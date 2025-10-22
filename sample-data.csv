@@ -1,0 +1,16 @@
+tracking_number,shipment_date,origin,destination,weight,service_type,shipping_cost,carrier,status,package_type,dimensions,delivered_at
+TRK100001,2025-10-15,New York NY,Los Angeles CA,15.5,Standard,25.50,UPS,DELIVERED,Box,12x10x8,2025-10-17
+TRK100002,2025-10-15,Chicago IL,Houston TX,22.3,Express,45.75,FedEx,DELIVERED,Box,14x12x10,2025-10-16
+TRK100003,2025-10-16,Seattle WA,Miami FL,8.2,Overnight,85.00,UPS,DELIVERED,Envelope,12x9x1,2025-10-17
+TRK100004,2025-10-16,Boston MA,Denver CO,35.7,Standard,32.25,USPS,DELIVERED,Box,18x14x12,2025-10-19
+TRK100005,2025-10-17,Portland OR,Atlanta GA,12.1,Express,52.50,FedEx,DELIVERED,Box,10x8x6,2025-10-18
+TRK100006,2025-10-17,Phoenix AZ,Philadelphia PA,19.8,Standard,28.75,UPS,DELIVERED,Box,12x10x8,2025-10-20
+TRK100007,2025-10-18,San Diego CA,Dallas TX,27.4,Express,48.90,FedEx,IN_TRANSIT,Box,16x12x10,
+TRK100008,2025-10-18,Minneapolis MN,Charlotte NC,14.6,Standard,26.30,USPS,IN_TRANSIT,Box,11x9x7,
+TRK100009,2025-10-19,Detroit MI,San Antonio TX,31.2,Standard,35.80,UPS,IN_TRANSIT,Box,20x16x12,
+TRK100010,2025-10-19,Las Vegas NV,Columbus OH,9.5,Overnight,92.00,FedEx,IN_TRANSIT,Envelope,12x9x1,
+TRK100011,2025-10-20,Nashville TN,Indianapolis IN,18.7,Express,44.20,UPS,PENDING,Box,12x10x9,
+TRK100012,2025-10-20,Austin TX,Jacksonville FL,25.3,Standard,30.50,USPS,PENDING,Box,15x12x10,
+TRK100013,2025-10-21,Memphis TN,San Francisco CA,40.5,Standard,38.75,FedEx,PENDING,Box,22x18x14,
+TRK100014,2025-10-21,Baltimore MD,Fort Worth TX,16.8,Express,51.30,UPS,PENDING,Box,13x10x8,
+TRK100015,2025-10-22,Milwaukee WI,El Paso TX,11.4,Standard,24.90,USPS,PENDING,Box,10x8x6,
