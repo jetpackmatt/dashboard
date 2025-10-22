@@ -1,0 +1,143 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Customer/User model
+model Customer {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  companyName   String
+  contactName   String
+  phone         String?
+  address       String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  invoices      Invoice[]
+  shipments     Shipment[]
+  
+  @@map("customers")
+}
+
+// Invoice model
+model Invoice {
+  id              String    @id @default(cuid())
+  invoiceNumber   String    @unique
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  // Invoice details
+  issueDate       DateTime  @default(now())
+  dueDate         DateTime
+  weekStartDate   DateTime
+  weekEndDate     DateTime
+  status          InvoiceStatus @default(PENDING)
+  
+  // Financial info
+  subtotal        Float
+  taxRate         Float     @default(0)
+  taxAmount       Float
+  totalAmount     Float
+  
+  // Optional notes
+  notes           String?
+  
+  // Relations
+  lineItems       InvoiceLineItem[]
+  shipments       Shipment[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@map("invoices")
+  @@index([customerId])
+  @@index([issueDate])
+  @@index([status])
+}
+
+enum InvoiceStatus {
+  PENDING
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// Invoice line items (breakdown of charges)
+model InvoiceLineItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  description String
+  quantity    Int
+  unitPrice   Float
+  amount      Float
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("invoice_line_items")
+  @@index([invoiceId])
+}
+
+// Shipment records from CSV uploads
+model Shipment {
+  id              String    @id @default(cuid())
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoiceId       String?
+  invoice         Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  
+  // Shipment details
+  trackingNumber  String    @unique
+  shipmentDate    DateTime
+  origin          String
+  destination     String
+  
+  // Package info
+  weight          Float
+  dimensions      String?   // e.g., "10x8x6"
+  packageType     String?   // e.g., "Box", "Envelope", "Pallet"
+  
+  // Shipping details
+  serviceType     String    // e.g., "Standard", "Express", "Overnight"
+  carrier         String?   // e.g., "UPS", "FedEx", "USPS"
+  
+  // Status
+  status          ShipmentStatus @default(IN_TRANSIT)
+  deliveredAt     DateTime?
+  
+  // Costs
+  shippingCost    Float
+  
+  // Metadata
+  notes           String?
+  rawData         String?   // Store original CSV row as JSON
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@map("shipments")
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([shipmentDate])
+  @@index([status])
+}
+
+enum ShipmentStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+  RETURNED
+}
