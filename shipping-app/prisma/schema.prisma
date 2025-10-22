@@ -1,0 +1,75 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Initial data model for shipping invoicing app
+model Client {
+  id            String      @id @default(cuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  name          String
+  email         String      @unique
+  companyName   String?
+  billingAddress String?
+  // Relations
+  shipments     Shipment[]
+  invoices      Invoice[]
+}
+
+model Shipment {
+  id            String      @id @default(cuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  clientId      String
+  // CSV-derived fields (extensible)
+  trackingNumber String?
+  origin        String?
+  destination   String?
+  shipDate      DateTime?
+  deliveryDate  DateTime?
+  weightKg      Decimal?
+  costCents     Int?        // raw cost from carrier
+  // Relations
+  client        Client      @relation(fields: [clientId], references: [id])
+  invoiceId     String?
+  invoice       Invoice?    @relation(fields: [invoiceId], references: [id])
+
+  @@index([clientId, shipDate])
+}
+
+model Invoice {
+  id            String      @id @default(cuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  clientId      String
+  periodStart   DateTime
+  periodEnd     DateTime
+  subtotalCents Int         // sum of shipments in period
+  taxCents      Int         @default(0)
+  totalCents    Int
+  status        InvoiceStatus @default(PENDING)
+  // Storage for generated PDF path or blob ref
+  pdfPath       String?
+
+  // Relations
+  client        Client      @relation(fields: [clientId], references: [id])
+  shipments     Shipment[]
+
+  @@index([clientId, periodStart, periodEnd])
+  @@unique([clientId, periodStart, periodEnd])
+}
+
+enum InvoiceStatus {
+  PENDING
+  SENT
+  PAID
+  VOID
+}

@@ -1,0 +1,4 @@
+clientEmail,clientName,trackingNumber,origin,destination,shipDate,deliveryDate,weightKg,costCents
+acme@example.com,Acme Co,1Z999,NYC,LAX,2025-10-01,2025-10-05,12.5,1599
+acme@example.com,Acme Co,1Z998,NYC,SEA,2025-10-02,2025-10-06,8.1,1299
+bravo@example.com,Bravo LLC,1Z123,ATL,ORD,2025-10-04,2025-10-07,5.3,899
