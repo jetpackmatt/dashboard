@@ -1,5 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 
+// Prevent static generation - requires Supabase env vars at runtime
+export const dynamic = 'force-dynamic'
+
 export default async function DebugPage() {
   const supabase = await createClient()
 

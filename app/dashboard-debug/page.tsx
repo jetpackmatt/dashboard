@@ -1,6 +1,9 @@
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 
+// Prevent static generation - requires Supabase env vars at runtime
+export const dynamic = 'force-dynamic'
+
 export default async function DebugPage() {
   const cookieStore = await cookies()
   const allCookies = cookieStore.getAll()
