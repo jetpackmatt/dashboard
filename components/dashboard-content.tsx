@@ -10,6 +10,7 @@ import { SectionCards } from "@/components/section-cards"
 
 interface Shipment {
   id: number
+  orderId: string
   status: string
   customerName: string
   orderType: string

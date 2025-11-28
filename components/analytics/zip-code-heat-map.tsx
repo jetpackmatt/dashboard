@@ -104,7 +104,6 @@ export function ZipCodeHeatMap({ zipCodeData, onZipSelect }: ZipCodeHeatMapProps
               onMouseEnter={() => setHoveredZip(zip.zipCode)}
               onMouseLeave={() => setHoveredZip(null)}
               onClick={() => onZipSelect?.(zip.zipCode)}
-              style={{ cursor: onZipSelect ? 'pointer' : 'default' }}
             >
               <circle
                 r={size}
@@ -114,7 +113,8 @@ export function ZipCodeHeatMap({ zipCodeData, onZipSelect }: ZipCodeHeatMapProps
                 strokeWidth={hoveredZip === zip.zipCode ? 1.5 : 0}
                 style={{
                   transition: 'all 0.2s ease',
-                  filter: hoveredZip === zip.zipCode ? 'brightness(1.2)' : 'none'
+                  filter: hoveredZip === zip.zipCode ? 'brightness(1.2)' : 'none',
+                  cursor: onZipSelect ? 'pointer' : 'default'
                 }}
               />
             </Marker>

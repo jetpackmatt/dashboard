@@ -13,9 +13,12 @@ import { createClient } from '@supabase/supabase-js'
  */
 
 // Singleton instance - reused across requests
-let adminClient: ReturnType<typeof createClient> | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let adminClient: any = null
 
-export function createAdminClient() {
+// Returns untyped client since we don't have generated Supabase types
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createAdminClient(): any {
   if (adminClient) return adminClient
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -113,7 +116,7 @@ export async function getClientToken(
     .select('api_token')
     .eq('client_id', clientId)
     .eq('provider', provider)
-    .single<{ api_token: string }>()
+    .single()
 
   if (error) {
     if (error.code === 'PGRST116') return null // Not found
@@ -152,7 +155,7 @@ export async function createNewClient(data: {
       is_active: true,
     })
     .select()
-    .single<Client>()
+    .single()
 
   if (error) {
     console.error('Failed to create client:', error)
@@ -176,7 +179,6 @@ export async function getClientsWithTokenStatus(): Promise<
     .select('*')
     .eq('is_active', true)
     .order('company_name')
-    .returns<Client[]>()
 
   if (clientsError) {
     console.error('Failed to fetch clients:', clientsError)
@@ -188,16 +190,15 @@ export async function getClientsWithTokenStatus(): Promise<
     .from('client_api_credentials')
     .select('client_id')
     .eq('provider', 'shipbob')
-    .returns<{ client_id: string }[]>()
 
   if (credError) {
     console.error('Failed to fetch credentials:', credError)
     throw new Error('Failed to fetch credentials')
   }
 
-  const clientsWithTokens = new Set(credentials?.map((c) => c.client_id) || [])
+  const clientsWithTokens = new Set(credentials?.map((c: { client_id: string }) => c.client_id) || [])
 
-  return (clients || []).map((client) => ({
+  return (clients || []).map((client: Client) => ({
     ...client,
     has_token: clientsWithTokens.has(client.id),
   }))
@@ -247,8 +248,9 @@ export async function inviteUser(data: {
 
   // Check if user already exists
   const { data: existingUsers } = await supabase.auth.admin.listUsers()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const existingUser = existingUsers?.users?.find(
-    (u) => u.email?.toLowerCase() === email.toLowerCase()
+    (u: any) => u.email?.toLowerCase() === email.toLowerCase()
   )
 
   let userId: string
@@ -295,7 +297,7 @@ export async function inviteUser(data: {
       invited_by: invitedBy,
     })
     .select()
-    .single<UserClient>()
+    .single()
 
   if (linkError) {
     console.error('Failed to link user to client:', linkError)
@@ -325,7 +327,7 @@ export async function updateClient(
     })
     .eq('id', clientId)
     .select()
-    .single<Client>()
+    .single()
 
   if (error) {
     console.error('Failed to update client:', error)
@@ -436,9 +438,11 @@ export async function getUsersWithClients(): Promise<UserWithClients[]> {
   }
 
   // Build user list with client info
-  const users: UserWithClients[] = (authData.users || []).map((user) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const users: UserWithClients[] = (authData.users || []).map((user: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const userAssignments = (assignments || []).filter(
-      (a) => a.user_id === user.id
+      (a: any) => a.user_id === user.id
     )
 
     return {
@@ -449,7 +453,8 @@ export async function getUsersWithClients(): Promise<UserWithClients[]> {
         full_name: user.user_metadata?.full_name,
         role: user.user_metadata?.role,
       },
-      clients: userAssignments.map((a) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      clients: userAssignments.map((a: any) => ({
         client_id: a.client_id,
         client_name: (a.clients as { company_name: string })?.company_name || 'Unknown',
         role: a.role,
@@ -487,8 +492,10 @@ export async function getClientUsers(
   const { data: authData } = await supabase.auth.admin.listUsers()
   const authUsers = authData?.users || []
 
-  return assignments.map((a) => {
-    const authUser = authUsers.find((u) => u.id === a.user_id)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return assignments.map((a: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const authUser = authUsers.find((u: any) => u.id === a.user_id)
     return {
       user_id: a.user_id,
       email: authUser?.email || 'Unknown',

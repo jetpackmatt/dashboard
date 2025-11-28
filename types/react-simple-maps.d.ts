@@ -38,6 +38,7 @@ declare module 'react-simple-maps' {
     }
     onMouseEnter?: (event: React.MouseEvent) => void
     onMouseLeave?: (event: React.MouseEvent) => void
+    onMouseMove?: (event: React.MouseEvent) => void
     onClick?: (event: React.MouseEvent) => void
     fill?: string
     stroke?: string
@@ -53,6 +54,10 @@ declare module 'react-simple-maps' {
       hover?: React.CSSProperties
       pressed?: React.CSSProperties
     }
+    onMouseEnter?: (event: React.MouseEvent) => void
+    onMouseLeave?: (event: React.MouseEvent) => void
+    onMouseMove?: (event: React.MouseEvent) => void
+    onClick?: (event: React.MouseEvent) => void
   }
 
   export interface ZoomableGroupProps {

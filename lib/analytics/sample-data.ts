@@ -137,7 +137,7 @@ export const sampleShipments: ShipmentData[] = generateSampleShipments(40000)
 function generateSampleShipments(count: number): ShipmentData[] {
   // Actual carriers from demo data
   const carriers = ['USPS', 'Amazon Shipping', 'BetterTrucks', 'CirroECommerce', 'DHLExpress', 'OSMWorldwide', 'OnTrac', 'Veho']
-  const services = {
+  const services: Record<string, string[]> = {
     'USPS': ['Priority Mail', 'First Class', 'Priority Express'],
     'Amazon Shipping': ['Standard', 'Expedited', 'Same Day'],
     'BetterTrucks': ['Ground', 'Express'],

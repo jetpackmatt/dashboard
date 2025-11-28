@@ -226,6 +226,7 @@ export async function syncAllClients(daysBack: number = 30): Promise<SyncResult[
       ordersFound: 0,
       ordersInserted: 0,
       ordersUpdated: 0,
+      shipmentIds: [],
       errors: ['Failed to fetch clients'],
     }]
   }

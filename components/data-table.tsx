@@ -86,6 +86,7 @@ import {
 // ============================================================================
 export const shipmentsSchema = z.object({
   id: z.number(),
+  orderId: z.string(),
   status: z.string(),
   customerName: z.string(),
   orderType: z.string(),
