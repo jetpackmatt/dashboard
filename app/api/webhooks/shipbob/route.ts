@@ -97,7 +97,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Update shipment status in database
-      const { data, error } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
         .from('shipments')
         .update({
           status: newStatus,
@@ -167,7 +168,8 @@ export async function POST(request: NextRequest) {
       // Try to update return status in database
       // Note: returns table may not exist yet - gracefully handle this
       try {
-        const { data, error } = await supabase
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (supabase as any)
           .from('returns')
           .update({
             status: newStatus,
