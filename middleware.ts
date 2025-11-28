@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-// Site password protection - set this in Vercel env vars
+// Site password protection - set SITE_PASSWORD in Vercel env vars to enable
 const SITE_PASSWORD = process.env.SITE_PASSWORD
 
 export async function middleware(request: NextRequest) {
