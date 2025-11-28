@@ -372,7 +372,9 @@ export interface ZipCodeVolumeData {
   state: string
   orderCount: number
   percent: number
-  coordinates?: [number, number] // [longitude, latitude]
+  coordinates?: [number, number] // [longitude, latitude] - legacy format
+  lon?: number // longitude - new format
+  lat?: number // latitude - new format
 }
 
 // Geography Cost + Speed Types

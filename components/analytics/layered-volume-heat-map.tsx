@@ -57,18 +57,18 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: 
 
   // Pre-compute marker data with stable coordinate arrays
   const markerData = useMemo(() => {
-    return limitedZipCodeData.map((zip, index) => {
-      const hasCoords = (zip as any).lon !== undefined && (zip as any).lat !== undefined
-      const hasOldCoords = (zip as any).coordinates !== undefined
+    return limitedZipCodeData.map((zip) => {
+      const hasCoords = zip.lon !== undefined && zip.lat !== undefined
+      const hasOldCoords = zip.coordinates !== undefined
 
       if (!hasCoords && !hasOldCoords) {
         return null
       }
 
       // Create a plain array without type annotation to avoid any TypeScript/React issues
-      const coords = hasCoords
-        ? [(zip as any).lon, (zip as any).lat]
-        : (zip as any).coordinates
+      const coords: [number, number] = hasCoords
+        ? [zip.lon!, zip.lat!]
+        : zip.coordinates!
 
       return {
         city: zip.city,
