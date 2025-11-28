@@ -1,0 +1,380 @@
+[
+  {
+    "issueDate": "2025-11-20",
+    "invoiceNumber": "JPHS-0042-112025",
+    "amount": 12450.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0042-112025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0042-112025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-11-13",
+    "invoiceNumber": "JPHS-0041-111325",
+    "amount": 8920.75,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0041-111325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0041-111325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-11-06",
+    "invoiceNumber": "JPHS-0040-110625",
+    "amount": 15230.25,
+    "currency": "USD",
+    "status": "Unpaid",
+    "summaryPdfUrl": "/invoices/JPHS-0040-110625-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0040-110625-details.xlsx"
+  },
+  {
+    "issueDate": "2025-10-30",
+    "invoiceNumber": "JPHS-0039-103025",
+    "amount": 11680.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0039-103025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0039-103025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-10-23",
+    "invoiceNumber": "JPHS-0038-102325",
+    "amount": 9540.50,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0038-102325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0038-102325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-10-16",
+    "invoiceNumber": "JPHS-0037-101625",
+    "amount": 13890.75,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0037-101625-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0037-101625-details.xlsx"
+  },
+  {
+    "issueDate": "2025-10-09",
+    "invoiceNumber": "JPHS-0036-100925",
+    "amount": 10320.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0036-100925-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0036-100925-details.xlsx"
+  },
+  {
+    "issueDate": "2025-10-02",
+    "invoiceNumber": "JPHS-0035-100225",
+    "amount": 12150.25,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0035-100225-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0035-100225-details.xlsx"
+  },
+  {
+    "issueDate": "2025-09-25",
+    "invoiceNumber": "JPHS-0034-092525",
+    "amount": 8765.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0034-092525-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0034-092525-details.xlsx"
+  },
+  {
+    "issueDate": "2025-09-18",
+    "invoiceNumber": "JPHS-0033-091825",
+    "amount": 14320.75,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0033-091825-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0033-091825-details.xlsx"
+  },
+  {
+    "issueDate": "2025-09-11",
+    "invoiceNumber": "JPHS-0032-091125",
+    "amount": 10590.00,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0032-091125-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0032-091125-details.xlsx"
+  },
+  {
+    "issueDate": "2025-09-04",
+    "invoiceNumber": "JPHS-0031-090425",
+    "amount": 11240.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0031-090425-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0031-090425-details.xlsx"
+  },
+  {
+    "issueDate": "2025-08-28",
+    "invoiceNumber": "JPHS-0030-082825",
+    "amount": 9875.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0030-082825-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0030-082825-details.xlsx"
+  },
+  {
+    "issueDate": "2025-08-21",
+    "invoiceNumber": "JPHS-0029-082125",
+    "amount": 13450.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0029-082125-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0029-082125-details.xlsx"
+  },
+  {
+    "issueDate": "2025-08-14",
+    "invoiceNumber": "JPHS-0028-081425",
+    "amount": 10120.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0028-081425-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0028-081425-details.xlsx"
+  },
+  {
+    "issueDate": "2025-08-07",
+    "invoiceNumber": "JPHS-0027-080725",
+    "amount": 12680.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0027-080725-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0027-080725-details.xlsx"
+  },
+  {
+    "issueDate": "2025-07-31",
+    "invoiceNumber": "JPHS-0026-073125",
+    "amount": 11390.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0026-073125-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0026-073125-details.xlsx"
+  },
+  {
+    "issueDate": "2025-07-24",
+    "invoiceNumber": "JPHS-0025-072425",
+    "amount": 9540.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0025-072425-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0025-072425-details.xlsx"
+  },
+  {
+    "issueDate": "2025-07-17",
+    "invoiceNumber": "JPHS-0024-071725",
+    "amount": 14230.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0024-071725-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0024-071725-details.xlsx"
+  },
+  {
+    "issueDate": "2025-07-10",
+    "invoiceNumber": "JPHS-0023-071025",
+    "amount": 10850.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0023-071025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0023-071025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-07-03",
+    "invoiceNumber": "JPHS-0022-070325",
+    "amount": 12570.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0022-070325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0022-070325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-06-26",
+    "invoiceNumber": "JPHS-0021-062625",
+    "amount": 8920.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0021-062625-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0021-062625-details.xlsx"
+  },
+  {
+    "issueDate": "2025-06-19",
+    "invoiceNumber": "JPHS-0020-061925",
+    "amount": 13680.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0020-061925-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0020-061925-details.xlsx"
+  },
+  {
+    "issueDate": "2025-06-12",
+    "invoiceNumber": "JPHS-0019-061225",
+    "amount": 11450.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0019-061225-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0019-061225-details.xlsx"
+  },
+  {
+    "issueDate": "2025-06-05",
+    "invoiceNumber": "JPHS-0018-060525",
+    "amount": 9785.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0018-060525-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0018-060525-details.xlsx"
+  },
+  {
+    "issueDate": "2025-05-29",
+    "invoiceNumber": "JPHS-0017-052925",
+    "amount": 12890.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0017-052925-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0017-052925-details.xlsx"
+  },
+  {
+    "issueDate": "2025-05-22",
+    "invoiceNumber": "JPHS-0016-052225",
+    "amount": 10320.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0016-052225-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0016-052225-details.xlsx"
+  },
+  {
+    "issueDate": "2025-05-15",
+    "invoiceNumber": "JPHS-0015-051525",
+    "amount": 14120.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0015-051525-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0015-051525-details.xlsx"
+  },
+  {
+    "issueDate": "2025-05-08",
+    "invoiceNumber": "JPHS-0014-050825",
+    "amount": 11640.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0014-050825-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0014-050825-details.xlsx"
+  },
+  {
+    "issueDate": "2025-05-01",
+    "invoiceNumber": "JPHS-0013-050125",
+    "amount": 9430.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0013-050125-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0013-050125-details.xlsx"
+  },
+  {
+    "issueDate": "2025-04-24",
+    "invoiceNumber": "JPHS-0012-042425",
+    "amount": 13250.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0012-042425-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0012-042425-details.xlsx"
+  },
+  {
+    "issueDate": "2025-04-17",
+    "invoiceNumber": "JPHS-0011-041725",
+    "amount": 10780.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0011-041725-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0011-041725-details.xlsx"
+  },
+  {
+    "issueDate": "2025-04-10",
+    "invoiceNumber": "JPHS-0010-041025",
+    "amount": 12450.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0010-041025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0010-041025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-04-03",
+    "invoiceNumber": "JPHS-0009-040325",
+    "amount": 8890.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0009-040325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0009-040325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-03-27",
+    "invoiceNumber": "JPHS-0008-032725",
+    "amount": 15120.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0008-032725-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0008-032725-details.xlsx"
+  },
+  {
+    "issueDate": "2025-03-20",
+    "invoiceNumber": "JPHS-0007-032025",
+    "amount": 11230.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0007-032025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0007-032025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-03-13",
+    "invoiceNumber": "JPHS-0006-031325",
+    "amount": 9650.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0006-031325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0006-031325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-03-06",
+    "invoiceNumber": "JPHS-0005-030625",
+    "amount": 13540.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0005-030625-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0005-030625-details.xlsx"
+  },
+  {
+    "issueDate": "2025-02-27",
+    "invoiceNumber": "JPHS-0004-022725",
+    "amount": 10450.00,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0004-022725-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0004-022725-details.xlsx"
+  },
+  {
+    "issueDate": "2025-02-20",
+    "invoiceNumber": "JPHS-0003-022025",
+    "amount": 12890.25,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0003-022025-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0003-022025-details.xlsx"
+  },
+  {
+    "issueDate": "2025-02-13",
+    "invoiceNumber": "JPHS-0002-021325",
+    "amount": 11120.50,
+    "currency": "USD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0002-021325-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0002-021325-details.xlsx"
+  },
+  {
+    "issueDate": "2025-02-06",
+    "invoiceNumber": "JPHS-0001-020625",
+    "amount": 9340.75,
+    "currency": "CAD",
+    "status": "Paid",
+    "summaryPdfUrl": "/invoices/JPHS-0001-020625-summary.pdf",
+    "detailsXlsUrl": "/invoices/JPHS-0001-020625-details.xlsx"
+  }
+]
