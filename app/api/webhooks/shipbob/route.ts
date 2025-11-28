@@ -71,23 +71,6 @@ export async function POST(request: NextRequest) {
       payloadKeys: Object.keys(payload),
     })
 
-    // Log to webhook_events table for debugging and audit (non-blocking)
-    try {
-      const { error: logError } = await supabase.from('webhook_events').insert({
-        provider: 'shipbob',
-        topic,
-        webhook_id: webhookId,
-        payload,
-        received_at: new Date().toISOString(),
-      })
-      if (logError) {
-        console.warn('[Webhook] Failed to log event:', logError.message)
-      }
-    } catch (logErr) {
-      // Don't fail the webhook if logging fails - table might not exist yet
-      console.warn('[Webhook] Failed to log event:', logErr)
-    }
-
     // Determine if this is a shipment or return topic
     const isShipmentTopic = topic in SHIPMENT_TOPIC_TO_STATUS
     const isReturnTopic = topic in RETURN_TOPIC_TO_STATUS
