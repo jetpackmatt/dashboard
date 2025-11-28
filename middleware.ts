@@ -1,10 +1,24 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+// Site password protection - set this in Vercel env vars
+const SITE_PASSWORD = process.env.SITE_PASSWORD
+
 export async function middleware(request: NextRequest) {
   // Skip if env vars are missing (during build)
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.next()
+  }
+
+  // Password protection gate (only if SITE_PASSWORD is set)
+  if (SITE_PASSWORD) {
+    const isPasswordPage = request.nextUrl.pathname === '/password'
+    const isPasswordApi = request.nextUrl.pathname === '/api/password'
+    const hasAccess = request.cookies.get('site_access')?.value === 'granted'
+
+    if (!hasAccess && !isPasswordPage && !isPasswordApi) {
+      return NextResponse.redirect(new URL('/password', request.url))
+    }
   }
 
   let supabaseResponse = NextResponse.next({
