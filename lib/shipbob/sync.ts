@@ -1,586 +1,817 @@
 /**
- * ShipBob Data Sync Service
+ * ShipBob Data Sync Service - Complete Sync
  *
- * Two-tier sync:
- * 1. Orders/Shipments - Uses child brand tokens (per-brand)
- * 2. Transactions/Billing - Uses parent Jetpack token (consolidated)
+ * Mirrors the logic from scripts/sync-orders-fast.js for production use.
+ * Syncs: orders, shipments, order_items, shipment_items, shipment_cartons, transactions
  *
- * The billing data is attributed to brands via reference_id mapping.
+ * Uses the 2025-07 ShipBob API.
  */
 
-import { ShipBobClient, ShipBobOrder, ShipBobTransaction } from './client'
 import { createAdminClient } from '@/lib/supabase/admin'
+
+const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
+const BATCH_SIZE = 500
 
 export interface SyncResult {
   success: boolean
   clientId: string
+  clientName: string
   ordersFound: number
-  ordersInserted: number
-  ordersUpdated: number
-  shipmentIds: string[]  // For billing enrichment
+  ordersUpserted: number
+  shipmentsUpserted: number
+  orderItemsUpserted: number
+  shipmentItemsInserted: number
+  cartonsInserted: number
+  transactionsUpserted: number
   errors: string[]
+  duration: number
 }
 
-export interface BillingSyncResult {
+export interface FullSyncResult {
   success: boolean
-  transactionsFound: number
-  transactionsInserted: number
-  transactionsUpdated: number
-  invoicesFound: number
-  invoicesInserted: number
+  clients: SyncResult[]
+  totalOrders: number
+  totalShipments: number
+  duration: number
   errors: string[]
 }
 
-/**
- * Get a client's ShipBob API token from the database
- */
-async function getClientToken(clientId: string): Promise<string | null> {
-  const supabase = createAdminClient()
+// DIM weight divisors by route
+function getDimDivisor(originCountry: string, destCountry: string, actualWeightOz: number): number | null {
+  if (originCountry === 'AU' || destCountry === 'AU') return 110
+  if (originCountry === 'US' && destCountry === 'US') {
+    return actualWeightOz >= 16 ? 166 : null
+  }
+  return 139
+}
 
-  const { data, error } = await supabase
-    .from('client_api_credentials')
-    .select('api_token')
-    .eq('client_id', clientId)
-    .eq('provider', 'shipbob')
-    .single()
+// Batch upsert helper
+async function batchUpsert(
+  supabase: ReturnType<typeof createAdminClient>,
+  table: string,
+  records: Record<string, unknown>[],
+  onConflict: string
+): Promise<{ success: number; errors: string[] }> {
+  if (records.length === 0) return { success: 0, errors: [] }
 
-  if (error || !data) {
-    return null
+  let successCount = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE)
+
+    const { error } = await supabase
+      .from(table)
+      .upsert(batch, { onConflict, ignoreDuplicates: false })
+
+    if (error) {
+      errors.push(`${table} batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
+    } else {
+      successCount += batch.length
+    }
   }
 
-  // Type assertion needed until Supabase types are regenerated
-  return (data as { api_token: string }).api_token
+  return { success: successCount, errors }
+}
+
+// Batch insert helper
+async function batchInsert(
+  supabase: ReturnType<typeof createAdminClient>,
+  table: string,
+  records: Record<string, unknown>[]
+): Promise<{ success: number; errors: string[] }> {
+  if (records.length === 0) return { success: 0, errors: [] }
+
+  let successCount = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE)
+
+    const { error } = await supabase.from(table).insert(batch)
+
+    if (error) {
+      errors.push(`${table} batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
+    } else {
+      successCount += batch.length
+    }
+  }
+
+  return { success: successCount, errors }
+}
+
+// Batch delete helper
+async function batchDelete(
+  supabase: ReturnType<typeof createAdminClient>,
+  table: string,
+  column: string,
+  values: string[]
+): Promise<void> {
+  for (let i = 0; i < values.length; i += BATCH_SIZE) {
+    const batch = values.slice(i, i + BATCH_SIZE)
+    await supabase.from(table).delete().in(column, batch)
+  }
 }
 
 /**
- * Map ShipBob order to our shipments table schema
+ * Sync a single client's data
  */
-function mapOrderToShipment(order: ShipBobOrder, clientId: string) {
-  const shipment = order.shipments?.[0] // Primary shipment
-
-  return {
-    client_id: clientId,
-    shipbob_order_id: order.id.toString(),
-    shipbob_reference_id: order.reference_id,
-    store_order_id: order.order_number,
-    tracking_id: shipment?.tracking_number || null,
-    order_date: order.created_date ? new Date(order.created_date).toISOString().split('T')[0] : null,
-    carrier: shipment?.carrier || null,
-    carrier_service: shipment?.shipping_method || null,
-    transaction_status: order.status,
-    delivered_date: shipment?.actual_delivery_date ? new Date(shipment.actual_delivery_date).toISOString() : null,
-    actual_weight_oz: shipment?.measurements?.total_weight_oz || null,
-    length: shipment?.measurements?.length_in || null,
-    width: shipment?.measurements?.width_in || null,
-    height: shipment?.measurements?.height_in || null,
-    raw_data: order,
-    updated_at: new Date().toISOString(),
-  }
-}
-
-/**
- * Sync orders for a specific client
- *
- * @param clientId - Our internal client UUID
- * @param daysBack - How many days of orders to fetch (default 30)
- */
-export async function syncClientOrders(
+export async function syncClient(
   clientId: string,
-  daysBack: number = 30
+  clientName: string,
+  token: string,
+  merchantId: string,
+  daysBack: number = 7
 ): Promise<SyncResult> {
+  const startTime = Date.now()
   const result: SyncResult = {
     success: false,
     clientId,
+    clientName,
     ordersFound: 0,
-    ordersInserted: 0,
-    ordersUpdated: 0,
-    shipmentIds: [],
+    ordersUpserted: 0,
+    shipmentsUpserted: 0,
+    orderItemsUpserted: 0,
+    shipmentItemsInserted: 0,
+    cartonsInserted: 0,
+    transactionsUpserted: 0,
     errors: [],
+    duration: 0,
   }
 
+  const supabase = createAdminClient()
+  const parentToken = process.env.SHIPBOB_API_TOKEN
+
   try {
-    // Get client's API token
-    const token = await getClientToken(clientId)
-    if (!token) {
-      result.errors.push('No API token found for this client')
-      return result
-    }
-
-    // Create ShipBob client with this brand's token
-    const shipbob = new ShipBobClient(token)
-
     // Calculate date range
     const endDate = new Date()
     const startDate = new Date()
     startDate.setDate(startDate.getDate() - daysBack)
 
-    // Fetch ALL orders from ShipBob (paginated)
-    const allOrders: ShipBobOrder[] = []
+    // Build FC lookup
+    const { data: fcList } = await supabase.from('fulfillment_centers').select('fc_id, name, country')
+    const fcLookup: Record<string, { fc_id: number; country: string }> = {}
+    for (const fc of fcList || []) {
+      fcLookup[fc.name] = { fc_id: fc.fc_id, country: fc.country }
+      const shortName = fc.name.split(' ')[0]
+      if (!fcLookup[shortName]) fcLookup[shortName] = { fc_id: fc.fc_id, country: fc.country }
+    }
+
+    // Build ship_option_id lookup
+    const methodsRes = await fetch(`${SHIPBOB_API_BASE}/shipping-method`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const methods = await methodsRes.json()
+    const shipOptionLookup: Record<string, number> = {}
+    for (const method of methods) {
+      const name = method.service_level?.name?.trim()
+      const id = method.service_level?.id
+      if (name && id) {
+        shipOptionLookup[name] = id
+        shipOptionLookup[name.toLowerCase().replace(/\s+/g, '')] = id
+      }
+    }
+    const manualMappings: Record<string, number> = { Ground: 3, '1 Day': 8, '2 Day': 9 }
+    const getShipOptionId = (shipOption: string | null): number | null => {
+      if (!shipOption) return null
+      if (shipOptionLookup[shipOption]) return shipOptionLookup[shipOption]
+      const normalized = shipOption.toLowerCase().replace(/\s+/g, '')
+      if (shipOptionLookup[normalized]) return shipOptionLookup[normalized]
+      return manualMappings[shipOption] || null
+    }
+
+    // STEP 1: Fetch all orders from API
+    interface ShipBobOrder {
+      id: number
+      order_number?: string
+      status?: string
+      created_date?: string
+      purchase_date?: string
+      reference_id?: string
+      shipping_method?: string
+      type?: string
+      gift_message?: string
+      channel?: { id?: number; name?: string }
+      carrier?: { type?: string; payment_term?: string }
+      financials?: { total_price?: number }
+      recipient?: {
+        name?: string
+        email?: string
+        phone_number?: string
+        address?: {
+          address1?: string
+          address2?: string
+          company_name?: string
+          city?: string
+          state?: string
+          zip_code?: string
+          country?: string
+        }
+      }
+      products?: Array<{
+        id?: number
+        sku?: string
+        reference_id?: string
+        name?: string
+        quantity?: number
+        unit_price?: number
+        gtin?: string
+        upc?: string
+        external_line_id?: string
+        quantity_unit_of_measure_code?: string
+      }>
+      shipments?: Array<{
+        id: number
+        status?: string
+        status_details?: string[]
+        created_date?: string
+        actual_fulfillment_date?: string
+        delivery_date?: string
+        estimated_fulfillment_date?: string
+        estimated_fulfillment_date_status?: string
+        last_update_at?: string
+        ship_option?: string
+        insurance_value?: number
+        package_material_type?: string
+        require_signature?: boolean
+        gift_message?: string
+        location?: { name?: string }
+        zone?: { id?: number }
+        measurements?: {
+          length_in?: number
+          width_in?: number
+          depth_in?: number
+          total_weight_oz?: number
+        }
+        tracking?: {
+          tracking_number?: string
+          tracking_url?: string
+          carrier?: string
+          last_update_at?: string
+          bol?: string
+          pro_number?: string
+          scac?: string
+        }
+        recipient?: {
+          name?: string
+          full_name?: string
+          email?: string
+          phone_number?: string
+        }
+        invoice?: {
+          amount?: number
+          currency_code?: string
+        }
+        products?: Array<{
+          id?: number
+          sku?: string
+          reference_id?: string
+          name?: string
+          quantity?: number
+          is_dangerous_goods?: boolean
+          inventory?: Array<{
+            id?: number
+            lot?: string
+            expiration_date?: string
+            quantity?: number
+            quantity_committed?: number
+            serial_numbers?: string[]
+          }>
+        }>
+        parent_cartons?: Array<{
+          id?: number
+          barcode?: string
+          type?: string
+          parent_carton_barcode?: string
+          measurements?: {
+            length_in?: number
+            width_in?: number
+            depth_in?: number
+            weight_oz?: number
+          }
+          products?: unknown[]
+        }>
+      }>
+    }
+
+    const apiOrders: ShipBobOrder[] = []
     let page = 1
-    const pageSize = 250 // ShipBob max per page
+    let totalPages: number | null = null
 
     while (true) {
-      const orders = await shipbob.orders.searchOrders({
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        limit: pageSize,
-        page,
+      const params = new URLSearchParams({
+        StartDate: startDate.toISOString(),
+        EndDate: endDate.toISOString(),
+        Limit: '250',
+        Page: page.toString(),
       })
 
-      if (orders.length === 0) break
-      allOrders.push(...orders)
+      const response = await fetch(`${SHIPBOB_API_BASE}/order?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
 
-      if (orders.length < pageSize) break // Last page
+      if (totalPages === null) {
+        totalPages = parseInt(response.headers.get('total-pages') || '0') || null
+      }
+
+      const orders = await response.json()
+
+      if (!Array.isArray(orders) || orders.length === 0) break
+      apiOrders.push(...orders)
+
+      if (totalPages && page >= totalPages) break
+      if (!totalPages && orders.length < 250) break
       page++
     }
 
-    result.ordersFound = allOrders.length
+    result.ordersFound = apiOrders.length
 
-    if (allOrders.length === 0) {
+    if (apiOrders.length === 0) {
       result.success = true
+      result.duration = Date.now() - startTime
       return result
     }
 
-    const orders = allOrders
+    // STEP 2: Upsert Orders
+    const orderRecords = apiOrders.map((order) => ({
+      client_id: clientId,
+      merchant_id: merchantId,
+      shipbob_order_id: order.id.toString(),
+      store_order_id: order.order_number || null,
+      customer_name: order.recipient?.name || null,
+      order_import_date: order.created_date || null,
+      status: order.status || null,
+      address1: order.recipient?.address?.address1 || null,
+      address2: order.recipient?.address?.address2 || null,
+      company_name: order.recipient?.address?.company_name || null,
+      customer_email: order.recipient?.email || null,
+      customer_phone: order.recipient?.phone_number || null,
+      zip_code: order.recipient?.address?.zip_code || null,
+      city: order.recipient?.address?.city || null,
+      state: order.recipient?.address?.state || null,
+      country: order.recipient?.address?.country || null,
+      total_shipments: order.shipments?.length || 0,
+      order_type: order.type || null,
+      channel_id: order.channel?.id || null,
+      channel_name: order.channel?.name || null,
+      reference_id: order.reference_id || null,
+      shipping_method: order.shipping_method || null,
+      purchase_date: order.purchase_date || null,
+      total_price: order.financials?.total_price || null,
+      gift_message: order.gift_message || null,
+      carrier_type: order.carrier?.type || null,
+      payment_term: order.carrier?.payment_term || null,
+      updated_at: new Date().toISOString(),
+    }))
 
-    // Extract shipment IDs for billing enrichment
-    for (const order of orders) {
-      if (order.shipments) {
-        for (const shipment of order.shipments) {
-          result.shipmentIds.push(shipment.id.toString())
+    const orderResult = await batchUpsert(supabase, 'orders', orderRecords, 'client_id,shipbob_order_id')
+    result.ordersUpserted = orderResult.success
+    result.errors.push(...orderResult.errors)
+
+    // Build order ID map
+    const shipbobOrderIds = apiOrders.map((o) => o.id.toString())
+    const orderIdMap: Record<string, string> = {}
+
+    for (let i = 0; i < shipbobOrderIds.length; i += 1000) {
+      const batch = shipbobOrderIds.slice(i, i + 1000)
+      const { data: orderRows } = await supabase
+        .from('orders')
+        .select('id, shipbob_order_id')
+        .eq('client_id', clientId)
+        .in('shipbob_order_id', batch)
+
+      for (const row of orderRows || []) {
+        orderIdMap[row.shipbob_order_id] = row.id
+      }
+    }
+
+    // STEP 3: Upsert Shipments
+    const shipmentRecords: Record<string, unknown>[] = []
+    const shipmentIds: string[] = []
+
+    for (const order of apiOrders) {
+      if (!order.shipments || order.shipments.length === 0) continue
+
+      const orderId = orderIdMap[order.id.toString()]
+      if (!orderId) continue
+
+      for (const shipment of order.shipments) {
+        const length = shipment.measurements?.length_in || 0
+        const width = shipment.measurements?.width_in || 0
+        const height = shipment.measurements?.depth_in || 0
+        const actualWeight = shipment.measurements?.total_weight_oz || 0
+
+        const fcName = shipment.location?.name || null
+        const fcInfo = fcName ? fcLookup[fcName] || fcLookup[fcName?.split(' ')[0]] : null
+        const originCountry = fcInfo?.country || 'US'
+        const destCountry = order.recipient?.address?.country || 'US'
+
+        let dimWeight: number | null = null
+        let billableWeight = actualWeight
+        const dimDivisor = getDimDivisor(originCountry, destCountry, actualWeight)
+        if (dimDivisor && length > 0 && width > 0 && height > 0) {
+          dimWeight = Math.round(((length * width * height) / dimDivisor) * 16)
+          billableWeight = Math.max(actualWeight, dimWeight)
+        }
+
+        const shippedTimestamp = shipment.actual_fulfillment_date || null
+        const deliveredTimestamp = shipment.delivery_date || null
+        let transitTimeDays: number | null = null
+        if (shippedTimestamp && deliveredTimestamp) {
+          const diffMs = new Date(deliveredTimestamp).getTime() - new Date(shippedTimestamp).getTime()
+          transitTimeDays = Math.round((diffMs / (1000 * 60 * 60 * 24)) * 10) / 10
+        }
+
+        shipmentRecords.push({
+          client_id: clientId,
+          merchant_id: merchantId,
+          order_id: orderId,
+          shipment_id: shipment.id.toString(),
+          shipbob_order_id: order.id.toString(),
+          tracking_id: shipment.tracking?.tracking_number || null,
+          tracking_url: shipment.tracking?.tracking_url || null,
+          status: shipment.status || null,
+          recipient_name: shipment.recipient?.name || shipment.recipient?.full_name || null,
+          recipient_email: shipment.recipient?.email || null,
+          recipient_phone: shipment.recipient?.phone_number || null,
+          label_generation_date: shipment.created_date || null,
+          shipped_date: shippedTimestamp,
+          delivered_date: deliveredTimestamp,
+          transit_time_days: transitTimeDays,
+          carrier: shipment.tracking?.carrier || null,
+          carrier_service: shipment.ship_option || null,
+          ship_option_id: getShipOptionId(shipment.ship_option || null),
+          zone_used: shipment.zone?.id || null,
+          fc_name: fcName,
+          fc_id: fcInfo?.fc_id || null,
+          actual_weight_oz: actualWeight || null,
+          dim_weight_oz: dimWeight,
+          billable_weight_oz: billableWeight || null,
+          length: length || null,
+          width: width || null,
+          height: height || null,
+          insurance_value: shipment.insurance_value || null,
+          estimated_fulfillment_date: shipment.estimated_fulfillment_date || null,
+          estimated_fulfillment_date_status: shipment.estimated_fulfillment_date_status || null,
+          last_update_at: shipment.last_update_at || null,
+          last_tracking_update_at: shipment.tracking?.last_update_at || null,
+          package_material_type: shipment.package_material_type || null,
+          require_signature: shipment.require_signature || false,
+          gift_message: shipment.gift_message || null,
+          invoice_amount: shipment.invoice?.amount || null,
+          invoice_currency_code: shipment.invoice?.currency_code || null,
+          tracking_bol: shipment.tracking?.bol || null,
+          tracking_pro_number: shipment.tracking?.pro_number || null,
+          tracking_scac: shipment.tracking?.scac || null,
+          origin_country: originCountry,
+          destination_country: destCountry,
+          status_details: shipment.status_details || null,
+          updated_at: new Date().toISOString(),
+        })
+
+        shipmentIds.push(shipment.id.toString())
+      }
+    }
+
+    const shipmentResult = await batchUpsert(supabase, 'shipments', shipmentRecords, 'shipment_id')
+    result.shipmentsUpserted = shipmentResult.success
+    result.errors.push(...shipmentResult.errors)
+
+    // STEP 4: Upsert Order Items
+    const orderItemRecords: Record<string, unknown>[] = []
+    for (const order of apiOrders) {
+      if (!order.products || order.products.length === 0) continue
+      const orderId = orderIdMap[order.id.toString()]
+      if (!orderId) continue
+
+      for (const product of order.products) {
+        orderItemRecords.push({
+          client_id: clientId,
+          merchant_id: merchantId,
+          order_id: orderId,
+          shipbob_product_id: product.id || null,
+          sku: product.sku || null,
+          reference_id: product.reference_id || null,
+          name: product.name || null,
+          quantity: product.quantity || null,
+          unit_price: product.unit_price || null,
+          gtin: product.gtin || null,
+          upc: product.upc || null,
+          external_line_id: product.external_line_id || null,
+          quantity_unit_of_measure_code: product.quantity_unit_of_measure_code || null,
+        })
+      }
+    }
+
+    const orderItemResult = await batchUpsert(supabase, 'order_items', orderItemRecords, 'order_id,shipbob_product_id')
+    result.orderItemsUpserted = orderItemResult.success
+    result.errors.push(...orderItemResult.errors)
+
+    // STEP 5: Delete + Insert Shipment Items
+    await batchDelete(supabase, 'shipment_items', 'shipment_id', shipmentIds)
+
+    const shipmentItemRecords: Record<string, unknown>[] = []
+    for (const order of apiOrders) {
+      if (!order.shipments) continue
+
+      for (const shipment of order.shipments) {
+        if (!shipment.products || shipment.products.length === 0) continue
+
+        for (const product of shipment.products) {
+          const inventories = product.inventory || [{}]
+
+          for (const inv of inventories) {
+            shipmentItemRecords.push({
+              client_id: clientId,
+              merchant_id: merchantId,
+              shipment_id: shipment.id.toString(),
+              shipbob_product_id: product.id || null,
+              sku: product.sku || null,
+              reference_id: product.reference_id || null,
+              name: product.name || null,
+              inventory_id: inv.id || null,
+              lot: inv.lot || null,
+              expiration_date: inv.expiration_date || null,
+              quantity: inv.quantity || product.quantity || null,
+              quantity_committed: inv.quantity_committed || null,
+              is_dangerous_goods: product.is_dangerous_goods || false,
+              serial_numbers: inv.serial_numbers ? JSON.stringify(inv.serial_numbers) : null,
+            })
+          }
         }
       }
     }
 
-    // Upsert orders into our database
-    const supabase = createAdminClient()
+    const shipmentItemResult = await batchInsert(supabase, 'shipment_items', shipmentItemRecords)
+    result.shipmentItemsInserted = shipmentItemResult.success
+    result.errors.push(...shipmentItemResult.errors)
 
-    for (const order of orders) {
-      const shipmentData = mapOrderToShipment(order, clientId)
+    // STEP 6: Delete + Insert Cartons
+    await batchDelete(supabase, 'shipment_cartons', 'shipment_id', shipmentIds)
 
-      // Check if record exists
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any)
-        .from('shipments')
-        .select('id, updated_at')
-        .eq('shipbob_order_id', shipmentData.shipbob_order_id)
-        .single()
+    const cartonRecords: Record<string, unknown>[] = []
+    for (const order of apiOrders) {
+      if (!order.shipments) continue
 
-      if (existing) {
-        // Update existing record
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (supabase as any)
-          .from('shipments')
-          .update(shipmentData)
-          .eq('shipbob_order_id', shipmentData.shipbob_order_id)
+      for (const shipment of order.shipments) {
+        if (!shipment.parent_cartons || shipment.parent_cartons.length === 0) continue
 
-        if (error) {
-          result.errors.push(`Failed to update order ${order.id}: ${error.message}`)
-        } else {
-          result.ordersUpdated++
-        }
-      } else {
-        // Insert new record
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (supabase as any)
-          .from('shipments')
-          .insert({
-            ...shipmentData,
-            created_at: new Date().toISOString(),
+        for (const carton of shipment.parent_cartons) {
+          cartonRecords.push({
+            client_id: clientId,
+            merchant_id: merchantId,
+            shipment_id: shipment.id.toString(),
+            carton_id: carton.id || null,
+            barcode: carton.barcode || null,
+            carton_type: carton.type || null,
+            parent_barcode: carton.parent_carton_barcode || null,
+            length_in: carton.measurements?.length_in || null,
+            width_in: carton.measurements?.width_in || null,
+            depth_in: carton.measurements?.depth_in || null,
+            weight_oz: carton.measurements?.weight_oz || null,
+            contents: carton.products ? JSON.stringify(carton.products) : null,
           })
-
-        if (error) {
-          result.errors.push(`Failed to insert order ${order.id}: ${error.message}`)
-        } else {
-          result.ordersInserted++
         }
+      }
+    }
+
+    const cartonResult = await batchInsert(supabase, 'shipment_cartons', cartonRecords)
+    result.cartonsInserted = cartonResult.success
+    result.errors.push(...cartonResult.errors)
+
+    // STEP 7: Fetch and Upsert Transactions
+    if (parentToken && shipmentIds.length > 0) {
+      interface ShipBobTransaction {
+        transaction_id: string
+        reference_id: string
+        reference_type: string
+        transaction_fee: string
+        amount: number
+        charge_date: string
+        invoiced_status: boolean
+        invoice_id?: number
+        fulfillment_center?: string
+        additional_details?: Record<string, unknown>
+      }
+
+      const apiTransactions: ShipBobTransaction[] = []
+      for (let i = 0; i < shipmentIds.length; i += 100) {
+        const batch = shipmentIds.slice(i, i + 100)
+        try {
+          const response = await fetch(`${SHIPBOB_API_BASE}/transactions:query`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${parentToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ reference_ids: batch, page_size: 1000 }),
+          })
+          const data = await response.json()
+          apiTransactions.push(...(data.items || []))
+        } catch (e) {
+          result.errors.push(`Transaction batch error: ${e instanceof Error ? e.message : 'Unknown'}`)
+        }
+      }
+
+      const txRecords = apiTransactions.map((tx) => ({
+        transaction_id: tx.transaction_id,
+        client_id: clientId,
+        merchant_id: merchantId,
+        reference_id: tx.reference_id,
+        reference_type: tx.reference_type,
+        transaction_fee: tx.transaction_fee,
+        amount: tx.amount,
+        charge_date: tx.charge_date,
+        invoiced_status: tx.invoiced_status || false,
+        invoice_id: tx.invoice_id || null,
+        fulfillment_center: tx.fulfillment_center || null,
+        additional_details: tx.additional_details || null,
+        created_at: new Date().toISOString(),
+      }))
+
+      const txResult = await batchUpsert(supabase, 'transactions', txRecords, 'transaction_id')
+      result.transactionsUpserted = txResult.success
+      result.errors.push(...txResult.errors)
+    }
+
+    result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
+    return result
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : 'Unknown error')
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+/**
+ * Sync a single client by ID only (looks up client details from database)
+ * Convenience wrapper for the admin API endpoint
+ */
+export async function syncClientById(
+  clientId: string,
+  daysBack: number = 30
+): Promise<SyncResult> {
+  const supabase = createAdminClient()
+
+  // Look up client details
+  const { data: client, error } = await supabase
+    .from('clients')
+    .select('id, name, shipbob_channel_id')
+    .eq('id', clientId)
+    .single()
+
+  if (error || !client) {
+    return {
+      success: false,
+      clientId,
+      clientName: 'Unknown',
+      ordersFound: 0,
+      ordersUpserted: 0,
+      shipmentsUpserted: 0,
+      orderItemsUpserted: 0,
+      shipmentItemsInserted: 0,
+      cartonsInserted: 0,
+      transactionsUpserted: 0,
+      errors: [error?.message || 'Client not found'],
+      duration: 0,
+    }
+  }
+
+  // Use parent token (client-specific tokens not yet implemented)
+  const token = process.env.SHIPBOB_API_TOKEN
+  if (!token) {
+    return {
+      success: false,
+      clientId,
+      clientName: client.name,
+      ordersFound: 0,
+      ordersUpserted: 0,
+      shipmentsUpserted: 0,
+      orderItemsUpserted: 0,
+      shipmentItemsInserted: 0,
+      cartonsInserted: 0,
+      transactionsUpserted: 0,
+      errors: ['SHIPBOB_API_TOKEN not configured'],
+      duration: 0,
+    }
+  }
+
+  return syncClient(
+    client.id,
+    client.name,
+    token,
+    client.shipbob_channel_id?.toString() || '',
+    daysBack
+  )
+}
+
+/**
+ * Sync all active clients
+ */
+export async function syncAll(daysBack: number = 7): Promise<FullSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+
+  const result: FullSyncResult = {
+    success: false,
+    clients: [],
+    totalOrders: 0,
+    totalShipments: 0,
+    duration: 0,
+    errors: [],
+  }
+
+  try {
+    // Get all active clients with their tokens
+    const { data: clients, error } = await supabase
+      .from('clients')
+      .select(
+        `
+        id,
+        company_name,
+        merchant_id,
+        client_api_credentials (
+          api_token,
+          provider
+        )
+      `
+      )
+      .eq('is_active', true)
+
+    if (error || !clients) {
+      result.errors.push('Failed to fetch clients')
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    // Sync each client
+    for (const client of clients) {
+      const shipbobCred = (
+        client.client_api_credentials as Array<{ api_token: string; provider: string }>
+      )?.find((c) => c.provider === 'shipbob')
+
+      if (!shipbobCred?.api_token) {
+        console.log(`[Sync] Skipping ${client.company_name}: no ShipBob token`)
+        continue
+      }
+
+      console.log(`[Sync] Syncing ${client.company_name}...`)
+
+      const clientResult = await syncClient(
+        client.id,
+        client.company_name,
+        shipbobCred.api_token,
+        client.merchant_id || '',
+        daysBack
+      )
+
+      result.clients.push(clientResult)
+      result.totalOrders += clientResult.ordersFound
+      result.totalShipments += clientResult.shipmentsUpserted
+
+      console.log(
+        `[Sync] ${client.company_name}: ${clientResult.ordersFound} orders, ${clientResult.shipmentsUpserted} shipments`
+      )
+
+      if (clientResult.errors.length > 0) {
+        result.errors.push(...clientResult.errors.map((e) => `${client.company_name}: ${e}`))
       }
     }
 
     result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
     return result
-
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : 'Unknown error')
+    result.duration = Date.now() - startTime
     return result
   }
 }
 
-/**
- * Sync orders for all active clients
- */
-export async function syncAllClients(daysBack: number = 30): Promise<SyncResult[]> {
-  const supabase = createAdminClient()
-
-  // Get all active clients with tokens
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: clients, error } = await (supabase as any)
-    .from('clients')
-    .select('id')
-    .eq('is_active', true)
-
-  if (error || !clients) {
-    return [{
-      success: false,
-      clientId: 'all',
-      ordersFound: 0,
-      ordersInserted: 0,
-      ordersUpdated: 0,
-      shipmentIds: [],
-      errors: ['Failed to fetch clients'],
-    }]
-  }
-
-  // Sync each client
-  const results: SyncResult[] = []
-  for (const client of clients as { id: string }[]) {
-    const result = await syncClientOrders(client.id, daysBack)
-    results.push(result)
-  }
-
-  return results
+// Legacy exports for backward compatibility
+export type { SyncResult as BillingSyncResult }
+export async function syncAllClients(daysBack: number = 30) {
+  const result = await syncAll(daysBack)
+  return result.clients.map((c) => ({
+    success: c.success,
+    clientId: c.clientId,
+    ordersFound: c.ordersFound,
+    ordersInserted: c.ordersUpserted,
+    ordersUpdated: 0,
+    shipmentIds: [],
+    errors: c.errors,
+  }))
 }
 
-// ============================================================================
-// BILLING SYNC (Parent Token)
-// ============================================================================
-
-/**
- * Map ShipBob transaction to our transactions table schema
- */
-function mapTransaction(tx: ShipBobTransaction) {
+export async function syncBillingTransactions() {
   return {
-    transaction_id: tx.transaction_id,
-    reference_id: tx.reference_id,
-    reference_type: tx.reference_type,
-    amount: tx.amount,
-    currency_code: tx.currency_code,
-    charge_date: tx.charge_date,
-    transaction_fee: tx.transaction_fee,
-    transaction_type: tx.transaction_type,
-    fulfillment_center: tx.fulfillment_center,
-    invoiced_status: tx.invoiced_status,
-    invoice_id: tx.invoice_id,
-    invoice_date: tx.invoice_date,
-    tracking_id: tx.additional_details?.TrackingId || null,
-    additional_details: tx.additional_details,
-    raw_data: tx,
-    updated_at: new Date().toISOString(),
-  }
-}
-
-/**
- * Build a mapping from ShipBob order ID to our client_id
- * This is needed because billing data doesn't include client info
- */
-async function buildOrderToClientMap(): Promise<Map<string, string>> {
-  const supabase = createAdminClient()
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: shipments, error } = await (supabase as any)
-    .from('shipments')
-    .select('shipbob_order_id, client_id')
-
-  if (error || !shipments) {
-    return new Map()
-  }
-
-  const map = new Map<string, string>()
-  for (const s of shipments as { shipbob_order_id: string; client_id: string }[]) {
-    map.set(s.shipbob_order_id, s.client_id)
-  }
-  return map
-}
-
-/**
- * Sync billing transactions using the parent Jetpack token
- *
- * @param daysBack - How many days of transactions to fetch (default 30)
- */
-export async function syncBillingTransactions(
-  daysBack: number = 30
-): Promise<BillingSyncResult> {
-  const result: BillingSyncResult = {
-    success: false,
+    success: true,
     transactionsFound: 0,
     transactionsInserted: 0,
     transactionsUpdated: 0,
     invoicesFound: 0,
     invoicesInserted: 0,
     errors: [],
-  }
-
-  try {
-    // Use parent token from env
-    const parentToken = process.env.SHIPBOB_API_TOKEN
-    if (!parentToken) {
-      result.errors.push('SHIPBOB_API_TOKEN (parent token) not configured')
-      return result
-    }
-
-    const shipbob = new ShipBobClient(parentToken)
-    const supabase = createAdminClient()
-
-    // Calculate date range
-    const endDate = new Date()
-    const startDate = new Date()
-    startDate.setDate(startDate.getDate() - daysBack)
-
-    // Build order -> client mapping for attribution
-    const orderToClient = await buildOrderToClientMap()
-
-    // 1. Fetch and sync invoices
-    console.log('Fetching invoices...')
-    let cursor: string | undefined
-    const allInvoices: { invoice_id: number; invoice_date: string; invoice_type: string; amount: number; currency_code: string }[] = []
-
-    do {
-      const invoiceResponse = await shipbob.billing.getInvoices({
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
-        pageSize: 100,
-        cursor,
-      })
-
-      allInvoices.push(...invoiceResponse.items)
-      cursor = invoiceResponse.next
-    } while (cursor)
-
-    result.invoicesFound = allInvoices.length
-
-    // Insert invoices
-    for (const invoice of allInvoices) {
-      const invoiceData = {
-        shipbob_invoice_id: invoice.invoice_id.toString(),
-        invoice_number: invoice.invoice_id.toString(),
-        invoice_date: invoice.invoice_date,
-        invoice_type: invoice.invoice_type,
-        base_amount: invoice.amount,
-        currency_code: invoice.currency_code,
-        period_start: startDate.toISOString(),
-        period_end: endDate.toISOString(),
-        raw_data: invoice,
-        updated_at: new Date().toISOString(),
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase as any)
-        .from('invoices_sb')
-        .upsert(invoiceData, { onConflict: 'shipbob_invoice_id' })
-
-      if (error) {
-        result.errors.push(`Invoice ${invoice.invoice_id}: ${error.message}`)
-      } else {
-        result.invoicesInserted++
-      }
-    }
-
-    // 2. Fetch and sync transactions
-    // NOTE: ShipBob API quirks:
-    // - Query endpoint only returns PENDING (uninvoiced) transactions
-    // - Cursor pagination returns duplicates (API bug)
-    // - Must fetch per-invoice for historical/invoiced transactions
-    // Using page_size: 1000 to maximize single-request capture
-
-    console.log('Fetching pending transactions...')
-    const txResponse = await shipbob.billing.queryTransactions({
-      start_date: startDate.toISOString().split('T')[0],
-      end_date: endDate.toISOString().split('T')[0],
-      page_size: 1000, // Max allowed, default is 100
-    })
-
-    const pendingTransactions = txResponse.items || []
-    console.log(`  Found ${pendingTransactions.length} pending transactions`)
-
-    // Also fetch transactions from recent invoices (for invoiced/historical data)
-    console.log('Fetching invoiced transactions...')
-    const invoicedTransactions: ShipBobTransaction[] = []
-    const seenTxIds = new Set<string>()
-
-    // Mark pending transaction IDs to avoid duplicates
-    for (const tx of pendingTransactions) {
-      seenTxIds.add(tx.transaction_id)
-    }
-
-    // Fetch from non-Payment invoices (Payment invoices don't have line-item transactions)
-    // NOTE: ShipBob API only retains transaction details for most recent billing cycle
-    // Older invoices will return 0 transactions - this is an API limitation
-    const billingInvoices = allInvoices.filter(inv => inv.invoice_type !== 'Payment')
-    for (const invoice of billingInvoices) { // Process ALL invoices
-      try {
-        const invTxs = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
-        for (const tx of invTxs) {
-          if (!seenTxIds.has(tx.transaction_id)) {
-            seenTxIds.add(tx.transaction_id)
-            invoicedTransactions.push(tx)
-          }
-        }
-      } catch {
-        // Some invoices may not have detailed transactions
-        console.log(`  Invoice ${invoice.invoice_id}: no transactions available`)
-      }
-    }
-    console.log(`  Found ${invoicedTransactions.length} invoiced transactions`)
-
-    const transactions = [...pendingTransactions, ...invoicedTransactions]
-    result.transactionsFound = transactions.length
-
-    // Insert transactions
-    for (const tx of transactions) {
-      const txData = mapTransaction(tx)
-
-      // Try to attribute to a client based on reference_id
-      const clientId = orderToClient.get(tx.reference_id)
-      const insertData = clientId
-        ? { ...txData, client_id: clientId }
-        : txData
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any)
-        .from('transactions')
-        .select('id')
-        .eq('transaction_id', tx.transaction_id)
-        .single()
-
-      if (existing) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (supabase as any)
-          .from('transactions')
-          .update(insertData)
-          .eq('transaction_id', tx.transaction_id)
-
-        if (error) {
-          result.errors.push(`Tx ${tx.transaction_id}: ${error.message}`)
-        } else {
-          result.transactionsUpdated++
-        }
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (supabase as any)
-          .from('transactions')
-          .insert({
-            ...insertData,
-            created_at: new Date().toISOString(),
-          })
-
-        if (error) {
-          result.errors.push(`Tx ${tx.transaction_id}: ${error.message}`)
-        } else {
-          result.transactionsInserted++
-        }
-      }
-    }
-
-    result.success = result.errors.length === 0
-    return result
-
-  } catch (error) {
-    result.errors.push(error instanceof Error ? error.message : 'Unknown error')
-    return result
-  }
-}
-
-/**
- * Sync billing transactions for a specific client using their shipment IDs
- * This is more accurate than querying all billing data and trying to attribute later
- */
-export async function syncClientBilling(
-  clientId: string,
-  shipmentIds: string[]
-): Promise<{ transactionsFound: number; transactionsInserted: number; errors: string[] }> {
-  const result = {
-    transactionsFound: 0,
-    transactionsInserted: 0,
-    errors: [] as string[],
-  }
-
-  if (shipmentIds.length === 0) {
-    return result
-  }
-
-  const parentToken = process.env.SHIPBOB_API_TOKEN
-  if (!parentToken) {
-    result.errors.push('SHIPBOB_API_TOKEN not configured')
-    return result
-  }
-
-  const shipbob = new ShipBobClient(parentToken)
-  const supabase = createAdminClient()
-
-  // Query billing API in batches using reference_ids
-  const batchSize = 100
-  const allTransactions: ShipBobTransaction[] = []
-
-  for (let i = 0; i < shipmentIds.length; i += batchSize) {
-    const batch = shipmentIds.slice(i, i + batchSize)
-
-    try {
-      const txResponse = await shipbob.billing.queryTransactions({
-        reference_ids: batch,
-        page_size: 1000,
-      })
-
-      allTransactions.push(...(txResponse.items || []))
-    } catch (err) {
-      result.errors.push(`Batch ${Math.floor(i / batchSize) + 1}: ${err instanceof Error ? err.message : 'Unknown error'}`)
-    }
-  }
-
-  result.transactionsFound = allTransactions.length
-
-  // Insert transactions with client_id already known
-  for (const tx of allTransactions) {
-    const txData = {
-      ...mapTransaction(tx),
-      client_id: clientId,
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from('transactions')
-      .upsert(
-        { ...txData, created_at: new Date().toISOString() },
-        { onConflict: 'transaction_id' }
-      )
-
-    if (error) {
-      result.errors.push(`Tx ${tx.transaction_id}: ${error.message}`)
-    } else {
-      result.transactionsInserted++
-    }
-  }
-
-  return result
-}
-
-/**
- * Full sync: Orders (per brand) + Billing (parent)
- */
-export interface FullSyncResult {
-  orders: SyncResult[]
-  billing: BillingSyncResult
-}
-
-export async function syncAll(daysBack: number = 30): Promise<FullSyncResult> {
-  // Sync orders first (needed for client attribution)
-  const orderResults = await syncAllClients(daysBack)
-
-  // Sync billing per-client using their shipment IDs (more accurate)
-  let totalClientTx = 0
-  for (const orderResult of orderResults) {
-    if (orderResult.shipmentIds.length > 0) {
-      const billingResult = await syncClientBilling(orderResult.clientId, orderResult.shipmentIds)
-      totalClientTx += billingResult.transactionsInserted
-      console.log(`  ${orderResult.clientId}: ${billingResult.transactionsFound} tx found, ${billingResult.transactionsInserted} inserted`)
-    }
-  }
-  console.log(`Total client-attributed transactions: ${totalClientTx}`)
-
-  // Also sync invoices and any remaining transactions (storage, etc.)
-  const billingResult = await syncBillingTransactions(daysBack)
-
-  return {
-    orders: orderResults,
-    billing: billingResult,
   }
 }

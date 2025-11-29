@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { syncClientOrders, syncAll } from '@/lib/shipbob/sync'
+import { syncClientById, syncAll } from '@/lib/shipbob/sync'
 
 /**
  * POST /api/admin/sync
- * Trigger a full sync of ShipBob data (orders + billing)
+ * Trigger a full sync of ShipBob data (orders, shipments, items, transactions)
  *
  * Body:
- *   - clientId: string (optional) - Sync specific client orders only
+ *   - clientId: string (optional) - Sync specific client only
  *   - daysBack: number (optional) - How many days to sync (default 30)
  */
 export async function POST(request: NextRequest) {
@@ -32,42 +32,45 @@ export async function POST(request: NextRequest) {
     const { clientId, daysBack = 30 } = body
 
     if (clientId) {
-      // Sync specific client orders only
-      const result = await syncClientOrders(clientId, daysBack)
-      return NextResponse.json(result)
+      // Sync specific client only
+      const result = await syncClientById(clientId, daysBack)
+      return NextResponse.json({
+        success: result.success,
+        client: result.clientName,
+        ordersFound: result.ordersFound,
+        ordersUpserted: result.ordersUpserted,
+        shipmentsUpserted: result.shipmentsUpserted,
+        orderItemsUpserted: result.orderItemsUpserted,
+        shipmentItemsInserted: result.shipmentItemsInserted,
+        cartonsInserted: result.cartonsInserted,
+        transactionsUpserted: result.transactionsUpserted,
+        errors: result.errors,
+        duration: `${result.duration}ms`,
+      })
     } else {
-      // Full sync: all clients + billing
-      const { orders, billing } = await syncAll(daysBack)
+      // Full sync: all clients
+      const results = await syncAll(daysBack)
 
       return NextResponse.json({
-        success: orders.every(r => r.success) && billing.success,
-        orders: {
-          results: orders,
-          summary: {
-            totalClients: orders.length,
-            totalOrdersFound: orders.reduce((sum, r) => sum + r.ordersFound, 0),
-            totalOrdersInserted: orders.reduce((sum, r) => sum + r.ordersInserted, 0),
-            totalOrdersUpdated: orders.reduce((sum, r) => sum + r.ordersUpdated, 0),
-            totalErrors: orders.reduce((sum, r) => sum + r.errors.length, 0),
-          },
-        },
-        billing: {
-          ...billing,
-        },
-        // Legacy summary for backward compatibility
+        success: results.success,
         summary: {
-          totalClients: orders.length,
-          totalOrdersFound: orders.reduce((sum, r) => sum + r.ordersFound, 0),
-          totalOrdersInserted: orders.reduce((sum, r) => sum + r.ordersInserted, 0),
-          totalOrdersUpdated: orders.reduce((sum, r) => sum + r.ordersUpdated, 0),
-          totalErrors: orders.reduce((sum, r) => sum + r.errors.length, 0) + billing.errors.length,
-          // New billing fields
-          totalInvoicesFound: billing.invoicesFound,
-          totalInvoicesInserted: billing.invoicesInserted,
-          totalTransactionsFound: billing.transactionsFound,
-          totalTransactionsInserted: billing.transactionsInserted,
-          totalTransactionsUpdated: billing.transactionsUpdated,
+          totalOrders: results.totalOrders,
+          totalShipments: results.totalShipments,
+          clientsProcessed: results.clients.length,
         },
+        clients: results.clients.map((c) => ({
+          client: c.clientName,
+          ordersFound: c.ordersFound,
+          ordersUpserted: c.ordersUpserted,
+          shipmentsUpserted: c.shipmentsUpserted,
+          orderItemsUpserted: c.orderItemsUpserted,
+          shipmentItemsInserted: c.shipmentItemsInserted,
+          cartonsInserted: c.cartonsInserted,
+          transactionsUpserted: c.transactionsUpserted,
+          errors: c.errors.length,
+          duration: `${c.duration}ms`,
+        })),
+        errors: results.errors.slice(0, 20),
       })
     }
   } catch (error) {

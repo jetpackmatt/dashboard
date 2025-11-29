@@ -6,6 +6,8 @@ import { syncAll } from '@/lib/shipbob/sync'
  *
  * Vercel Cron calls this endpoint on schedule.
  * Protected by CRON_SECRET to prevent unauthorized access.
+ *
+ * Syncs all tables: orders, shipments, order_items, shipment_items, shipment_cartons, transactions
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret (Vercel automatically includes this header)
@@ -28,45 +30,32 @@ export async function GET(request: NextRequest) {
 
     const duration = Date.now() - startTime
 
-    // Summarize results
-    const ordersSummary = results.orders.map(r => ({
-      clientId: r.clientId,
-      found: r.ordersFound,
-      inserted: r.ordersInserted,
-      updated: r.ordersUpdated,
-      errors: r.errors.length,
+    console.log(`[Cron Sync] Completed in ${duration}ms`)
+    console.log(`[Cron Sync] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
+
+    // Build per-client summary
+    const clientSummary = results.clients.map((c) => ({
+      client: c.clientName,
+      ordersFound: c.ordersFound,
+      ordersUpserted: c.ordersUpserted,
+      shipmentsUpserted: c.shipmentsUpserted,
+      orderItemsUpserted: c.orderItemsUpserted,
+      shipmentItemsInserted: c.shipmentItemsInserted,
+      transactionsUpserted: c.transactionsUpserted,
+      errors: c.errors.length,
+      duration: `${c.duration}ms`,
     }))
 
-    const totalOrders = results.orders.reduce((sum, r) => sum + r.ordersFound, 0)
-    const totalInserted = results.orders.reduce((sum, r) => sum + r.ordersInserted, 0)
-    const totalUpdated = results.orders.reduce((sum, r) => sum + r.ordersUpdated, 0)
-
-    console.log(`[Cron Sync] Completed in ${duration}ms`)
-    console.log(`[Cron Sync] Orders: ${totalOrders} found, ${totalInserted} inserted, ${totalUpdated} updated`)
-    console.log(`[Cron Sync] Billing: ${results.billing.transactionsFound} tx, ${results.billing.invoicesFound} invoices`)
-
     return NextResponse.json({
-      success: true,
+      success: results.success,
       duration: `${duration}ms`,
       summary: {
-        orders: {
-          total: totalOrders,
-          inserted: totalInserted,
-          updated: totalUpdated,
-        },
-        billing: {
-          transactions: results.billing.transactionsFound,
-          invoices: results.billing.invoicesFound,
-        },
+        totalOrders: results.totalOrders,
+        totalShipments: results.totalShipments,
+        clientsProcessed: results.clients.length,
       },
-      details: {
-        orders: ordersSummary,
-        billing: {
-          transactionsInserted: results.billing.transactionsInserted,
-          invoicesInserted: results.billing.invoicesInserted,
-          errors: results.billing.errors.slice(0, 10), // Limit error output
-        },
-      },
+      clients: clientSummary,
+      errors: results.errors.slice(0, 20), // Limit error output
     })
   } catch (error) {
     console.error('[Cron Sync] Error:', error)
