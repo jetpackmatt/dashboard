@@ -12,11 +12,15 @@ export async function middleware(request: NextRequest) {
 
   // Password protection gate (only if SITE_PASSWORD is set)
   if (SITE_PASSWORD) {
-    const isPasswordPage = request.nextUrl.pathname === '/password'
-    const isPasswordApi = request.nextUrl.pathname === '/api/password'
+    const pathname = request.nextUrl.pathname
+    const isPasswordPage = pathname === '/password'
+    const isPasswordApi = pathname === '/api/password'
+    const isCronApi = pathname.startsWith('/api/cron/')
+    const isWebhookApi = pathname.startsWith('/api/webhooks/')
     const hasAccess = request.cookies.get('site_access')?.value === 'granted'
 
-    if (!hasAccess && !isPasswordPage && !isPasswordApi) {
+    // Skip password for cron jobs and webhooks (they have their own auth)
+    if (!hasAccess && !isPasswordPage && !isPasswordApi && !isCronApi && !isWebhookApi) {
       return NextResponse.redirect(new URL('/password', request.url))
     }
   }
