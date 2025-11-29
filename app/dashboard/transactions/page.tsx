@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 const DEFAULT_PAGE_SIZE = 50
 
-export default function ShipmentsPage() {
+export default function TransactionsPage() {
   const router = useRouter()
   const { selectedClientId, isAdmin, isLoading: isClientLoading } = useClient()
 
@@ -43,7 +43,11 @@ export default function ShipmentsPage() {
   const [isNavigatingBack, setIsNavigatingBack] = React.useState(false)
 
   // Determine which client to fetch data for
-  const effectiveClientId = isAdmin && selectedClientId ? selectedClientId : DEFAULT_CLIENT_ID
+  // For admins: null = "All Brands", specific ID = single brand
+  // For non-admins: always use DEFAULT_CLIENT_ID
+  const effectiveClientId = isAdmin
+    ? (selectedClientId || 'all')  // null means "All Brands" for admins
+    : DEFAULT_CLIENT_ID
 
   // Fetch shipments data - called on initial load and page changes
   const fetchData = React.useCallback(async (page: number, size: number) => {
@@ -105,7 +109,7 @@ export default function ShipmentsPage() {
       if (link) {
         e.preventDefault()
         setIsNavigatingBack(true)
-        sessionStorage.setItem('navigatingFromShipments', 'true')
+        sessionStorage.setItem('navigatingFromTransactions', 'true')
 
         setTimeout(() => {
           router.push("/dashboard")
@@ -124,7 +128,7 @@ export default function ShipmentsPage() {
   if (isLoading || isClientLoading) {
     return (
       <>
-        <SiteHeader sectionName="Shipments + Transactions" />
+        <SiteHeader sectionName="Transactions" />
         <div className="flex flex-1 flex-col overflow-x-hidden">
           <div className="@container/main flex flex-1 flex-col gap-2 w-full">
             <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full px-4 lg:px-6">
@@ -143,7 +147,7 @@ export default function ShipmentsPage() {
   if (error) {
     return (
       <>
-        <SiteHeader sectionName="Shipments + Transactions" />
+        <SiteHeader sectionName="Transactions" />
         <div className="flex flex-1 flex-col overflow-x-hidden">
           <div className="@container/main flex flex-1 flex-col gap-2 w-full">
             <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full px-4 lg:px-6">
@@ -160,7 +164,7 @@ export default function ShipmentsPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Shipments + Transactions" />
+      <SiteHeader sectionName="Transactions" />
       <motion.div
         initial={fromDashboard ? { y: 700 } : false}
         animate={{ y: isNavigatingBack ? 700 : 0 }}
@@ -193,6 +197,8 @@ export default function ShipmentsPage() {
               totalCount={totalCount}
               onServerPageChange={handleServerPageChange}
               isPageLoading={isPageLoading}
+              // Client ID for unfulfilled orders tab
+              clientId={effectiveClientId}
             />
           </div>
         </div>

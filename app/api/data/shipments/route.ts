@@ -10,13 +10,15 @@ export async function GET(request: NextRequest) {
 
   // Get query params
   const searchParams = request.nextUrl.searchParams
-  const clientId = searchParams.get('clientId') || DEFAULT_CLIENT_ID
+  const clientIdParam = searchParams.get('clientId')
+  // 'all' means return all brands (admin view), otherwise filter by clientId
+  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
   try {
-    // Query shipments (without FK join - we'll do manual join)
-    const { data: shipmentsData, error: shipmentsError, count } = await supabase
+    // Build query - conditionally add client filter
+    let query = supabase
       .from('shipments')
       .select(`
         id,
@@ -36,9 +38,20 @@ export async function GET(request: NextRequest) {
         estimated_fulfillment_date_status,
         label_generation_date,
         fc_name,
-        invoice_amount
+        invoice_amount,
+        client_id
       `, { count: 'exact' })
-      .eq('client_id', clientId)
+
+    // Only filter by client_id if not viewing all brands
+    if (clientId) {
+      query = query.eq('client_id', clientId)
+    }
+
+    // Only show shipments that have actually shipped (have a shipped_date)
+    // This excludes pending/processing orders that should appear in the Unfulfilled tab
+    query = query.not('shipped_date', 'is', null)
+
+    const { data: shipmentsData, error: shipmentsError, count } = await query
       .order('label_generation_date', { ascending: false })
       .range(offset, offset + limit - 1)
 

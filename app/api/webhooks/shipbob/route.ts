@@ -1,6 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 
+const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
+
 /**
  * ShipBob Webhook Receiver
  *
@@ -49,6 +51,158 @@ const ALL_TOPICS = [
   ...Object.keys(SHIPMENT_TOPIC_TO_STATUS),
   ...Object.keys(RETURN_TOPIC_TO_STATUS),
 ]
+
+/**
+ * Fetch a shipment from ShipBob API and upsert it to our database.
+ * Used when we receive a webhook for a shipment that doesn't exist yet.
+ */
+async function fetchAndUpsertShipment(
+  supabase: ReturnType<typeof createAdminClient>,
+  shipmentId: string
+): Promise<{ success: boolean; clientId?: string; error?: string }> {
+  const token = process.env.SHIPBOB_API_TOKEN
+  if (!token) {
+    return { success: false, error: 'No API token configured' }
+  }
+
+  try {
+    // Fetch orders containing this shipment
+    const response = await fetch(
+      `${SHIPBOB_API_BASE}/order?ShipmentId=${shipmentId}&Limit=1`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+
+    if (!response.ok) {
+      return { success: false, error: `API error: ${response.status}` }
+    }
+
+    const orders = await response.json()
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return { success: false, error: 'Order not found in ShipBob' }
+    }
+
+    const order = orders[0]
+    const shipment = order.shipments?.find((s: { id: number }) => s.id.toString() === shipmentId)
+
+    if (!shipment) {
+      return { success: false, error: 'Shipment not found in order' }
+    }
+
+    // Find which client this order belongs to by matching channel_id
+    const channelId = order.channel?.id
+    let clientId: string | null = null
+    let merchantId: string | null = null
+
+    if (channelId) {
+      const { data: client } = await supabase
+        .from('clients')
+        .select('id, merchant_id')
+        .eq('shipbob_channel_id', channelId)
+        .single()
+
+      if (client) {
+        clientId = client.id
+        merchantId = client.merchant_id
+      }
+    }
+
+    // If no client found by channel, try to find by existing order
+    if (!clientId) {
+      const { data: existingOrder } = await supabase
+        .from('orders')
+        .select('client_id, merchant_id')
+        .eq('shipbob_order_id', order.id.toString())
+        .single()
+
+      if (existingOrder) {
+        clientId = existingOrder.client_id
+        merchantId = existingOrder.merchant_id
+      }
+    }
+
+    if (!clientId) {
+      return { success: false, error: 'Could not determine client for shipment' }
+    }
+
+    // First ensure the order exists
+    const orderRecord = {
+      client_id: clientId,
+      merchant_id: merchantId,
+      shipbob_order_id: order.id.toString(),
+      store_order_id: order.order_number || null,
+      customer_name: order.recipient?.name || null,
+      order_import_date: order.created_date || null,
+      status: order.status || null,
+      address1: order.recipient?.address?.address1 || null,
+      city: order.recipient?.address?.city || null,
+      state: order.recipient?.address?.state || null,
+      zip_code: order.recipient?.address?.zip_code || null,
+      country: order.recipient?.address?.country || null,
+      customer_email: order.recipient?.email || null,
+      total_shipments: order.shipments?.length || 1,
+      order_type: order.type || null,
+      channel_id: order.channel?.id || null,
+      channel_name: order.channel?.name || null,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { error: orderError } = await supabase
+      .from('orders')
+      .upsert(orderRecord, { onConflict: 'client_id,shipbob_order_id' })
+
+    if (orderError) {
+      console.error('[Webhook] Failed to upsert order:', orderError)
+    }
+
+    // Get the order ID
+    const { data: orderRow } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('shipbob_order_id', order.id.toString())
+      .single()
+
+    const orderId = orderRow?.id || null
+
+    // Now upsert the shipment
+    const shipmentRecord = {
+      client_id: clientId,
+      merchant_id: merchantId,
+      order_id: orderId,
+      shipment_id: shipment.id.toString(),
+      shipbob_order_id: order.id.toString(),
+      tracking_id: shipment.tracking?.tracking_number || null,
+      tracking_url: shipment.tracking?.tracking_url || null,
+      status: shipment.status || null,
+      recipient_name: shipment.recipient?.name || order.recipient?.name || null,
+      recipient_email: shipment.recipient?.email || order.recipient?.email || null,
+      label_generation_date: shipment.created_date || null,
+      shipped_date: shipment.actual_fulfillment_date || null,
+      delivered_date: shipment.delivery_date || null,
+      carrier: shipment.tracking?.carrier || null,
+      carrier_service: shipment.ship_option || null,
+      fc_name: shipment.location?.name || null,
+      actual_weight_oz: shipment.measurements?.total_weight_oz || null,
+      estimated_fulfillment_date: shipment.estimated_fulfillment_date || null,
+      estimated_fulfillment_date_status: shipment.estimated_fulfillment_date_status || null,
+      invoice_amount: shipment.invoice?.amount || null,
+      status_details: shipment.status_details || null,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { error: shipmentError } = await supabase
+      .from('shipments')
+      .upsert(shipmentRecord, { onConflict: 'shipment_id' })
+
+    if (shipmentError) {
+      return { success: false, error: shipmentError.message }
+    }
+
+    return { success: true, clientId }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+}
 
 export async function POST(request: NextRequest) {
   const supabase = createAdminClient()
@@ -132,12 +286,53 @@ export async function POST(request: NextRequest) {
       }
 
       if (!data || data.length === 0) {
-        console.warn(`[Webhook] Shipment ${shipmentId} not found in database`)
-        return NextResponse.json({
-          received: true,
-          warning: 'Shipment not found',
-          shipmentId
-        })
+        // Shipment not in our database - try to fetch from ShipBob API and create it
+        console.log(`[Webhook] Shipment ${shipmentId} not in database, fetching from API...`)
+
+        const fetchResult = await fetchAndUpsertShipment(supabase, shipmentId)
+
+        if (fetchResult.success) {
+          // Now apply the webhook update
+          const { error: retryError } = await supabase
+            .from('shipments')
+            .update({
+              status: newStatus,
+              ...(payload.status_details && { status_details: payload.status_details }),
+              ...(payload.tracking && {
+                tracking_id: payload.tracking.tracking_number,
+                carrier: payload.tracking.carrier,
+              }),
+              ...(topic === 'order.shipment.delivered' && {
+                delivered_date: payload.delivered_at || payload.delivery_date || new Date().toISOString()
+              }),
+              ...(topic === 'order.shipped' && {
+                shipped_date: payload.shipped_at || payload.ship_date || new Date().toISOString()
+              }),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('shipment_id', shipmentId)
+
+          if (retryError) {
+            console.error('[Webhook] Failed to update newly created shipment:', retryError)
+          }
+
+          console.log(`[Webhook] Created shipment ${shipmentId} from API, updated to status: ${newStatus}`)
+          return NextResponse.json({
+            received: true,
+            created: true,
+            updated: true,
+            shipmentId,
+            newStatus,
+            clientId: fetchResult.clientId,
+          })
+        } else {
+          console.warn(`[Webhook] Could not fetch shipment ${shipmentId}: ${fetchResult.error}`)
+          return NextResponse.json({
+            received: true,
+            warning: `Shipment not found: ${fetchResult.error}`,
+            shipmentId
+          })
+        }
       }
 
       console.log(`[Webhook] Updated shipment ${shipmentId} to status: ${newStatus}`)
@@ -166,21 +361,20 @@ export async function POST(request: NextRequest) {
       }
 
       // Try to update return status in database
-      // Note: returns table may not exist yet - gracefully handle this
+      // Note: returns table uses different column names than shipments
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data, error } = await (supabase as any)
           .from('returns')
           .update({
             status: newStatus,
-            ...(payload.status_details && { status_details: payload.status_details }),
             ...(topic === 'return.completed' && {
-              completed_at: payload.completed_at || new Date().toISOString()
+              completed_date: payload.completed_at || new Date().toISOString()
             }),
-            updated_at: new Date().toISOString(),
+            synced_at: new Date().toISOString(),
           })
-          .eq('return_id', returnId)
-          .select('id, return_id, status')
+          .eq('shipbob_return_id', returnId.toString())
+          .select('id, shipbob_return_id, status')
 
         if (error) {
           // Table might not exist yet

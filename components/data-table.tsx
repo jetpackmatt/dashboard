@@ -80,6 +80,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import { UnfulfilledTable } from "@/components/transactions/unfulfilled-table"
 
 // ============================================================================
 // SHIPMENTS TAB - Schema and Columns
@@ -1019,6 +1020,8 @@ export function DataTable({
   totalCount = 0,
   onServerPageChange,
   isPageLoading = false,
+  // Client ID for unfulfilled orders tab
+  clientId,
 }: {
   shipmentsData: z.infer<typeof shipmentsSchema>[]
   additionalServicesData: z.infer<typeof additionalServicesSchema>[]
@@ -1033,6 +1036,8 @@ export function DataTable({
   totalCount?: number
   onServerPageChange?: (pageIndex: number, pageSize: number) => void
   isPageLoading?: boolean
+  // Client ID for unfulfilled orders tab
+  clientId?: string
 }) {
   // ============================================================================
   // SHIPMENTS TAB - Table State and Configuration
@@ -1052,7 +1057,7 @@ export function DataTable({
   const [exportFormat, setExportFormat] = React.useState<string>("csv")
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
-  const [currentTab, setCurrentTab] = React.useState("shipments")
+  const [currentTab, setCurrentTab] = React.useState("unfulfilled")
 
   // Calculate page count for server-side pagination
   const serverPageCount = serverPagination
@@ -1390,7 +1395,7 @@ export function DataTable({
   return (
     <>
     <Tabs
-      defaultValue="shipments"
+      defaultValue="unfulfilled"
       className="flex w-full flex-col justify-start gap-6"
       onValueChange={handleTabChange}
     >
@@ -1401,6 +1406,7 @@ export function DataTable({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
               <SelectItem value="shipments">Shipments</SelectItem>
               <SelectItem value="additional-services">Additional Services</SelectItem>
               <SelectItem value="returns">Returns</SelectItem>
@@ -1412,6 +1418,7 @@ export function DataTable({
 
           {/* Desktop: Full tabs list */}
           <TabsList className="hidden lg:inline-flex">
+            <TabsTrigger value="unfulfilled">Unfulfilled</TabsTrigger>
             <TabsTrigger value="shipments">Shipments</TabsTrigger>
             <TabsTrigger value="additional-services">Additional Services</TabsTrigger>
             <TabsTrigger value="returns">Returns</TabsTrigger>
@@ -1529,6 +1536,15 @@ export function DataTable({
             )}
           </div>
         </div>
+      {/* ============================================================================ */}
+      {/* UNFULFILLED TAB */}
+      {/* ============================================================================ */}
+      <TabsContent
+        value="unfulfilled"
+        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+      >
+        {clientId && <UnfulfilledTable clientId={clientId} />}
+      </TabsContent>
       {/* ============================================================================ */}
       {/* SHIPMENTS TAB */}
       {/* ============================================================================ */}

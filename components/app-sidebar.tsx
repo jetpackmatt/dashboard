@@ -36,8 +36,8 @@ const navItems = [
     icon: LayoutDashboardIcon,
   },
   {
-    title: "Shipments",
-    url: "/dashboard/shipments",
+    title: "Transactions",
+    url: "/dashboard/transactions",
     icon: ListIcon,
   },
   {
