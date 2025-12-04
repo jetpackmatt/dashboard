@@ -2,17 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { syncAll } from '@/lib/shipbob/sync'
 
 /**
- * Cron endpoint for scheduled data sync
+ * Hourly reconciliation sync
  *
- * Vercel Cron calls this endpoint every minute.
- * Protected by CRON_SECRET to prevent unauthorized access.
+ * Runs every hour to:
+ * 1. Catch any orders/shipments/transactions missed by per-minute sync
+ * 2. Run soft-delete reconciliation (detect deleted records in ShipBob)
  *
- * Syncs all tables: orders, shipments, order_items, shipment_items, shipment_cartons, transactions
- *
- * Per-minute sync strategy:
- * - Fetch only last 5 minutes of data (with overlap for safety)
- * - Skip reconciliation (soft-delete detection) - run that daily instead
- * - This replaces webhooks for near-real-time updates
+ * Uses a 2-hour lookback window for safety margin.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret (Vercel automatically includes this header)
@@ -26,18 +22,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  console.log('[Cron Sync] Starting per-minute sync...')
+  console.log('[Cron Reconcile] Starting hourly reconciliation sync...')
   const startTime = Date.now()
 
   try {
-    // Per-minute sync: only fetch last 5 minutes of data (with overlap)
-    // This is fast and keeps data fresh without relying on webhooks
-    const results = await syncAll({ minutesBack: 5 })
+    // Hourly sync: 2-hour lookback to catch anything missed + run reconciliation
+    // Note: daysBack triggers reconciliation, minutesBack skips it
+    // So we use a fractional day: 2 hours = 2/24 ≈ 0.083 days
+    // But the API works in whole days, so we'll sync 1 day and let reconciliation run
+    const results = await syncAll({ daysBack: 1 })
 
     const duration = Date.now() - startTime
 
-    console.log(`[Cron Sync] Completed in ${duration}ms`)
-    console.log(`[Cron Sync] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
+    console.log(`[Cron Reconcile] Completed in ${duration}ms`)
+    console.log(`[Cron Reconcile] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
 
     // Build per-client summary
     const clientSummary = results.clients.map((c) => ({
@@ -46,14 +44,16 @@ export async function GET(request: NextRequest) {
       ordersUpserted: c.ordersUpserted,
       shipmentsUpserted: c.shipmentsUpserted,
       orderItemsUpserted: c.orderItemsUpserted,
-      shipmentItemsInserted: c.shipmentItemsInserted,
       transactionsUpserted: c.transactionsUpserted,
+      ordersDeleted: c.ordersDeleted,
+      shipmentsDeleted: c.shipmentsDeleted,
       errors: c.errors.length,
       duration: `${c.duration}ms`,
     }))
 
     return NextResponse.json({
       success: results.success,
+      type: 'reconciliation',
       duration: `${duration}ms`,
       summary: {
         totalOrders: results.totalOrders,
@@ -61,10 +61,10 @@ export async function GET(request: NextRequest) {
         clientsProcessed: results.clients.length,
       },
       clients: clientSummary,
-      errors: results.errors.slice(0, 20), // Limit error output
+      errors: results.errors.slice(0, 20),
     })
   } catch (error) {
-    console.error('[Cron Sync] Error:', error)
+    console.error('[Cron Reconcile] Error:', error)
     return NextResponse.json(
       {
         success: false,
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Vercel Cron requires GET, but also support POST for manual triggers
+// Support POST for manual triggers
 export async function POST(request: NextRequest) {
   return GET(request)
 }

@@ -23,6 +23,10 @@ export interface SyncResult {
   shipmentItemsInserted: number
   cartonsInserted: number
   transactionsUpserted: number
+  ordersDeleted: number       // Soft-deleted orders (no longer in ShipBob)
+  shipmentsDeleted: number    // Soft-deleted shipments
+  ordersRestored: number      // Previously deleted orders that reappeared
+  shipmentsRestored: number   // Previously deleted shipments that reappeared
   errors: string[]
   duration: number
 }
@@ -113,6 +117,12 @@ async function batchDelete(
   }
 }
 
+export interface SyncOptions {
+  daysBack?: number
+  minutesBack?: number
+  skipReconciliation?: boolean // Skip soft-delete reconciliation for quick syncs
+}
+
 /**
  * Sync a single client's data
  */
@@ -121,7 +131,7 @@ export async function syncClient(
   clientName: string,
   token: string,
   merchantId: string,
-  daysBack: number = 7
+  options: SyncOptions | number = 7 // number for backward compat (daysBack)
 ): Promise<SyncResult> {
   const startTime = Date.now()
   const result: SyncResult = {
@@ -135,9 +145,18 @@ export async function syncClient(
     shipmentItemsInserted: 0,
     cartonsInserted: 0,
     transactionsUpserted: 0,
+    ordersDeleted: 0,
+    shipmentsDeleted: 0,
+    ordersRestored: 0,
+    shipmentsRestored: 0,
     errors: [],
     duration: 0,
   }
+
+  // Handle backward compat: number = daysBack
+  const opts: SyncOptions = typeof options === 'number'
+    ? { daysBack: options }
+    : options
 
   const supabase = createAdminClient()
   const parentToken = process.env.SHIPBOB_API_TOKEN
@@ -146,7 +165,12 @@ export async function syncClient(
     // Calculate date range
     const endDate = new Date()
     const startDate = new Date()
-    startDate.setDate(startDate.getDate() - daysBack)
+
+    if (opts.minutesBack) {
+      startDate.setMinutes(startDate.getMinutes() - opts.minutesBack)
+    } else {
+      startDate.setDate(startDate.getDate() - (opts.daysBack || 7))
+    }
 
     // Build FC lookup
     const { data: fcList } = await supabase.from('fulfillment_centers').select('fc_id, name, country')
@@ -178,6 +202,29 @@ export async function syncClient(
       const normalized = shipOption.toLowerCase().replace(/\s+/g, '')
       if (shipOptionLookup[normalized]) return shipOptionLookup[normalized]
       return manualMappings[shipOption] || null
+    }
+
+    // Build channel_id -> application_name lookup from Channels API
+    const channelLookup: Record<number, string> = {}
+    try {
+      const channelsRes = await fetch(`${SHIPBOB_API_BASE}/channel`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (channelsRes.ok) {
+        const channelsData = await channelsRes.json()
+        // 2025-07 API returns { items: [...] }, extract the array
+        const channels = Array.isArray(channelsData) ? channelsData : (channelsData.items || [])
+        for (const ch of channels) {
+          if (ch.id && ch.application_name) {
+            channelLookup[ch.id] = ch.application_name
+          }
+        }
+        console.log(`[Sync] Built channel lookup with ${Object.keys(channelLookup).length} channels`)
+      } else {
+        console.warn(`[Sync] Channels API returned ${channelsRes.status}: ${channelsRes.statusText}`)
+      }
+    } catch (e) {
+      console.warn('[Sync] Could not fetch channels for application_name lookup:', e)
     }
 
     // STEP 1: Fetch all orders from API
@@ -333,6 +380,7 @@ export async function syncClient(
     }
 
     // STEP 2: Upsert Orders
+    const now = new Date().toISOString()
     const orderRecords = apiOrders.map((order) => ({
       client_id: clientId,
       merchant_id: merchantId,
@@ -354,6 +402,7 @@ export async function syncClient(
       order_type: order.type || null,
       channel_id: order.channel?.id || null,
       channel_name: order.channel?.name || null,
+      application_name: order.channel?.id ? channelLookup[order.channel.id] || null : null,
       reference_id: order.reference_id || null,
       shipping_method: order.shipping_method || null,
       purchase_date: order.purchase_date || null,
@@ -361,7 +410,10 @@ export async function syncClient(
       gift_message: order.gift_message || null,
       carrier_type: order.carrier?.type || null,
       payment_term: order.carrier?.payment_term || null,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
+      // Soft delete support: mark as verified and restore if previously deleted
+      last_verified_at: now,
+      deleted_at: null,
     }))
 
     const orderResult = await batchUpsert(supabase, 'orders', orderRecords, 'client_id,shipbob_order_id')
@@ -466,7 +518,12 @@ export async function syncClient(
           origin_country: originCountry,
           destination_country: destCountry,
           status_details: shipment.status_details || null,
-          updated_at: new Date().toISOString(),
+          order_type: order.type || null,
+          application_name: order.channel?.id ? channelLookup[order.channel.id] || null : null,
+          updated_at: now,
+          // Soft delete support: mark as verified and restore if previously deleted
+          last_verified_at: now,
+          deleted_at: null,
         })
 
         shipmentIds.push(shipment.id.toString())
@@ -634,6 +691,107 @@ export async function syncClient(
       result.errors.push(...txResult.errors)
     }
 
+    // STEP 8: Reconcile - Find and soft-delete orders/shipments that weren't in the API response
+    // Skip for quick syncs (minutesBack) - run daily with full sync instead
+    if (!opts.skipReconciliation && !opts.minutesBack) {
+      // This handles the case where orders/shipments were deleted from ShipBob
+      const apiOrderIdSet = new Set(apiOrders.map((o) => o.id.toString()))
+      const apiShipmentIdSet = new Set(shipmentIds)
+
+      // Find orders in our DB within the sync date range that weren't in the API response
+      // These are candidates for soft-deletion
+      const { data: staleOrders } = await supabase
+        .from('orders')
+        .select('id, shipbob_order_id')
+        .eq('client_id', clientId)
+        .is('deleted_at', null) // Only check active records
+        .gte('order_import_date', startDate.toISOString())
+        .lte('order_import_date', endDate.toISOString())
+
+      // Find orders that weren't in the API response
+      const potentiallyDeletedOrders = (staleOrders || []).filter(
+        (order: { id: string; shipbob_order_id: string }) => !apiOrderIdSet.has(order.shipbob_order_id)
+      )
+
+      // Verify each potentially-deleted order by checking the API
+      let ordersDeleted = 0
+      for (const order of potentiallyDeletedOrders) {
+        try {
+          const checkRes = await fetch(`${SHIPBOB_API_BASE}/order/${order.shipbob_order_id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+
+          if (checkRes.status === 404) {
+            // Order is truly deleted from ShipBob - soft delete it
+            await supabase
+              .from('orders')
+              .update({ deleted_at: now })
+              .eq('id', order.id)
+
+            // Also soft-delete all related shipments
+            await supabase
+              .from('shipments')
+              .update({ deleted_at: now })
+              .eq('order_id', order.id)
+              .is('deleted_at', null)
+
+            ordersDeleted++
+            console.log(`[Sync] Soft-deleted order ${order.shipbob_order_id} (not found in ShipBob)`)
+          }
+          // If not 404, the order still exists - it's just outside our date range filter
+        } catch (e) {
+          // Network error - skip this order (don't delete if we can't verify)
+          console.warn(`[Sync] Could not verify order ${order.shipbob_order_id}:`, e)
+        }
+      }
+      result.ordersDeleted = ordersDeleted
+
+      // Find shipments in our DB that weren't in the API response
+      const { data: staleShipments } = await supabase
+        .from('shipments')
+        .select('id, shipment_id, order_id')
+        .eq('client_id', clientId)
+        .is('deleted_at', null) // Only check active records
+
+      // Filter to shipments whose orders were in the sync but shipment wasn't
+      const potentiallyDeletedShipments = (staleShipments || []).filter(
+        (shipment: { id: string; shipment_id: string; order_id: string }) => {
+          // Only check if the parent order was in the API response
+          const parentOrderId = Object.entries(orderIdMap).find(
+            ([, dbId]) => dbId === shipment.order_id
+          )?.[0]
+          if (!parentOrderId) return false // Parent order not in this sync
+
+          // If parent was synced but this shipment wasn't in response, it may be deleted
+          return !apiShipmentIdSet.has(shipment.shipment_id)
+        }
+      )
+
+      // Verify each potentially-deleted shipment by checking the API
+      let shipmentsDeleted = 0
+      for (const shipment of potentiallyDeletedShipments) {
+        try {
+          const checkRes = await fetch(`${SHIPBOB_API_BASE}/shipment/${shipment.shipment_id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+
+          if (checkRes.status === 404) {
+            // Shipment is truly deleted from ShipBob - soft delete it
+            await supabase
+              .from('shipments')
+              .update({ deleted_at: now })
+              .eq('id', shipment.id)
+
+            shipmentsDeleted++
+            console.log(`[Sync] Soft-deleted shipment ${shipment.shipment_id} (not found in ShipBob)`)
+          }
+        } catch (e) {
+          console.warn(`[Sync] Could not verify shipment ${shipment.shipment_id}:`, e)
+        }
+      }
+      result.shipmentsDeleted = shipmentsDeleted
+    }
+
     result.success = result.errors.length === 0
     result.duration = Date.now() - startTime
     return result
@@ -673,6 +831,10 @@ export async function syncClientById(
       shipmentItemsInserted: 0,
       cartonsInserted: 0,
       transactionsUpserted: 0,
+      ordersDeleted: 0,
+      shipmentsDeleted: 0,
+      ordersRestored: 0,
+      shipmentsRestored: 0,
       errors: [error?.message || 'Client not found'],
       duration: 0,
     }
@@ -692,6 +854,10 @@ export async function syncClientById(
       shipmentItemsInserted: 0,
       cartonsInserted: 0,
       transactionsUpserted: 0,
+      ordersDeleted: 0,
+      shipmentsDeleted: 0,
+      ordersRestored: 0,
+      shipmentsRestored: 0,
       errors: ['SHIPBOB_API_TOKEN not configured'],
       duration: 0,
     }
@@ -709,9 +875,14 @@ export async function syncClientById(
 /**
  * Sync all active clients
  */
-export async function syncAll(daysBack: number = 7): Promise<FullSyncResult> {
+export async function syncAll(options: SyncOptions | number = 7): Promise<FullSyncResult> {
   const startTime = Date.now()
   const supabase = createAdminClient()
+
+  // Handle backward compat: number = daysBack
+  const opts: SyncOptions = typeof options === 'number'
+    ? { daysBack: options }
+    : options
 
   const result: FullSyncResult = {
     success: false,
@@ -756,14 +927,15 @@ export async function syncAll(daysBack: number = 7): Promise<FullSyncResult> {
         continue
       }
 
-      console.log(`[Sync] Syncing ${client.company_name}...`)
+      const syncMode = opts.minutesBack ? `${opts.minutesBack}min` : `${opts.daysBack || 7}d`
+      console.log(`[Sync] Syncing ${client.company_name} (${syncMode})...`)
 
       const clientResult = await syncClient(
         client.id,
         client.company_name,
         shipbobCred.api_token,
         client.merchant_id || '',
-        daysBack
+        opts
       )
 
       result.clients.push(clientResult)
