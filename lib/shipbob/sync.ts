@@ -1006,6 +1006,23 @@ export async function syncAllTransactions(
   const supabase = createAdminClient()
 
   try {
+    // Get system clients (ShipBob Payments and Jetpack Costs)
+    console.log('[TransactionSync] Looking up system clients...')
+    const { data: shipbobPaymentsClient } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('company_name', 'ShipBob Payments')
+      .single()
+    const { data: jetpackCostsClient } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('company_name', 'Jetpack Costs')
+      .single()
+
+    const shipbobPaymentsId = shipbobPaymentsClient?.id || null
+    const jetpackCostsId = jetpackCostsClient?.id || null
+    console.log(`[TransactionSync] System clients: ShipBob Payments=${shipbobPaymentsId}, Jetpack Costs=${jetpackCostsId}`)
+
     // Build shipment_id -> client_id lookup from database
     console.log('[TransactionSync] Building client lookup from shipments...')
     const clientLookup: Record<string, string> = {}
@@ -1040,6 +1057,46 @@ export async function syncAllTransactions(
       if (data.length < pageSize) break
     }
     console.log(`[TransactionSync] Built lookup with ${Object.keys(clientLookup).length} shipments`)
+
+    // Build return_id -> client_id lookup from returns table
+    console.log('[TransactionSync] Building returns lookup...')
+    const returnLookup: Record<string, string> = {}
+    let returnLastId: string | null = null
+
+    while (true) {
+      let query = supabase
+        .from('returns')
+        .select('id, return_id, client_id')
+        .order('id', { ascending: true })
+        .limit(pageSize)
+
+      if (returnLastId) {
+        query = query.gt('id', returnLastId)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('[TransactionSync] Error fetching returns:', error.message)
+        break
+      }
+
+      if (!data || data.length === 0) break
+
+      for (const r of data) {
+        if (r.return_id && r.client_id) {
+          returnLookup[r.return_id.toString()] = r.client_id
+        }
+        returnLastId = r.id
+      }
+
+      if (data.length < pageSize) break
+    }
+    console.log(`[TransactionSync] Built returns lookup with ${Object.keys(returnLookup).length} returns`)
+
+    // NOTE: FC (Storage) transactions are NOT attributed during sync.
+    // They will be attributed via invoice-based fallback during Monday invoicing.
+    // This avoids dependency on billing_storage (legacy table being deleted).
 
     // Fetch ALL transactions by date range
     console.log(`[TransactionSync] Fetching transactions from ${startDate.toISOString()} to ${endDate.toISOString()}...`)
@@ -1107,18 +1164,88 @@ export async function syncAllTransactions(
 
     // Transform to DB records with client attribution
     const now = new Date().toISOString()
+
+    // Group transactions by invoice for invoice-based fallback attribution
+    const invoiceGroups: Record<number, typeof transactions> = {}
+    for (const tx of transactions) {
+      if (tx.invoice_id) {
+        if (!invoiceGroups[tx.invoice_id]) invoiceGroups[tx.invoice_id] = []
+        invoiceGroups[tx.invoice_id].push(tx)
+      }
+    }
+
     const txRecords = transactions.map((tx) => {
-      // Try to attribute client from shipment lookup (for Shipment/Default types)
+      // Try to attribute client based on reference_type
       let clientId: string | null = null
-      if (tx.reference_type === 'Shipment' || tx.reference_type === 'Default') {
+
+      // Strategy 1: Shipment - direct lookup
+      if (tx.reference_type === 'Shipment') {
         clientId = clientLookup[tx.reference_id] || null
-        if (clientId) {
-          result.attributed++
-        } else {
-          result.unattributed++
+      }
+
+      // Strategy 2: FC (Storage) - leave unattributed for invoice-based fallback
+      // FC transactions will be attributed during Monday invoicing via invoice lookup.
+      // This avoids dependency on billing_storage (legacy table being deleted).
+
+      // Strategy 3: Return - lookup via returns table
+      else if (tx.reference_type === 'Return') {
+        clientId = returnLookup[tx.reference_id] || null
+      }
+
+      // Strategy 4: Default - route by transaction_fee
+      else if (tx.reference_type === 'Default') {
+        const fee = tx.transaction_fee
+        if (fee === 'Payment' && shipbobPaymentsId) {
+          // ACH payments go to ShipBob Payments
+          clientId = shipbobPaymentsId
+        } else if (fee === 'Credit Card Processing Fee' && jetpackCostsId) {
+          // CC processing fee is a parent-level cost to Jetpack
+          clientId = jetpackCostsId
+        } else if (fee === 'Credit') {
+          // Credits - try shipment lookup first, then invoice-based fallback
+          clientId = clientLookup[tx.reference_id] || null
         }
+        // Warehousing Fee and other Default fees use invoice-based fallback below
+      }
+
+      // Strategy 5: TicketNumber - parse client name from additional_details.Comment
+      else if (tx.reference_type === 'TicketNumber') {
+        const comment = tx.additional_details?.Comment as string || ''
+        // Try to extract client name from comment
+        // Format often: "Client Name - description" or "adjustment for Client Name"
+        // For now, leave unattributed - can be enhanced later
+      }
+
+      // Strategy 6: WRO/URO - leave for invoice-based fallback below
+      // These reference IDs don't match anything directly
+
+      // Fallback: Invoice-based attribution
+      // If transaction has invoice_id and we couldn't attribute, check if other
+      // transactions on same invoice are attributed
+      if (!clientId && tx.invoice_id && invoiceGroups[tx.invoice_id]) {
+        for (const siblingTx of invoiceGroups[tx.invoice_id]) {
+          // Skip self
+          if (siblingTx.transaction_id === tx.transaction_id) continue
+
+          // Try to find a sibling with known client
+          let siblingClientId: string | null = null
+          if (siblingTx.reference_type === 'Shipment') {
+            siblingClientId = clientLookup[siblingTx.reference_id] || null
+          } else if (siblingTx.reference_type === 'Return') {
+            siblingClientId = returnLookup[siblingTx.reference_id] || null
+          }
+          // Note: FC transactions can't help as siblings since they need attribution too
+
+          if (siblingClientId) {
+            clientId = siblingClientId
+            break
+          }
+        }
+      }
+
+      if (clientId) {
+        result.attributed++
       } else {
-        // FC, WRO, Return, etc. - can't attribute without additional data
         result.unattributed++
       }
 
