@@ -636,7 +636,9 @@ export async function syncClient(
     result.cartonsInserted = cartonResult.success
     result.errors.push(...cartonResult.errors)
 
-    // STEP 7: Fetch and Upsert Transactions
+    // STEP 7: Fetch and Upsert Transactions (for this client's shipments only)
+    // NOTE: Full transaction sync (including storage, returns, etc.) is handled separately
+    // by syncAllTransactions(). This section only syncs shipment-linked transactions.
     if (parentToken && shipmentIds.length > 0) {
       interface ShipBobTransaction {
         transaction_id: string
@@ -679,8 +681,8 @@ export async function syncClient(
         transaction_fee: tx.transaction_fee,
         amount: tx.amount,
         charge_date: tx.charge_date,
-        invoiced_status: tx.invoiced_status || false,
-        invoice_id: tx.invoice_id || null,
+        invoiced_status_sb: tx.invoiced_status || false,
+        invoice_id_sb: tx.invoice_id || null,
         fulfillment_center: tx.fulfillment_center || null,
         additional_details: tx.additional_details || null,
         created_at: new Date().toISOString(),
@@ -950,6 +952,201 @@ export async function syncAll(options: SyncOptions | number = 7): Promise<FullSy
         result.errors.push(...clientResult.errors.map((e) => `${client.company_name}: ${e}`))
       }
     }
+
+    result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
+    return result
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : 'Unknown error')
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+/**
+ * Transaction Sync Result
+ */
+export interface TransactionSyncResult {
+  success: boolean
+  transactionsFetched: number
+  transactionsUpserted: number
+  attributed: number
+  unattributed: number
+  errors: string[]
+  duration: number
+}
+
+/**
+ * Sync ALL transactions by date range (not just shipment-linked)
+ * This captures storage, returns, receiving, credits, etc.
+ * Uses the parent API token.
+ */
+export async function syncAllTransactions(
+  startDate: Date,
+  endDate: Date
+): Promise<TransactionSyncResult> {
+  const startTime = Date.now()
+  const result: TransactionSyncResult = {
+    success: false,
+    transactionsFetched: 0,
+    transactionsUpserted: 0,
+    attributed: 0,
+    unattributed: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  const parentToken = process.env.SHIPBOB_API_TOKEN
+  if (!parentToken) {
+    result.errors.push('SHIPBOB_API_TOKEN not configured')
+    result.duration = Date.now() - startTime
+    return result
+  }
+
+  const supabase = createAdminClient()
+
+  try {
+    // Build shipment_id -> client_id lookup from database
+    console.log('[TransactionSync] Building client lookup from shipments...')
+    const clientLookup: Record<string, string> = {}
+    let lastId: string | null = null
+    const pageSize = 1000
+
+    while (true) {
+      let query = supabase
+        .from('shipments')
+        .select('id, shipment_id, client_id')
+        .order('id', { ascending: true })
+        .limit(pageSize)
+
+      if (lastId) {
+        query = query.gt('id', lastId)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('[TransactionSync] Error fetching shipments:', error.message)
+        break
+      }
+
+      if (!data || data.length === 0) break
+
+      for (const s of data) {
+        clientLookup[s.shipment_id] = s.client_id
+        lastId = s.id
+      }
+
+      if (data.length < pageSize) break
+    }
+    console.log(`[TransactionSync] Built lookup with ${Object.keys(clientLookup).length} shipments`)
+
+    // Fetch ALL transactions by date range
+    console.log(`[TransactionSync] Fetching transactions from ${startDate.toISOString()} to ${endDate.toISOString()}...`)
+
+    interface ShipBobTransaction {
+      transaction_id: string
+      reference_id: string
+      reference_type: string
+      transaction_fee: string
+      amount: number
+      charge_date: string
+      invoiced_status: boolean
+      invoice_id?: number
+      fulfillment_center?: string
+      additional_details?: Record<string, unknown>
+    }
+
+    const transactions: ShipBobTransaction[] = []
+    let cursor: string | null = null
+    let page = 0
+
+    do {
+      page++
+      let url = `${SHIPBOB_API_BASE}/transactions:query`
+      if (cursor) url += `?Cursor=${encodeURIComponent(cursor)}`
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${parentToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from_date: startDate.toISOString(),
+          to_date: endDate.toISOString(),
+          page_size: 1000,
+        }),
+      })
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          // Rate limited - wait and retry
+          console.log('[TransactionSync] Rate limited, waiting 60s...')
+          await new Promise((r) => setTimeout(r, 60000))
+          continue
+        }
+        throw new Error(`API error: ${response.status} ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      transactions.push(...(data.items || []))
+      cursor = data.next
+
+      console.log(`[TransactionSync] Page ${page}: ${transactions.length} total transactions`)
+    } while (cursor)
+
+    result.transactionsFetched = transactions.length
+    console.log(`[TransactionSync] Fetched ${transactions.length} transactions`)
+
+    if (transactions.length === 0) {
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    // Transform to DB records with client attribution
+    const now = new Date().toISOString()
+    const txRecords = transactions.map((tx) => {
+      // Try to attribute client from shipment lookup (for Shipment/Default types)
+      let clientId: string | null = null
+      if (tx.reference_type === 'Shipment' || tx.reference_type === 'Default') {
+        clientId = clientLookup[tx.reference_id] || null
+        if (clientId) {
+          result.attributed++
+        } else {
+          result.unattributed++
+        }
+      } else {
+        // FC, WRO, Return, etc. - can't attribute without additional data
+        result.unattributed++
+      }
+
+      return {
+        transaction_id: tx.transaction_id,
+        client_id: clientId,
+        reference_id: tx.reference_id,
+        reference_type: tx.reference_type,
+        transaction_fee: tx.transaction_fee,
+        amount: tx.amount,
+        charge_date: tx.charge_date,
+        invoiced_status_sb: tx.invoiced_status || false,
+        invoice_id_sb: tx.invoice_id || null,
+        fulfillment_center: tx.fulfillment_center || null,
+        additional_details: tx.additional_details || null,
+        updated_at: now,
+      }
+    })
+
+    // Batch upsert
+    console.log('[TransactionSync] Upserting transactions...')
+    const txResult = await batchUpsert(supabase, 'transactions', txRecords, 'transaction_id')
+    result.transactionsUpserted = txResult.success
+    result.errors.push(...txResult.errors)
+
+    console.log(
+      `[TransactionSync] Done: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed`
+    )
 
     result.success = result.errors.length === 0
     result.duration = Date.now() - startTime
