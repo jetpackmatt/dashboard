@@ -1,216 +1,93 @@
 "use client"
 
 import * as React from "react"
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from "@tanstack/react-table"
-import {
-  AlertCircleIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ChevronsLeftIcon,
-  ChevronsRightIcon,
-  ClockIcon,
-  FilterIcon,
-  LoaderIcon,
-  PackageIcon,
-  XCircleIcon,
-} from "lucide-react"
-import { format } from "date-fns"
+import { differenceInHours, format, startOfDay, endOfDay } from "date-fns"
+import { DateRange } from "react-day-picker"
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { UNFULFILLED_TABLE_CONFIG } from "@/lib/table-config"
+import { TransactionsTable } from "./transactions-table"
+import { UnfulfilledOrder, unfulfilledCellRenderers } from "./cell-renderers"
 
-interface UnfulfilledOrder {
-  id: string
-  orderId: string
-  storeOrderId: string
-  customerName: string
-  status: string
-  orderDate: string
-  slaDate: string | null
-  itemCount: number
-  orderType: string
-  channelName: string
+// Calculate age in days from order date (used for filtering)
+function calculateAge(orderDate: string): number {
+  if (!orderDate) return 0
+  const hoursElapsed = differenceInHours(new Date(), new Date(orderDate))
+  return hoursElapsed / 24
 }
-
-// Status badge colors
-function getStatusColors(status: string) {
-  // Out of Stock / Exception statuses (warning - amber)
-  if (status.includes("Out of Stock") || status === "Exception" || status === "Address Issue" || status === "On Hold") {
-    return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
-  }
-  // Late statuses (red/urgent)
-  if (status.includes("Late")) {
-    return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
-  }
-  // Processing / Awaiting Pick (normal - blue)
-  if (status === "Processing" || status.includes("Awaiting Pick")) {
-    return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
-  }
-  // Default
-  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-}
-
-function getStatusIcon(status: string) {
-  // Out of Stock / Exception statuses
-  if (status.includes("Out of Stock") || status === "Exception" || status === "Address Issue" || status === "On Hold") {
-    return <AlertCircleIcon className="h-3.5 w-3.5" />
-  }
-  // Late statuses
-  if (status.includes("Late")) {
-    return <XCircleIcon className="h-3.5 w-3.5" />
-  }
-  // Processing / Awaiting Pick
-  if (status === "Processing" || status.includes("Awaiting Pick")) {
-    return <ClockIcon className="h-3.5 w-3.5" />
-  }
-  // Default
-  return <PackageIcon className="h-3.5 w-3.5" />
-}
-
-const columns: ColumnDef<UnfulfilledOrder>[] = [
-  {
-    accessorKey: "orderId",
-    header: "Order ID",
-    cell: ({ row }) => (
-      <div className="font-medium text-foreground">
-        {row.getValue("orderId")}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "storeOrderId",
-    header: "Store Order",
-    cell: ({ row }) => (
-      <div className="text-muted-foreground text-sm">
-        {row.getValue("storeOrderId") || "-"}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer",
-    cell: ({ row }) => (
-      <div className="max-w-[200px] truncate">
-        {row.getValue("customerName")}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => {
-      const status = row.getValue("status") as string
-      return (
-        <Badge
-          variant="outline"
-          className={`gap-1 ${getStatusColors(status)}`}
-        >
-          {getStatusIcon(status)}
-          {status}
-        </Badge>
-      )
-    },
-    filterFn: (row, id, value) => {
-      return value.includes(row.getValue(id))
-    },
-  },
-  {
-    accessorKey: "orderDate",
-    header: "Order Date",
-    cell: ({ row }) => {
-      const date = row.getValue("orderDate") as string
-      return date ? format(new Date(date), "MMM d, yyyy") : "-"
-    },
-  },
-  {
-    accessorKey: "slaDate",
-    header: "SLA Date",
-    cell: ({ row }) => {
-      const date = row.getValue("slaDate") as string | null
-      if (!date) return "-"
-      const slaDate = new Date(date)
-      const isOverdue = slaDate < new Date()
-      return (
-        <span className={isOverdue ? "text-red-500 font-medium" : ""}>
-          {format(slaDate, "MMM d, yyyy")}
-        </span>
-      )
-    },
-  },
-  {
-    accessorKey: "itemCount",
-    header: "Items",
-    cell: ({ row }) => (
-      <div className="text-center">{row.getValue("itemCount")}</div>
-    ),
-  },
-  {
-    accessorKey: "orderType",
-    header: "Type",
-    cell: ({ row }) => (
-      <Badge variant="secondary" className="font-normal">
-        {row.getValue("orderType")}
-      </Badge>
-    ),
-  },
-]
 
 interface UnfulfilledTableProps {
   clientId: string
+  // Filter state managed by parent (DataTable) - now using arrays for multi-select
+  statusFilter?: string[]
+  ageFilter?: string[]
+  typeFilter?: string[]
+  channelFilter?: string[]
+  dateRange?: DateRange
+  // Search query for real-time search
+  searchQuery?: string
+  // Callback to update available channels in parent
+  onChannelsChange?: (channels: string[]) => void
+  // Callback to notify parent of loading state changes
+  onLoadingChange?: (isLoading: boolean) => void
+  // Column visibility from column selector
+  userColumnVisibility?: Record<string, boolean>
+  // Pre-fetched data for instant initial render
+  initialData?: UnfulfilledOrder[]
+  initialTotalCount?: number
 }
 
-export function UnfulfilledTable({ clientId }: UnfulfilledTableProps) {
-  const [data, setData] = React.useState<UnfulfilledOrder[]>([])
-  const [isLoading, setIsLoading] = React.useState(true)
+export function UnfulfilledTable({
+  clientId,
+  statusFilter = [],
+  ageFilter = [],
+  typeFilter = [],
+  channelFilter = [],
+  dateRange,
+  searchQuery = "",
+  onChannelsChange,
+  onLoadingChange,
+  userColumnVisibility = {},
+  // Pre-fetched data for instant initial render
+  initialData,
+  initialTotalCount = 0,
+}: UnfulfilledTableProps) {
+  // Use initial data if provided, otherwise start empty
+  const hasInitialData = initialData && initialData.length > 0
+  const [data, setData] = React.useState<UnfulfilledOrder[]>(initialData || [])
+  const [isLoading, setIsLoading] = React.useState(!hasInitialData)
   const [isPageLoading, setIsPageLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [totalCount, setTotalCount] = React.useState(0)
+  const [totalCount, setTotalCount] = React.useState(initialTotalCount)
 
-  // Table state
-  const [sorting, setSorting] = React.useState<SortingState>([])
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
-  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
+  // Track if we've used the initial data (to skip first fetch)
+  const [usedInitialData, setUsedInitialData] = React.useState(hasInitialData)
+
+  // Extract platform types from initial data on mount
+  React.useEffect(() => {
+    if (hasInitialData && initialData && onChannelsChange) {
+      // channelName now contains real application_name from API (e.g., "Shopify", "Amazon")
+      const platforms = [...new Set(
+        initialData
+          .map(d => d.channelName)
+          .filter(Boolean)
+      )] as string[]
+      if (platforms.length > 0) {
+        onChannelsChange(platforms)
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pagination state
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(50)
 
-  // Status filter state
-  const [statusFilter, setStatusFilter] = React.useState<string[]>([])
+  // Notify parent of loading state changes
+  React.useEffect(() => {
+    onLoadingChange?.(isLoading || isPageLoading)
+  }, [isLoading, isPageLoading, onLoadingChange])
 
   // Fetch data
-  const fetchData = React.useCallback(async (page: number, size: number, statuses: string[]) => {
+  const fetchData = React.useCallback(async (page: number, size: number) => {
     const isInitialLoad = page === 0 && data.length === 0
 
     if (isInitialLoad) {
@@ -222,18 +99,101 @@ export function UnfulfilledTable({ clientId }: UnfulfilledTableProps) {
 
     try {
       const offset = page * size
-      const statusParam = statuses.length > 0 ? `&status=${statuses.join(',')}` : ''
-      const response = await fetch(
-        `/api/data/orders/unfulfilled?clientId=${clientId}&limit=${size}&offset=${offset}${statusParam}`
-      )
+
+      // Build query params
+      const params = new URLSearchParams({
+        clientId,
+        limit: size.toString(),
+        offset: offset.toString(),
+      })
+
+      // Add status filter
+      if (statusFilter.length > 0) {
+        params.set('status', statusFilter.join(','))
+      }
+
+      // Add search query (server-side)
+      if (searchQuery) {
+        params.set('search', searchQuery)
+      }
+
+      // Add date range filter (server-side filtering for performance)
+      if (dateRange?.from) {
+        params.set('startDate', format(startOfDay(dateRange.from), 'yyyy-MM-dd'))
+        if (dateRange.to) {
+          params.set('endDate', format(endOfDay(dateRange.to), 'yyyy-MM-dd'))
+        }
+      }
+
+      const response = await fetch(`/api/data/orders/unfulfilled?${params.toString()}`)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.status}`)
       }
 
       const result = await response.json()
-      setData(result.data || [])
-      setTotalCount(result.totalCount || 0)
+      let filteredData = result.data || []
+
+      // Extract unique platform types for filter dropdown and notify parent
+      // channelName now contains real application_name from API (e.g., "Shopify", "Amazon")
+      // IMPORTANT: Only update channel options when NO channel filter is active
+      // Otherwise, filtered data only contains selected channels, causing other options to disappear
+      if (channelFilter.length === 0) {
+        const platforms = [...new Set(
+          filteredData
+            .map((d: UnfulfilledOrder) => d.channelName)
+            .filter(Boolean)
+        )]
+        if (platforms.length > 0 && onChannelsChange) {
+          onChannelsChange(platforms as string[])
+        }
+      }
+
+      // Apply client-side filters for filters not supported server-side
+      // Note: Status filter is now applied server-side for accurate pagination
+
+      // Age filter - check if order age matches any selected age range
+      if (ageFilter.length > 0) {
+        filteredData = filteredData.filter((order: UnfulfilledOrder) => {
+          const age = calculateAge(order.orderDate)
+          return ageFilter.some(filter => {
+            switch (filter) {
+              case "0-1": return age < 1
+              case "1-2": return age >= 1 && age < 2
+              case "2-3": return age >= 2 && age < 3
+              case "3-5": return age >= 3 && age < 5
+              case "5-7": return age >= 5 && age < 7
+              case "7-10": return age >= 7 && age < 10
+              case "10-15": return age >= 10 && age < 15
+              case "15+": return age >= 15
+              default: return false
+            }
+          })
+        })
+      }
+
+      // Type filter - match any selected type
+      if (typeFilter.length > 0) {
+        filteredData = filteredData.filter((order: UnfulfilledOrder) =>
+          typeFilter.includes(order.orderType)
+        )
+      }
+
+      // Channel filter - match any selected platform type
+      // channelName now contains real application_name from API
+      if (channelFilter.length > 0) {
+        filteredData = filteredData.filter((order: UnfulfilledOrder) => {
+          return channelFilter.includes(order.channelName)
+        })
+      }
+
+      // Note: Date range filtering is now done server-side for performance
+
+      setData(filteredData)
+      // Use filtered data count when client-side filters are active
+      // Note: Status filter is now server-side, so use server count for that
+      const hasClientFilters = ageFilter.length > 0 || typeFilter.length > 0 || channelFilter.length > 0
+      setTotalCount(hasClientFilters ? filteredData.length : (result.totalCount || 0))
     } catch (err) {
       console.error('Error fetching unfulfilled orders:', err)
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -242,52 +202,32 @@ export function UnfulfilledTable({ clientId }: UnfulfilledTableProps) {
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length])
+  }, [clientId, data.length, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, onChannelsChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
-    fetchData(pageIndex, pageSize, statusFilter)
-  }, [clientId, pageIndex, pageSize, statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reset to first page when filter changes
-  const handleStatusFilterChange = (status: string, checked: boolean) => {
-    setPageIndex(0)
-    if (checked) {
-      setStatusFilter(prev => [...prev, status])
-    } else {
-      setStatusFilter(prev => prev.filter(s => s !== status))
+    // Skip the first fetch if we have initial data
+    if (usedInitialData) {
+      setUsedInitialData(false)
+      return
     }
-  }
+    fetchData(pageIndex, pageSize)
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const table = useReactTable({
-    data,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    state: {
-      sorting,
-      columnFilters,
-      columnVisibility,
-    },
-    manualPagination: true,
-    pageCount: Math.ceil(totalCount / pageSize),
-  })
+  // Reset page when filter changes (from parent)
+  React.useEffect(() => {
+    setPageIndex(0)
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery])
 
-  const totalPages = Math.ceil(totalCount / pageSize)
-
-  if (isLoading) {
-    return (
-      <div className="px-4 lg:px-6 space-y-4">
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-[400px] w-full" />
-      </div>
-    )
-  }
+  // Handle page changes
+  const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {
+    if (newPageSize !== pageSize) {
+      setPageSize(newPageSize)
+      setPageIndex(0)
+    } else {
+      setPageIndex(newPageIndex)
+    }
+  }, [pageSize])
 
   if (error) {
     return (
@@ -301,189 +241,21 @@ export function UnfulfilledTable({ clientId }: UnfulfilledTableProps) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="px-4 lg:px-6 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          {/* Status filter dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1">
-                <FilterIcon className="h-4 w-4" />
-                Status
-                {statusFilter.length > 0 && (
-                  <Badge variant="secondary" className="ml-1 px-1.5 py-0">
-                    {statusFilter.length}
-                  </Badge>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuCheckboxItem
-                checked={statusFilter.includes("Out of Stock")}
-                onCheckedChange={(checked) => handleStatusFilterChange("Out of Stock", checked)}
-              >
-                Out of Stock
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={statusFilter.includes("Awaiting Pick")}
-                onCheckedChange={(checked) => handleStatusFilterChange("Awaiting Pick", checked)}
-              >
-                Awaiting Pick
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={statusFilter.includes("Exception")}
-                onCheckedChange={(checked) => handleStatusFilterChange("Exception", checked)}
-              >
-                Exception
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                checked={statusFilter.includes("Processing")}
-                onCheckedChange={(checked) => handleStatusFilterChange("Processing", checked)}
-              >
-                Processing
-              </DropdownMenuCheckboxItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Clear filters */}
-          {statusFilter.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setPageIndex(0)
-                setStatusFilter([])
-              }}
-            >
-              Clear filters
-            </Button>
-          )}
-        </div>
-
-        <div className="text-sm text-muted-foreground">
-          {totalCount.toLocaleString()} unfulfilled orders
-          {isPageLoading && <LoaderIcon className="inline ml-2 h-4 w-4 animate-spin" />}
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="px-4 lg:px-6">
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
-                          )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={columns.length}
-                    className="h-24 text-center"
-                  >
-                    No unfulfilled orders found.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-
-      {/* Pagination */}
-      <div className="px-4 lg:px-6 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Rows per page</span>
-          <Select
-            value={pageSize.toString()}
-            onValueChange={(value) => {
-              setPageSize(Number(value))
-              setPageIndex(0)
-            }}
-          >
-            <SelectTrigger className="h-8 w-[70px]">
-              <SelectValue placeholder={pageSize} />
-            </SelectTrigger>
-            <SelectContent>
-              {[25, 50, 100, 200].map((size) => (
-                <SelectItem key={size} value={size.toString()}>
-                  {size}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
-            Page {pageIndex + 1} of {totalPages || 1}
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPageIndex(0)}
-              disabled={pageIndex === 0}
-            >
-              <ChevronsLeftIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPageIndex(Math.max(0, pageIndex - 1))}
-              disabled={pageIndex === 0}
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPageIndex(Math.min(totalPages - 1, pageIndex + 1))}
-              disabled={pageIndex >= totalPages - 1}
-            >
-              <ChevronRightIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPageIndex(totalPages - 1)}
-              disabled={pageIndex >= totalPages - 1}
-            >
-              <ChevronsRightIcon className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <TransactionsTable
+      config={UNFULFILLED_TABLE_CONFIG}
+      data={data}
+      cellRenderers={unfulfilledCellRenderers}
+      getRowKey={(row) => row.id}
+      isLoading={isLoading}
+      isPageLoading={isPageLoading}
+      totalCount={totalCount}
+      pageIndex={pageIndex}
+      pageSize={pageSize}
+      onPageChange={handlePageChange}
+      userColumnVisibility={userColumnVisibility}
+      emptyMessage="No unfulfilled orders found."
+      itemName="orders"
+      integratedHeader={true}
+    />
   )
 }

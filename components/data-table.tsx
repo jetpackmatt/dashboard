@@ -1,29 +1,20 @@
 "use client"
 
 import * as React from "react"
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  SortingState,
-  VisibilityState,
-  flexRender,
-  getCoreRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from "@tanstack/react-table"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
+import { VisibilityState } from "@tanstack/react-table"
 import {
   AlertCircleIcon,
+  CalendarIcon,
   CheckCircle2Icon,
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
+  ClipboardIcon,
   ClockIcon,
   ColumnsIcon,
   DownloadIcon,
@@ -33,9 +24,11 @@ import {
   PackageIcon,
   SearchIcon,
   TruckIcon,
+  XIcon,
 } from "lucide-react"
+import { format } from "date-fns"
+import { DateRange } from "react-day-picker"
 import { toast } from "sonner"
-import { z } from "zod"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -48,8 +41,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -57,6 +56,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { cn } from "@/lib/utils"
+import { useDebouncedCallback } from "use-debounce"
+import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
+import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import {
   Sheet,
   SheetClose,
@@ -67,988 +70,244 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { UnfulfilledTable } from "@/components/transactions/unfulfilled-table"
+import { ShipmentsTable } from "@/components/transactions/shipments-table"
+import { AdditionalServicesTable } from "@/components/transactions/additional-services-table"
+import { ReturnsTable } from "@/components/transactions/returns-table"
+import { ReceivingTable } from "@/components/transactions/receiving-table"
+import { StorageTable } from "@/components/transactions/storage-table"
+import { CreditsTable } from "@/components/transactions/credits-table"
+import { JetpackLoader } from "@/components/jetpack-loader"
+import {
+  UNFULFILLED_TABLE_CONFIG,
+  SHIPMENTS_TABLE_CONFIG,
+  ADDITIONAL_SERVICES_TABLE_CONFIG,
+  RETURNS_TABLE_CONFIG,
+  RECEIVING_TABLE_CONFIG,
+  STORAGE_TABLE_CONFIG,
+  CREDITS_TABLE_CONFIG,
+} from "@/lib/table-config"
 
-// ============================================================================
-// SHIPMENTS TAB - Schema and Columns
-// ============================================================================
-export const shipmentsSchema = z.object({
-  id: z.number(),
-  orderId: z.string(),
-  status: z.string(),
-  customerName: z.string(),
-  orderType: z.string(),
-  qty: z.number(),
-  cost: z.number(),
-  importDate: z.string(),
-  slaDate: z.string(),
-})
+// Cookie helpers for column visibility persistence
+const COOKIE_PREFIX = 'jetpack_columns_'
+const COOKIE_MAX_AGE = 365 * 24 * 60 * 60 // 1 year in seconds
 
-// Helper function to get status icon for shipments
-function getStatusIcon(status: string) {
-  switch (status) {
-    case "Shipped":
-      return <PackageIcon />
-    case "Awaiting Pick":
-      return <ClockIcon />
-    case "Picked":
-      return <CheckCircleIcon />
-    case "Action Required":
-      return <AlertCircleIcon />
-    case "In Transit":
-      return <TruckIcon />
-    case "Delivered":
-      return <CheckCircle2Icon />
-    case "Processing":
-      return <LoaderIcon />
-    case "Cancelled":
-      return <AlertCircleIcon />
+function getColumnVisibilityFromCookie(tabName: string): VisibilityState | null {
+  if (typeof document === 'undefined') return null
+
+  const cookieName = `${COOKIE_PREFIX}${tabName}`
+  const cookies = document.cookie.split(';')
+
+  for (const cookie of cookies) {
+    const [name, value] = cookie.trim().split('=')
+    if (name === cookieName && value) {
+      try {
+        return JSON.parse(decodeURIComponent(value))
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
+function saveColumnVisibilityToCookie(tabName: string, visibility: VisibilityState) {
+  if (typeof document === 'undefined') return
+
+  const cookieName = `${COOKIE_PREFIX}${tabName}`
+  const value = encodeURIComponent(JSON.stringify(visibility))
+  document.cookie = `${cookieName}=${value}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`
+}
+
+function clearColumnVisibilityCookie(tabName: string) {
+  if (typeof document === 'undefined') return
+
+  const cookieName = `${COOKIE_PREFIX}${tabName}`
+  document.cookie = `${cookieName}=; max-age=0; path=/; SameSite=Lax`
+}
+import { getCarrierDisplayName } from "@/components/transactions/cell-renderers"
+
+// Normalize channel names for display (e.g., "Walmartv2" -> "Walmart", "Shopifyv3" -> "Shopify")
+function normalizeChannelName(name: string): string {
+  if (!name) return name
+  // Remove version suffix (v1, v2, v3, etc.)
+  return name.replace(/v\d+$/i, '')
+}
+
+// Date range preset types and constants
+type DateRangePreset = 'today' | '1d' | '2d' | '3d' | '4d' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'
+
+// Presets for Unfulfilled tab (short-term focus)
+const UNFULFILLED_DATE_PRESETS: { value: DateRangePreset; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '1d', label: '1D' },
+  { value: '2d', label: '2D' },
+  { value: '3d', label: '3D' },
+  { value: '4d', label: '4D' },
+  { value: 'all', label: 'All' },
+]
+
+// Presets for Shipments and other tabs (longer-term focus)
+const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: '7D' },
+  { value: '30d', label: '30D' },
+  { value: '60d', label: '60D' },
+  { value: 'mtd', label: 'MTD' },
+  { value: 'ytd', label: 'YTD' },
+  { value: 'all', label: 'All' },
+]
+
+function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date } | null {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  switch (preset) {
+    case 'today':
+      return { from: today, to: today }
+    case '1d':
+      const oneDayAgo = new Date(today)
+      oneDayAgo.setDate(today.getDate() - 1)
+      return { from: oneDayAgo, to: today }
+    case '2d':
+      const twoDaysAgo = new Date(today)
+      twoDaysAgo.setDate(today.getDate() - 2)
+      return { from: twoDaysAgo, to: today }
+    case '3d':
+      const threeDaysAgo = new Date(today)
+      threeDaysAgo.setDate(today.getDate() - 3)
+      return { from: threeDaysAgo, to: today }
+    case '4d':
+      const fourDaysAgo = new Date(today)
+      fourDaysAgo.setDate(today.getDate() - 4)
+      return { from: fourDaysAgo, to: today }
+    case '7d':
+      const sevenDaysAgo = new Date(today)
+      sevenDaysAgo.setDate(today.getDate() - 6)
+      return { from: sevenDaysAgo, to: today }
+    case '30d':
+      const thirtyDaysAgo = new Date(today)
+      thirtyDaysAgo.setDate(today.getDate() - 29)
+      return { from: thirtyDaysAgo, to: today }
+    case '60d':
+      const sixtyDaysAgo = new Date(today)
+      sixtyDaysAgo.setDate(today.getDate() - 59)
+      return { from: sixtyDaysAgo, to: today }
+    case 'mtd':
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+      return { from: monthStart, to: today }
+    case 'ytd':
+      const yearStart = new Date(today.getFullYear(), 0, 1)
+      return { from: yearStart, to: today }
+    case 'all':
+      return null
+    case 'custom':
+      return null
     default:
-      return <LoaderIcon />
+      return null
   }
 }
 
-// Helper function to get status colors
-function getStatusColors(status: string) {
-  switch (status) {
-    case "Delivered":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-    case "Shipped":
-    case "In Transit":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
-    case "Processing":
-      return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
-    case "Awaiting Pick":
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-    case "Picked":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-    case "Action Required":
-    case "Cancelled":
-      return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
-    default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-  }
-}
-
-// Helper function for Additional Services status colors
-function getAdditionalServicesStatusColors(status: string) {
-  switch (status) {
-    case "Completed":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-    case "In Progress":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
-    case "Pending":
-      return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
-    case "Failed":
-    case "Cancelled":
-      return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
-    default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-  }
-}
-
-// Helper function for Returns status colors
-function getReturnsStatusColors(status: string) {
-  switch (status) {
-    case "Refunded":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-    case "Received":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
-    case "Processing":
-      return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
-    case "Rejected":
-    case "Cancelled":
-      return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
-    default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-  }
-}
-
-// Helper function for Credits status colors
-function getCreditsStatusColors(status: string) {
-  switch (status) {
-    case "Applied":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-    case "Approved":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
-    case "Pending":
-      return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
-    case "Denied":
-    case "Expired":
-      return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
-    default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-  }
-}
-
-const shipmentsColumns: ColumnDef<z.infer<typeof shipmentsSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "orderId",
-    header: () => <div className="pl-[25px]">Order ID</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.orderId}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge
-        variant="outline"
-        className={`gap-1 px-1.5 font-medium [&_svg]:size-3 ${getStatusColors(row.original.status)}`}
-      >
-        {getStatusIcon(row.original.status)}
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer Name",
-    cell: ({ row }) => row.original.customerName,
-  },
-  {
-    accessorKey: "orderType",
-    header: "Order Type",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.orderType}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "qty",
-    header: () => <div className="text-right">Qty</div>,
-    cell: ({ row }) => (
-      <div className="text-right font-medium">{row.original.qty}</div>
-    ),
-  },
-  {
-    accessorKey: "cost",
-    header: () => <div className="text-right">Cost</div>,
-    cell: ({ row }) => (
-      <div className="text-right font-medium">${row.original.cost.toFixed(2)}</div>
-    ),
-  },
-  {
-    accessorKey: "importDate",
-    header: () => <div className="pl-16">Import Date</div>,
-    cell: ({ row }) => {
-      const date = new Date(row.original.importDate)
-      return (
-        <div className="whitespace-nowrap pl-16">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}{" "}
-          {date.toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </div>
-      )
-    },
-  },
-  {
-    accessorKey: "slaDate",
-    header: "SLA Date",
-    cell: ({ row }) => {
-      const date = new Date(row.original.slaDate)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}{" "}
-          {date.toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </div>
-      )
-    },
-  },
-  {
-    id: "actions",
-    cell: () => (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
-            size="icon"
-          >
-            <MoreVerticalIcon />
-            <span className="sr-only">Open menu</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-32">
-          <DropdownMenuItem>View Details</DropdownMenuItem>
-          <DropdownMenuItem>Edit Order</DropdownMenuItem>
-          <DropdownMenuItem>Track Shipment</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem>Cancel Order</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ),
-  },
+// Filter option constants - using FilterOption format for multi-select
+const UNFULFILLED_STATUS_OPTIONS: FilterOption[] = [
+  { value: 'Awaiting Pick', label: 'Awaiting Pick' },
+  { value: 'Pick In-Progress', label: 'Pick In-Progress' },
+  { value: 'Picked', label: 'Picked' },
+  { value: 'Packed', label: 'Packed' },
+  { value: 'Out of Stock', label: 'Out of Stock' },
+  { value: 'On Hold', label: 'On Hold' },
+  { value: 'Exception', label: 'Exception' },
+]
+const UNFULFILLED_AGE_OPTIONS: FilterOption[] = [
+  { value: '0-1', label: '< 1 day' },
+  { value: '1-2', label: '1-2 days' },
+  { value: '2-3', label: '2-3 days' },
+  { value: '3-5', label: '3-5 days' },
+  { value: '5-7', label: '5-7 days' },
+  { value: '7-10', label: '7-10 days' },
+  { value: '10-15', label: '10-15 days' },
+  { value: '15+', label: '15+ days' },
+]
+const TYPE_OPTIONS: FilterOption[] = [
+  { value: 'DTC', label: 'DTC' },
+  { value: 'B2B', label: 'B2B' },
+  { value: 'FBA', label: 'FBA' },
+  { value: 'Dropship', label: 'Dropship' },
 ]
 
-// ============================================================================
-// ADDITIONAL SERVICES TAB - Schema and Columns
-// ============================================================================
-export const additionalServicesSchema = z.object({
-  id: z.number(),
-  serviceId: z.string(),
-  serviceType: z.string(),
-  customerName: z.string(),
-  status: z.string(),
-  quantity: z.number(),
-  cost: z.number(),
-  requestDate: z.string(),
-  completionDate: z.string(),
-})
-
-const additionalServicesColumns: ColumnDef<z.infer<typeof additionalServicesSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "serviceId",
-    header: () => <div className="pl-[25px]">Service ID</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.serviceId}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "serviceType",
-    header: "Service Type",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.serviceType}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer Name",
-    cell: ({ row }) => <div>{row.original.customerName}</div>,
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge
-        variant="outline"
-        className={`font-medium ${getAdditionalServicesStatusColors(row.original.status)}`}
-      >
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "quantity",
-    header: () => <div className="text-center">Qty</div>,
-    cell: ({ row }) => (
-      <div className="text-center">{row.original.quantity}</div>
-    ),
-  },
-  {
-    accessorKey: "cost",
-    header: () => <div className="text-right">Cost</div>,
-    cell: ({ row }) => (
-      <div className="text-right font-medium">${row.original.cost.toFixed(2)}</div>
-    ),
-  },
-  {
-    accessorKey: "requestDate",
-    header: "Request Date",
-    cell: ({ row }) => {
-      const date = new Date(row.original.requestDate)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
-      )
-    },
-  },
+const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
+  { value: 'Labelled', label: 'Labelled' },
+  { value: 'Awaiting Carrier', label: 'Awaiting Carrier' },
+  { value: 'In Transit', label: 'In Transit' },
+  { value: 'Out for Delivery', label: 'Out for Delivery' },
+  { value: 'Delivered', label: 'Delivered' },
+  { value: 'Exception', label: 'Exception' },
 ]
 
-// ============================================================================
-// RETURNS TAB - Schema and Columns
-// ============================================================================
-export const returnsSchema = z.object({
-  id: z.number(),
-  rmaNumber: z.string(),
-  orderId: z.string(),
-  customerName: z.string(),
-  reason: z.string(),
-  status: z.string(),
-  itemsQty: z.number(),
-  receivedDate: z.string(),
-  resolutionDate: z.string(),
-})
+const ADDITIONAL_SERVICES_TYPE_OPTIONS = ['Pick & Pack', 'Assembly', 'Kitting', 'Labeling', 'Inspection', 'Other']
+const ADDITIONAL_SERVICES_STATUS_OPTIONS = ['Pending', 'Completed', 'Invoiced']
 
-const returnsColumns: ColumnDef<z.infer<typeof returnsSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "rmaNumber",
-    header: () => <div className="pl-[25px]">RMA Number</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.rmaNumber}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "orderId",
-    header: "Original Order ID",
-    cell: ({ row }) => (
-      <div className="font-medium text-muted-foreground">{row.original.orderId}</div>
-    ),
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer Name",
-    cell: ({ row }) => <div>{row.original.customerName}</div>,
-  },
-  {
-    accessorKey: "reason",
-    header: "Reason",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.reason}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge
-        variant="outline"
-        className={`font-medium ${getReturnsStatusColors(row.original.status)}`}
-      >
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "itemsQty",
-    header: () => <div className="text-center">Items Qty</div>,
-    cell: ({ row }) => (
-      <div className="text-center">{row.original.itemsQty}</div>
-    ),
-  },
-  {
-    accessorKey: "receivedDate",
-    header: "Received Date",
-    cell: ({ row }) => {
-      const date = new Date(row.original.receivedDate)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
-      )
-    },
-  },
-]
+const RETURNS_STATUS_OPTIONS = ['Pending', 'Processing', 'Completed', 'Rejected']
+const RETURNS_REASON_OPTIONS = ['Damaged', 'Wrong Item', 'Quality Issue', 'Customer Return', 'Other']
 
-// ============================================================================
-// RECEIVING TAB - Schema and Columns
-// ============================================================================
-export const receivingSchema = z.object({
-  id: z.number(),
-  referenceId: z.string(),
-  feeType: z.string(),
-  cost: z.number(),
-  transactionDate: z.string(),
-})
+const RECEIVING_FEE_TYPE_OPTIONS = ['Standard', 'Oversize', 'Special Handling', 'Pallet']
 
-const receivingColumns: ColumnDef<z.infer<typeof receivingSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "referenceId",
-    header: () => <div className="pl-[25px]">Reference ID</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.referenceId}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "feeType",
-    header: "Fee Type",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.feeType}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "cost",
-    header: () => <div className="text-right">Cost</div>,
-    cell: ({ row }) => (
-      <div className="text-right font-medium">${row.original.cost.toFixed(2)}</div>
-    ),
-  },
-  {
-    accessorKey: "transactionDate",
-    header: "Transaction Date",
-    cell: ({ row }) => {
-      const date = new Date(row.original.transactionDate)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
-      )
-    },
-  },
-]
+const STORAGE_LOCATION_OPTIONS = ['Rack', 'Bin', 'Pallet', 'Floor']
 
-// ============================================================================
-// STORAGE TAB - Schema and Columns
-// ============================================================================
-export const storageSchema = z.object({
-  id: z.number(),
-  sku: z.string(),
-  productName: z.string(),
-  location: z.string(),
-  qtyOnHand: z.number(),
-  reserved: z.number(),
-  available: z.number(),
-  lastUpdated: z.string(),
-})
-
-const storageColumns: ColumnDef<z.infer<typeof storageSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "sku",
-    header: () => <div className="pl-[25px]">SKU</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.sku}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "productName",
-    header: "Product Name",
-    cell: ({ row }) => <div>{row.original.productName}</div>,
-  },
-  {
-    accessorKey: "location",
-    header: "Location",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.location}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "qtyOnHand",
-    header: () => <div className="text-center">Quantity on Hand</div>,
-    cell: ({ row }) => (
-      <div className="text-center">{row.original.qtyOnHand}</div>
-    ),
-  },
-  {
-    accessorKey: "reserved",
-    header: () => <div className="text-center">Reserved</div>,
-    cell: ({ row }) => (
-      <div className="text-center">{row.original.reserved}</div>
-    ),
-  },
-  {
-    accessorKey: "available",
-    header: () => <div className="text-center">Available</div>,
-    cell: ({ row }) => (
-      <div className="text-center font-medium">{row.original.available}</div>
-    ),
-  },
-  {
-    accessorKey: "lastUpdated",
-    header: "Last Updated",
-    cell: ({ row }) => {
-      const date = new Date(row.original.lastUpdated)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
-      )
-    },
-  },
-]
-
-// ============================================================================
-// CREDITS TAB - Schema and Columns
-// ============================================================================
-export const creditsSchema = z.object({
-  id: z.number(),
-  creditId: z.string(),
-  customerName: z.string(),
-  orderReference: z.string(),
-  reason: z.string(),
-  amount: z.number(),
-  status: z.string(),
-  issueDate: z.string(),
-})
-
-const creditsColumns: ColumnDef<z.infer<typeof creditsSchema>>[] = [
-  {
-    id: "select",
-    header: ({ table }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={
-            table.getIsAllPageRowsSelected() ||
-            (table.getIsSomePageRowsSelected() && "indeterminate")
-          }
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      </div>
-    ),
-    cell: ({ row }) => (
-      <div className="pl-2">
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-        />
-      </div>
-    ),
-    enableSorting: false,
-    enableHiding: false,
-  },
-  {
-    accessorKey: "creditId",
-    header: () => <div className="pl-[25px]">Credit ID</div>,
-    cell: ({ row }) => (
-      <div className="font-medium pl-[25px]">{row.original.creditId}</div>
-    ),
-    enableHiding: false,
-  },
-  {
-    accessorKey: "customerName",
-    header: "Customer Name",
-    cell: ({ row }) => <div>{row.original.customerName}</div>,
-  },
-  {
-    accessorKey: "orderReference",
-    header: "Order Reference",
-    cell: ({ row }) => (
-      <div className="font-medium text-muted-foreground">{row.original.orderReference}</div>
-    ),
-  },
-  {
-    accessorKey: "reason",
-    header: "Reason",
-    cell: ({ row }) => (
-      <Badge variant="outline" className="px-1.5 font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
-        {row.original.reason}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "amount",
-    header: () => <div className="text-right">Amount</div>,
-    cell: ({ row }) => (
-      <div className="text-right font-medium">
-        ${row.original.amount.toFixed(2)}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge
-        variant="outline"
-        className={`font-medium ${getCreditsStatusColors(row.original.status)}`}
-      >
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "issueDate",
-    header: "Issue Date",
-    cell: ({ row }) => {
-      const date = new Date(row.original.issueDate)
-      return (
-        <div className="whitespace-nowrap">
-          {date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </div>
-      )
-    },
-  },
-]
-
-// ============================================================================
-// HELPER COMPONENT - Reusable Table Renderer
-// ============================================================================
-function TableRenderer<TData>({
-  table,
-  columns,
-  serverPagination = false,
-  totalCount = 0,
-  isPageLoading = false,
-}: {
-  table: ReturnType<typeof useReactTable<TData>>
-  columns: ColumnDef<TData>[]
-  serverPagination?: boolean
-  totalCount?: number
-  isPageLoading?: boolean
-}) {
-  // Calculate max table width: average column width + max 150px gaps
-  // This prevents tables with few columns from over-stretching
-  const columnCount = columns.length
-  const avgColumnWidth = 250 // Estimated average column width in pixels
-  const maxGap = 150 // Maximum spacing between columns
-  const maxTableWidth = columnCount * avgColumnWidth + (columnCount - 1) * maxGap
-
-  return (
-    <>
-      <div className="overflow-x-auto overflow-y-hidden rounded-lg border border-border">
-        <Table
-          className="w-full"
-          style={{
-            maxWidth: `${maxTableWidth}px`,
-            tableLayout: 'auto'
-          }}
-        >
-          <TableHeader className="sticky top-0 z-10 bg-muted">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead
-                    key={header.id}
-                    colSpan={header.colSpan}
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows?.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-state={row.getIsSelected() && "selected"}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <div className="flex items-center justify-between px-4">
-        <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-          {table.getFilteredSelectedRowModel().rows.length} of{" "}
-          {serverPagination ? totalCount.toLocaleString() : table.getFilteredRowModel().rows.length} row(s) selected.
-          {isPageLoading && <LoaderIcon className="ml-2 h-4 w-4 animate-spin" />}
-        </div>
-        <div className="flex w-full items-center gap-8 lg:w-fit">
-          <div className="hidden items-center gap-2 lg:flex">
-            <Label htmlFor="rows-per-page" className="text-sm font-medium">
-              Rows per page
-            </Label>
-            <Select
-              value={`${table.getState().pagination.pageSize}`}
-              onValueChange={(value) => {
-                table.setPageSize(Number(value))
-              }}
-            >
-              <SelectTrigger className="w-20" id="rows-per-page">
-                <SelectValue
-                  placeholder={table.getState().pagination.pageSize}
-                />
-              </SelectTrigger>
-              <SelectContent side="top">
-                {[30, 50, 100, 200].map((pageSize) => (
-                  <SelectItem key={pageSize} value={`${pageSize}`}>
-                    {pageSize}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex w-fit items-center justify-center text-sm font-medium">
-            Page {table.getState().pagination.pageIndex + 1} of{" "}
-            {table.getPageCount()}
-          </div>
-          <div className="ml-auto flex items-center gap-2 lg:ml-0">
-            <Button
-              variant="outline"
-              className="hidden h-8 w-8 p-0 lg:flex"
-              onClick={() => table.setPageIndex(0)}
-              disabled={!table.getCanPreviousPage()}
-            >
-              <span className="sr-only">Go to first page</span>
-              <ChevronsLeftIcon />
-            </Button>
-            <Button
-              variant="outline"
-              className="size-8"
-              size="icon"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
-              <span className="sr-only">Go to previous page</span>
-              <ChevronLeftIcon />
-            </Button>
-            <Button
-              variant="outline"
-              className="size-8"
-              size="icon"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
-              <span className="sr-only">Go to next page</span>
-              <ChevronRightIcon />
-            </Button>
-            <Button
-              variant="outline"
-              className="hidden size-8 lg:flex"
-              size="icon"
-              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-              disabled={!table.getCanNextPage()}
-            >
-              <span className="sr-only">Go to last page</span>
-              <ChevronsRightIcon />
-            </Button>
-          </div>
-        </div>
-      </div>
-    </>
-  )
-}
-
-// ============================================================================
+const CREDITS_STATUS_OPTIONS = ['Pending', 'Approved', 'Applied', 'Denied']
+const CREDITS_REASON_OPTIONS = ['Damaged Goods', 'Shipping Error', 'Billing Adjustment', 'Service Credit', 'Other']
 
 export function DataTable({
-  shipmentsData,
-  additionalServicesData,
-  returnsData,
-  receivingData,
-  storageData,
-  creditsData,
+  clientId,
   defaultPageSize = 30,
   showExport = false,
-  // Server-side pagination props
-  serverPagination = false,
-  totalCount = 0,
-  onServerPageChange,
-  isPageLoading = false,
-  // Client ID for unfulfilled orders tab
-  clientId,
+  // Pre-fetched unfulfilled data for instant tab switching
+  unfulfilledData,
+  unfulfilledTotalCount = 0,
+  unfulfilledLoading = false,
+  unfulfilledChannels = [],
+  // Pre-fetched shipments data for instant tab switching
+  shipmentsData: prefetchedShipmentsData,
+  shipmentsTotalCount: prefetchedShipmentsTotalCount = 0,
+  shipmentsLoading: prefetchedShipmentsLoading = false,
+  shipmentsChannels: prefetchedShipmentsChannels = [],
+  shipmentsCarriers: prefetchedShipmentsCarriers = [],
 }: {
-  shipmentsData: z.infer<typeof shipmentsSchema>[]
-  additionalServicesData: z.infer<typeof additionalServicesSchema>[]
-  returnsData: z.infer<typeof returnsSchema>[]
-  receivingData: z.infer<typeof receivingSchema>[]
-  storageData: z.infer<typeof storageSchema>[]
-  creditsData: z.infer<typeof creditsSchema>[]
+  clientId: string
   defaultPageSize?: number
   showExport?: boolean
-  // Server-side pagination - when enabled, calls onServerPageChange instead of client-side pagination
-  serverPagination?: boolean
-  totalCount?: number
-  onServerPageChange?: (pageIndex: number, pageSize: number) => void
-  isPageLoading?: boolean
-  // Client ID for unfulfilled orders tab
-  clientId?: string
+  // Pre-fetched unfulfilled data for instant tab switching
+  unfulfilledData?: any[]
+  unfulfilledTotalCount?: number
+  unfulfilledLoading?: boolean
+  unfulfilledChannels?: string[]
+  // Pre-fetched shipments data for instant tab switching
+  shipmentsData?: any[]
+  shipmentsTotalCount?: number
+  shipmentsLoading?: boolean
+  shipmentsChannels?: string[]
+  shipmentsCarriers?: string[]
 }) {
   // ============================================================================
   // SHIPMENTS TAB - Table State and Configuration
   // ============================================================================
   const [rowSelection, setRowSelection] = React.useState({})
+
+  // Separate column visibility state for each main tab (persisted via cookies)
+  // Initialize empty to avoid SSR hydration mismatch - cookies are loaded via useEffect
+  const [shipmentsColumnVisibility, setShipmentsColumnVisibility] =
+    React.useState<VisibilityState>({})
+  const [unfulfilledColumnVisibility, setUnfulfilledColumnVisibility] =
+    React.useState<VisibilityState>({})
+
+  // Legacy columnVisibility for other tabs (not persisted)
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({})
-  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
-    []
-  )
-  const [sorting, setSorting] = React.useState<SortingState>([])
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
     pageSize: defaultPageSize,
@@ -1056,182 +315,522 @@ export function DataTable({
   const [exportSheetOpen, setExportSheetOpen] = React.useState(false)
   const [exportFormat, setExportFormat] = React.useState<string>("csv")
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
+  const [filtersExpanded, setFiltersExpanded] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
-  const [currentTab, setCurrentTab] = React.useState("unfulfilled")
 
-  // Calculate page count for server-side pagination
-  const serverPageCount = serverPagination
-    ? Math.ceil(totalCount / pagination.pageSize)
-    : undefined
+  // Tab state with URL persistence
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const validTabs = ["shipments", "unfulfilled", "additional-services", "returns", "receiving", "storage", "credits"]
+  const tabFromUrl = searchParams.get("tab")
+  const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : "shipments"
+  const [currentTab, setCurrentTab] = React.useState(initialTab)
 
-  // Shipments table instance
-  const shipmentsTable = useReactTable({
-    data: shipmentsData,
-    columns: shipmentsColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: (updater) => {
-      const newPagination = typeof updater === 'function'
-        ? updater(pagination)
-        : updater
-      setPagination(newPagination)
-      // Trigger server fetch when pagination changes in server mode
-      if (serverPagination && onServerPageChange) {
-        onServerPageChange(newPagination.pageIndex, newPagination.pageSize)
+  // Sync tab to URL when it changes, with scroll position restoration
+  const handleTabChange = React.useCallback((newTab: string) => {
+    setCurrentTab(newTab)
+
+    // Update URL
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", newTab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+
+    // Get saved position from click handler, or save now if not available
+    const scrollContainer = scrollContainerRef.current
+    const savedPosition = scrollPositionRef.current || (scrollContainer ? scrollContainer.scrollTop : window.scrollY)
+    scrollPositionRef.current = savedPosition
+
+    // Immediately restore scroll position synchronously (before any paint)
+    const immediateRestore = () => {
+      if (scrollContainer) {
+        scrollContainer.scrollTop = savedPosition
+      } else {
+        window.scrollTo({ top: savedPosition, behavior: 'instant' as ScrollBehavior })
       }
-    },
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    // Only use client-side pagination when not in server mode
-    ...(serverPagination ? {} : { getPaginationRowModel: getPaginationRowModel() }),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-    // Server-side pagination settings
-    ...(serverPagination ? {
-      manualPagination: true,
-      pageCount: serverPageCount,
-    } : {}),
+    }
+
+    // Call immediately
+    immediateRestore()
+
+    // Also restore on next few frames to catch any late scrolling
+    let frameCount = 0
+    const maxFrames = 10
+
+    const checkAndRestore = () => {
+      const currentScroll = scrollContainer ? scrollContainer.scrollTop : window.scrollY
+      if (currentScroll !== savedPosition) {
+        immediateRestore()
+      }
+
+      frameCount++
+      if (frameCount < maxFrames) {
+        requestAnimationFrame(checkAndRestore)
+      } else {
+        scrollPositionRef.current = 0
+      }
+    }
+
+    // Start RAF monitoring
+    requestAnimationFrame(checkAndRestore)
+  }, [searchParams, router, pathname])
+
+  // Unfulfilled tab filter state (lifted from UnfulfilledTable for header integration)
+  // Now using arrays for multi-select support
+  const [unfulfilledStatusFilter, setUnfulfilledStatusFilter] = React.useState<string[]>([])
+  const [unfulfilledAgeFilter, setUnfulfilledAgeFilter] = React.useState<string[]>([])
+  const [unfulfilledTypeFilter, setUnfulfilledTypeFilter] = React.useState<string[]>([])
+  const [unfulfilledChannelFilter, setUnfulfilledChannelFilter] = React.useState<string[]>([])
+  const [unfulfilledDateRange, setUnfulfilledDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [availableChannels, setAvailableChannels] = React.useState<string[]>(unfulfilledChannels)
+  const [isUnfulfilledLoading, setIsUnfulfilledLoading] = React.useState(unfulfilledLoading)
+
+  // Sync channels when parent updates them (from pre-fetch)
+  React.useEffect(() => {
+    if (unfulfilledChannels.length > 0) {
+      setAvailableChannels(unfulfilledChannels)
+    }
+  }, [unfulfilledChannels])
+
+  // Sync loading state from parent
+  React.useEffect(() => {
+    setIsUnfulfilledLoading(unfulfilledLoading)
+  }, [unfulfilledLoading])
+
+  // Load column visibility from cookies on mount (client-side only, after hydration)
+  const [hasMounted, setHasMounted] = React.useState(false)
+  React.useEffect(() => {
+    setHasMounted(true)
+    const savedShipments = getColumnVisibilityFromCookie('shipments')
+    const savedUnfulfilled = getColumnVisibilityFromCookie('unfulfilled')
+    if (savedShipments) setShipmentsColumnVisibility(savedShipments)
+    if (savedUnfulfilled) setUnfulfilledColumnVisibility(savedUnfulfilled)
+  }, [])
+
+  // Persist column visibility to cookies when changed (only after mount to avoid overwriting with empty state)
+  React.useEffect(() => {
+    if (!hasMounted) return
+    // Only save if there are actual changes (not the initial empty state)
+    if (Object.keys(shipmentsColumnVisibility).length > 0) {
+      saveColumnVisibilityToCookie('shipments', shipmentsColumnVisibility)
+    }
+  }, [shipmentsColumnVisibility, hasMounted])
+
+  React.useEffect(() => {
+    if (!hasMounted) return
+    if (Object.keys(unfulfilledColumnVisibility).length > 0) {
+      saveColumnVisibilityToCookie('unfulfilled', unfulfilledColumnVisibility)
+    }
+  }, [unfulfilledColumnVisibility, hasMounted])
+
+  // Reset column visibility to defaults (clears cookie and state)
+  const resetShipmentsColumns = React.useCallback(() => {
+    clearColumnVisibilityCookie('shipments')
+    setShipmentsColumnVisibility({})
+  }, [])
+
+  const resetUnfulfilledColumns = React.useCallback(() => {
+    clearColumnVisibilityCookie('unfulfilled')
+    setUnfulfilledColumnVisibility({})
+  }, [])
+
+  // Shipments tab filter state - now using arrays for multi-select
+  const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>([])
+  const [shipmentsAgeFilter, setShipmentsAgeFilter] = React.useState<string[]>([])
+  const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>([])
+  const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>([])
+  const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>([])
+  // Initialize shipments date range to 60 days for better performance
+  const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('60d')
+    return range ? { from: range.from, to: range.to } : undefined
   })
+  const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>('60d')
+  const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>(prefetchedShipmentsChannels)
+  const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
+  const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)
+
+  // Debounced shipments filters - UI updates immediately, API calls debounced
+  const debouncedShipmentsFilters = useDebouncedShipmentsFilters({
+    statusFilter: shipmentsStatusFilter,
+    ageFilter: shipmentsAgeFilter,
+    typeFilter: shipmentsTypeFilter,
+    channelFilter: shipmentsChannelFilter,
+    carrierFilter: shipmentsCarrierFilter,
+    dateRange: shipmentsDateRange,
+  })
+
+  // Debounced unfulfilled filters
+  const debouncedUnfulfilledFilters = useDebouncedUnfulfilledFilters({
+    statusFilter: unfulfilledStatusFilter,
+    ageFilter: unfulfilledAgeFilter,
+    typeFilter: unfulfilledTypeFilter,
+    channelFilter: unfulfilledChannelFilter,
+    dateRange: unfulfilledDateRange,
+  })
+
+  // Search state - shared across tabs, debounced for performance
+  const [searchInput, setSearchInput] = React.useState("")
+  const [searchQuery, setSearchQuery] = React.useState("")
+
+  // Debounced search - triggers API call 300ms after typing stops
+  const debouncedSearch = useDebouncedCallback((value: string) => {
+    setSearchQuery(value)
+  }, 300)
+
+  // Additional Services tab filter state
+  const [additionalServicesTypeFilter, setAdditionalServicesTypeFilter] = React.useState<string>("all")
+  const [additionalServicesStatusFilter, setAdditionalServicesStatusFilter] = React.useState<string>("all")
+  const [additionalServicesDateRange, setAdditionalServicesDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [additionalServicesDatePreset, setAdditionalServicesDatePreset] = React.useState<DateRangePreset | undefined>('all')
+
+  // Returns tab filter state
+  const [returnsStatusFilter, setReturnsStatusFilter] = React.useState<string>("all")
+  const [returnsReasonFilter, setReturnsReasonFilter] = React.useState<string>("all")
+  const [returnsDateRange, setReturnsDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [returnsDatePreset, setReturnsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+
+  // Receiving tab filter state
+  const [receivingFeeTypeFilter, setReceivingFeeTypeFilter] = React.useState<string>("all")
+  const [receivingDateRange, setReceivingDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [receivingDatePreset, setReceivingDatePreset] = React.useState<DateRangePreset | undefined>('all')
+
+  // Storage tab filter state
+  const [storageLocationFilter, setStorageLocationFilter] = React.useState<string>("all")
+
+  // Credits tab filter state
+  const [creditsStatusFilter, setCreditsStatusFilter] = React.useState<string>("all")
+  const [creditsReasonFilter, setCreditsReasonFilter] = React.useState<string>("all")
+  const [creditsDateRange, setCreditsDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [creditsDatePreset, setCreditsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+
+  // Date preset state for unfulfilled filter
+  const [unfulfilledDatePreset, setUnfulfilledDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
+  // Track if we're in the middle of selecting a range (waiting for end date)
+  const [isAwaitingEndDate, setIsAwaitingEndDate] = React.useState(false)
+
+  // Handle preset selection
+  const handleDatePresetChange = (preset: DateRangePreset) => {
+    setUnfulfilledDatePreset(preset)
+    if (preset === 'custom') {
+      // Custom will use the existing date range picker
+      setIsCustomRangeOpen(true)
+    } else {
+      // Set date range from preset
+      const range = getDateRangeFromPreset(preset)
+      if (range) {
+        setUnfulfilledDateRange({ from: range.from, to: range.to })
+      }
+      setIsCustomRangeOpen(false)
+    }
+  }
+
+  // Handle custom range selection
+  const handleCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
+    // If we're not awaiting end date, this is the first click - always start fresh
+    if (!isAwaitingEndDate) {
+      // First click - set just the from date, wait for end date
+      const clickedDate = range.from || range.to
+      if (clickedDate) {
+        setUnfulfilledDateRange({ from: clickedDate, to: undefined })
+        setIsAwaitingEndDate(true)
+      }
+      return
+    }
+
+    // We're awaiting end date - this is the second click
+    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
+      // Complete range selected with different dates - close popover
+      setUnfulfilledDateRange(range)
+      setUnfulfilledDatePreset('custom')
+      setIsCustomRangeOpen(false)
+      setIsAwaitingEndDate(false)
+    } else if (range.from && range.to) {
+      // Same date clicked again (clicking on the already-selected from date)
+      // Just update the range but don't close
+      setUnfulfilledDateRange(range)
+    } else {
+      // Partial range update
+      setUnfulfilledDateRange(range)
+    }
+  }
+
+  // Format custom range display
+  const customRangeLabel = React.useMemo(() => {
+    if (unfulfilledDateRange?.from && unfulfilledDateRange?.to) {
+      return `${format(unfulfilledDateRange.from, 'MMM d')} - ${format(unfulfilledDateRange.to, 'MMM d')}`
+    }
+    return 'Custom'
+  }, [unfulfilledDateRange])
+
+  // Check if unfulfilled filters are active and count them (now using arrays)
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasUnfulfilledFilters = unfulfilledStatusFilter.length > 0 || unfulfilledAgeFilter.length > 0 ||
+    unfulfilledTypeFilter.length > 0 || unfulfilledChannelFilter.length > 0
+
+  // Count active filters for badge - count total selected values
+  const activeFilterCount =
+    unfulfilledStatusFilter.length +
+    unfulfilledAgeFilter.length +
+    unfulfilledTypeFilter.length +
+    unfulfilledChannelFilter.length
+
+  // Clear unfulfilled filters
+  const clearUnfulfilledFilters = () => {
+    setUnfulfilledStatusFilter([])
+    setUnfulfilledAgeFilter([])
+    setUnfulfilledTypeFilter([])
+    setUnfulfilledChannelFilter([])
+    setUnfulfilledDateRange(undefined)
+    setUnfulfilledDatePreset(undefined)
+    setIsCustomRangeOpen(false)
+    setIsAwaitingEndDate(false)
+  }
 
   // ============================================================================
-  // OTHER TABS - Table Instances
+  // COMPUTED VALUES FOR OTHER TABS
   // ============================================================================
-  const additionalServicesTable = useReactTable({
-    data: additionalServicesData,
-    columns: additionalServicesColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-  })
 
-  const returnsTable = useReactTable({
-    data: returnsData,
-    columns: returnsColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-  })
+  // Shipments tab computed values (now using arrays)
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasShipmentsFilters = shipmentsStatusFilter.length > 0 || shipmentsAgeFilter.length > 0 ||
+    shipmentsTypeFilter.length > 0 || shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0
+  const shipmentsFilterCount =
+    shipmentsStatusFilter.length +
+    shipmentsAgeFilter.length +
+    shipmentsTypeFilter.length +
+    shipmentsChannelFilter.length +
+    shipmentsCarrierFilter.length
 
-  const receivingTable = useReactTable({
-    data: receivingData,
-    columns: receivingColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-  })
+  const clearShipmentsFilters = () => {
+    setShipmentsStatusFilter([])
+    setShipmentsAgeFilter([])
+    setShipmentsTypeFilter([])
+    setShipmentsChannelFilter([])
+    setShipmentsCarrierFilter([])
+    setShipmentsDateRange(undefined)
+    setShipmentsDatePreset(undefined)
+  }
 
-  const storageTable = useReactTable({
-    data: storageData,
-    columns: storageColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-  })
+  // Additional Services tab computed values
+  const hasAdditionalServicesFilters = additionalServicesTypeFilter !== "all" || additionalServicesStatusFilter !== "all" || additionalServicesDateRange?.from
+  const additionalServicesFilterCount = [
+    additionalServicesTypeFilter !== "all",
+    additionalServicesStatusFilter !== "all",
+    additionalServicesDateRange?.from,
+  ].filter(Boolean).length
 
-  const creditsTable = useReactTable({
-    data: creditsData,
-    columns: creditsColumns,
-    state: {
-      sorting,
-      columnVisibility,
-      rowSelection,
-      columnFilters,
-      pagination,
-    },
-    getRowId: (row) => row.id.toString(),
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setColumnVisibility,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFacetedRowModel: getFacetedRowModel(),
-    getFacetedUniqueValues: getFacetedUniqueValues(),
-  })
+  const clearAdditionalServicesFilters = () => {
+    setAdditionalServicesTypeFilter("all")
+    setAdditionalServicesStatusFilter("all")
+    setAdditionalServicesDateRange(undefined)
+    setAdditionalServicesDatePreset(undefined)
+  }
+
+  // Returns tab computed values
+  const hasReturnsFilters = returnsStatusFilter !== "all" || returnsReasonFilter !== "all" || returnsDateRange?.from
+  const returnsFilterCount = [
+    returnsStatusFilter !== "all",
+    returnsReasonFilter !== "all",
+    returnsDateRange?.from,
+  ].filter(Boolean).length
+
+  const clearReturnsFilters = () => {
+    setReturnsStatusFilter("all")
+    setReturnsReasonFilter("all")
+    setReturnsDateRange(undefined)
+    setReturnsDatePreset(undefined)
+  }
+
+  // Receiving tab computed values
+  const hasReceivingFilters = receivingFeeTypeFilter !== "all" || receivingDateRange?.from
+  const receivingFilterCount = [
+    receivingFeeTypeFilter !== "all",
+    receivingDateRange?.from,
+  ].filter(Boolean).length
+
+  const clearReceivingFilters = () => {
+    setReceivingFeeTypeFilter("all")
+    setReceivingDateRange(undefined)
+    setReceivingDatePreset(undefined)
+  }
+
+  // Storage tab computed values
+  const hasStorageFilters = storageLocationFilter !== "all"
+  const storageFilterCount = storageLocationFilter !== "all" ? 1 : 0
+
+  const clearStorageFilters = () => {
+    setStorageLocationFilter("all")
+  }
+
+  // Credits tab computed values
+  const hasCreditsFilters = creditsStatusFilter !== "all" || creditsReasonFilter !== "all" || creditsDateRange?.from
+  const creditsFilterCount = [
+    creditsStatusFilter !== "all",
+    creditsReasonFilter !== "all",
+    creditsDateRange?.from,
+  ].filter(Boolean).length
+
+  const clearCreditsFilters = () => {
+    setCreditsStatusFilter("all")
+    setCreditsReasonFilter("all")
+    setCreditsDateRange(undefined)
+    setCreditsDatePreset(undefined)
+  }
+
+  // ============================================================================
+  // GET CURRENT TAB FILTER STATE (for header)
+  // ============================================================================
+  const getCurrentTabFilters = () => {
+    switch (currentTab) {
+      case "unfulfilled":
+        return { hasFilters: hasUnfulfilledFilters, filterCount: activeFilterCount, clear: clearUnfulfilledFilters }
+      case "shipments":
+        return { hasFilters: hasShipmentsFilters, filterCount: shipmentsFilterCount, clear: clearShipmentsFilters }
+      case "additional-services":
+        return { hasFilters: hasAdditionalServicesFilters, filterCount: additionalServicesFilterCount, clear: clearAdditionalServicesFilters }
+      case "returns":
+        return { hasFilters: hasReturnsFilters, filterCount: returnsFilterCount, clear: clearReturnsFilters }
+      case "receiving":
+        return { hasFilters: hasReceivingFilters, filterCount: receivingFilterCount, clear: clearReceivingFilters }
+      case "storage":
+        return { hasFilters: hasStorageFilters, filterCount: storageFilterCount, clear: clearStorageFilters }
+      case "credits":
+        return { hasFilters: hasCreditsFilters, filterCount: creditsFilterCount, clear: clearCreditsFilters }
+      default:
+        return { hasFilters: false, filterCount: 0, clear: () => {} }
+    }
+  }
+
+  const currentTabFilters = getCurrentTabFilters()
+
+  // Get current tab's date range state
+  const getCurrentTabDateRange = () => {
+    switch (currentTab) {
+      case "unfulfilled": return { dateRange: unfulfilledDateRange, preset: unfulfilledDatePreset, setPreset: setUnfulfilledDatePreset, setDateRange: setUnfulfilledDateRange }
+      case "shipments": return { dateRange: shipmentsDateRange, preset: shipmentsDatePreset, setPreset: setShipmentsDatePreset, setDateRange: setShipmentsDateRange }
+      case "additional-services": return { dateRange: additionalServicesDateRange, preset: additionalServicesDatePreset, setPreset: setAdditionalServicesDatePreset, setDateRange: setAdditionalServicesDateRange }
+      case "returns": return { dateRange: returnsDateRange, preset: returnsDatePreset, setPreset: setReturnsDatePreset, setDateRange: setReturnsDateRange }
+      case "receiving": return { dateRange: receivingDateRange, preset: receivingDatePreset, setPreset: setReceivingDatePreset, setDateRange: setReceivingDateRange }
+      case "credits": return { dateRange: creditsDateRange, preset: creditsDatePreset, setPreset: setCreditsDatePreset, setDateRange: setCreditsDateRange }
+      default: return { dateRange: undefined, preset: undefined, setPreset: () => {}, setDateRange: () => {} }
+    }
+  }
+
+  const currentTabDateState = getCurrentTabDateRange()
+
+  // Generic date preset change handler
+  const handleGenericDatePresetChange = (preset: DateRangePreset) => {
+    const { setPreset, setDateRange } = currentTabDateState
+    setPreset(preset)
+    if (preset === 'custom') {
+      setIsCustomRangeOpen(true)
+    } else if (preset === 'all') {
+      // Clear the date range when "All" is selected
+      setDateRange(undefined)
+      setIsCustomRangeOpen(false)
+    } else {
+      const range = getDateRangeFromPreset(preset)
+      if (range) {
+        setDateRange({ from: range.from, to: range.to })
+      }
+      setIsCustomRangeOpen(false)
+    }
+  }
+
+  // Generic custom range select handler
+  const handleGenericCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
+    const { setPreset, setDateRange } = currentTabDateState
+    if (!isAwaitingEndDate) {
+      const clickedDate = range.from || range.to
+      if (clickedDate) {
+        setDateRange({ from: clickedDate, to: undefined })
+        setIsAwaitingEndDate(true)
+      }
+      return
+    }
+    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
+      setDateRange(range)
+      setPreset('custom')
+      setIsCustomRangeOpen(false)
+      setIsAwaitingEndDate(false)
+    } else if (range.from && range.to) {
+      setDateRange(range)
+    } else {
+      setDateRange(range)
+    }
+  }
+
+  // Format custom range display for current tab
+  const currentCustomRangeLabel = React.useMemo(() => {
+    const { dateRange } = currentTabDateState
+    if (dateRange?.from && dateRange?.to) {
+      return `${format(dateRange.from, 'MMM d')} - ${format(dateRange.to, 'MMM d')}`
+    }
+    return 'Custom'
+  }, [currentTabDateState])
+
+  // Get current table config for columns dropdown
+  const currentTableConfig = React.useMemo(() => {
+    switch (currentTab) {
+      case "unfulfilled": return UNFULFILLED_TABLE_CONFIG
+      case "shipments": return SHIPMENTS_TABLE_CONFIG
+      case "additional-services": return ADDITIONAL_SERVICES_TABLE_CONFIG
+      case "returns": return RETURNS_TABLE_CONFIG
+      case "receiving": return RECEIVING_TABLE_CONFIG
+      case "storage": return STORAGE_TABLE_CONFIG
+      case "credits": return CREDITS_TABLE_CONFIG
+      default: return null
+    }
+  }, [currentTab])
+
+  // Get current column visibility state and setter based on tab
+  const currentColumnVisibility = React.useMemo(() => {
+    switch (currentTab) {
+      case "unfulfilled": return unfulfilledColumnVisibility
+      case "shipments": return shipmentsColumnVisibility
+      default: return columnVisibility
+    }
+  }, [currentTab, unfulfilledColumnVisibility, shipmentsColumnVisibility, columnVisibility])
+
+  const setCurrentColumnVisibility = React.useCallback((update: VisibilityState | ((prev: VisibilityState) => VisibilityState)) => {
+    switch (currentTab) {
+      case "unfulfilled":
+        if (typeof update === 'function') {
+          setUnfulfilledColumnVisibility(update)
+        } else {
+          setUnfulfilledColumnVisibility(update)
+        }
+        break
+      case "shipments":
+        if (typeof update === 'function') {
+          setShipmentsColumnVisibility(update)
+        } else {
+          setShipmentsColumnVisibility(update)
+        }
+        break
+      default:
+        if (typeof update === 'function') {
+          setColumnVisibility(update)
+        } else {
+          setColumnVisibility(update)
+        }
+    }
+  }, [currentTab])
+
+  const resetCurrentColumns = React.useCallback(() => {
+    switch (currentTab) {
+      case "unfulfilled": resetUnfulfilledColumns(); break
+      case "shipments": resetShipmentsColumns(); break
+      default: setColumnVisibility({})
+    }
+  }, [currentTab, resetUnfulfilledColumns, resetShipmentsColumns])
+
+  // Check if current column visibility has any customizations
+  const hasColumnCustomizations = React.useMemo(() => {
+    return Object.keys(currentColumnVisibility).length > 0
+  }, [currentColumnVisibility])
 
   // Preserve scroll position when switching tabs
   const scrollPositionRef = React.useRef(0)
@@ -1346,264 +945,713 @@ export function DataTable({
     }
   }, [])
 
-  const handleTabChange = (value: string) => {
-    setCurrentTab(value)
-
-    // Get saved position from click handler, or save now if not available
-    const scrollContainer = scrollContainerRef.current
-    const savedPosition = scrollPositionRef.current || (scrollContainer ? scrollContainer.scrollTop : window.scrollY)
-    scrollPositionRef.current = savedPosition
-
-    console.log('🔄 Tab changing to:', value, '| Using saved position:', savedPosition)
-
-    // Immediately restore scroll position synchronously (before any paint)
-    const immediateRestore = () => {
-      if (scrollContainer) {
-        scrollContainer.scrollTop = savedPosition
-      } else {
-        window.scrollTo({ top: savedPosition, behavior: 'instant' as ScrollBehavior })
-      }
-    }
-
-    // Call immediately
-    immediateRestore()
-
-    // Also restore on next few frames to catch any late scrolling
-    let frameCount = 0
-    const maxFrames = 10
-
-    const checkAndRestore = () => {
-      const currentScroll = scrollContainer ? scrollContainer.scrollTop : window.scrollY
-      if (currentScroll !== savedPosition) {
-        console.log('⚠️ Frame', frameCount, ': Scroll changed from', savedPosition, 'to', currentScroll, '- restoring')
-        immediateRestore()
-      }
-
-      frameCount++
-      if (frameCount < maxFrames) {
-        requestAnimationFrame(checkAndRestore)
-      } else {
-        console.log('✅ Scroll monitoring complete')
-        scrollPositionRef.current = 0
-      }
-    }
-
-    // Start RAF monitoring
-    requestAnimationFrame(checkAndRestore)
-  }
-
   return (
     <>
     <Tabs
-      defaultValue="unfulfilled"
-      className="flex w-full flex-col justify-start gap-6"
+      value={currentTab}
+      className="flex w-full flex-col h-[calc(100vh-64px)] px-4 lg:px-6"
       onValueChange={handleTabChange}
     >
-        <div className="flex items-center justify-between gap-4 px-4 lg:px-6">
-          {/* Mobile/Tablet: Table selector dropdown */}
-          <Select value={currentTab} onValueChange={handleTabChange}>
-            <SelectTrigger className="w-[180px] lg:hidden">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
-              <SelectItem value="shipments">Shipments</SelectItem>
-              <SelectItem value="additional-services">Additional Services</SelectItem>
-              <SelectItem value="returns">Returns</SelectItem>
-              <SelectItem value="receiving">Receiving</SelectItem>
-              <SelectItem value="storage">Storage</SelectItem>
-              <SelectItem value="credits">Credits</SelectItem>
-            </SelectContent>
-          </Select>
+        {/* Sticky header with tabs and controls */}
+        <div className="sticky top-0 z-20 bg-zinc-50 dark:bg-zinc-900 -mx-4 px-4 lg:-mx-6 lg:px-6 pt-5 pb-6 border-b">
+          {/* Row 1: Tabs */}
+          <div className="flex items-center gap-4 mb-5">
+            {/* Mobile/Tablet: Table selector dropdown */}
+            <Select value={currentTab} onValueChange={handleTabChange}>
+              <SelectTrigger className="w-[180px] lg:hidden">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
+                <SelectItem value="shipments">Shipments</SelectItem>
+                <SelectItem value="additional-services">Additional Services</SelectItem>
+                <SelectItem value="returns">Returns</SelectItem>
+                <SelectItem value="receiving">Receiving</SelectItem>
+                <SelectItem value="storage">Storage</SelectItem>
+                <SelectItem value="credits">Credits</SelectItem>
+              </SelectContent>
+            </Select>
 
-          {/* Desktop: Full tabs list */}
-          <TabsList className="hidden lg:inline-flex">
-            <TabsTrigger value="unfulfilled">Unfulfilled</TabsTrigger>
-            <TabsTrigger value="shipments">Shipments</TabsTrigger>
-            <TabsTrigger value="additional-services">Additional Services</TabsTrigger>
-            <TabsTrigger value="returns">Returns</TabsTrigger>
-            <TabsTrigger value="receiving">Receiving</TabsTrigger>
-            <TabsTrigger value="storage">Storage</TabsTrigger>
-            <TabsTrigger value="credits">Credits</TabsTrigger>
-          </TabsList>
+            {/* Desktop: Full-width tabs grid (matches Analytics page styling) */}
+            <TabsList className="hidden lg:grid w-full grid-cols-7 h-auto gap-1 bg-zinc-100 border border-zinc-200/60 dark:bg-zinc-800 dark:border-zinc-700/60">
+              <TabsTrigger value="unfulfilled" className="text-xs sm:text-sm">Unfulfilled</TabsTrigger>
+              <TabsTrigger value="shipments" className="text-xs sm:text-sm">Shipments</TabsTrigger>
+              <TabsTrigger value="additional-services" className="text-xs sm:text-sm">Additional Services</TabsTrigger>
+              <TabsTrigger value="returns" className="text-xs sm:text-sm">Returns</TabsTrigger>
+              <TabsTrigger value="receiving" className="text-xs sm:text-sm">Receiving</TabsTrigger>
+              <TabsTrigger value="storage" className="text-xs sm:text-sm">Storage</TabsTrigger>
+              <TabsTrigger value="credits" className="text-xs sm:text-sm">Credits</TabsTrigger>
+            </TabsList>
+          </div>
 
-          {/* Action buttons - Always visible, search shrinks to fit */}
-          <div className="flex items-center gap-1.5 md:gap-2">
-            {/* Mobile search - Expands inline when clicked */}
-            {!searchExpanded && (
+          {/* Row 2: Search + Date Range (left) | Filters button + Export + Columns (right) */}
+          <div className="flex items-center justify-between gap-4">
+            {/* LEFT SIDE: Search + Date Range (date range hidden on small screens) */}
+            <div className="flex items-center gap-3">
+              <div className="relative w-48 2xl:w-64">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search..."
+                  value={searchInput}
+                  onChange={(e) => {
+                    setSearchInput(e.target.value)
+                    debouncedSearch(e.target.value)
+                  }}
+                  className="h-[30px] pl-9 text-sm bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
+                />
+                {searchInput && (
+                  <button
+                    onClick={() => {
+                      setSearchInput("")
+                      setSearchQuery("")
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <XIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Date Range Presets - visible on xl screens, hidden on smaller (not for storage tab) */}
+              {currentTab !== "storage" && (
+                <div className="hidden xl:inline-flex rounded-md border border-border overflow-hidden">
+                  {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => handleGenericDatePresetChange(option.value)}
+                      className={cn(
+                        "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
+                        currentTabDateState.preset === option.value
+                          ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                          : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                  <Popover
+                    open={isCustomRangeOpen}
+                    onOpenChange={(open) => {
+                      if (open) {
+                        setIsCustomRangeOpen(true)
+                        // Reset selection state when opening - always start fresh
+                        setIsAwaitingEndDate(false)
+                      }
+                    }}
+                    modal={false}
+                  >
+                    <PopoverTrigger asChild>
+                      <button
+                        className={cn(
+                          "px-2.5 py-1 text-sm font-medium transition-all",
+                          currentTabDateState.preset === 'custom'
+                            ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                            : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
+                        )}
+                      >
+                        {currentTabDateState.preset === 'custom' ? currentCustomRangeLabel : 'Custom'}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-auto p-3"
+                      align="start"
+                      onInteractOutside={(e) => e.preventDefault()}
+                      onPointerDownOutside={(e) => e.preventDefault()}
+                      onFocusOutside={(e) => e.preventDefault()}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">Select Date Range</span>
+                        </div>
+                        {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
+                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                            <div className="flex-1 text-xs">
+                              <span className="text-muted-foreground">From: </span>
+                              <span className="font-medium">
+                                {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
+                              </span>
+                            </div>
+                            <div className="flex-1 text-xs">
+                              <span className="text-muted-foreground">To: </span>
+                              <span className="font-medium">
+                                {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                currentTabDateState.setDateRange(undefined)
+                                currentTabDateState.setPreset(undefined)
+                                setIsCustomRangeOpen(false)
+                                setIsAwaitingEndDate(false)
+                              }}
+                              className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        )}
+                        <div className="text-[11px] text-muted-foreground px-1">
+                          {isAwaitingEndDate
+                            ? "Click a date to select end date"
+                            : "Click a date to select start date"}
+                        </div>
+                        <Calendar
+                          mode="range"
+                          selected={{
+                            from: currentTabDateState.dateRange?.from,
+                            to: currentTabDateState.dateRange?.to,
+                          }}
+                          onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
+                          numberOfMonths={2}
+                        />
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
+
+              {/* Jetpack Loading Indicator - shows when data is loading */}
+              {((currentTab === "unfulfilled" && isUnfulfilledLoading) || (currentTab === "shipments" && isShipmentsLoading)) && (
+                <div className="flex items-center gap-1.5">
+                  <JetpackLoader size="md" />
+                  <span className="text-xs text-muted-foreground">Loading</span>
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT SIDE: Filters toggle + Export + Columns */}
+            <div className="flex items-center gap-2">
+              {/* Filters button with badge - for all tabs */}
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setSearchExpanded(true)}
-                className="flex-shrink-0 md:hidden"
+                onClick={() => setFiltersExpanded(!filtersExpanded)}
+                className={cn(
+                  "h-[30px] flex-shrink-0 gap-1.5",
+                  filtersExpanded && "bg-accent text-accent-foreground"
+                )}
               >
-                <SearchIcon className="h-4 w-4" />
+                <FilterIcon className="h-4 w-4" />
+                <span className="hidden lg:inline">Filters</span>
+                {currentTabFilters.hasFilters && (
+                  <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-medium rounded-full bg-muted text-muted-foreground">
+                    {currentTabFilters.filterCount}
+                  </span>
+                )}
+                {filtersExpanded ? (
+                  <ChevronUpIcon className="h-3.5 w-3.5 ml-0.5" />
+                ) : (
+                  <ChevronDownIcon className="h-3.5 w-3.5 ml-0.5" />
+                )}
               </Button>
-            )}
 
-            {searchExpanded && (
-              <div className="flex flex-1 items-center gap-1.5 md:hidden">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSearchExpanded(false)}
-                  className="flex-shrink-0"
-                >
-                  <ChevronLeftIcon className="h-4 w-4" />
-                </Button>
-                <div className="relative flex-1">
-                  <SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search..."
-                    className="h-9 w-full pl-8"
-                    autoFocus
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Search input (tablet+) - Visible from md breakpoint */}
-            <div className="relative hidden flex-shrink-0 md:block">
-              <SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                className="h-9 w-[140px] pl-8 lg:w-[160px] xl:w-[180px]"
-              />
-            </div>
-
-            {/* Hide other buttons when search is expanded on mobile */}
-            {!searchExpanded && (
-              <>
-                {/* Filters button - Always visible, icon-only on small screens */}
+              {/* Export */}
+              {showExport && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setFiltersSheetOpen(true)}
-                  className="flex-shrink-0"
+                  onClick={() => setExportSheetOpen(true)}
+                  className="h-[30px] flex-shrink-0"
                 >
-                  <FilterIcon className="h-4 w-4" />
-                  <span className="ml-2 hidden 2xl:inline">Filters</span>
+                  <DownloadIcon className="h-4 w-4" />
+                  <span className="ml-2 hidden lg:inline">Export</span>
                 </Button>
+              )}
 
-                {/* Export - Always visible, icon-only on small screens */}
-                {showExport && (
+              {/* Columns - show for shipments and unfulfilled tabs */}
+              {(currentTab === "shipments" || currentTab === "unfulfilled") && currentTableConfig && (() => {
+                // Maximum columns allowed to prevent horizontal scrolling
+                const MAX_VISIBLE_COLUMNS = 12
+
+                // Count currently enabled columns
+                const enabledColumnCount = currentTableConfig.columns.filter(
+                  col => currentColumnVisibility[col.id] ?? col.defaultVisible !== false
+                ).length
+
+                const isAtLimit = enabledColumnCount >= MAX_VISIBLE_COLUMNS
+
+                return (
+                  <div className="flex items-center gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center">
+                          <ColumnsIcon className="h-4 w-4" />
+                          <span className="ml-[3px] text-xs text-muted-foreground hidden lg:inline leading-none">
+                            ({enabledColumnCount}/{MAX_VISIBLE_COLUMNS})
+                          </span>
+                          <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        {/* Column limit message with Reset link */}
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground border-b mb-1 flex items-center justify-between">
+                          <span>
+                            {enabledColumnCount} of {MAX_VISIBLE_COLUMNS} columns
+                            {isAtLimit && <span className="text-amber-600 dark:text-amber-400 ml-1">(max)</span>}
+                          </span>
+                          {hasColumnCustomizations && (
+                            <button
+                              onClick={resetCurrentColumns}
+                              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                        {currentTableConfig.columns.map((column) => {
+                          const isChecked = currentColumnVisibility[column.id] ?? column.defaultVisible !== false
+                          // Disable unchecked columns if at limit
+                          const isDisabled = !isChecked && isAtLimit
+
+                          return (
+                            <DropdownMenuCheckboxItem
+                              key={column.id}
+                              className={cn("capitalize", isDisabled && "opacity-50 cursor-not-allowed")}
+                              checked={isChecked}
+                              disabled={isDisabled}
+                              onCheckedChange={(value) =>
+                                setCurrentColumnVisibility((prev) => ({
+                                  ...prev,
+                                  [column.id]: !!value,
+                                }))
+                              }
+                            >
+                              {column.header}
+                            </DropdownMenuCheckboxItem>
+                          )
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+
+          {/* Row 3: Expandable Filter Bar (for all tabs) */}
+          {filtersExpanded && (
+            <div className="flex items-center justify-between gap-4 border-t border-border/50 mt-4 pt-4 animate-in slide-in-from-top-2 duration-200">
+              {/* LEFT SIDE: Date Range Presets - only visible on small screens (hidden on xl where it shows in Row 2) */}
+              {currentTab !== "storage" && (
+                <div className="flex xl:hidden items-center gap-3">
+                  <div className="inline-flex rounded-md border border-border overflow-hidden">
+                    {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => handleGenericDatePresetChange(option.value)}
+                        className={cn(
+                          "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
+                          currentTabDateState.preset === option.value
+                            ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                            : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                    <Popover
+                      open={isCustomRangeOpen}
+                      onOpenChange={(open) => {
+                        if (open) {
+                          setIsCustomRangeOpen(true)
+                          setIsAwaitingEndDate(false)
+                        }
+                      }}
+                      modal={false}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          className={cn(
+                            "px-2.5 py-1 text-sm font-medium transition-all",
+                            currentTabDateState.preset === 'custom'
+                              ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                              : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
+                          )}
+                        >
+                          {currentTabDateState.preset === 'custom' ? currentCustomRangeLabel : 'Custom'}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        className="w-auto p-3"
+                        align="start"
+                        onInteractOutside={(e) => e.preventDefault()}
+                        onPointerDownOutside={(e) => e.preventDefault()}
+                        onFocusOutside={(e) => e.preventDefault()}
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">Select Date Range</span>
+                          </div>
+                          {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
+                            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                              <div className="flex-1 text-xs">
+                                <span className="text-muted-foreground">From: </span>
+                                <span className="font-medium">
+                                  {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
+                                </span>
+                              </div>
+                              <div className="flex-1 text-xs">
+                                <span className="text-muted-foreground">To: </span>
+                                <span className="font-medium">
+                                  {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  currentTabDateState.setDateRange(undefined)
+                                  currentTabDateState.setPreset(undefined)
+                                  setIsCustomRangeOpen(false)
+                                  setIsAwaitingEndDate(false)
+                                }}
+                                className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                          )}
+                          <div className="text-[11px] text-muted-foreground px-1">
+                            {isAwaitingEndDate
+                              ? "Click a date to select end date"
+                              : "Click a date to select start date"}
+                          </div>
+                          <Calendar
+                            mode="range"
+                            selected={{
+                              from: currentTabDateState.dateRange?.from,
+                              to: currentTabDateState.dateRange?.to,
+                            }}
+                            onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
+                            numberOfMonths={2}
+                          />
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+              )}
+
+              {/* Clear + Filter Dropdowns - right-aligned (ml-auto pushes to right on xl when date range is hidden) */}
+              <div className={cn("flex items-center gap-2", currentTab === "storage" ? "" : "xl:ml-auto")}>
+                {/* Clear Filters - show first, only when filters are active */}
+                {currentTabFilters.hasFilters && (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => setExportSheetOpen(true)}
-                    className="flex-shrink-0"
+                    onClick={currentTabFilters.clear}
+                    className="h-[30px] px-2 gap-1 text-muted-foreground hover:text-foreground"
                   >
-                    <DownloadIcon className="h-4 w-4" />
-                    <span className="ml-2 hidden 2xl:inline">Export</span>
+                    <XIcon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Clear</span>
                   </Button>
                 )}
 
-                {/* Columns - Always visible, icon-only on small screens */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="flex-shrink-0">
-                      <ColumnsIcon className="h-4 w-4" />
-                      <span className="ml-2 hidden 2xl:inline">Columns</span>
-                      <ChevronDownIcon className="h-4 w-4 2xl:ml-2" />
-                    </Button>
-                  </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {/* Currently showing shipments columns only */}
-              {shipmentsTable
-                .getAllColumns()
-                .filter(
-                  (column) =>
-                    typeof column.accessorFn !== "undefined" &&
-                    column.getCanHide()
-                )
-                .map((column) => {
-                  return (
-                    <DropdownMenuCheckboxItem
-                      key={column.id}
-                      className="capitalize"
-                      checked={column.getIsVisible()}
-                      onCheckedChange={(value) =>
-                        column.toggleVisibility(!!value)
-                      }
-                    >
-                      {column.id}
-                    </DropdownMenuCheckboxItem>
-                  )
-                })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-              </>
-            )}
-          </div>
+                {/* UNFULFILLED TAB FILTERS - Multi-select dropdowns */}
+                {currentTab === "unfulfilled" && (
+                  <>
+                    <MultiSelectFilter
+                      options={UNFULFILLED_STATUS_OPTIONS}
+                      selected={unfulfilledStatusFilter}
+                      onSelectionChange={setUnfulfilledStatusFilter}
+                      placeholder="Status"
+                      className="w-[130px]"
+                    />
+                    <MultiSelectFilter
+                      options={UNFULFILLED_AGE_OPTIONS}
+                      selected={unfulfilledAgeFilter}
+                      onSelectionChange={setUnfulfilledAgeFilter}
+                      placeholder="Age"
+                      className="w-[110px]"
+                    />
+                    <MultiSelectFilter
+                      options={TYPE_OPTIONS}
+                      selected={unfulfilledTypeFilter}
+                      onSelectionChange={setUnfulfilledTypeFilter}
+                      placeholder="Type"
+                      className="w-[100px]"
+                    />
+                    <MultiSelectFilter
+                      options={availableChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
+                      selected={unfulfilledChannelFilter}
+                      onSelectionChange={setUnfulfilledChannelFilter}
+                      placeholder="Channel"
+                      className="w-[130px]"
+                    />
+                  </>
+                )}
+
+                {/* SHIPMENTS TAB FILTERS - Multi-select dropdowns matching Unfulfilled tab */}
+                {currentTab === "shipments" && (
+                  <>
+                    <MultiSelectFilter
+                      options={SHIPMENTS_STATUS_OPTIONS}
+                      selected={shipmentsStatusFilter}
+                      onSelectionChange={setShipmentsStatusFilter}
+                      placeholder="Status"
+                      className="w-[130px]"
+                    />
+                    <MultiSelectFilter
+                      options={UNFULFILLED_AGE_OPTIONS}
+                      selected={shipmentsAgeFilter}
+                      onSelectionChange={setShipmentsAgeFilter}
+                      placeholder="Age"
+                      className="w-[110px]"
+                    />
+                    <MultiSelectFilter
+                      options={TYPE_OPTIONS}
+                      selected={shipmentsTypeFilter}
+                      onSelectionChange={setShipmentsTypeFilter}
+                      placeholder="Type"
+                      className="w-[100px]"
+                    />
+                    <MultiSelectFilter
+                      options={shipmentsChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
+                      selected={shipmentsChannelFilter}
+                      onSelectionChange={setShipmentsChannelFilter}
+                      placeholder="Channel"
+                      className="w-[130px]"
+                    />
+                    <MultiSelectFilter
+                      options={shipmentsCarriers.map(c => ({ value: c, label: getCarrierDisplayName(c) }))}
+                      selected={shipmentsCarrierFilter}
+                      onSelectionChange={setShipmentsCarrierFilter}
+                      placeholder="Carrier"
+                      className="w-[130px]"
+                    />
+                  </>
+                )}
+
+                {/* ADDITIONAL SERVICES TAB FILTERS */}
+                {currentTab === "additional-services" && (
+                  <>
+                    <Select value={additionalServicesTypeFilter} onValueChange={setAdditionalServicesTypeFilter}>
+                      <SelectTrigger className="h-[30px] w-[140px] text-sm">
+                        <SelectValue placeholder="Service Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All types</SelectItem>
+                        {ADDITIONAL_SERVICES_TYPE_OPTIONS.map((type) => (
+                          <SelectItem key={type} value={type}>{type}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={additionalServicesStatusFilter} onValueChange={setAdditionalServicesStatusFilter}>
+                      <SelectTrigger className="h-[30px] w-[130px] text-sm">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {ADDITIONAL_SERVICES_STATUS_OPTIONS.map((status) => (
+                          <SelectItem key={status} value={status}>{status}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+
+                {/* RETURNS TAB FILTERS */}
+                {currentTab === "returns" && (
+                  <>
+                    <Select value={returnsStatusFilter} onValueChange={setReturnsStatusFilter}>
+                      <SelectTrigger className="h-[30px] w-[130px] text-sm">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {RETURNS_STATUS_OPTIONS.map((status) => (
+                          <SelectItem key={status} value={status}>{status}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={returnsReasonFilter} onValueChange={setReturnsReasonFilter}>
+                      <SelectTrigger className="h-[30px] w-[150px] text-sm">
+                        <SelectValue placeholder="Reason" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All reasons</SelectItem>
+                        {RETURNS_REASON_OPTIONS.map((reason) => (
+                          <SelectItem key={reason} value={reason}>{reason}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+
+                {/* RECEIVING TAB FILTERS */}
+                {currentTab === "receiving" && (
+                  <Select value={receivingFeeTypeFilter} onValueChange={setReceivingFeeTypeFilter}>
+                    <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                      <SelectValue placeholder="Fee Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All fee types</SelectItem>
+                      {RECEIVING_FEE_TYPE_OPTIONS.map((type) => (
+                        <SelectItem key={type} value={type}>{type}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* STORAGE TAB FILTERS */}
+                {currentTab === "storage" && (
+                  <Select value={storageLocationFilter} onValueChange={setStorageLocationFilter}>
+                    <SelectTrigger className="h-[30px] w-[140px] text-sm">
+                      <SelectValue placeholder="Location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All locations</SelectItem>
+                      {STORAGE_LOCATION_OPTIONS.map((loc) => (
+                        <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* CREDITS TAB FILTERS */}
+                {currentTab === "credits" && (
+                  <>
+                    <Select value={creditsStatusFilter} onValueChange={setCreditsStatusFilter}>
+                      <SelectTrigger className="h-[30px] w-[120px] text-sm">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {CREDITS_STATUS_OPTIONS.map((status) => (
+                          <SelectItem key={status} value={status}>{status}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={creditsReasonFilter} onValueChange={setCreditsReasonFilter}>
+                      <SelectTrigger className="h-[30px] w-[140px] text-sm">
+                        <SelectValue placeholder="Reason" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All reasons</SelectItem>
+                        {CREDITS_REASON_OPTIONS.map((reason) => (
+                          <SelectItem key={reason} value={reason}>{reason}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       {/* ============================================================================ */}
       {/* UNFULFILLED TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="unfulfilled"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        {clientId && <UnfulfilledTable clientId={clientId} />}
+        {clientId && (
+          <UnfulfilledTable
+            clientId={clientId}
+            statusFilter={debouncedUnfulfilledFilters.statusFilter}
+            ageFilter={debouncedUnfulfilledFilters.ageFilter}
+            typeFilter={debouncedUnfulfilledFilters.typeFilter}
+            channelFilter={debouncedUnfulfilledFilters.channelFilter}
+            dateRange={debouncedUnfulfilledFilters.dateRange}
+            searchQuery={searchQuery}
+            onChannelsChange={setAvailableChannels}
+            onLoadingChange={setIsUnfulfilledLoading}
+            userColumnVisibility={unfulfilledColumnVisibility}
+            // Pre-fetched data for instant initial render
+            initialData={unfulfilledData}
+            initialTotalCount={unfulfilledTotalCount}
+          />
+        )}
       </TabsContent>
       {/* ============================================================================ */}
       {/* SHIPMENTS TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="shipments"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer
-          table={shipmentsTable}
-          columns={shipmentsColumns}
-          serverPagination={serverPagination}
-          totalCount={totalCount}
-          isPageLoading={isPageLoading}
-        />
+        {clientId && (
+          <ShipmentsTable
+            clientId={clientId}
+            userColumnVisibility={shipmentsColumnVisibility}
+            statusFilter={debouncedShipmentsFilters.statusFilter}
+            ageFilter={debouncedShipmentsFilters.ageFilter}
+            typeFilter={debouncedShipmentsFilters.typeFilter}
+            channelFilter={debouncedShipmentsFilters.channelFilter}
+            carrierFilter={debouncedShipmentsFilters.carrierFilter}
+            dateRange={debouncedShipmentsFilters.dateRange}
+            searchQuery={searchQuery}
+            onChannelsChange={setShipmentsChannels}
+            onCarriersChange={setShipmentsCarriers}
+            onLoadingChange={setIsShipmentsLoading}
+            // Pre-fetched data for instant initial render
+            initialData={prefetchedShipmentsData}
+            initialTotalCount={prefetchedShipmentsTotalCount}
+          />
+        )}
       </TabsContent>
       {/* ============================================================================ */}
       {/* ADDITIONAL SERVICES TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="additional-services"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer table={additionalServicesTable} columns={additionalServicesColumns} />
+        <AdditionalServicesTable
+          clientId={clientId}
+          dateRange={additionalServicesDateRange}
+          userColumnVisibility={columnVisibility}
+        />
       </TabsContent>
       {/* ============================================================================ */}
       {/* RETURNS TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="returns"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer table={returnsTable} columns={returnsColumns} />
+        <ReturnsTable
+          clientId={clientId}
+          dateRange={returnsDateRange}
+          userColumnVisibility={columnVisibility}
+        />
       </TabsContent>
       {/* ============================================================================ */}
       {/* RECEIVING TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="receiving"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer table={receivingTable} columns={receivingColumns} />
+        <ReceivingTable
+          clientId={clientId}
+          dateRange={receivingDateRange}
+          userColumnVisibility={columnVisibility}
+        />
       </TabsContent>
       {/* ============================================================================ */}
       {/* STORAGE TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="storage"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer table={storageTable} columns={storageColumns} />
+        <StorageTable
+          clientId={clientId}
+          userColumnVisibility={columnVisibility}
+        />
       </TabsContent>
       {/* ============================================================================ */}
       {/* CREDITS TAB */}
       {/* ============================================================================ */}
       <TabsContent
         value="credits"
-        className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6 data-[state=inactive]:hidden"
+        className="relative flex flex-col flex-1 min-h-0 mt-0 data-[state=inactive]:hidden"
       >
-        <TableRenderer table={creditsTable} columns={creditsColumns} />
+        <CreditsTable
+          clientId={clientId}
+          dateRange={creditsDateRange}
+          userColumnVisibility={columnVisibility}
+        />
       </TabsContent>
     </Tabs>
 

@@ -1,0 +1,272 @@
+{
+  "Credits": [
+    {
+      "invoice_id": 8595619,
+      "invoice_date": "2025-11-24",
+      "invoice_type": "Credits",
+      "amount": -200,
+      "currency_code": "USD",
+      "running_balance": 14020.69
+    },
+    {
+      "invoice_id": 8564622,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "Credits",
+      "amount": -297.38,
+      "currency_code": "USD",
+      "running_balance": 15264.17
+    },
+    {
+      "invoice_id": 8527465,
+      "invoice_date": "2025-11-10",
+      "invoice_type": "Credits",
+      "amount": -570.45,
+      "currency_code": "USD",
+      "running_balance": 25621.33
+    },
+    {
+      "invoice_id": 8498736,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "Credits",
+      "amount": -569.9,
+      "currency_code": "USD",
+      "running_balance": 28736.31
+    },
+    {
+      "invoice_id": 8462077,
+      "invoice_date": "2025-10-27",
+      "invoice_type": "Credits",
+      "amount": -986.38,
+      "currency_code": "USD",
+      "running_balance": 26139.13
+    }
+  ],
+  "ReturnsFee": [
+    {
+      "invoice_id": 8595616,
+      "invoice_date": "2025-11-24",
+      "invoice_type": "ReturnsFee",
+      "amount": 27.61,
+      "currency_code": "USD",
+      "running_balance": 14220.69
+    },
+    {
+      "invoice_id": 8564614,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "ReturnsFee",
+      "amount": 62.15,
+      "currency_code": "USD",
+      "running_balance": 15561.55
+    },
+    {
+      "invoice_id": 8527461,
+      "invoice_date": "2025-11-10",
+      "invoice_type": "ReturnsFee",
+      "amount": 44.8,
+      "currency_code": "USD",
+      "running_balance": 26191.78
+    },
+    {
+      "invoice_id": 8498735,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "ReturnsFee",
+      "amount": 19.28,
+      "currency_code": "USD",
+      "running_balance": 29306.21
+    },
+    {
+      "invoice_id": 8462075,
+      "invoice_date": "2025-10-27",
+      "invoice_type": "ReturnsFee",
+      "amount": 18.56,
+      "currency_code": "USD",
+      "running_balance": 27125.51
+    }
+  ],
+  "AdditionalFee": [
+    {
+      "invoice_id": 8595606,
+      "invoice_date": "2025-11-24",
+      "invoice_type": "AdditionalFee",
+      "amount": 1006.04,
+      "currency_code": "USD",
+      "running_balance": 14193.08
+    },
+    {
+      "invoice_id": 8564605,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "AdditionalFee",
+      "amount": 1172.32,
+      "currency_code": "USD",
+      "running_balance": 15499.4
+    },
+    {
+      "invoice_id": 8527457,
+      "invoice_date": "2025-11-10",
+      "invoice_type": "AdditionalFee",
+      "amount": 668.55,
+      "currency_code": "USD",
+      "running_balance": 26146.98
+    },
+    {
+      "invoice_id": 8498734,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "AdditionalFee",
+      "amount": 1164.46,
+      "currency_code": "USD",
+      "running_balance": 29286.93
+    },
+    {
+      "invoice_id": 8462072,
+      "invoice_date": "2025-10-27",
+      "invoice_type": "AdditionalFee",
+      "amount": 1257.31,
+      "currency_code": "USD",
+      "running_balance": 27106.95
+    }
+  ],
+  "WarehouseInboundFee": [
+    {
+      "invoice_id": 8595600,
+      "invoice_date": "2025-11-24",
+      "invoice_type": "WarehouseInboundFee",
+      "amount": 183.75,
+      "currency_code": "USD",
+      "running_balance": 13187.04
+    },
+    {
+      "invoice_id": 8564600,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "WarehouseInboundFee",
+      "amount": 35,
+      "currency_code": "USD",
+      "running_balance": 14327.08
+    },
+    {
+      "invoice_id": 8527451,
+      "invoice_date": "2025-11-10",
+      "invoice_type": "WarehouseInboundFee",
+      "amount": 35,
+      "currency_code": "USD",
+      "running_balance": 25478.43
+    },
+    {
+      "invoice_id": 8498733,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "WarehouseInboundFee",
+      "amount": 70,
+      "currency_code": "USD",
+      "running_balance": 28122.47
+    },
+    {
+      "invoice_id": 8462067,
+      "invoice_date": "2025-10-27",
+      "invoice_type": "WarehouseInboundFee",
+      "amount": 35,
+      "currency_code": "USD",
+      "running_balance": 25849.64
+    }
+  ],
+  "Shipping": [
+    {
+      "invoice_id": 8595597,
+      "invoice_date": "2025-11-24",
+      "invoice_type": "Shipping",
+      "amount": 13003.29,
+      "currency_code": "USD",
+      "running_balance": 13003.29
+    },
+    {
+      "invoice_id": 8564590,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "Shipping",
+      "amount": 13429.47,
+      "currency_code": "USD",
+      "running_balance": 13429.47
+    },
+    {
+      "invoice_id": 8527436,
+      "invoice_date": "2025-11-10",
+      "invoice_type": "Shipping",
+      "amount": 10797.22,
+      "currency_code": "USD",
+      "running_balance": 25443.43
+    },
+    {
+      "invoice_id": 8498730,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "Shipping",
+      "amount": 11386.8,
+      "currency_code": "USD",
+      "running_balance": 25476.9
+    },
+    {
+      "invoice_id": 8462059,
+      "invoice_date": "2025-10-27",
+      "invoice_type": "Shipping",
+      "amount": 13765.61,
+      "currency_code": "USD",
+      "running_balance": 25814.64
+    }
+  ],
+  "Payment": [
+    {
+      "invoice_id": 8581446,
+      "invoice_date": "2025-11-20",
+      "invoice_type": "Payment",
+      "amount": -15264.17,
+      "currency_code": "USD",
+      "running_balance": 0
+    },
+    {
+      "invoice_id": 8544550,
+      "invoice_date": "2025-11-13",
+      "invoice_type": "Payment",
+      "amount": -10975.12,
+      "currency_code": "USD",
+      "running_balance": 0
+    },
+    {
+      "invoice_id": 8540077,
+      "invoice_date": "2025-11-12",
+      "invoice_type": "Payment",
+      "amount": -14646.21,
+      "currency_code": "USD",
+      "running_balance": 10975.12
+    },
+    {
+      "invoice_id": 8520687,
+      "invoice_date": "2025-11-07",
+      "invoice_type": "Payment",
+      "amount": -14090.1,
+      "currency_code": "USD",
+      "running_balance": 14646.21
+    },
+    {
+      "invoice_id": 8470993,
+      "invoice_date": "2025-10-28",
+      "invoice_type": "Payment",
+      "amount": -12049.03,
+      "currency_code": "USD",
+      "running_balance": 14090.1
+    }
+  ],
+  "WarehouseStorage": [
+    {
+      "invoice_id": 8564594,
+      "invoice_date": "2025-11-17",
+      "invoice_type": "WarehouseStorage",
+      "amount": 862.61,
+      "currency_code": "USD",
+      "running_balance": 14292.08
+    },
+    {
+      "invoice_id": 8498732,
+      "invoice_date": "2025-11-03",
+      "invoice_type": "WarehouseStorage",
+      "amount": 2575.57,
+      "currency_code": "USD",
+      "running_balance": 28052.47
+    }
+  ]
+}

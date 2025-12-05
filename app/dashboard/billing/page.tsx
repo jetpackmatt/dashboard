@@ -2,17 +2,14 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { motion } from "framer-motion"
 import {
   CreditCardIcon,
   BuildingIcon,
   AlertCircleIcon,
   CheckCircle2Icon,
   PencilIcon,
-  DollarSignIcon,
   TrendingDownIcon,
   CalendarIcon,
-  DownloadIcon,
   FileTextIcon,
   BanknoteIcon,
   ShieldCheckIcon,
@@ -26,7 +23,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -72,20 +68,6 @@ interface BillingDetails {
 export default function BillingPage() {
   const router = useRouter()
 
-  // Navigation state
-  const [fromDashboard] = React.useState(() => {
-    if (typeof window !== "undefined") {
-      const navigationFlag = sessionStorage.getItem('navigatingFromDashboard')
-      if (navigationFlag === 'true') {
-        sessionStorage.removeItem('navigatingFromDashboard')
-        return true
-      }
-    }
-    return false
-  })
-
-  const [isNavigatingBack, setIsNavigatingBack] = React.useState(false)
-
   // Payment method state
   const [ccBillingEnabled, setCcBillingEnabled] = React.useState(false)
   const [showStripeSetup, setShowStripeSetup] = React.useState(false)
@@ -108,27 +90,6 @@ export default function BillingPage() {
   const unpaidInvoices = invoicesData.filter(inv => inv.status === "Unpaid")
   const outstandingBalance = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0)
   const recentInvoices = invoicesData.slice(0, 5)
-
-  // Intercept clicks back to Dashboard
-  React.useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      const link = target.closest('a[href="/dashboard"]')
-
-      if (link) {
-        e.preventDefault()
-        setIsNavigatingBack(true)
-        sessionStorage.setItem('navigatingFromBilling', 'true')
-
-        setTimeout(() => {
-          router.push("/dashboard")
-        }, 400)
-      }
-    }
-
-    document.addEventListener("click", handleClick, true)
-    return () => document.removeEventListener("click", handleClick, true)
-  }, [router])
 
   const handleCcToggle = (enabled: boolean) => {
     if (enabled && !stripeSetupComplete) {
@@ -162,17 +123,7 @@ export default function BillingPage() {
   return (
     <>
       <SiteHeader sectionName="Billing" />
-      <motion.div
-        initial={fromDashboard ? { y: 700 } : false}
-        animate={{ y: isNavigatingBack ? 700 : 0 }}
-        transition={{
-          type: "spring",
-          stiffness: 100,
-          damping: 20,
-          mass: 0.8,
-        }}
-        className="flex flex-1 flex-col overflow-x-hidden"
-      >
+      <div className="flex flex-1 flex-col overflow-x-hidden">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
           <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full px-4 lg:px-6">
             {/* Description Text */}
@@ -538,7 +489,7 @@ export default function BillingPage() {
             </Card>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* Stripe Setup Dialog */}
       <Dialog open={showStripeSetup} onOpenChange={setShowStripeSetup}>

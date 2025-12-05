@@ -3,9 +3,8 @@
 export const dynamic = 'force-dynamic'
 
 import * as React from "react"
-import { startTransition } from "react"
+import { useDeferredValue } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { motion } from "framer-motion"
 import { format } from "date-fns"
 import {
   CalendarIcon,
@@ -32,14 +31,11 @@ import {
 } from "recharts"
 
 import { SiteHeader } from "@/components/site-header"
-import { KPICard } from "@/components/analytics/kpi-card"
 import { USStateMap } from "@/components/analytics/us-state-map"
 import { StateDetailsPanel } from "@/components/analytics/state-details-panel"
-import { StateVolumeHeatMap } from "@/components/analytics/state-volume-heat-map"
 import { StateVolumeDetailsPanel } from "@/components/analytics/state-volume-details-panel"
 import { NationalVolumeOverviewPanel } from "@/components/analytics/national-volume-overview-panel"
 import { NationalPerformanceOverviewPanel } from "@/components/analytics/national-performance-overview-panel"
-import { ZipCodeHeatMap } from "@/components/analytics/zip-code-heat-map"
 import { LayeredVolumeHeatMap } from "@/components/analytics/layered-volume-heat-map"
 import { CostSpeedStateMap } from "@/components/analytics/cost-speed-state-map"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -50,7 +46,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
-  ChartConfig,
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
@@ -78,7 +73,6 @@ import {
   aggregateStateVolume,
   aggregateCityVolumeByState,
   aggregateCityVolume,
-  aggregateZipCodeVolume,
   aggregateStateCostSpeed,
   aggregateCostByZone,
   // Billing aggregators
@@ -100,13 +94,6 @@ import {
 import type { DateRangePreset, StateVolumeData, CityVolumeData, ZipCodeVolumeData } from "@/lib/analytics/types"
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
 
-// Helper to ensure browser has painted before running heavy computation
-// Double rAF guarantees the loading indicator is visible and animating
-const afterPaint = (callback: () => void) => {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(callback)
-  })
-}
 
 export default function AnalyticsPage() {
   const router = useRouter()
@@ -118,18 +105,6 @@ export default function AnalyticsPage() {
     setIsMounted(true)
   }, [])
 
-  const [fromDashboard] = React.useState(() => {
-    if (typeof window !== "undefined") {
-      const navigationFlag = sessionStorage.getItem('navigatingFromDashboard')
-      if (navigationFlag === 'true') {
-        sessionStorage.removeItem('navigatingFromDashboard')
-        return true
-      }
-    }
-    return false
-  })
-
-  const [isNavigatingBack, setIsNavigatingBack] = React.useState(false)
 
   // Initialize active tab from URL or default to 'state-performance'
   const [activeTab, setActiveTab] = React.useState(() => {
@@ -137,49 +112,50 @@ export default function AnalyticsPage() {
   })
 
   const [dateRange, setDateRange] = React.useState<DateRangePreset>('30d')
+  // Committed custom range - only updated when user completes a valid selection
   const [customDateRange, setCustomDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({
     from: undefined,
     to: undefined,
   })
+  // Picker range - temporary state for the calendar, always starts fresh when opening
+  const [pickerDateRange, setPickerDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({
+    from: undefined,
+    to: undefined,
+  })
   const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
-  const [showMobileCalendar, setShowMobileCalendar] = React.useState(false)
-  const [editingDateField, setEditingDateField] = React.useState<'from' | 'to' | null>(null)
+
+  // Deferred date values for heavy calculations - calendar updates instantly, charts update in background
+  const deferredDateRange = useDeferredValue(dateRange)
+  const deferredCustomDateRange = useDeferredValue(customDateRange)
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
   const [selectedVolumeState, setSelectedVolumeState] = React.useState<string | null>(null)
-  const [isDataLoading, setIsDataLoading] = React.useState(false)
 
   // SLA-specific filters
   const [selectedFulfillmentCenters, setSelectedFulfillmentCenters] = React.useState<string[]>([])
   const [selectedOrderTypes, setSelectedOrderTypes] = React.useState<string[]>([])
   const [selectedOrderFulfilled, setSelectedOrderFulfilled] = React.useState<string[]>([])
 
-  // Track loading state when date range changes
-  React.useEffect(() => {
-    setIsDataLoading(true)
-    const timer = setTimeout(() => setIsDataLoading(false), 500)
-    return () => clearTimeout(timer)
-  }, [dateRange, customDateRange])
-
   // Calculate real KPI data from sample shipments
+  // Uses deferred values so calendar UI updates instantly while charts calculate in background
   const currentDateRange = React.useMemo(() => {
-    if (dateRange === 'custom' && customDateRange.from && customDateRange.to) {
+    if (deferredDateRange === 'custom' && deferredCustomDateRange.from && deferredCustomDateRange.to) {
       return {
-        from: customDateRange.from,
-        to: customDateRange.to,
+        from: deferredCustomDateRange.from,
+        to: deferredCustomDateRange.to,
         preset: 'custom' as DateRangePreset,
       }
     }
-    return getDateRangeFromPreset(dateRange)
-  }, [dateRange, customDateRange])
+    return getDateRangeFromPreset(deferredDateRange)
+  }, [deferredDateRange, deferredCustomDateRange])
   const previousDateRange = React.useMemo(() => {
     const daysMap: Record<string, number> = { '7d': 7, '30d': 30, '60d': 60, '90d': 90, '6mo': 182, '1yr': 365 }
-    const days = daysMap[dateRange] || 30
+    const days = daysMap[deferredDateRange] || 30
     const from = new Date(currentDateRange.from)
     from.setDate(from.getDate() - days)
     const to = new Date(currentDateRange.from)
     to.setDate(to.getDate() - 1)
-    return { from, to, preset: dateRange }
-  }, [currentDateRange, dateRange])
+    return { from, to, preset: deferredDateRange }
+  }, [currentDateRange, deferredDateRange])
 
   const kpiData = React.useMemo(() =>
     calculateKPIs(
@@ -533,19 +509,17 @@ export default function AnalyticsPage() {
     return labels[dateRange] || 'Last 30 Days'
   }, [dateRange, customDateRange])
 
-  // Handle custom range selection
+  // Handle custom range selection - picker state is separate from committed state
+  // Only commit to customDateRange and close when selection is complete
   const handleCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
-    setCustomDateRange(range)
-    if (range.from && range.to) {
-      setIsDataLoading(true)
-      // Close the popover when both dates are selected
+    // Update picker state for display
+    setPickerDateRange(range)
+
+    // If we have a complete range with both dates different, commit and close
+    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
+      setCustomDateRange(range)
+      setDateRange('custom' as DateRangePreset)
       setIsCustomRangeOpen(false)
-      // Defer the date change to allow loading indicator to render first
-      afterPaint(() => {
-        startTransition(() => {
-          setDateRange('custom' as DateRangePreset)
-        })
-      })
     }
   }
 
@@ -576,17 +550,7 @@ export default function AnalyticsPage() {
   return (
     <>
       <SiteHeader sectionName="Analytics" />
-      <motion.div
-        initial={fromDashboard ? { y: 700 } : false}
-        animate={{ y: isNavigatingBack ? 700 : 0 }}
-        transition={{
-          type: "spring",
-          stiffness: 100,
-          damping: 20,
-          mass: 0.8,
-        }}
-        className="flex flex-1 flex-col overflow-x-clip"
-      >
+      <div className="flex flex-1 flex-col overflow-x-clip">
         <div className="@container/main flex flex-1 flex-col w-full">
           <div className="flex flex-col gap-4 w-full px-4 lg:px-6">
             {/* Tabs for Different Reports */}
@@ -627,14 +591,9 @@ export default function AnalyticsPage() {
                         <button
                           key={option.value}
                           onClick={() => {
-                            setIsDataLoading(true)
-                            afterPaint(() => {
-                              startTransition(() => {
-                                setDateRange(option.value as any)
-                                setCustomDateRange({ from: undefined, to: undefined })
-                                setIsCustomRangeOpen(false)
-                              })
-                            })
+                            setDateRange(option.value as any)
+                            setCustomDateRange({ from: undefined, to: undefined })
+                            setIsCustomRangeOpen(false)
                           }}
                           className={cn(
                             "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
@@ -650,7 +609,12 @@ export default function AnalyticsPage() {
                         open={isCustomRangeOpen}
                         onOpenChange={(open) => {
                           if (open) {
+                            // Clear picker state when opening - always start fresh selection
+                            setPickerDateRange({ from: undefined, to: undefined })
                             setIsCustomRangeOpen(true)
+                          } else {
+                            // Closing without completing - just close (customDateRange unchanged)
+                            setIsCustomRangeOpen(false)
                           }
                         }}
                         modal={false}
@@ -678,30 +642,26 @@ export default function AnalyticsPage() {
                             <div className="flex items-center justify-between">
                               <span className="text-sm font-medium">Select Date Range</span>
                             </div>
-                            {(customDateRange.from || customDateRange.to) && (
+                            {(pickerDateRange.from || pickerDateRange.to) && (
                               <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
                                 <div className="flex-1 text-xs">
                                   <span className="text-muted-foreground">From: </span>
                                   <span className="font-medium">
-                                    {customDateRange.from ? format(customDateRange.from, 'MMM d, yyyy') : '—'}
+                                    {pickerDateRange.from ? format(pickerDateRange.from, 'MMM d, yyyy') : '—'}
                                   </span>
                                 </div>
                                 <div className="flex-1 text-xs">
                                   <span className="text-muted-foreground">To: </span>
                                   <span className="font-medium">
-                                    {customDateRange.to ? format(customDateRange.to, 'MMM d, yyyy') : '—'}
+                                    {pickerDateRange.to ? format(pickerDateRange.to, 'MMM d, yyyy') : '—'}
                                   </span>
                                 </div>
                                 <button
                                   onClick={() => {
-                                    setIsDataLoading(true)
-                                    afterPaint(() => {
-                                      startTransition(() => {
-                                        setCustomDateRange({ from: undefined, to: undefined })
-                                        setDateRange('30d')
-                                        setIsCustomRangeOpen(false)
-                                      })
-                                    })
+                                    setPickerDateRange({ from: undefined, to: undefined })
+                                    setCustomDateRange({ from: undefined, to: undefined })
+                                    setDateRange('30d')
+                                    setIsCustomRangeOpen(false)
                                   }}
                                   className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
                                 >
@@ -710,17 +670,15 @@ export default function AnalyticsPage() {
                               </div>
                             )}
                             <div className="text-[11px] text-muted-foreground px-1">
-                              {!customDateRange.from && !customDateRange.to
-                                ? "Click a date to select start date"
-                                : customDateRange.from && !customDateRange.to
+                              {pickerDateRange.from && !pickerDateRange.to
                                 ? "Click a date to select end date"
-                                : "Click start date again to change range"}
+                                : "Click a date to select start date"}
                             </div>
                             <Calendar
                               mode="range"
                               selected={{
-                                from: customDateRange.from,
-                                to: customDateRange.to,
+                                from: pickerDateRange.from,
+                                to: pickerDateRange.to,
                               }}
                               onSelect={(range) => handleCustomRangeSelect({ from: range?.from, to: range?.to })}
                               numberOfMonths={2}
@@ -731,14 +689,6 @@ export default function AnalyticsPage() {
                     </div>
                   </div>
 
-                  {/* Loading Indicator */}
-                  {isDataLoading && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground ml-1">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Refreshing Data</span>
-                    </div>
-                  )}
-
                   {/* Date Range Filter - Mobile/Tablet (dropdown) */}
                   <div className="lg:hidden">
                     <Button variant="outline" size="sm" className="h-8"
@@ -747,13 +697,8 @@ export default function AnalyticsPage() {
                         const presets = ['7d', '30d', '60d', '90d', '6mo', '1yr'] as const
                         const currentIndex = presets.indexOf(dateRange as any)
                         const nextIndex = (currentIndex + 1) % presets.length
-                        setIsDataLoading(true)
-                        afterPaint(() => {
-                          startTransition(() => {
-                            setDateRange(presets[nextIndex])
-                            setCustomDateRange({ from: undefined, to: undefined })
-                          })
-                        })
+                        setDateRange(presets[nextIndex])
+                        setCustomDateRange({ from: undefined, to: undefined })
                       }}
                     >
                       <CalendarIcon className="mr-1 h-4 w-4" />
@@ -3100,7 +3045,7 @@ export default function AnalyticsPage() {
             </Tabs>
           </div>
         </div>
-      </motion.div>
+      </div>
     </>
   )
 }

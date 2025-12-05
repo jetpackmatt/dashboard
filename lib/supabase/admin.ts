@@ -166,6 +166,48 @@ export async function createNewClient(data: {
 }
 
 /**
+ * Get all clients with their actual API tokens (for webhook processing)
+ * Only use server-side - never expose tokens to client
+ */
+export async function getAllClientsWithTokens(): Promise<
+  Array<{ clientId: string; companyName: string; merchantId: string | null; token: string }>
+> {
+  const supabase = createAdminClient()
+
+  // Get all active clients with their credentials
+  const { data: credentials, error } = await supabase
+    .from('client_api_credentials')
+    .select(`
+      client_id,
+      api_token,
+      clients!inner (
+        id,
+        company_name,
+        merchant_id,
+        is_active
+      )
+    `)
+    .eq('provider', 'shipbob')
+    .eq('clients.is_active', true)
+
+  if (error) {
+    console.error('Failed to fetch clients with tokens:', error)
+    return []
+  }
+
+  return (credentials || []).map((cred: {
+    client_id: string
+    api_token: string
+    clients: { id: string; company_name: string; merchant_id: string | null }
+  }) => ({
+    clientId: cred.client_id,
+    companyName: cred.clients.company_name,
+    merchantId: cred.clients.merchant_id,
+    token: cred.api_token,
+  }))
+}
+
+/**
  * Get all clients with their token status (without exposing actual tokens)
  */
 export async function getClientsWithTokenStatus(): Promise<

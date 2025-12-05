@@ -63,7 +63,16 @@ CREATE INDEX idx_transactions_reference_type ON transactions(reference_type);
 ### Transaction Data Summary
 - **Total transactions**: 146,912
 - **Reference types**: Shipment (129,475), FC (16,666), Default (393), Return (202), WRO (145), URO (27), TicketNumber (4)
-- **Client attribution**: 88.3% attributed (Shipment/Default types matched to clients via shipment lookup)
+- **Client attribution**: 100% attributed (see CLAUDE.data.md for attribution strategies)
+
+### Attribution Strategies (Dec 4, 2025)
+1. **Shipment**: `reference_id` → `shipments.shipment_id` → `shipments.client_id`
+2. **FC**: Parse InventoryId from `reference_id` format `{FC_ID}-{InventoryId}-{LocationType}` → `billing_storage`
+3. **Return**: Returns API per client → build lookup
+4. **WRO/URO**: Invoice-based fallback (same `invoice_id_sb` = same client)
+5. **TicketNumber**: Parse client name from `additional_details.Comment`
+6. **Default**: "ShipBob Payments" system client (`is_active=false`)
+7. **Fallback**: Invoice-based for any remaining
 
 ---
 

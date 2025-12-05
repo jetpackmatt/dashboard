@@ -143,8 +143,9 @@ function getShipmentStatus(shipment: any): string {
         case 'OutForDelivery':
           return 'Out for Delivery'
         case 'DeliveryException':
+          return 'Exception'
         case 'DeliveryAttemptFailed':
-          return 'Delivery Exception'
+          return 'Delivery Attempted'
       }
     }
   }

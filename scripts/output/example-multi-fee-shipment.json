@@ -1,0 +1,51 @@
+{
+  "reference_id": "319900667",
+  "transactions": [
+    {
+      "transaction_id": "01KAYQQCBFRDDSXNXDMKTPEBQ9",
+      "amount": 0.26,
+      "currency_code": "USD",
+      "charge_date": "2025-11-26",
+      "invoiced_status": false,
+      "invoice_date": null,
+      "transaction_fee": "Per Pick Fee",
+      "invoice_id": null,
+      "invoice_type": null,
+      "reference_id": "319900667",
+      "reference_type": "Shipment",
+      "transaction_type": "Charge",
+      "fulfillment_center": "Ontario 6 (CA)",
+      "taxes": [],
+      "additional_details": {
+        "TrackingId": "",
+        "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+      }
+    },
+    {
+      "transaction_id": "01KAYHZ0Z2AE8WYC9W9PHZZ1ZS",
+      "amount": 6.07,
+      "currency_code": "USD",
+      "charge_date": "2025-11-25",
+      "invoiced_status": false,
+      "invoice_date": null,
+      "transaction_fee": "Shipping",
+      "invoice_id": null,
+      "invoice_type": null,
+      "reference_id": "319900667",
+      "reference_type": "Shipment",
+      "transaction_type": "Charge",
+      "fulfillment_center": "Ontario 6 (CA)",
+      "taxes": [],
+      "additional_details": {
+        "TrackingId": "9200190244541302711436",
+        "Comment": ""
+      }
+    }
+  ],
+  "explanation": {
+    "note": "This shows all fee line items for a single shipment",
+    "reference_id": "The shipment/order ID that links all fees together",
+    "transaction_id": "Unique ID for each fee line item",
+    "total_cost": 6.33
+  }
+}

@@ -1,0 +1,83 @@
+[
+  {
+    "id": 896983201,
+    "reference_id": "1",
+    "bundle_root_information": null,
+    "created_date": "2025-03-25T19:53:22.541+00:00",
+    "channel": {
+      "id": 0,
+      "name": "ShipBob Default"
+    },
+    "sku": "1",
+    "name": "dummy insert box",
+    "barcode": "",
+    "gtin": "",
+    "upc": "",
+    "unit_price": null,
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "fulfillable_inventory_items": [
+      {
+        "id": 20347614,
+        "name": "dummy insert box",
+        "quantity": 1
+      }
+    ],
+    "fulfillable_quantity_by_fulfillment_center": []
+  },
+  {
+    "id": 896983204,
+    "reference_id": "2",
+    "bundle_root_information": null,
+    "created_date": "2025-03-25T19:54:13.023+00:00",
+    "channel": {
+      "id": 0,
+      "name": "ShipBob Default"
+    },
+    "sku": "2",
+    "name": "dummy pouch 1",
+    "barcode": "",
+    "gtin": "",
+    "upc": "",
+    "unit_price": null,
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "fulfillable_inventory_items": [
+      {
+        "id": 20347617,
+        "name": "dummy pouch 1",
+        "quantity": 1
+      }
+    ],
+    "fulfillable_quantity_by_fulfillment_center": []
+  },
+  {
+    "id": 896983206,
+    "reference_id": "3",
+    "bundle_root_information": null,
+    "created_date": "2025-03-25T19:54:45.643+00:00",
+    "channel": {
+      "id": 0,
+      "name": "ShipBob Default"
+    },
+    "sku": "3",
+    "name": "dummy pouch 2",
+    "barcode": "",
+    "gtin": "",
+    "upc": "",
+    "unit_price": null,
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "fulfillable_inventory_items": [
+      {
+        "id": 20347619,
+        "name": "dummy pouch 2",
+        "quantity": 1
+      }
+    ],
+    "fulfillable_quantity_by_fulfillment_center": []
+  }
+]

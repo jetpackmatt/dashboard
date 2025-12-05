@@ -1,0 +1,2002 @@
+[
+  {
+    "transaction_id": "01KAYV6C5T8FSYNG67B5PTAP50",
+    "amount": 6.58,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320263454",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "UUS5BS2764446177552",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYV3CPAMBXFFAP4PBXVGBC9",
+    "amount": 6.19,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320274847",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486496146",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTRTM3FVD8RYPM8Q4GVZXD",
+    "amount": 5.93,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320298864",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486489427",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTQ02J1K5JM98JGYQYP85F",
+    "amount": 7.13,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320165139",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486485592",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTMTN4JACKM36XRHYFA95W",
+    "amount": 6.28,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320161823",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486485463",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTMGPKM38T14J2B9AZAESY",
+    "amount": 6.58,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320169569",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486485659",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTKSHHB9GFS7AK0WQ5RPWS",
+    "amount": 6.58,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320100019",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "UUS5BS2767446101240",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTK32BV7R1F094X2WA8F3D",
+    "amount": 6.58,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319916791",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "UUS5BS2762446099630",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTJMP9DRJ6FNK0N3WWQF25",
+    "amount": 6.21,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319842108",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "TBA326284538811",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTJ2HRPJWGAH37Y0KFWACY",
+    "amount": 6.3,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320101566",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "UUS5BS2767446094674",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTGDB164MPJ7CQ2KMNJF6B",
+    "amount": 6.94,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320202149",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9261290318421409411656",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTDE10FQZNT1WW9VCXSQY7",
+    "amount": 6.03,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319909504",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486487039",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYTB8FP3RN0RF1ECM0Q6QDC",
+    "amount": 5.9,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320177167",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "BTPA02760IELL02",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYSYW3A35DQ4Q0MXS3RRRAX",
+    "amount": 5.75,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320170043",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541402842849",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYSY8655QMH5GPDN67VW8WB",
+    "amount": 6.13,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320156181",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486425945",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYSWWQNJQ0D09ZZNJWVDNF6",
+    "amount": 5.64,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320174864",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486420197",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYSVA8TWM6HN0DSM9J6AZP8",
+    "amount": 5.68,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320158084",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486422708",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYST7J0YV02P6VM5XGQJT3Z",
+    "amount": 5.68,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320201120",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541302722807",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYSFNSTX997KPG434WSBAD0",
+    "amount": 7.13,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320202108",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486419070",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYS37JGEFWX6HFSJEZ4BEEF",
+    "amount": 6.56,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320242546",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "TBA326283821867",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYRWAH2FJW3ZE9EBXRNSVEM",
+    "amount": 17.22,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320288844",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "395797688509",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYQQGXGPCRWE9AVJ3ZQ9DTX",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320086443",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYQQGXBZ0XSQKJTY0NKKB77",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320069338",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYQQG2SNDRBJ0NWYPK9EQ7F",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320106587",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYQQG0BJ55X0FSBMSZNEEQ1",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320059189",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYQQCBFRDDSXNXDMKTPEBQ9",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-26",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319900667",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYP8P97QPP495CFESATQ6VN",
+    "amount": 6.46,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320151072",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486407357",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYP6HVFYET9BJ0KR66171HN",
+    "amount": 6.01,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320145058",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486403461",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKS540G6JF76SNZKBC3BK1",
+    "amount": 6.7,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320160162",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486783135",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKPR2VSCS61R8CV6B56T5E",
+    "amount": 6.23,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320278573",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "TBA326281859223",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKNYMHB1S7EMQ4VXS76WE6",
+    "amount": 6.07,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320268936",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "TBA326281845032",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKNKGHGZRSWXQ7G4XSW0KQ",
+    "amount": 5.97,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320161533",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541402833724",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKFPM1CRXJ4DF089GCB1B5",
+    "amount": 5.63,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320252647",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541402833229",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYKEVFFR427680ENXN1B68A",
+    "amount": 5.79,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320225456",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486786508",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYJ3TKEWGNCHVGGB406FBY7",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320134578",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ3QS4EZ0MN0XPXD4MHKQP",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320103835",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ3Q6FA1P74GWQXYWRW60X",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320139482",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ3Q1G7FKRDXGDZSM3A1YD",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320117576",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ36AFRNFDQ97SBYSQAEPM",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320129164",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ1NZV5WHBBC917EAXZ6V2",
+    "amount": 6.01,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320069338",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486713072",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYJ118473QC285CDCN73NXS",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320021742",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ113WBZ1YJSDD6FCA8H82",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319986731",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ10K61VYF7BN9V91B3ZPE",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319856346",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ10HQQP3D36T8TQT5R7JN",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319963509",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ10HEYWRD5JXGMVZ42FPN",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319994291",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ10DXPQST25PZ3BY53JWV",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319866635",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ104B31GPXNYRJWFF57QV",
+    "amount": 1.04,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319896067",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 5 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ101Z0D42FJGSFJE3AHN8",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319877703",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ101G896F98H2FTANNA6A",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319917109",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0ZG41ZNFK50VZDEBAJ1X",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319925683",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0ZFC71QW3SN4WYZM9A97",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319926371",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0ZFAWN5FKPBTDK5C4Q0T",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319934997",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0YXNMPF46J28WDS7Y02E",
+    "amount": 1.04,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319932300",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 5 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0Y608DT6KTBNC8SFQKAM",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320136920",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0XK0GMQQ7AMR5D2HGF21",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319960843",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0XBM930ZN77TBTA6KNKR",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319957285",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0X95VW4JRYR078APVT9W",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319953410",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0X3FBDAEE96C1H07D1YG",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319938515",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0SMEZ75Y5EX7VRB3A4BV",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319942258",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0QKQ4JAJFSSQDE9WB67K",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319968998",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0Q6CRVJWBMPMFFYYCQFC",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319906684",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0PS6P7WT3H0DCFF6XKST",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319960701",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0P4YWXPJHQGNG2XHHN5Z",
+    "amount": 1.04,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319864716",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 5 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0P250M503VYC6CN5VVNS",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319861244",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0NB2Z3ZBKFP0DE7DA2MB",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319927223",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0MFXK6B79ASF8WSZXFY1",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319865392",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0M5DCVNMNMGBPCZ2ZMHC",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319867732",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0K3ZV2AY9V7TMM7MX69T",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320104237",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0JA0ZN1J6SXJ02CGY21P",
+    "amount": 6.01,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320059189",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486714935",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0HMYK3EH11YSPEHYSEKN",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320133845",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0EGGDMXEPXF6PTCVK573",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320146818",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0EB42JMCAAR3HP20Y9MQ",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320052915",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0D8958QBFPRS5QBG9WM3",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320105612",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0D79W06SX5TMSV2A2D10",
+    "amount": 1.04,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320103497",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 5 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0C5C54APK2NMKXXVGKHT",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320031472",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0C269EGMKCP7WFCM6X22",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320055630",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYJ0C1E5H486V2RTWWE0QH8",
+    "amount": 1.04,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320078853",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 5 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYHZ0Z2AE8WYC9W9PHZZ1ZS",
+    "amount": 6.07,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319900667",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541302711436",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYH7WW2NHWBPKJ16WG8A904",
+    "amount": 5.9,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320234239",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486750324",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYG3PP77DHW84NPT5SB7QS2",
+    "amount": 7.93,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320161602",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "D10016905032348",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYG0YEBZM649T6RQK7VP77N",
+    "amount": 6.71,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319942090",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486703969",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYFW2PMGC5ADWN8S4XJRZBS",
+    "amount": 3.95,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320086443",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "1142841350",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYFMS9W4PV7EZVYYNX8H8ES",
+    "amount": 7.13,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320138088",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "D10016905001260",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYFHHHTNVM72S121N0ZB1XV",
+    "amount": 6.58,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320163120",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486271145",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYFCZC8AHMKBBTBWVTW6VKM",
+    "amount": 6.07,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320167720",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486276039",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYF6WQDNRK9DA3SMM2QY7E7",
+    "amount": 3.95,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320254227",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "1142820501",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYEJE3ZV8JFXDJS8CYJH968",
+    "amount": 6.41,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320160338",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486290633",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYEH66SB9CE1TZCX7JJB0GH",
+    "amount": 6.32,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320146935",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "D10016904938951",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYEG59TR9AHGAA993AREWW5",
+    "amount": 6.07,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320150598",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486293551",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYE6MT286PWFHBMY1MMN6EA",
+    "amount": 6.12,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320200515",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486285724",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYE6M9470VAVW6PDFA432VM",
+    "amount": 6.85,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320170215",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486285736",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYE3H61C6XY86EQ7DE5062F",
+    "amount": 6.31,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320253143",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Riverside (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486287177",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYE2KTWAA4W4PWHXNNCP7JH",
+    "amount": 6.47,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320168632",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486287706",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYDRTZC0GE8QR42KV5CD0JX",
+    "amount": 6.03,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320217355",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "CR000486228504",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYDK6MXTCE6K766FYC0VK8E",
+    "amount": 5.9,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Shipping",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "320156169",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Twin Lakes (WI)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "9200190244541402817663",
+      "Comment": ""
+    }
+  },
+  {
+    "transaction_id": "01KAYD08PCQJESV8MVRTSJGFGN",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319857204",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Ontario 6 (CA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYCRY4KBGRS6J7QPSRNG0WZ",
+    "amount": 0.78,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319879439",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 4 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYCRY2XG0021R02KYN0AHT8",
+    "amount": 1.3,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319806858",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 6 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYCRY2CYKXB9306HVXZ7N4V",
+    "amount": 0.26,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319967621",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 2 item(s) were charged $ 0.26 USD per unit"
+    }
+  },
+  {
+    "transaction_id": "01KAYCRX3BY5HKRW33SD4SATY7",
+    "amount": 0.52,
+    "currency_code": "USD",
+    "charge_date": "2025-11-25",
+    "invoiced_status": false,
+    "invoice_date": null,
+    "transaction_fee": "Per Pick Fee",
+    "invoice_id": null,
+    "invoice_type": null,
+    "reference_id": "319959820",
+    "reference_type": "Shipment",
+    "transaction_type": "Charge",
+    "fulfillment_center": "Wind Gap 2 (PA)",
+    "taxes": [],
+    "additional_details": {
+      "TrackingId": "",
+      "Comment": "1 to 1 item(s) were charged $ 0 USD per unit, 2 to 3 item(s) were charged $ 0.26 USD per unit"
+    }
+  }
+]

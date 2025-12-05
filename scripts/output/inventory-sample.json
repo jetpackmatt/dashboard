@@ -1,0 +1,146 @@
+[
+  {
+    "id": 20347622,
+    "name": "dummy master box",
+    "is_digital": false,
+    "is_case_pick": false,
+    "is_lot": false,
+    "dimensions": {
+      "weight": 0,
+      "length": 0,
+      "width": 0,
+      "depth": 0
+    },
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "total_sellable_quantity": 0,
+    "total_awaiting_quantity": 0,
+    "total_exception_quantity": 0,
+    "total_internal_transfer_quantity": 0,
+    "total_backordered_quantity": 0,
+    "is_active": true,
+    "fulfillable_quantity_by_fulfillment_center": [],
+    "fulfillable_quantity_by_lot": [
+      {
+        "lot_number": null,
+        "expiration_date": null,
+        "fulfillable_quantity": 0,
+        "onhand_quantity": 0,
+        "committed_quantity": 0,
+        "awaiting_quantity": 0,
+        "internal_transfer_quantity": 0,
+        "fulfillable_quantity_by_fulfillment_center": []
+      }
+    ],
+    "packaging_attribute": "None"
+  },
+  {
+    "id": 20347619,
+    "name": "dummy pouch 2",
+    "is_digital": false,
+    "is_case_pick": false,
+    "is_lot": false,
+    "dimensions": {
+      "weight": 0,
+      "length": 0,
+      "width": 0,
+      "depth": 0
+    },
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "total_sellable_quantity": 0,
+    "total_awaiting_quantity": 0,
+    "total_exception_quantity": 0,
+    "total_internal_transfer_quantity": 0,
+    "total_backordered_quantity": 0,
+    "is_active": true,
+    "fulfillable_quantity_by_fulfillment_center": [],
+    "fulfillable_quantity_by_lot": [
+      {
+        "lot_number": null,
+        "expiration_date": null,
+        "fulfillable_quantity": 0,
+        "onhand_quantity": 0,
+        "committed_quantity": 0,
+        "awaiting_quantity": 0,
+        "internal_transfer_quantity": 0,
+        "fulfillable_quantity_by_fulfillment_center": []
+      }
+    ],
+    "packaging_attribute": "None"
+  },
+  {
+    "id": 20347617,
+    "name": "dummy pouch 1",
+    "is_digital": false,
+    "is_case_pick": false,
+    "is_lot": false,
+    "dimensions": {
+      "weight": 0,
+      "length": 0,
+      "width": 0,
+      "depth": 0
+    },
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "total_sellable_quantity": 0,
+    "total_awaiting_quantity": 0,
+    "total_exception_quantity": 0,
+    "total_internal_transfer_quantity": 0,
+    "total_backordered_quantity": 0,
+    "is_active": true,
+    "fulfillable_quantity_by_fulfillment_center": [],
+    "fulfillable_quantity_by_lot": [
+      {
+        "lot_number": null,
+        "expiration_date": null,
+        "fulfillable_quantity": 0,
+        "onhand_quantity": 0,
+        "committed_quantity": 0,
+        "awaiting_quantity": 0,
+        "internal_transfer_quantity": 0,
+        "fulfillable_quantity_by_fulfillment_center": []
+      }
+    ],
+    "packaging_attribute": "None"
+  },
+  {
+    "id": 20347614,
+    "name": "dummy insert box",
+    "is_digital": false,
+    "is_case_pick": false,
+    "is_lot": false,
+    "dimensions": {
+      "weight": 0,
+      "length": 0,
+      "width": 0,
+      "depth": 0
+    },
+    "total_fulfillable_quantity": 0,
+    "total_onhand_quantity": 0,
+    "total_committed_quantity": 0,
+    "total_sellable_quantity": 0,
+    "total_awaiting_quantity": 0,
+    "total_exception_quantity": 0,
+    "total_internal_transfer_quantity": 0,
+    "total_backordered_quantity": 0,
+    "is_active": true,
+    "fulfillable_quantity_by_fulfillment_center": [],
+    "fulfillable_quantity_by_lot": [
+      {
+        "lot_number": null,
+        "expiration_date": null,
+        "fulfillable_quantity": 0,
+        "onhand_quantity": 0,
+        "committed_quantity": 0,
+        "awaiting_quantity": 0,
+        "internal_transfer_quantity": 0,
+        "fulfillable_quantity_by_fulfillment_center": []
+      }
+    ],
+    "packaging_attribute": "None"
+  }
+]

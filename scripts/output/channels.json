@@ -1,0 +1,45 @@
+[
+  {
+    "id": 341684,
+    "name": "ShipBob Default",
+    "application_name": "ShipBob",
+    "scopes": [
+      "billing_read",
+      "channels_read",
+      "fulfillments_read",
+      "inventory_read",
+      "locations_read",
+      "orders_read",
+      "pricing_read",
+      "products_read",
+      "receiving_read",
+      "returns_read",
+      "webhooks_read"
+    ]
+  },
+  {
+    "id": 433646,
+    "name": "PAT Channel",
+    "application_name": "SMA",
+    "scopes": [
+      "billing_read",
+      "channels_read",
+      "fulfillments_read",
+      "fulfillments_write",
+      "inventory_read",
+      "inventory_write",
+      "locations_read",
+      "orders_read",
+      "orders_write",
+      "pricing_read",
+      "products_read",
+      "products_write",
+      "receiving_read",
+      "receiving_write",
+      "returns_read",
+      "returns_write",
+      "webhooks_read",
+      "webhooks_write"
+    ]
+  }
+]

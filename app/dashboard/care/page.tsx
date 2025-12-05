@@ -1,18 +1,15 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import {
   FilterIcon,
   ColumnsIcon,
   ChevronDownIcon,
-  CalendarIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
-  InfoIcon,
 } from "lucide-react"
 
 import { SiteHeader } from "@/components/site-header"
@@ -41,7 +38,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -50,8 +46,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
 import {
   Tooltip,
   TooltipContent,
@@ -59,7 +53,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { format } from "date-fns"
 
 import careData from "../care-data.json"
 
@@ -106,21 +99,6 @@ function getStatusColors(status: string) {
 }
 
 export default function CarePage() {
-  const router = useRouter()
-
-  // Initialize fromDashboard by reading sessionStorage synchronously
-  const [fromDashboard] = React.useState(() => {
-    if (typeof window !== "undefined") {
-      const navigationFlag = sessionStorage.getItem('navigatingFromDashboard')
-      if (navigationFlag === 'true') {
-        sessionStorage.removeItem('navigatingFromDashboard')
-        return true
-      }
-    }
-    return false
-  })
-
-  const [isNavigatingBack, setIsNavigatingBack] = React.useState(false)
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
   const [dateRange, setDateRange] = React.useState<{
     from: Date | undefined
@@ -152,27 +130,6 @@ export default function CarePage() {
     status: true,
     description: true,
   })
-
-  // Intercept clicks back to Dashboard
-  React.useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      const link = target.closest('a[href="/dashboard"]')
-
-      if (link) {
-        e.preventDefault()
-        setIsNavigatingBack(true)
-        sessionStorage.setItem('navigatingFromCare', 'true')
-
-        setTimeout(() => {
-          router.push("/dashboard")
-        }, 400)
-      }
-    }
-
-    document.addEventListener("click", handleClick, true)
-    return () => document.removeEventListener("click", handleClick, true)
-  }, [router])
 
   const formatCurrency = (amount: number, currency: string) => {
     return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -223,17 +180,7 @@ export default function CarePage() {
   return (
     <>
       <SiteHeader sectionName="Jetpack Care Central" />
-      <motion.div
-        initial={fromDashboard ? { y: 700 } : false}
-        animate={{ y: isNavigatingBack ? 700 : 0 }}
-        transition={{
-          type: "spring",
-          stiffness: 100,
-          damping: 20,
-          mass: 0.8,
-        }}
-        className="flex flex-1 flex-col overflow-x-hidden"
-      >
+      <div className="flex flex-1 flex-col overflow-x-hidden">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
           <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full px-4 lg:px-6">
             {/* Description Text */}
@@ -643,7 +590,7 @@ export default function CarePage() {
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* Filters Sheet */}
       <Sheet open={filtersSheetOpen} onOpenChange={setFiltersSheetOpen}>
