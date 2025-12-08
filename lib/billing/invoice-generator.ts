@@ -2421,14 +2421,21 @@ export async function collectUnprocessedDetailedBillingData(
  * Mark transactions as invoiced with their markup data
  * @param lineItems - Line items with markup applied
  * @param invoiceNumber - Human-readable invoice number (e.g., "JPHS-0037-120125"), NOT the UUID
+ * @param invoiceDate - Optional invoice date (defaults to current date if not provided)
  */
 export async function markTransactionsAsInvoiced(
   lineItems: InvoiceLineItem[],
-  invoiceNumber: string
+  invoiceNumber: string,
+  invoiceDate?: string | Date
 ): Promise<{ updated: number; errors: string[] }> {
   const supabase = createAdminClient()
   const errors: string[] = []
   let updated = 0
+
+  // Convert invoice date to ISO string if provided
+  const invoiceDateIso = invoiceDate
+    ? (typeof invoiceDate === 'string' ? new Date(invoiceDate).toISOString() : invoiceDate.toISOString())
+    : new Date().toISOString()
 
   // Update each transaction with its markup data
   for (let i = 0; i < lineItems.length; i += 500) {
@@ -2441,6 +2448,7 @@ export async function markTransactionsAsInvoiced(
       const updateData: Record<string, unknown> = {
         invoiced_status_jp: true,
         invoice_id_jp: invoiceNumber,
+        invoice_date_jp: invoiceDateIso,
         markup_applied: item.markupApplied,
         billed_amount: item.billedAmount,
         markup_percentage: item.markupPercentage,

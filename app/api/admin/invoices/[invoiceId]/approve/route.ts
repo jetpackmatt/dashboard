@@ -76,7 +76,8 @@ export async function POST(
     console.log(`  Using ${lineItems.length} cached line items (no recalculation)`)
 
     // Step 1: Mark transactions as invoiced using cached markup data
-    const markResult = await markTransactionsAsInvoiced(lineItems, invoice.invoice_number)
+    // Pass invoice_date so transactions have the proper invoice date recorded
+    const markResult = await markTransactionsAsInvoiced(lineItems, invoice.invoice_number, invoice.invoice_date)
     console.log(`  Marked ${markResult.updated} transactions`)
     if (markResult.errors.length > 0) {
       console.warn(`  Errors marking transactions:`, markResult.errors.slice(0, 5))
