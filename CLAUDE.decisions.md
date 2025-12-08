@@ -1408,6 +1408,387 @@ API provides correct totals, but not the fulfillment vs surcharge split.
 
 ---
 
+## December 5, 2025
+
+### Invoice Reconciliation Verification Complete
+
+**Context:** Testing whether transaction sums match ShipBob invoice amounts for billing module.
+
+**Initial confusion:** Earlier testing showed apparent discrepancies (~$9-32 differences per invoice). This led to incorrect conclusion that "invoice totals should be source of truth, not transaction sums."
+
+**User correction:** User explicitly stated:
+> "We have to use our transactions for summing the invoices to our clients, because we mark some of them up remember? Markups happen on a transaction level, not an invoice level."
+
+**Root cause of apparent discrepancies:** Supabase's default 1,000 row limit was cutting off transaction data in queries. Invoice 8633612 has 1,875 transactions - our queries only returned the first 1,000.
+
+**Verification with proper pagination:**
+| Metric | Value |
+|--------|-------|
+| Invoice 8633612 amount | $11,127.61 |
+| Transaction sum (paginated) | $11,127.61 |
+| Transaction count | 1,875 |
+| **Difference** | **$0.00** |
+
+**Decision:** Transactions ARE the source of truth for Jetpack invoicing.
+
+**Key rules established:**
+1. Match transactions by `invoice_id_sb` field, NOT date ranges
+2. Only bill transactions where `invoiced_status_sb = true`
+3. Always use paginated queries when summing large transaction sets
+4. Apply markups at transaction level (Jetpack's business model)
+
+**Scripts created:**
+- `scripts/reconcile-by-invoice.js` - Invoice-based reconciliation
+- `scripts/count-invoice-ids.js` - Count unique invoice IDs
+
+**Documentation updated:**
+- CLAUDE.billing.md - Corrected "Source of Truth" section, added pagination requirement
+
+---
+
+## December 5, 2025 (continued)
+
+### Reference XLSX = Correct Marked-Up Invoice (Jetpack-Created)
+
+**Context:** Using reference XLSX files to validate invoice generation.
+
+**Billing Model (CORRECT):**
+- ShipBob API → Raw costs (what Jetpack pays ShipBob)
+- Jetpack → Creates invoices for clients with markup applied
+- Reference XLSX files (`reference/invoiceformatexamples/`) are **Jetpack-created** invoices showing **correct marked-up amounts**
+
+**The Reference Files:**
+- `INVOICE-DETAILS-JPHS-0037-120125.xlsx` = Correct marked-up invoice for Henson
+- Each tab (Shipments, Additional Services, etc.) = line items on PDF summary
+- These show what clients should pay (raw cost + markup)
+
+**Using as Validation Target:**
+- XLSX Henson shipping (correct marked-up): $9,715.24
+- DB raw API cost: $8,329.54
+- Markup to apply: ~$1,385.70 (~16.6%)
+
+**Goal:** Generate invoice XLSX that matches the reference amounts by applying correct markup rules to raw API costs.
+
+**Scripts created:**
+- `scripts/compare-xlsx-db-ids.js` - Verified XLSX OrderID = shipment_id (100% match)
+- `scripts/compare-shipment-amounts.js` - Per-shipment comparison
+- `scripts/investigate-xlsx-ids.js` - Initial ID investigation
+
+---
+
+### ⚠️ CRITICAL: FC Transaction Attribution Bug Fixed
+
+**Context:** While validating invoice JPHS-0037, discovered 12-row discrepancy in storage transactions (DB: 969, Reference: 981).
+
+**Investigation:**
+1. Reference file had 981 storage rows for Henson
+2. Our DB returned 969 rows for Henson (client_id filtered)
+3. Discovered 12 rows for inventory ID `20114295` were INCORRECTLY attributed to Methyl-Life in our DB
+4. The `products` table correctly showed inventory 20114295 belongs to Henson (in `variants[].inventory.inventory_id`)
+
+**Root Cause (Bug in sync.ts):**
+1. FC (Storage) transactions were intentionally left unattributed during sync (line 1205-1207)
+2. The code used invoice-based fallback attribution (lines 1244-1263)
+3. **The fallback assumed single-client invoices - THIS IS FALSE FOR STORAGE INVOICES**
+4. Storage invoices are SHARED across multiple clients
+5. Invoice 8633618 contained FC transactions from both Henson (158) and Methyl-Life (842)
+6. The fallback found a Methyl-Life sibling first and incorrectly used that client_id
+
+**Fix Applied (Dec 5, 2025):**
+1. Added `inventoryLookup` built from `products.variants[].inventory.inventory_id`
+2. FC transactions now attributed directly at sync time using inventory ID lookup
+3. Removed the broken invoice-based fallback
+4. Created `scripts/fix-fc-attribution.js` to backfill misattributed transactions
+5. Fixed 12 misattributed transactions (all inventory 20114295)
+
+**Key Learnings:**
+- Storage invoices (`invoice_id_sb`) are SHARED across all clients on the same billing cycle
+- The `products` table contains the authoritative inventory→client mapping
+- Never use invoice-based fallback for FC transactions
+
+**Decision:** Always filter storage queries by BOTH `invoice_id_sb` AND `client_id`:
+```javascript
+// CORRECT: Per-client storage query
+const { data } = await supabase
+  .from('transactions')
+  .select('*')
+  .eq('client_id', hensonId)           // Filter by client
+  .eq('invoice_id_sb', storageInvoiceId) // And by invoice
+
+// WRONG: Invoice-only query includes other clients
+const { data } = await supabase
+  .from('transactions')
+  .select('*')
+  .eq('invoice_id_sb', storageInvoiceId) // Will include ALL clients!
+```
+
+**Final Validated Counts (JPHS-0037) - After Fix:**
+| Category | Our Count | Reference | Status |
+|----------|-----------|-----------|--------|
+| Shipments | 1,435 | 1,435 | ✓ Match |
+| Additional Services | 1,112 | 1,112 | ✓ Match |
+| Returns | 3 | 3 | ✓ Match |
+| Receiving | 1 | 1 | ✓ Match |
+| Storage | 981 | 981 | ✓ Match (fixed) |
+| Credits | 11 | 11 | ✓ Match |
+
+**Code Changes:**
+- `lib/shipbob/sync.ts` - Added inventory lookup, fixed FC attribution, removed invoice-based fallback
+- `scripts/fix-fc-attribution.js` - One-time backfill script
+
+**Scripts Created:**
+- `scripts/final-validation.js` - Category count validation
+- `scripts/compare-storage-details.js` - Reference vs DB comparison
+- `scripts/investigate-inventory-attribution.js` - Root cause analysis
+- `scripts/fix-fc-attribution.js` - Backfill misattributed FC transactions
+
+---
+
+## December 6, 2025
+
+### Internal Client Flag for System Entries
+
+**Added `is_internal` column to distinguish system clients from merchants**
+- Context: During billing sync, transactions with no merchant_id (parent-level transactions) needed a place to go. Created "ShipBob Payments" and "Jetpack Costs" pseudo-clients to hold these.
+- Problem: These appeared in the brand selector dropdown and invoice generation, confusing users and potentially generating invalid invoices.
+- Decision: Add `is_internal BOOLEAN DEFAULT false` column to `clients` table
+- Rationale: Better than `is_active=false` because:
+  - Internal clients ARE active (they hold real transactions)
+  - Separate flag allows explicit filtering without affecting other logic
+  - Future-proof for other internal/system entities
+- Implementation:
+  - Migration: `scripts/migrations/add-is-internal-column.sql`
+  - `getClients()` in `lib/supabase/admin.ts` now excludes internal by default
+  - Invoice generation routes filter `.or('is_internal.is.null,is_internal.eq.false')`
+  - Pass `getClients(true)` when internal clients are needed
+
+**Internal Clients Marked:**
+| Client | Purpose |
+|--------|---------|
+| ShipBob Payments | ACH payment transactions (money in/out) |
+| Jetpack Costs | Parent-level fees (CC processing, warehousing) |
+
+### ULID Timestamp Behavior for Transaction Types
+
+**Investigation: Which transaction types have accurate ULID timestamps?**
+- Context: ShipBob's `transaction_id` is a ULID with embedded millisecond timestamp. Wanted to use for more precise transaction dates than `charge_date` (date-only).
+- Test: Compared ULID-decoded timestamps against reference XLSX for Credits, Returns, Receiving.
+- Findings:
+  | Type | ULID Works? | Notes |
+  |------|-------------|-------|
+  | Credits | ✅ YES | 1-2ms accuracy vs reference |
+  | Receiving | ✅ YES | 1ms accuracy vs reference |
+  | Returns | ❌ NO | ULID = `completed_date`, need `insert_date` from Returns API |
+  | Storage | ❌ NO | All decode to period end date |
+- Decision: Use ULID for Credits/Receiving. For Returns, use `returns.insert_date` from our `returns` table.
+- Returns API Discovery:
+  - `/1.0/return/{id}` returns `insert_date` (return creation) and `completed_date` (return completion)
+  - ULID timestamp matches `completed_date` (~300ms off)
+  - Reference XLSX "Return Creation Date" matches `insert_date` (1ms accuracy)
+  - Our `returns` table already stores `insert_date` from sync
+- Implementation: `collectDetailedBillingData()` already joins with `returns` table to get `insert_date`. Falls back to `charge_date` if return not in table.
+
+### Returns Sync Added to Cron Job
+
+**Problem:** Returns table had only 207 records, not updated since Nov 28. New return transactions were missing `insert_date` for accurate timestamps.
+- Root cause: No returns sync function existed - `syncAll()` synced orders/shipments but not returns
+- Only 1 return (2933435) was missing from returns table for billed transactions
+
+**Solution:** Added `syncReturns()` to `lib/shipbob/sync.ts` and cron job
+- Strategy: Find return IDs from transactions table, check which missing from returns table, fetch each from API
+- Called every minute via `/api/cron/sync` route
+- Returns API `GET /1.0/return/{id}` provides full return data including `insert_date`
+
+**Files changed:**
+- `lib/shipbob/sync.ts` - Added `syncReturns()` function and `ReturnsSyncResult` interface
+- `app/api/cron/sync/route.ts` - Import and call `syncReturns()`
+- Created `scripts/sync-returns.js` for manual backfill
+
+**Verification:**
+- Before: 200 of 201 return transactions had matching return records
+- After: 201 of 201 (100% coverage)
+- All returns now have `insert_date` for accurate invoice timestamps
+
+---
+
+## December 7, 2025
+
+### Database Schema Consolidation
+
+**Consolidated `invoices_jetpack_line_items` into `transactions` table**
+
+- Context: The `invoices_jetpack_line_items` table stored markup data (markup_applied, billed_amount, markup_percentage, markup_rule_id) with a foreign key to billing_record_id linking back to transactions. This was redundant since transactions already had `invoice_id_jp` and `invoiced_status_jp` columns.
+
+- Options considered:
+  1. Keep separate table for line items (status quo)
+  2. Store all markup data directly on transactions when invoiced (chosen)
+
+- Decision: Store markup data directly on the `transactions` table
+
+- Rationale:
+  - Eliminates redundant table join when querying invoice data
+  - Simpler data model - one table is the source of truth
+  - Credits that reference shipments can now look up markup by querying the original transaction directly
+  - Already had `invoiced_status_jp` and `invoice_id_jp` on transactions, so extending with markup columns is natural
+
+- Implementation:
+  - Migration: `scripts/migrations/014-consolidate-line-items-to-transactions.sql`
+  - Added to `transactions`: `markup_applied`, `billed_amount`, `markup_percentage`, `markup_rule_id`
+  - Dropped from `transactions`: `markup_amount`, `markup_percent` (old unused columns)
+  - Dropped table: `invoices_jetpack_line_items`
+  - Migrated 5,416 existing line items
+  - Set `billed_amount = cost` for 141,734 uninvoiced transactions
+  - Updated `markTransactionsAsInvoiced()` to accept lineItems and save markup data
+  - Removed `saveLineItems()` function entirely
+
+---
+
+## December 7, 2025
+
+### Invoice Identifier Strategy
+
+**Use human-readable invoice numbers instead of UUIDs**
+- Context: Needed to link transactions to Jetpack invoices for historical import and ongoing billing
+- Options considered:
+  1. UUID foreign key (`invoice_id_jp UUID REFERENCES invoices_jetpack(id)`)
+  2. Human-readable text (`jetpack_invoice_id TEXT` matching `invoices_jetpack.invoice_number`)
+- Decision: Use human-readable invoice number (e.g., "JPHS-0038-120825") as the identifier
+- Rationale:
+  - Invoice numbers are already unique by design
+  - Human-readable in queries and debugging
+  - No need for UUID lookups
+  - Simpler joins: `transactions.jetpack_invoice_id = invoices_jetpack.invoice_number`
+  - Client-facing identifier matches internal reference
+- Implementation:
+  - `transactions.jetpack_invoice_id` = TEXT field storing invoice number
+  - `invoices_jetpack.invoice_number` = UNIQUE TEXT, primary identifier
+  - No UUID column needed on transactions for Jetpack invoice linking
+
+---
+
+## December 7, 2025
+
+### invoice_id_jp Column Type Migration
+
+**Changed invoice_id_jp from UUID to TEXT**
+- Context: Column was originally typed as UUID but was storing references to Jetpack invoice UUIDs
+- Problem: Human-readable invoice numbers like "JPHS-0037-120125" couldn't be stored
+- Migration: `ALTER TABLE transactions ALTER COLUMN invoice_id_jp TYPE TEXT USING invoice_id_jp::TEXT`
+- Conversion: Ran script to convert 12 unique UUIDs → readable invoice numbers (45,435 transactions)
+- Scripts: `scripts/migrations/016-change-invoice-id-jp-to-text.sql`, `scripts/fix-invoice-id-jp-to-readable.js`
+
+---
+
+## December 7, 2025
+
+### XLSX Blank Columns Bug Fix
+
+**Reduced UUID batch size for order lookups**
+- Context: XLSX invoices had blank Customer Name, Store, Zip Code columns despite database having all data
+- Root cause: `.in('id', batch)` with 500 UUIDs (36 chars each) created ~18KB URL parameters, exceeding HTTP header limits
+- Error: `HeadersOverflowError: Headers Overflow Error (UND_ERR_HEADERS_OVERFLOW)`
+- Fix: Changed batch size from 500 to 50 at `lib/billing/invoice-generator.ts:1662`
+- Result: Customer names 100%, store names 100%, zip codes 98.6% populated (was 0% for all)
+
+### PDF Date Timezone Bug Fix
+
+**Parse date strings as local dates, not UTC**
+- Context: PDF showed "November 30" instead of "December 1" for invoice date
+- Root cause: `new Date("2025-12-01")` parses as UTC midnight, which in PST (UTC-8) is Nov 30
+- Fix: Parse YYYY-MM-DD by splitting and creating local Date: `new Date(year, month - 1, day)`
+- Location: `lib/billing/pdf-generator.tsx` formatDate() and formatShortDate() functions
+
+---
+
+## December 8, 2025
+
+### Admin UI Invoice Management Enhancements
+
+**Added pre-flight validation display to Run Invoicing tab**
+- Context: Pre-flight validation ran in the cron job but admins couldn't see validation results in UI
+- Implementation: Collapsible card showing per-client validation status with badges (Failed/Warnings/Passed)
+- API: New `/api/admin/invoices/preflight` endpoint returns validation results for all clients
+- UI: Color-coded borders (red for failed, yellow for warnings) with expandable detail views
+
+**Fixed View buttons with dropdown for file type selection**
+- Context: View buttons in the invoice table weren't working
+- Solution: Changed from single button to DropdownMenu with PDF and XLSX options
+- API: New `/api/admin/invoices/[invoiceId]/files` endpoint returns signed URLs (1-hour validity)
+- Implementation: `window.open(url, '_blank')` opens file in new tab
+
+**Added Re-Run (Regenerate) invoice button**
+- Context: After markup rule changes or sync corrections, admins need to regenerate draft invoices
+- API: New `/api/admin/invoices/[invoiceId]/regenerate` endpoint
+- Logic: Re-collects transactions by ShipBob invoice IDs, runs validation, applies markups, generates new files
+- Versioning: Increments `version` column on invoice record
+- Restriction: Only draft invoices can be regenerated
+
+**Added confirmation dialogs for destructive actions**
+- Context: Approve and Re-Run buttons could be accidentally clicked
+- Implementation: AlertDialog components for:
+  - Approve single invoice
+  - Approve all invoices
+  - Regenerate invoice
+- Library: Added shadcn `alert-dialog` component
+
+---
+
+## December 8, 2025 (continued)
+
+### Invoice Workflow Refactor: Separation of Generation and Approval
+
+**Background:** When investigating why Dec 1 ShipBob invoices weren't being excluded from preflight, discovered that the invoice workflow needed fundamental restructuring.
+
+**Problems with previous approach:**
+1. Transactions were marked as invoiced (`invoice_id_jp`) at generation time
+2. If draft invoice needed regeneration, marked transactions couldn't be re-queried
+3. `invoices_sb.jetpack_invoice_id` was marked at generation, removing them from preflight before approval
+4. Recalculating markups at approval time could produce different results than the PDF/XLS files reviewed
+
+**Decision:** Clean separation between generation and approval phases
+
+**New workflow:**
+1. **GENERATE (cron or manual):**
+   - Collect transactions from ShipBob invoices
+   - Apply markup rules, calculate amounts
+   - Store `shipbob_invoice_ids` on invoice record (which SB invoices are included)
+   - Store `line_items_json` on invoice record (cached markup calculations)
+   - Generate PDF and XLSX files
+   - Create invoice with status = 'draft'
+   - **Does NOT mark** `transactions.invoice_id_jp`
+   - **Does NOT mark** `invoices_sb.jetpack_invoice_id`
+
+2. **REVIEW (admin UI):**
+   - Admin reviews PDF and XLSX files
+   - Can regenerate freely (reads `shipbob_invoice_ids`, recalculates, updates `line_items_json`)
+   - Draft shows in "Pending Approval" section
+
+3. **APPROVE (finalization):**
+   - Reads `line_items_json` (NO recalculation!)
+   - Marks transactions with `invoice_id_jp` using EXACT amounts from files
+   - Marks `invoices_sb.jetpack_invoice_id`
+   - Changes status to 'approved'
+
+**Key database schema additions:**
+```sql
+ALTER TABLE invoices_jetpack ADD COLUMN shipbob_invoice_ids JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE invoices_jetpack ADD COLUMN line_items_json JSONB;
+```
+
+**Rationale:**
+- `shipbob_invoice_ids`: Enables clean regeneration without relying on transaction marking
+- `line_items_json`: Ensures what gets approved is EXACTLY what was generated and reviewed (no recalculation drift)
+- Drafts can be regenerated or deleted safely without data corruption
+- Same SB invoices can appear in preflight until approved
+
+**Files changed:**
+- `app/api/cron/generate-invoices/route.ts` - Stores both columns, removed transaction marking
+- `app/api/admin/invoices/[invoiceId]/regenerate/route.ts` - Reads from invoice, updates line_items_json
+- `app/api/admin/invoices/[invoiceId]/approve/route.ts` - Reads from line_items_json, no recalculation
+- `scripts/migrations/018-add-shipbob-invoice-ids-column.sql` - Migration for new columns
+
+---
+
 ## Template for New Entries
 
 ```markdown

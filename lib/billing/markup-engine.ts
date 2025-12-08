@@ -84,6 +84,7 @@ export type BillingCategory =
   | 'credits'
   | 'returns'
   | 'receiving'
+  | 'insurance'
 
 // Weight bracket definitions
 export const WEIGHT_BRACKETS = [

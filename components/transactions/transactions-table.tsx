@@ -89,7 +89,7 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
   return (
     <tr
       key={rowKey}
-      className={`h-12 border-b hover:bg-muted/50 ${isPageLoading ? 'opacity-50' : ''}`}
+      className={`h-12 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/50 ${isPageLoading ? 'opacity-50' : ''}`}
     >
       {visibleColumns.map((column, index) => {
         // Status and orderType columns contain Badges - don't apply text-ellipsis
@@ -162,17 +162,14 @@ export function TransactionsTable<T>({
     <div className="flex flex-col h-full">
       {/* Scrollable table area */}
       <div className={`flex-1 overflow-y-auto min-h-0 ${integratedHeader ? '-mx-4 lg:-mx-6' : 'pt-5'}`}>
-        <div className={integratedHeader ? '' : 'rounded-md border overflow-hidden'}>
+        <div className={integratedHeader ? '' : 'rounded-md border border-border overflow-hidden'}>
           <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
             <colgroup>
               {visibleColumns.map((column) => (
                 <col key={column.id} style={{ width: getColumnWidth(column.id) }} />
               ))}
             </colgroup>
-            <thead className={integratedHeader
-              ? 'sticky top-0 bg-zinc-50 dark:bg-zinc-900 z-10 border-b'
-              : 'sticky top-0 bg-muted z-10 border-b'
-            }>
+            <thead className="sticky top-0 bg-muted/50 dark:bg-[hsl(220,8%,10%)] z-10">
               <tr className="h-10">
                 {visibleColumns.map((column, index) => {
                   // Determine padding based on position and integrated mode
@@ -201,7 +198,7 @@ export function TransactionsTable<T>({
               {isLoading ? (
                 // Loading skeleton rows
                 Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={`loading-${i}`} className="h-12 border-b">
+                  <tr key={`loading-${i}`} className="h-12 dark:bg-[hsl(220,8%,8%)]">
                     {visibleColumns.map((column, colIndex) => {
                       const isFirst = colIndex === 0
                       const isLast = colIndex === visibleColumns.length - 1
@@ -253,7 +250,7 @@ export function TransactionsTable<T>({
       </div>
 
       {/* Pagination - sticky at bottom */}
-      <div className="flex-shrink-0 sticky bottom-0 bg-zinc-50 dark:bg-zinc-900 border-t py-5 -mx-4 px-4 lg:-mx-6 lg:px-6 flex items-center justify-between">
+      <div className="flex-shrink-0 sticky bottom-0 bg-background py-5 -mx-4 px-4 lg:-mx-6 lg:px-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <span className="text-sm text-muted-foreground">
             {data.length.toLocaleString()} of {totalCount.toLocaleString()} {itemName}

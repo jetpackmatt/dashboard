@@ -38,15 +38,20 @@ Strategy for transitioning from mock data to production database with real ShipB
 - Attribution baked into `lib/shipbob/sync.ts` → `syncAllTransactions()`
 - Cron: `/api/cron/sync-transactions` runs every 5 minutes
 
-**System Clients (inactive, `is_active=false`):**
+**System/Internal Clients (`is_internal=true`):**
 | Client | Purpose | Transaction Fees |
 |--------|---------|-----------------|
 | **ShipBob Payments** | ACH payments FROM clients TO ShipBob | Payment |
 | **Jetpack Costs** | Parent-level charges TO Jetpack | CC Processing Fee, Warehousing Fee |
 
+These are NOT real merchant clients - they exist to hold parent-level transactions that aren't billable to any specific merchant. The `is_internal` column distinguishes them from real clients:
+- `getClients()` in `lib/supabase/admin.ts` excludes them by default
+- Invoice generation routes exclude them automatically
+- Pass `getClients(true)` to include internal clients if needed
+
 **Attribution Strategies by reference_type (in order):**
 1. **Shipment**: `reference_id` → `shipments.shipment_id` → `shipments.client_id`
-2. **FC (Storage)**: Parse InventoryId from `reference_id` format `{FC_ID}-{InventoryId}-{LocationType}` → lookup via `billing_storage`
+2. **FC (Storage)**: Parse InventoryId from `reference_id` format `{FC_ID}-{InventoryId}-{LocationType}` → lookup via `products.variants[].inventory.inventory_id`
 3. **Return**: `reference_id` → `returns.return_id` → `returns.client_id`
 4. **Default**: Route by `transaction_fee`:
    - `Payment` → ShipBob Payments client
@@ -732,14 +737,19 @@ CREATE TABLE transactions (
 );
 ```
 
-**Keep `billing_*` tables for historical Excel imports:**
-- `billing_shipments` (73K rows) - Has pre-computed breakdown columns
-- `billing_shipment_fees`, `billing_storage`, etc.
+**⚠️ IMPORTANT: `billing_*` tables have been DELETED (Dec 5, 2025)**
 
-**Going forward:**
-1. **API sync** → `transactions` table (one row per fee)
-2. **Excel imports** → `billing_*` tables (legacy, pre-computed breakdowns)
-3. **Views/RPCs** → Aggregate `transactions` into breakdown format when needed
+The following tables no longer exist and should NEVER be referenced:
+- ~~`billing_shipments`~~, ~~`billing_shipment_fees`~~, ~~`billing_storage`~~
+- ~~`billing_credits`~~, ~~`billing_returns`~~, ~~`billing_receiving`~~
+
+**The `transactions` table is now the SOLE source of truth for all billing data.**
+
+All attribution happens at sync time in `lib/shipbob/sync.ts`:
+- **Shipments**: `reference_id` → `shipments.shipment_id` → `client_id`
+- **FC (Storage)**: `reference_id` contains InventoryId → lookup via `products.variants[].inventory.inventory_id`
+- **Returns**: `reference_id` → `returns.return_id` → `client_id`
+- **Credits/Defaults**: Same-invoice sibling attribution or shipment lookup
 
 ---
 
@@ -1012,6 +1022,66 @@ If merchant ID cannot be resolved via API:
 2. Can `user_id` be added to Billing API transaction responses?
 3. Why does Orders API return empty for a PAT with `orders_read` scope?
 
+### Transaction Storage Strategy (Returns, Receiving, Storage, Credits)
+
+All transaction types are stored in the unified `transactions` table. The `reference_type` field determines the transaction category:
+
+| `reference_type` | Description | `reference_id` Format | Attribution Strategy |
+|------------------|-------------|----------------------|---------------------|
+| **Shipment** | Shipping, picks, materials | Shipment ID (e.g., `325435372`) | Direct lookup via `shipments.shipment_id` |
+| **Return** | Return processing fees | Return ID | Lookup via `returns.return_id` |
+| **FC** | Storage fees | `{FC_ID}-{InventoryId}-{LocationType}` | Parse inventory ID, lookup via catalog |
+| **WRO** | Receiving (Work Order) | WRO reference | Invoice-based fallback attribution |
+| **URO** | Unplanned Receiving Order | URO reference | Invoice-based fallback attribution |
+| **Default** | ACH payments, CC fees, credits | Various | Route by `transaction_fee` value |
+| **TicketNumber** | Support ticket credits | Ticket number | Parse from `additional_details.Comment` |
+
+**Key Fields:**
+- `transaction_type`: "Charge" or "Credit" (from API)
+- `transaction_fee`: Fee category (e.g., "Storage Fee", "Shipping", "Per Pick Fee")
+- `invoice_date_sb`: Date ShipBob invoiced this transaction
+- `invoice_date_jp`: Date Jetpack included in client invoice (set during invoicing)
+- `additional_details`: JSONB with variable fields per transaction type
+
+**Attribution Strategies (in `lib/shipbob/sync.ts`):**
+
+1. **Shipment**: Direct `shipment_id` → `client_id` lookup
+2. **Return**: Direct `return_id` → `client_id` via `returns` table
+3. **FC Storage**: Parse `InventoryId` from reference, lookup via inventory catalog
+4. **Default Payments**: Route ACH to "ShipBob Payments", CC fees to "Jetpack Costs"
+5. **Invoice Fallback**: For unattributed transactions, find sibling on same invoice
+
+**Cron Jobs:**
+- Every 1 minute: Order/shipment sync with linked transactions + returns sync
+- Every 5 minutes: Full transaction sync (all types)
+- Every hour: Reconciliation (soft-delete detection)
+- Weekly Monday 5am: Invoice generation
+
+**Returns Sync (Dec 2025):**
+- `syncReturns()` in `lib/shipbob/sync.ts` - fetches missing returns from API
+- Strategy: Find return IDs in transactions table, check which are missing from returns table, fetch each from API
+- Called by `/api/cron/sync` route every minute
+- Returns table stores `insert_date` which is the Return Creation Date (needed for invoice timestamps)
+- Manual backfill: `node scripts/sync-returns.js` or `--all` for full resync
+
+**Timeline Events Sync (Dec 2025):**
+- Timeline events (`event_created`, `event_intransit`, `event_delivered`, etc.) are fetched automatically during sync
+- After shipments are upserted, `syncShipmentTimelines()` fetches the Timeline API for each shipment
+- Shipments are re-fetched **every sync until delivered** (`event_delivered IS NULL`) to capture all events
+- Timeline API: `GET /2025-07/shipment/{id}/timeline` - returns array of events with `log_type_id` and `timestamp`
+- Event mapping:
+  - 601: `event_created` (Ship Request Created)
+  - 602: `event_picked`
+  - 603: `event_packed`
+  - 604: `event_labeled`
+  - 605: `event_labelvalidated`
+  - 607: `event_intransit`
+  - 608: `event_outfordelivery`
+  - 609: `event_delivered`
+  - 611: `event_deliveryattemptfailed`
+- Rate limiting: 100ms delay between API calls to avoid 429s
+- Historical backfill: `node scripts/backfill-timeline-invoice.js` for shipments with billing transactions
+
 ### ✅ API Field Coverage - VERIFIED
 **Analysis complete:** ~90% of historic Excel fields are directly available via API.
 
@@ -1089,118 +1159,32 @@ const manualMappings = {
 
 ---
 
-## Historic Billing Data (reference/data/historic/)
+## ~~Historic Billing Data~~ (DELETED Dec 5, 2025)
 
-**Source:** ShipBob Excel exports (updated Nov 27, 2025)
+**⚠️ ALL `billing_*` TABLES HAVE BEEN DELETED**
 
-| Excel File | DB Table | Rows | Purpose |
-|------------|----------|------|---------|
-| SHIPMENTS.xlsx | `billing_shipments` | 73,666 | Main shipment costs with full breakdown |
-| ADDITIONAL-SERVICES.xlsx | `billing_shipment_fees` | 51,366 | Line-item fees per shipment |
-| STORAGE.xlsx | `billing_storage` | 14,466 | Warehouse storage fees |
-| CREDITS.xlsx | `billing_credits` | 336 | Credits and refunds |
-| RETURNS.xlsx | `billing_returns` | 204 | Return processing fees |
-| RECEIVING.xlsx | `billing_receiving` | 118 | WRO/inbound receiving fees |
-| **TOTAL** | | **140,156** | |
+The following tables no longer exist. All billing data is now in the `transactions` table:
+- ~~`billing_shipments`~~, ~~`billing_shipment_fees`~~, ~~`billing_storage`~~
+- ~~`billing_credits`~~, ~~`billing_returns`~~, ~~`billing_receiving`~~
+- ~~`billing_all` view~~
 
-### Billing Tables Schema (Migration 008)
+**Why deleted?**
+- Redundant with `transactions` table (API source of truth)
+- Caused attribution bugs (invoice-based fallback assumed single-client invoices)
+- The `products.variants[].inventory.inventory_id` field is the correct source for FC/Storage client attribution
 
-**Design Principle:** Billing tables store ONLY billing-specific data. Shipment/order details live in existing `shipments`/`orders` tables and are joined via foreign keys.
-
-#### 1. `billing_shipments` - Main Shipment Costs
-Links to: `shipments.shipment_id` via `shipment_id` column
-
-| Column | Type | Source |
-|--------|------|--------|
-| order_id | INTEGER | OrderID |
-| shipment_id | TEXT | TrackingId |
-| fulfillment_cost | DECIMAL | Fulfillment without Surcharge |
-| surcharge | DECIMAL | Surcharge Applied |
-| total_amount | DECIMAL | Original Invoice |
-| pick_fees | DECIMAL | Pick Fees |
-| b2b_fees | DECIMAL | B2B Fees |
-| insurance | DECIMAL | Insurance Amount |
-| invoice_number | INTEGER | Invoice Number |
-| invoice_date | DATE | Invoice Date |
-| transaction_date | DATE | Transaction Date |
-| transaction_status | TEXT | 'invoiced' / 'invoice pending' |
-| transaction_type | TEXT | 'Charge' / 'Credit' |
-
-#### 2. `billing_shipment_fees` - Line-Item Fees
-Multiple rows per shipment (pick fees, shipping, etc.)
-
-| Column | Type | Source |
-|--------|------|--------|
-| shipment_id | TEXT | Reference ID |
-| fee_type | TEXT | Fee Type |
-| amount | DECIMAL | Invoice Amount |
-
-#### 3. `billing_storage` - Storage Fees
-Includes parsed quantity and rate from Comment field
-
-| Column | Type | Source |
-|--------|------|--------|
-| inventory_id | INTEGER | Inventory ID |
-| fc_name | TEXT | FC Name |
-| location_type | TEXT | 'Bin', 'Shelf', 'Pallet', 'HalfPallet', 'ShoeShelf' |
-| quantity | INTEGER | Parsed from Comment |
-| rate_per_month | DECIMAL | Parsed from Comment |
-| amount | DECIMAL | Invoice amount |
-
-**Storage Types & Rates:**
-- pallet: $30-40/month
-- shelf: $8-10/month
-- bin: $4-5/month
-- halfpallet: $15/month
-- shoeshelf: $8/month
-
-#### 4. `billing_credits` - Credits/Refunds
-
-| Column | Type | Source |
-|--------|------|--------|
-| reference_id | TEXT | Reference ID |
-| credit_reason | TEXT | 'Courtesy', 'Shipping Error', etc. |
-| credit_amount | DECIMAL | Negative value |
-
-#### 5. `billing_returns` - Return Processing
-
-| Column | Type | Source |
-|--------|------|--------|
-| return_id | INTEGER | Return ID |
-| original_order_id | INTEGER | Original Order ID |
-| return_type | TEXT | 'Regular', 'ReturnToSender' |
-| amount | DECIMAL | Invoice |
-
-#### 6. `billing_receiving` - WRO/Inbound Fees
-
-| Column | Type | Source |
-|--------|------|--------|
-| reference_id | TEXT | WRO ID |
-| fee_type | TEXT | 'WRO Receiving Fee' |
-| amount | DECIMAL | Invoice Amount |
-
-### Import Script
-
-```bash
-# Import all billing data from Excel
-node scripts/import-billing-xlsx.js --client=henson
-
-# Import single file type
-node scripts/import-billing-xlsx.js --file=shipments
-
-# Dry run (preview without inserting)
-node scripts/import-billing-xlsx.js --dry-run
-```
-
-### Unified View
-
-Query all billing data via `billing_all` view:
+**Migration:** All billing queries should now use the `transactions` table:
 ```sql
-SELECT billing_type, reference_id, amount, invoice_date, transaction_status
-FROM billing_all
+-- Old (BROKEN):
+SELECT * FROM billing_storage WHERE client_id = 'xxx';
+
+-- New (CORRECT):
+SELECT * FROM transactions
 WHERE client_id = 'xxx'
-ORDER BY transaction_date DESC;
+  AND reference_type = 'FC';
 ```
+
+See [CLAUDE.billing.md](CLAUDE.billing.md) for transaction type mappings
 
 ---
 

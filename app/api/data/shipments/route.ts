@@ -64,13 +64,12 @@ export async function GET(request: NextRequest) {
         recipient_email,
         carrier,
         carrier_service,
-        shipped_date,
+        event_labeled,
+        event_intransit,
         delivered_date,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
-        label_generation_date,
         fc_name,
-        invoice_amount,
         client_id,
         application_name,
         destination_country,
@@ -99,13 +98,12 @@ export async function GET(request: NextRequest) {
         recipient_email,
         carrier,
         carrier_service,
-        shipped_date,
+        event_labeled,
+        event_intransit,
         delivered_date,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
-        label_generation_date,
         fc_name,
-        invoice_amount,
         client_id,
         application_name,
         destination_country,
@@ -132,8 +130,8 @@ export async function GET(request: NextRequest) {
       query = query.eq('client_id', clientId)
     }
 
-    // Only show shipments that have actually shipped (have a shipped_date)
-    query = query.not('shipped_date', 'is', null)
+    // Only show shipments that have actually shipped (have event_labeled or event_intransit)
+    query = query.not('event_labeled', 'is', null)
 
     // Exclude soft-deleted records
     query = query.is('deleted_at', null)
@@ -329,10 +327,10 @@ export async function GET(request: NextRequest) {
             .select(`
               id,
               delivered_date,
-              label_generation_date,
+              event_labeled,
               orders!inner(order_import_date)
             `)
-            .not('shipped_date', 'is', null)
+            .not('event_labeled', 'is', null)
             .is('deleted_at', null)
 
           if (clientId) {
@@ -369,7 +367,7 @@ export async function GET(request: NextRequest) {
         let countQuery = supabase
           .from('shipments')
           .select('id', { count: 'exact', head: true })
-          .not('shipped_date', 'is', null)
+          .not('event_labeled', 'is', null)
           .is('deleted_at', null)
 
         if (clientId) {
@@ -397,7 +395,7 @@ export async function GET(request: NextRequest) {
           for (let batchNum = i; batchNum < endBatch; batchNum++) {
             const batchOffset = batchNum * BATCH_SIZE
             const batchQuery = buildBatchQuery()
-              .order('label_generation_date', { ascending: false })
+              .order('event_labeled', { ascending: false })
               .range(batchOffset, batchOffset + BATCH_SIZE - 1)
 
             batchPromises.push(batchQuery)
@@ -454,7 +452,7 @@ export async function GET(request: NextRequest) {
 
     // Execute main query
     let { data: shipmentsData, error: shipmentsError, count } = await query
-      .order('label_generation_date', { ascending: false })
+      .order('event_labeled', { ascending: false })
       .range(matchingShipmentIds ? 0 : offset, matchingShipmentIds ? matchingShipmentIds.length - 1 : offset + limit - 1)
 
     // If full-text search failed (column doesn't exist), retry with ILIKE
@@ -469,7 +467,7 @@ export async function GET(request: NextRequest) {
       if (clientId) {
         fallbackQuery = fallbackQuery.eq('client_id', clientId)
       }
-      fallbackQuery = fallbackQuery.not('shipped_date', 'is', null)
+      fallbackQuery = fallbackQuery.not('event_labeled', 'is', null)
       fallbackQuery = fallbackQuery.is('deleted_at', null)
 
       // Re-apply all filters
@@ -502,7 +500,7 @@ export async function GET(request: NextRequest) {
       )
 
       const fallbackResult = await fallbackQuery
-        .order('label_generation_date', { ascending: false })
+        .order('event_labeled', { ascending: false })
         .range(offset, offset + limit - 1)
 
       shipmentsData = fallbackResult.data
@@ -591,7 +589,7 @@ export async function GET(request: NextRequest) {
     let shipments = (shipmentsData || []).map((row: any) => {
       // Order data comes from the JOIN (nested under 'orders' key)
       const order = row.orders || null
-      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.shipped_date, row.delivered_date)
+      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled || row.event_intransit, row.delivered_date)
       const billing = billingMap[row.shipment_id]
 
       // Override status to "Refunded" if this shipment has a refund in billing
@@ -608,13 +606,13 @@ export async function GET(request: NextRequest) {
         customerName: row.recipient_name || order?.customer_name || 'Unknown',
         orderType: order?.order_type || 'DTC',
         qty: itemCounts[row.shipment_id] || 1,
-        cost: billing?.totalCost || row.invoice_amount || 0,
-        importDate: order?.order_import_date || row.label_generation_date || new Date().toISOString(),
+        cost: billing?.totalCost || 0,
+        importDate: order?.order_import_date || row.event_labeled || new Date().toISOString(),
         slaDate: row.estimated_fulfillment_date || null,
         trackingId: row.tracking_id || '',
         carrier: row.carrier || '',
         carrierService: row.carrier_service || '',
-        shippedDate: row.shipped_date,
+        shippedDate: row.event_labeled || row.event_intransit,
         deliveredDate: row.delivered_date,
         fcName: row.fc_name || '',
         storeOrderId: order?.store_order_id || '',
@@ -640,7 +638,7 @@ export async function GET(request: NextRequest) {
       let carriersQuery = supabase
         .from('shipments')
         .select('carrier')
-        .not('shipped_date', 'is', null)
+        .not('event_labeled', 'is', null)
         .not('carrier', 'is', null)
         .is('deleted_at', null)
 

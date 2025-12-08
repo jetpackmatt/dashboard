@@ -5,7 +5,7 @@
  * that we can't get from their API. This is a stopgap until API support.
  *
  * File naming: extras-MMDDYY.csv (e.g., extras-120125.csv for Dec 1, 2025)
- * Location: /shipbob-data on SFTP server
+ * Location: root directory on SFTP server (configurable via SFTP_REMOTE_PATH)
  *
  * CSV Columns:
  * - User ID: ShipBob merchant user ID
@@ -82,7 +82,7 @@ function getConfig() {
   const username = process.env.SFTP_USERNAME
   const password = process.env.SFTP_PASSWORD
   const privateKey = process.env.SFTP_PRIVATE_KEY
-  const remotePath = process.env.SFTP_REMOTE_PATH || '/shipbob-data'
+  const remotePath = process.env.SFTP_REMOTE_PATH || '/'
 
   if (!host || !username) {
     throw new Error('SFTP_HOST and SFTP_USERNAME are required')

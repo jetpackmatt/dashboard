@@ -217,7 +217,7 @@ export function ShipmentsTable({
   if (error) {
     return (
       <div className="px-4 lg:px-6">
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive dark:border-destructive/40 dark:bg-destructive/10 dark:text-red-300">
           <p className="font-medium">Error loading data</p>
           <p className="text-sm">{error}</p>
         </div>

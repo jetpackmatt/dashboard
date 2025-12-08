@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { company_name, shipbob_user_id } = body
+    const { company_name, merchant_id } = body
 
     if (!company_name || typeof company_name !== 'string') {
       return NextResponse.json(
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
 
     const client = await createNewClient({
       company_name: company_name.trim(),
-      shipbob_user_id: shipbob_user_id?.trim() || null,
+      merchant_id: merchant_id?.trim() || null,
     })
 
     return NextResponse.json({ client }, { status: 201 })

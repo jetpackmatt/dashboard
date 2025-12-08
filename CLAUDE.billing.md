@@ -19,11 +19,99 @@ Jetpack bills clients for fulfillment services by:
 ### Table Naming Convention
 | Table | Purpose |
 |-------|---------|
-| `invoices_shipbob` | ShipBob's invoices to us (renamed from `invoices`) |
+| `transactions` | **SOURCE OF TRUTH** - All billing transactions from ShipBob (includes markup data when invoiced) |
+| `invoices_sb` | ShipBob's invoices to us (source of truth for invoice attribution) |
 | `invoices_jetpack` | Our invoices to clients |
-| `invoices_jetpack_line_items` | Line items linking transactions to Jetpack invoices |
 | `markup_rules` | Markup configuration with history via effective dates |
 | `markup_rule_history` | Audit trail for markup changes |
+
+**⚠️ DELETED (Dec 7, 2025):** `invoices_jetpack_line_items` table has been consolidated into `transactions`. Markup data is now stored directly on each transaction when invoiced.
+
+### Transactions Table (Source of Truth - Dec 2025 Refactor)
+
+The `transactions` table is the **sole source of truth** for all billing data.
+
+**⚠️ CRITICAL: `billing_*` tables have been DELETED (Dec 5, 2025)**
+
+The following tables no longer exist and should NEVER be referenced:
+- ~~`billing_shipments`~~, ~~`billing_shipment_fees`~~, ~~`billing_storage`~~
+- ~~`billing_credits`~~, ~~`billing_returns`~~, ~~`billing_receiving`~~
+- ~~`billing_all` view~~
+
+### Financial Column Structure (Dec 2025 - DEFINITIVE)
+
+**⚠️ IMPORTANT: Different columns are used for Shipments vs Non-Shipments!**
+
+#### For SHIPMENTS Only (`reference_type='Shipment'`, `transaction_fee='Shipping'`)
+
+| Column | Source | Description | Client Sees? |
+|--------|--------|-------------|--------------|
+| `cost` | ShipBob API | Total cost to us (= base_cost + surcharge + insurance_cost) | NO (internal) |
+| `base_cost` | SFTP | Base shipping cost from ShipBob (NOT marked up) | NO (internal) |
+| `base_charge` | Calculated | `base_cost × (1 + markup%)` - marked up base cost | YES - "Base Fulfillment Charge" |
+| `surcharge` | SFTP | Carrier surcharges (passed through, NO markup) | YES - "Surcharges" |
+| `total_charge` | Calculated | `base_charge + surcharge` | YES - "Total Charge" |
+| `insurance_cost` | SFTP | Insurance cost from ShipBob (NOT marked up) | NO (internal) |
+| `insurance_charge` | Calculated | `insurance_cost × (1 + markup%)` - marked up insurance | YES - "Insurance" |
+| `billed_amount` | Calculated | `total_charge + insurance_charge` - total charged to client | YES (summary) |
+
+**Formula Summary for Shipments:**
+```
+base_charge = base_cost × (1 + markup_percentage)
+total_charge = base_charge + surcharge
+insurance_charge = insurance_cost × (1 + markup_percentage)
+billed_amount = total_charge + insurance_charge
+```
+
+#### For NON-SHIPMENTS (All other transaction types)
+
+| Column | Source | Description | Client Sees? |
+|--------|--------|-------------|--------------|
+| `cost` | ShipBob API | Cost to us | NO (internal) |
+| `billed_amount` | Calculated | `cost × (1 + markup%)` - total charged to client | YES - "Total Charge" |
+| `base_cost` | NULL | Not applicable | - |
+| `base_charge` | NULL | Not applicable | - |
+| `surcharge` | NULL | Not applicable | - |
+| `total_charge` | NULL | Not applicable | - |
+| `insurance_cost` | NULL | Not applicable | - |
+| `insurance_charge` | NULL | Not applicable | - |
+
+**Formula for Non-Shipments:**
+```
+billed_amount = cost × (1 + markup_percentage)
+```
+
+#### Internal-Only Columns (NEVER show to client)
+
+| Column | Description |
+|--------|-------------|
+| `cost` | Our cost from ShipBob |
+| `base_cost` | ShipBob's base shipping cost |
+| `insurance_cost` | ShipBob's insurance cost |
+| `markup_applied` | Dollar amount of markup |
+| `markup_percentage` | Percentage applied (e.g., 0.18 for 18%) |
+| `markup_rule_id` | Reference to markup_rules.id |
+
+#### `billed_amount` - Universal Total Column
+
+The `billed_amount` column is the **single source of truth for "total charged to client"** regardless of transaction type:
+- **For Shipments:** `billed_amount = total_charge + insurance_charge`
+- **For Non-Shipments:** `billed_amount = cost × (1 + markup%)`
+
+Use this column whenever you need the final amount billed to client without caring about transaction type.
+
+---
+
+### Reference Type Mapping
+
+| reference_type | transaction_fee | Description |
+|----------------|-----------------|-------------|
+| `Shipment` | `Shipping` | Base shipping charges (uses SFTP breakdown) |
+| `Shipment` | `Per Pick Fee`, etc. | Additional fees on shipments |
+| `FC` | `Warehousing Fee` | Storage/warehousing charges |
+| `Return` | various | Return processing charges |
+| `WRO` | `WRO Receiving Fee` | Warehouse receiving orders |
+| `Default` | `Credit` | Credit adjustments |
 
 ### Client Billing Fields (added to `clients` table)
 ```sql
@@ -74,12 +162,14 @@ markup_rules:
 
 ### Transaction Types by Category
 
-**billing_shipments** (order_category field):
-| Category | Count | Description | Markup Strategy |
-|----------|-------|-------------|-----------------|
-| NULL | 68,761 | Standard shipments | By ship_option + weight bracket |
-| FBA | 115 | Fulfillment by Amazon | Different markup rate |
-| VAS | 5 | Value Added Services | Different markup rate |
+All transaction data is in the `transactions` table, categorized by `reference_type` and `transaction_fee` columns.
+
+**Shipping Transactions** (`reference_type='Shipment'`, `transaction_fee='Shipping'`):
+| order_category | Description | Markup Strategy |
+|----------------|-------------|-----------------|
+| NULL/Standard | Standard shipments | By ship_option + weight bracket |
+| FBA | Fulfillment by Amazon | Different markup rate |
+| VAS | Value Added Services | Different markup rate |
 
 **Weight Brackets for Standard Shipments:**
 - `<8oz` - Lightest tier
@@ -89,51 +179,197 @@ markup_rules:
 - `10-15lbs` - Extra heavy
 - `20+lbs` - Freight tier
 
-**billing_shipment_fees** (fee_type field):
-| Fee Type | Count | Notes |
-|----------|-------|-------|
-| Per Pick Fee | 50,463 | Most common |
-| B2B - Label Fee | 300 | B2B specific |
-| B2B - Each Pick Fee | 290 | B2B specific |
-| B2B - Case Pick Fee | 114 | B2B specific |
-| B2B - Order Fee | 50 | B2B specific |
-| B2B - Supplies | 39 | B2B specific |
-| Address Correction | 35 | Carrier charge |
-| Inventory Placement | 28 | Amazon program |
-| URO Storage Fee | 27 | Unshippable inventory |
-| B2B - Pallet Pack/Material | 12 | B2B specific |
-| VAS - Paid Requests | 2 | Custom work |
-| Kitting Fee | 1 | Assembly |
+**Additional Service Fees** (`reference_type='Shipment'`, various `transaction_fee` values):
+| transaction_fee | Notes |
+|-----------------|-------|
+| Per Pick Fee | Most common |
+| B2B - Label Fee | B2B specific |
+| B2B - Each Pick Fee | B2B specific |
+| B2B - Case Pick Fee | B2B specific |
+| B2B - Order Fee | B2B specific |
+| B2B - Supplies | B2B specific |
+| Address Correction | Carrier charge |
+| Inventory Placement | Amazon program |
+| URO Storage Fee | Unshippable inventory |
+| Fuel Surcharge | Carrier surcharge |
+| Residential Surcharge | Carrier surcharge |
+| Delivery Area Surcharge | Carrier surcharge |
+| Kitting Fee | Assembly |
 
-**billing_storage** (location_type field):
-| Type | Count | Typical Rate |
-|------|-------|--------------|
-| Pallet | 5,516 | $30-40/month |
-| Shelf | 2,983 | $10/month |
-| Bin | 1,431 | $3/month |
-| HalfPallet | 3 | $15/month |
+**Storage Transactions** (`reference_type='FC'`):
+| location_type | Typical Rate |
+|---------------|--------------|
+| Pallet | $30-40/month |
+| Shelf | $10/month |
+| Bin | $3/month |
+| HalfPallet | $15/month |
 
-**billing_credits** (credit_reason field):
-| Reason | Count | Markup? |
-|--------|-------|---------|
-| Claim for Lost Order | 221 | See below |
-| Picking Error | 40 | Pass-through |
-| Courtesy | 35 | Pass-through |
-| Claim for Damaged Order | 29 | See below |
-| Others | 9 | Pass-through |
+**Credit Transactions** (`transaction_fee='Credit'`):
+| Reason | Markup? |
+|--------|---------|
+| Claim for Lost Order | See below |
+| Picking Error | Pass-through |
+| Courtesy | Pass-through |
+| Claim for Damaged Order | See below |
 
-**billing_returns** (transaction_type field):
-| Type | Count |
-|------|-------|
-| Return to sender - Processing | 123 |
-| Return Processed by Operations | 73 |
-| Return Label | 4 |
-| Credit | 1 |
+**Return Transactions** (`reference_type='Return'`):
+| transaction_type | Description |
+|------------------|-------------|
+| Return to sender - Processing | RTS handling |
+| Return Processed by Operations | Return processing |
+| Return Label | Label cost |
 
-**billing_receiving** (transaction_type field):
-| Type | Count |
-|------|-------|
-| Charge | 116 |
+**Receiving Transactions** (`reference_type='WRO'`):
+| transaction_fee | Description |
+|-----------------|-------------|
+| WRO Receiving Fee | Inbound receiving charge |
+
+**Insurance Markup** (special category):
+Insurance is marked up separately from base shipping charges. Data comes from SFTP weekly file, not API transactions.
+| Fee Type | Description |
+|----------|-------------|
+| Shipment Insurance | Insurance cost on shipments |
+
+Insurance markup supports both:
+- `markup_percent` (e.g., 0.10 for 10%)
+- `markup_amount` (flat $ amount added)
+
+Formula: `insurance_charge = insurance_cost + (insurance_cost × markup_percent) + markup_amount`
+
+---
+
+## Shipping Markup Analysis (Dec 2025)
+
+### Key Discovery: Base vs Surcharge Markup
+
+**Shipping costs have TWO components with DIFFERENT markup rates:**
+
+| Component | Markup | Notes |
+|-----------|--------|-------|
+| Base Shipping | 14% or 18% | Two tiers exist |
+| Surcharges | 0% | Passed through at cost |
+
+**Analysis Results (Henson JPHS-0037, 1,435 shipments):**
+- Average base markup: 16.83% (between 14% and 18% due to two tiers)
+- Standard deviation: 1.82% (consistent)
+- RMSE at 17.5%: $0.0866 (best fit)
+
+**Formula:**
+```
+markedUpTotal = rawBase × 1.175 + rawSurcharge
+```
+
+Where:
+- `rawSurcharge = xlsxSurcharge` (surcharges passed through at cost)
+- `rawBase = dbCost - rawSurcharge`
+
+**Correlation Evidence:**
+| Surcharge % of Total | Total Markup % |
+|---------------------|----------------|
+| < 10% (1,422 shipments) | 16.5% |
+| > 30% (13 shipments) | 9.4% |
+
+This proves surcharges dilute the total markup percentage because they're not marked up.
+
+### Challenge: API Doesn't Split Base/Surcharge
+
+The ShipBob API returns a single "Shipping" transaction per shipment with total cost. It does NOT provide base vs surcharge breakdown.
+
+**Options for Invoice Generation:**
+1. **Flat 17.5% markup** - Simple, good average fit (RMSE $0.0866)
+2. **Lookup surcharge from invoice details** - More accurate but requires data not in API
+3. **Fixed surcharge table** - If surcharges are standard amounts per zone/carrier
+
+**Recommendation:** Start with flat 17.5% markup on shipping. Average error is <$0.10 per shipment, which is acceptable for now.
+
+### Script References
+- `scripts/analyze-shipping-markup.js` - Shipping-only markup analysis
+- `scripts/analyze-base-vs-surcharge.js` - Base vs surcharge breakdown analysis
+- `scripts/compare-shipment-amounts.js` - XLSX vs DB comparison
+
+---
+
+## Shipping Breakdown Stopgap: SFTP Weekly CSV (Dec 2025)
+
+### Problem
+ShipBob's API returns total shipping cost per shipment, but NOT the base/surcharge/insurance breakdown needed for proper markup application:
+- **Base shipping:** Marked up 14-18%
+- **Surcharges:** Passed through at 0%
+- **Insurance:** Passed through at 0%
+
+### Solution
+ShipBob drops a weekly CSV to our SFTP server with the breakdown data before invoice generation runs (Mondays).
+
+**File format:** `extras-MMDDYY.csv` (e.g., `extras-120125.csv` for Dec 1, 2025)
+**Location:** `sftp://{SFTP_HOST}/extras-MMDDYY.csv` (root directory)
+
+### CSV Format (Actual ShipBob Export)
+```csv
+User ID,Merchant Name,OrderID,Invoice Number,Fulfillment without Surcharge,Surcharge Applied,Original Invoice,Insurance Amount
+386350,Henson Shaving,314479977,8633612,$6.70,$0.15,$6.85,$0.00
+392333,Methyl-Life®,318747654,8633612,$7.11,$0.20,$7.31,$0.00
+```
+
+**Column Mapping:**
+| CSV Column | Our Field | Description |
+|------------|-----------|-------------|
+| OrderID | `shipment_id` | ShipBob shipment ID (matches `reference_id` on transactions) |
+| Fulfillment without Surcharge | `base_cost` | Base shipping cost (gets marked up) |
+| Surcharge Applied | `surcharge` | Carrier surcharges (passed through at 0%) |
+| Insurance Amount | `insurance_cost` | Insurance (passed through at 0%) |
+| Original Invoice | `total` | Total = base + surcharge (for validation) |
+
+### Environment Variables Required
+```bash
+SFTP_HOST=us-east-1.sftpcloud.io
+SFTP_PORT=22  # optional, defaults to 22
+SFTP_USERNAME=shipbob
+SFTP_PASSWORD=...  # or use SFTP_PRIVATE_KEY
+SFTP_PRIVATE_KEY=...  # base64-encoded private key (alternative to password)
+SFTP_REMOTE_PATH=/  # root directory where extras-MMDDYY.csv files live
+```
+
+### Implementation
+**File:** `lib/billing/sftp-client.ts`
+
+The SFTP fetch is **automatically integrated** into the invoice cron job (`app/api/cron/generate-invoices/route.ts`):
+
+```typescript
+// Step 1: Fetch shipping breakdown data from SFTP (if available)
+const sftpResult = await fetchShippingBreakdown(invoiceDate)
+
+if (sftpResult.success && sftpResult.rows.length > 0) {
+  // Update transactions with breakdown data
+  const updateResult = await updateTransactionsWithBreakdown(adminClient, sftpResult.rows)
+  // Updates base_cost, surcharge, insurance_cost on matching transactions
+}
+
+// Step 2: Generate invoices (now with breakdown data available)
+```
+
+### Database Schema
+The `transactions` table has these columns for breakdown data:
+- `base_cost` NUMERIC - Base shipping cost from SFTP
+- `surcharge` NUMERIC - Carrier surcharges from SFTP
+- `insurance_cost` NUMERIC - Insurance cost from SFTP
+
+### Vercel Compatibility
+Uses `ssh2-sftp-client` with `ssh2` v1.17.0 which is pure JavaScript (no native bindings required). Configured in `next.config.ts`:
+```typescript
+serverExternalPackages: ['ssh2', 'ssh2-sftp-client']
+```
+
+### Workflow Integration
+1. ShipBob uploads `extras-MMDDYY.csv` to SFTP root by Sunday night
+2. Monday 5am: Invoice cron fetches CSV for the week's date
+3. Updates all matching Shipping transactions with `base_cost`, `surcharge`, `insurance_cost`
+4. Invoice generation uses breakdown for correct markup application
+5. If CSV missing, invoice generation continues (breakdown columns stay null, uses flat markup)
+
+### Scripts
+- `scripts/apply-sftp-breakdown.js` - Manual backfill from SFTP CSV
+- `scripts/find-missing-breakdown.js` - Debug which shipments don't match
+- `scripts/test-sftp-connection.js` - Test SFTP connectivity and list files
 
 ---
 
@@ -165,18 +401,310 @@ Storage billing intervals vary by client:
 
 **Key Rule:** If storage transactions exist for a given week, include them. If not, no storage line item.
 
+**⚠️ CRITICAL: Storage Invoice Shared Between Clients (Dec 2025 Discovery)**
+
+Storage invoices (`invoice_id_sb`) are SHARED across all clients on the same billing cycle. When querying storage transactions:
+- **ALWAYS filter by BOTH `invoice_id_sb` AND `client_id`**
+- The `merchant_id` field from ShipBob API is the authoritative source for client attribution
+- Reference files from ShipBob may include other clients' inventory if they only filter by invoice_id
+
+Example: Invoice 8633618 contains storage for both Henson (969 rows) and Methyl-Life (12 rows for inventory 20114295). Our DB correctly attributes by `merchant_id`, but ShipBob's raw export included both.
+
 **PDF Requirement:** Always show billing period in line item:
 - "Storage (Nov 1 - Nov 15, 2025)"
 - "Storage (Nov 1 - Nov 30, 2025)"
 
 ---
 
-## Invoice Generation
+## Transaction Timestamps (ULID Decoding)
+
+ShipBob's `transaction_id` field is a ULID which embeds a millisecond-precision timestamp in its first 10 characters. This can provide more precise timestamps than `charge_date` (which is date-only).
+
+**ULID Timestamp Behavior by Transaction Type:**
+
+| Type | ULID Timestamp Works? | What to Use | Notes |
+|------|----------------------|-------------|-------|
+| **Credits** | ✅ YES | `decodeUlidTimestamp()` | Matches reference within 1-2ms |
+| **Receiving (WRO)** | ✅ YES | `decodeUlidTimestamp()` | Matches reference within 1ms |
+| **Returns** | ❌ NO | `returns.insert_date` | ULID = completed_date, not insert_date. Use Returns API. |
+| **Shipments** | ✅ YES | Shipment timeline events | More accurate dates available from timeline API |
+| **Storage** | ❌ NO | `charge_date` | All ULIDs decode to period end date |
+
+**ULID Decode Function:**
+```typescript
+const ULID_ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+function decodeUlidTimestamp(ulid: string): string | null {
+  if (!ulid || ulid.length < 10) return null
+  const timeStr = ulid.substring(0, 10).toUpperCase()
+  let time = 0
+  for (const char of timeStr) {
+    const index = ULID_ENCODING.indexOf(char)
+    if (index === -1) return null
+    time = time * 32 + index
+  }
+  return new Date(time).toISOString()
+}
+```
+
+**Returns Timestamp Source:**
+The Returns API (`/1.0/return/{id}`) provides two timestamps:
+- **`insert_date`** = Return Creation Date (what we need, matches reference within 1ms)
+- **`completed_date`** = When return was completed (what ULID decodes to)
+
+Our `returns` table already stores `insert_date` from the API. The invoice generator joins with `returns` table to get this timestamp. Falls back to `charge_date` (date-only) if return not found.
+
+---
+
+## ShipBob Invoice Reconciliation
+
+### invoices_sb Table
+The `invoices_sb` table stores ShipBob's weekly invoices imported from CSV export (API has ~1 month history limit).
+
+**Schema:**
+- `shipbob_invoice_id` - Primary key, also serves as invoice number (e.g., "8633612")
+- `invoice_date` - Date invoice was issued
+- `invoice_type` - Category (see mapping below)
+- `base_amount` - USD amount (negative for credits/payments)
+- `period_start/end` - Billing period (7-day week)
+
+**Invoice Types from ShipBob:**
+| Type | Description |
+|------|-------------|
+| Shipping | Carrier shipping costs |
+| AdditionalFee | Fulfillment fees (picking, handling) |
+| WarehouseStorage | Monthly storage fees |
+| WarehouseInboundFee | Receiving fees (WRO) |
+| ReturnsFee | Return processing |
+| Credits | Credit adjustments (negative) |
+| Payment | Payments made to ShipBob (negative) |
+
+### Transaction Fee → Invoice Type Mapping
+
+See `lib/billing/fee-invoice-mapping.ts` for the canonical mapping. Key mappings:
+
+| Transaction Fee | Invoice Type |
+|-----------------|--------------|
+| Shipping, Address Correction | Shipping |
+| Per Pick Fee, B2B fees, VAS, Kitting | AdditionalFee |
+| Warehousing Fee, URO Storage Fee | WarehouseStorage |
+| WRO Receiving Fee | WarehouseInboundFee |
+| Return to sender, Return Processed | ReturnsFee |
+| Credit | Credits |
+| Payment | Payment |
+
+### Reconciliation Results (Dec 2025 Testing)
+
+**✅ CONFIRMED: Transaction sums EXACTLY match invoice amounts when properly queried.**
+
+Tested invoice 8633612 (Shipping, Nov 24-30, 2025):
+| Metric | Value |
+|--------|-------|
+| Invoice amount | $11,127.61 |
+| Transaction sum | $11,127.61 |
+| Transaction count | 1,875 |
+| **Difference** | **$0.00** |
+
+Overall sync status:
+- API total transactions: 147,281
+- DB synced transactions: 147,150 (99.9%)
+- Invoice attribution: Working correctly via `invoice_id_sb` field
+
+### Critical: Supabase Pagination Requirement
+
+⚠️ **When summing transactions by invoice, you MUST paginate!**
+
+Supabase has a default 1,000 row limit. Queries without pagination will return incorrect sums.
+
+```javascript
+// CORRECT: Paginated query
+let allTx = []
+let offset = 0
+const pageSize = 1000
+
+while (true) {
+  const { data } = await supabase
+    .from('transactions')
+    .select('cost')  // NOTE: Column was renamed from 'amount' to 'cost' in Dec 2025
+    .eq('invoice_id_sb', invoiceId)
+    .range(offset, offset + pageSize - 1)
+    .order('id')
+
+  if (!data || data.length === 0) break
+  allTx.push(...data)
+  offset += data.length
+  if (data.length < pageSize) break
+}
+
+const total = allTx.reduce((sum, tx) => sum + Number(tx.cost), 0)
+```
+
+### Key Decision: Source of Truth
+
+**For Jetpack invoicing, transactions ARE the source of truth.**
+
+Why:
+- Markups happen at the **transaction level**, not invoice level
+- We need transaction-level detail to apply different markup rates
+- Transaction sums match invoice amounts exactly (verified Dec 5, 2025)
+
+Key rules:
+1. **Match by `invoice_id_sb`**, NOT date ranges (avoids timezone issues)
+2. **ALWAYS filter by BOTH `invoice_id_sb` AND `client_id`** - invoices are shared across clients!
+3. Only bill transactions where `invoiced_status_sb = true`
+4. Only include transactions whose `invoice_id_sb` matches active week's ShipBob invoice IDs
+5. Always use paginated queries when summing large transaction sets
+
+The fee-to-invoice mapping (`lib/billing/fee-invoice-mapping.ts`) is for categorization/grouping in Jetpack invoices.
+
+---
+
+## Invoice Generation & Approval Workflow (Dec 2025 Refactor)
+
+### Core Principle: Separation of Generation and Approval
+
+**⚠️ CRITICAL: Transactions and invoices_sb are NOT marked until APPROVAL, not generation.**
+
+This ensures:
+1. Drafts can be regenerated freely without data corruption
+2. Draft invoices can be deleted safely (no orphaned transaction marks)
+3. What you approve is EXACTLY what was generated (no recalculation on approval)
+
+### Database Schema for Workflow
+
+The `invoices_jetpack` table has two key JSONB columns:
+
+```sql
+-- Stores which ShipBob invoices are included (for regeneration)
+shipbob_invoice_ids JSONB DEFAULT '[]'::jsonb
+
+-- Stores calculated line items with markup data (for approval)
+line_items_json JSONB
+```
+
+### The Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  1. GENERATE (Cron or Manual)                                               │
+│                                                                             │
+│  • Collect transactions from invoices_sb (where jetpack_invoice_id IS NULL) │
+│  • Apply markup rules, calculate amounts                                    │
+│  • Store shipbob_invoice_ids on invoice record                              │
+│  • Store line_items_json with all calculated markup data                    │
+│  • Generate PDF and XLSX files                                              │
+│  • Create invoice with status = 'draft'                                     │
+│                                                                             │
+│  ❌ Does NOT mark transactions.invoice_id_jp                                │
+│  ❌ Does NOT mark invoices_sb.jetpack_invoice_id                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  2. REVIEW (Admin UI)                                                       │
+│                                                                             │
+│  • Admin reviews PDF and XLSX files                                         │
+│  • Can regenerate if issues found (recalculates from shipbob_invoice_ids)   │
+│  • Draft shows in "Pending Approval" section                                │
+│  • Same SB invoices can appear in preflight until approved                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  3. APPROVE (Finalization)                                                  │
+│                                                                             │
+│  • Reads line_items_json (NO recalculation!)                                │
+│  • Marks transactions with invoice_id_jp using EXACT amounts from files     │
+│  • Marks invoices_sb.jetpack_invoice_id                                     │
+│  • Changes status to 'approved'                                             │
+│                                                                             │
+│  ✅ NOW transactions are marked (same amounts as PDF/XLSX)                  │
+│  ✅ NOW invoices_sb is marked (removed from preflight)                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why line_items_json Matters
+
+The `line_items_json` column stores the calculated markup data at generation time:
+- `markupApplied` - Dollar amount of markup
+- `billedAmount` - Final amount billed to client
+- `markupPercentage` - The percentage used
+- `markupRuleId` - Reference to the rule applied
+- Plus all other line item fields
+
+When you approve, the system reads this cached data and marks transactions with these EXACT amounts. This guarantees that what the admin reviewed in the PDF/XLSX is exactly what gets committed to the database.
+
+**If we recalculated at approval time:**
+- Markup rules might have changed between generation and approval
+- Underlying data might have been modified
+- The approved amounts could differ from the PDF/XLSX files reviewed
+- This would be a critical bug!
+
+### Regeneration
+
+When regenerating a draft invoice:
+1. Reads `shipbob_invoice_ids` from the invoice record
+2. Recollects transactions for those IDs
+3. Reapplies current markup rules
+4. Updates `line_items_json` with new calculations
+5. Regenerates PDF and XLSX files
+6. Increments version number
+
+**Does NOT touch:**
+- `transactions.invoice_id_jp` (still null for drafts)
+- `invoices_sb.jetpack_invoice_id` (still null for drafts)
 
 ### Weekly Schedule
-- **When:** Mondays at 5am PT (Vercel Cron)
+- **When:** Mondays at 6pm EST (Vercel Cron)
 - **Status:** Generates as "draft"
-- **Regeneration window:** 24 hours only
+- **Regeneration:** Unlimited while in draft status
+
+### Invoice Dates and Billing Periods
+
+**Invoice Date & Due Date:**
+- Always the Monday when the invoice is generated
+- Example: If cron runs Monday Dec 1, invoice_date = Dec 1, 2025
+
+**Billing Period (for non-storage line items):**
+- Always the PRIOR Monday through Sunday
+- Example: Dec 1 invoice → billing period = Nov 24 - Nov 30, 2025
+- Applies to: Shipping, Additional Services, Returns, Receiving, Credits
+
+**Storage Billing Period:**
+- Determined from actual storage transaction `charge_date` values
+- Rounded to the nearest half-month boundary:
+  - If transactions span Nov 1 - Nov 30 → "Nov 1 - Nov 30, 2025"
+  - If transactions only Nov 16 - Nov 30 → "Nov 16 - Nov 30, 2025"
+  - If transactions only Nov 1 - Nov 15 → "Nov 1 - Nov 15, 2025"
+- Storage can be monthly or semi-monthly depending on client billing cycle
+
+**Period Detection Logic:**
+```typescript
+// Calculate storage period from transaction dates
+function detectStoragePeriod(storageDates: Date[]): { start: Date, end: Date } {
+  const minDate = Math.min(...storageDates.map(d => d.getTime()))
+  const maxDate = Math.max(...storageDates.map(d => d.getTime()))
+
+  const earliest = new Date(minDate)
+  const latest = new Date(maxDate)
+
+  // Round to half-month boundaries
+  const month = earliest.getMonth()
+  const year = earliest.getFullYear()
+
+  // If transactions cross the 15th, use full month
+  const dayMin = earliest.getDate()
+  const dayMax = latest.getDate()
+
+  if (dayMin <= 15 && dayMax > 15) {
+    // Full month
+    return { start: new Date(year, month, 1), end: new Date(year, month + 1, 0) }
+  } else if (dayMax <= 15) {
+    // First half
+    return { start: new Date(year, month, 1), end: new Date(year, month, 15) }
+  } else {
+    // Second half
+    return { start: new Date(year, month, 16), end: new Date(year, month + 1, 0) }
+  }
+}
+```
 
 ### Invoice Statuses
 | Status | Description |
@@ -197,6 +725,199 @@ Storage billing intervals vary by client:
 2. Optional custom note per client (`clients.invoice_email_note`)
 3. If past-due invoices exist: Add warning paragraph
 4. If regenerated: Add bold correction notice
+
+---
+
+## Pre-Flight Validation (Dec 2025)
+
+Before generating invoices, the cron job runs a comprehensive validation to ensure all required data is populated. This prevents generating incomplete invoices.
+
+### How It Works
+
+**Location:** `lib/billing/preflight-validation.ts`
+
+The validation runs per-client, checking ALL fields that appear in the generated XLS output:
+
+```typescript
+// Called in the cron job before generating each client's invoice
+const validation = await runPreflightValidation(adminClient, client.id, shipbobInvoiceIds)
+
+if (!validation.passed) {
+  // Critical issues block invoice generation
+  console.error(`❌ Pre-flight validation FAILED for ${client.company_name}`)
+  errors.push({ client: client.company_name, error: validation.issues.map(i => i.message).join('; ') })
+  continue  // Skip this client
+}
+```
+
+### What Gets Validated
+
+The validation checks EVERY column in ALL 6 XLS sheets:
+
+#### 1. Shipments Sheet (12 field categories)
+| Field | Source | Required? |
+|-------|--------|-----------|
+| `tracking_id` | shipments table | Warning if missing |
+| `base_cost` | SFTP breakdown file | **100% REQUIRED** - ANY missing blocks generation |
+| `carrier` | shipments.carrier | Warning if missing |
+| `carrier_service` | shipments.carrier_service | Warning if missing |
+| `zone_used` | shipments.zone_used | Warning if missing |
+| `weight_oz` / `weight_actual` | shipments table | Warning if missing |
+| `dimensions` | shipments (length/width/height) | Warning if missing |
+| `event_labeled` | shipment timeline events | Warning if missing |
+| `products_sold` | shipment_items table | Warning if missing |
+| `customer_name` | orders.recipient_name | Warning if missing |
+| `zip_code` | orders.ship_to_postal | Warning if missing |
+
+#### 2. Additional Services Sheet (3 field categories)
+| Field | Source |
+|-------|--------|
+| `reference_id` | transactions.reference_id |
+| `fee_type` | transactions.transaction_fee |
+| `transaction_date` | transactions.charge_date |
+
+#### 3. Returns Sheet (5 field categories)
+| Field | Source |
+|-------|--------|
+| `return_id` | transactions.reference_id |
+| `order_id` | returns.order_id |
+| `tracking_id` | transactions.tracking_id |
+| `return_date` | returns.insert_date |
+| `fc_name` | transactions.fulfillment_center |
+
+#### 4. Receiving Sheet (4 field categories)
+| Field | Source |
+|-------|--------|
+| `wro_id` | transactions.reference_id |
+| `fee_type` | transactions.transaction_fee |
+| `transaction_type` | transactions.transaction_type |
+| `transaction_date` | transactions.charge_date |
+
+#### 5. Storage Sheet (4 field categories)
+| Field | Source |
+|-------|--------|
+| `fc_name` | transactions.fulfillment_center |
+| `inventory_id` | transactions.additional_details.InventoryId |
+| `sku` | transactions.additional_details.SKU |
+| `location_type` | transactions.additional_details.LocationType |
+
+#### 6. Credits Sheet (3 field categories)
+| Field | Source |
+|-------|--------|
+| `reference_id` | transactions.reference_id |
+| `transaction_date` | transactions.charge_date |
+| `credit_reason` | transactions.additional_details.Comment or CreditReason |
+
+### Thresholds
+
+```typescript
+const CRITICAL_THRESHOLD = 5  // >5% missing = CRITICAL (blocks generation)
+const WARNING_THRESHOLD = 1   // >1% missing = WARNING (logs but continues)
+```
+
+**`base_cost` requires 100% completion** - Even a single missing `base_cost` value blocks invoice generation. This is because:
+- Without base/surcharge breakdown, we cannot apply correct markup rates
+- Markup is applied to base cost only, surcharges pass through at 0%
+- Incorrect markup would result in incorrect billing
+
+All other fields use threshold-based validation (>5% missing = critical, >1% = warning) and generate warnings but allow invoice generation to proceed (they affect XLS detail but not billing accuracy).
+
+### Validation Output Example
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║  PRE-FLIGHT VALIDATION: ✅ PASSED                            ║
+╠══════════════════════════════════════════════════════════════╣
+║ TRANSACTION COUNTS:                                          ║
+║   Shipping: 1,435  | Add'l Svc: 389    | Storage: 0          ║
+║   Returns: 51      | Receiving: 0      | Credits: 2          ║
+╠══════════════════════════════════════════════════════════════╣
+║ SHIPMENTS SHEET FIELDS:                                      ║
+║   Tracking ID:    1435/1435 (100%)     Event Labeled: 1435/1435║
+║   Base Cost:      1435/1435 (100%)     Products Sold: 1398/1435║
+║   Carrier:        1432/1435 (99%)      Customer Name: 1435/1435║
+║   Carrier Svc:    1430/1435 (99%)      Zip Code:      1435/1435║
+║   Zone:           1420/1435 (99%)      Weights:       1435/1435║
+║   Dimensions:     1400/1435 (97%)                              ║
+╠══════════════════════════════════════════════════════════════╣
+║ ADDITIONAL SERVICES SHEET FIELDS:                            ║
+║   Reference ID: 389/389 (100%)         Fee Type:    389/389   ║
+║   Tx Date:      389/389 (100%)                                ║
+╠══════════════════════════════════════════════════════════════╣
+║ RETURNS SHEET FIELDS:                                        ║
+║   Return ID: 51/51 (100%)              Return Date: 48/51     ║
+║   Order ID:  48/51 (94%)               FC Name:     51/51     ║
+╠══════════════════════════════════════════════════════════════╣
+║ CREDITS SHEET FIELDS:                                        ║
+║   Reference ID: 2/2 (100%)             Tx Date:      2/2      ║
+║   Credit Reason: 2/2 (100%)                                   ║
+╠══════════════════════════════════════════════════════════════╣
+║ ℹ️  WARNINGS:                                                 ║
+║   [SHIPMENTS] 37 shipments (3%) missing products_sold        ║
+║   [RETURNS] 3 returns (6%) missing return_date               ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### Cron Job Integration
+
+The validation is called in Step 4.5 of the invoice generation flow:
+
+```typescript
+// In app/api/cron/generate-invoices/route.ts
+
+// Step 4: Collect billing transactions
+let lineItems = await collectBillingTransactionsByInvoiceIds(client.id, shipbobInvoiceIds)
+
+// Step 4.5: Run pre-flight validation
+const validation = await runPreflightValidation(adminClient, client.id, shipbobInvoiceIds)
+validationResults.push({ client: client.company_name, validation })
+
+if (!validation.passed) {
+  errors.push({ client: client.company_name, error: `Pre-flight validation failed` })
+  continue  // Skip to next client
+}
+
+// Step 5: Apply markups (only if validation passed)
+lineItems = await applyMarkupsToLineItems(client.id, lineItems)
+```
+
+### Response Output
+
+The cron job response includes validation results for each client:
+
+```json
+{
+  "success": true,
+  "generated": 2,
+  "preflightValidation": [
+    {
+      "client": "Henson Shaving",
+      "passed": true,
+      "issues": 0,
+      "warnings": 2,
+      "summary": { /* detailed field counts */ }
+    },
+    {
+      "client": "Methyl-Life",
+      "passed": true,
+      "issues": 0,
+      "warnings": 1,
+      "summary": { /* detailed field counts */ }
+    }
+  ]
+}
+```
+
+### Data Population Scripts
+
+If validation fails due to missing data, these scripts can backfill:
+
+| Missing Data | Script | Notes |
+|--------------|--------|-------|
+| SFTP breakdown | `scripts/apply-sftp-breakdown.js` | Reads from SFTP CSV |
+| Timeline events | `scripts/backfill-timeline-fast.js` | Fetches from ShipBob API |
+| Shipment items | `scripts/backfill-shipment-items.js <days>` | Fetches product data |
+| Returns data | `scripts/sync-returns.js` | Syncs Returns API |
 
 ---
 
@@ -235,15 +956,48 @@ UPDATE clients SET short_code = 'HS', next_invoice_number = 38 WHERE company_nam
 UPDATE clients SET short_code = 'ML', next_invoice_number = 22 WHERE company_name ILIKE '%methyl%';
 ```
 
-### 3. Add markup columns to billing tables
+### 3. Add markup columns to transactions table (COMPLETED Dec 2025)
 ```sql
--- Add to ALL 6 billing tables:
-ALTER TABLE billing_shipments ADD COLUMN billed_amount DECIMAL(10,2);
-ALTER TABLE billing_shipments ADD COLUMN markup_rule_id UUID REFERENCES markup_rules(id);
-ALTER TABLE billing_shipments ADD COLUMN markup_percentage DECIMAL(5,2);
+-- Phase 1: Renamed amount to cost (our cost from ShipBob)
+ALTER TABLE transactions RENAME COLUMN amount TO cost;
 
--- Repeat for: billing_shipment_fees, billing_storage, billing_credits, billing_returns, billing_receiving
+-- Phase 2: Renamed charge to total_charge, added insurance_charge
+ALTER TABLE transactions RENAME COLUMN charge TO total_charge;
+ALTER TABLE transactions ADD COLUMN insurance_charge NUMERIC(12,2);
+
+-- Phase 3: Consolidated line_items into transactions (Dec 7, 2025)
+-- See migration: scripts/migrations/014-consolidate-line-items-to-transactions.sql
+ALTER TABLE transactions ADD COLUMN markup_applied NUMERIC DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN billed_amount NUMERIC;
+ALTER TABLE transactions ADD COLUMN markup_percentage NUMERIC DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN markup_rule_id UUID REFERENCES markup_rules(id);
+
+-- Dropped old unused columns
+ALTER TABLE transactions DROP COLUMN markup_amount;
+ALTER TABLE transactions DROP COLUMN markup_percent;
+
+-- Dropped redundant table
+DROP TABLE invoices_jetpack_line_items;
 ```
+
+**Column Summary (see "Financial Column Structure" section for full details):**
+
+For **Shipments**:
+- `cost` - Our total cost from ShipBob API (internal only)
+- `base_cost` - Base shipping cost from SFTP (internal only, gets marked up)
+- `base_charge` - Marked up base cost = `base_cost × (1 + markup%)` (client sees as "Base Fulfillment Charge")
+- `surcharge` - Carrier surcharges from SFTP (passed through at cost, no markup)
+- `total_charge` - `base_charge + surcharge` (client sees as "Total Charge")
+- `insurance_cost` - Insurance cost from SFTP (internal only, gets marked up)
+- `insurance_charge` - Marked up insurance = `insurance_cost × (1 + markup%)` (client sees as "Insurance")
+- `billed_amount` - `total_charge + insurance_charge` (universal total for any transaction type)
+
+For **Non-Shipments**:
+- `cost` - Our cost from ShipBob API (internal only)
+- `billed_amount` - `cost × (1 + markup%)` (client sees as "Total Charge")
+- All breakdown columns (`base_cost`, `base_charge`, `surcharge`, `total_charge`, `insurance_cost`, `insurance_charge`) are NULL
+
+**⚠️ DELETED:** The old `billing_*` tables have been permanently deleted (Dec 5, 2025). All billing data is now in the `transactions` table.
 
 ### 4. Create markup history table
 ```sql
@@ -260,7 +1014,7 @@ CREATE TABLE markup_rule_history (
 ALTER TABLE markup_rule_history ENABLE ROW LEVEL SECURITY;
 ```
 
-### 5. Create Jetpack invoices tables
+### 5. Create Jetpack invoices table
 ```sql
 CREATE TABLE invoices_jetpack (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -302,29 +1056,30 @@ CREATE TABLE invoices_jetpack (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE invoices_jetpack ENABLE ROW LEVEL SECURITY;
-
-CREATE TABLE invoices_jetpack_line_items (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  invoice_id UUID NOT NULL REFERENCES invoices_jetpack(id) ON DELETE CASCADE,
-
-  -- Source
-  billing_table TEXT NOT NULL,
-  billing_record_id UUID NOT NULL,
-
-  -- Frozen amounts
-  base_amount DECIMAL(10,2) NOT NULL,
-  markup_applied DECIMAL(10,2) NOT NULL,
-  billed_amount DECIMAL(10,2) NOT NULL,
-  markup_rule_id UUID REFERENCES markup_rules(id),
-
-  -- Display
-  line_category TEXT NOT NULL,
-  description TEXT,
-
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-ALTER TABLE invoices_jetpack_line_items ENABLE ROW LEVEL SECURITY;
 ```
+
+**Note:** Line items are NOT stored in a separate table. When transactions are invoiced, their markup data is stored directly on the `transactions` table:
+- `invoiced_status_jp` = true
+- `jetpack_invoice_id` = Human-readable invoice number (e.g., "JPHS-0038-120825") - TEXT field, NOT a UUID
+- `markup_percentage` = the percentage applied (e.g., 0.18 for 18%)
+- `markup_rule_id` = reference to the markup rule used
+- `markup_applied` = dollar amount of markup
+
+**⚠️ Invoice Identifier Decision (Dec 2025):**
+We use the human-readable `invoice_number` (e.g., "JPHS-0038-120825") as the primary identifier instead of UUIDs:
+- `invoices_jetpack.invoice_number` = Primary key / unique identifier (TEXT)
+- `transactions.jetpack_invoice_id` = Direct text reference to invoice_number
+- Join: `transactions.jetpack_invoice_id = invoices_jetpack.invoice_number`
+- **Rationale:** Simpler, human-readable, no UUID lookups needed, easier debugging
+
+**For Shipments:**
+- `base_charge` = base_cost × (1 + markup_percentage)
+- `total_charge` = base_charge + surcharge
+- `insurance_charge` = insurance_cost × (1 + markup_percentage)
+- `billed_amount` = total_charge + insurance_charge
+
+**For Non-Shipments:**
+- `billed_amount` = cost × (1 + markup_percentage)
 
 ---
 
@@ -337,7 +1092,7 @@ Two-phase approach that solves the 7-day data retention limit:
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  PHASE 1: CONTINUOUS SYNC (every 15-30 min)                                 │
-│  POST /transactions:query → billing_transactions table                      │
+│  POST /transactions:query → transactions table                              │
 │                                                                             │
 │  • Captures pending transactions before 7-day expiry                        │
 │  • Links to shipments via reference_id for context                          │
@@ -346,7 +1101,7 @@ Two-phase approach that solves the 7-day data retention limit:
 └─────────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  PHASE 2: MONDAY 5AM INVOICE VERIFICATION                                   │
+│  PHASE 2: MONDAY 6PM EST INVOICE VERIFICATION                               │
 │                                                                             │
 │  1. GET /invoices → Fetch new week's ShipBob invoices                       │
 │  2. GET /invoices/{id}/transactions → Official invoice transactions         │
@@ -530,7 +1285,7 @@ function findMatchingRules(
 ## Historical Data Backfill
 
 ### Source Data
-1. **ShipBob costs:** Already in `billing_*` tables (140K+ records)
+1. **ShipBob costs:** All in `transactions` table via API sync (147K+ records)
 2. **Billed amounts:** From Excel invoices since inception
 
 ### Strategy
@@ -562,12 +1317,54 @@ reference/invoices/
   │   └── View change history
   │
   └── Run Invoicing (Tab 2)
-      ├── This Week's Invoices
-      ├── Per-client preview
-      ├── Approve Individual / Approve All
-      ├── Regenerate (24hr window only)
-      └── Past invoices archive
+      ├── Pre-flight Validation Card (collapsible)
+      │   ├── Summary badges: Failed/Warnings/Passed counts
+      │   ├── Per-client validation details
+      │   └── Field-level issue breakdown
+      │
+      ├── Pending Approval Section
+      │   ├── Draft invoices table
+      │   ├── View button (dropdown: PDF/XLSX)
+      │   ├── Re-Run button (regenerate with fresh data)
+      │   ├── Approve button (per invoice)
+      │   └── Approve All button
+      │
+      └── Recent Invoices Section
+          ├── Approved/sent invoices table
+          └── Download button (dropdown: PDF/XLSX)
 ```
+
+### Admin API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/invoices` | GET | List all Jetpack invoices |
+| `/api/admin/invoices/generate` | POST | Generate draft invoices for current week |
+| `/api/admin/invoices/preflight` | GET | Run pre-flight validation for all clients |
+| `/api/admin/invoices/[invoiceId]/files` | GET | Get signed URLs for PDF/XLSX files |
+| `/api/admin/invoices/[invoiceId]/approve` | POST | Approve a draft invoice |
+| `/api/admin/invoices/[invoiceId]/regenerate` | POST | Regenerate a draft invoice |
+| `/api/admin/markup-rules` | GET/POST | List or create markup rules |
+| `/api/admin/markup-rules/[ruleId]` | GET/PATCH | Get or update a markup rule |
+| `/api/admin/markup-rules/[ruleId]/deactivate` | POST | Deactivate a markup rule |
+
+### Confirmation Dialogs
+
+All destructive actions require confirmation:
+- **Approve Invoice**: "This will finalize the invoice and mark it as approved. Once approved, invoices cannot be modified."
+- **Approve All**: "This will approve N draft invoice(s) and mark them as finalized."
+- **Regenerate Invoice**: "This will regenerate the invoice with fresh data, recalculate markups, and create new PDF/XLSX files."
+
+### Invoice Files
+
+Files are stored in Supabase Storage and accessed via signed URLs:
+```
+invoices/{client_id}/
+  {invoice_number}.pdf
+  {invoice_number}.xlsx
+```
+
+Signed URLs are valid for 1 hour (3600 seconds).
 
 ### Client-Facing
 ```

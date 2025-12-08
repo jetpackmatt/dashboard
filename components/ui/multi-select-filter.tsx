@@ -69,7 +69,7 @@ export function MultiSelectFilter({
           role="combobox"
           aria-expanded={open}
           className={cn(
-            "h-[30px] justify-between text-sm font-normal",
+            "h-[30px] justify-between text-sm font-normal text-muted-foreground",
             selected.length > 0 && "text-foreground",
             className
           )}

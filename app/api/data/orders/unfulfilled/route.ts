@@ -42,7 +42,8 @@ export async function GET(request: NextRequest) {
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         status_details,
-        label_generation_date,
+        event_labeled,
+        created_at,
         recipient_name,
         carrier_service,
         fc_name,
@@ -69,19 +70,20 @@ export async function GET(request: NextRequest) {
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         status_details,
-        label_generation_date,
+        event_labeled,
+        created_at,
         recipient_name,
         carrier_service,
         fc_name,
         client_id
       `
 
-    // Query shipments that haven't been shipped yet (no fees assigned)
-    // These are shipments where shipped_date IS NULL and status is not Cancelled
+    // Query shipments that haven't been shipped yet (no label generated)
+    // These are shipments where event_labeled IS NULL and status is not Cancelled
     let query = supabase
       .from('shipments')
       .select(selectFields, { count: 'exact' })
-      .is('shipped_date', null) // No fees assigned yet
+      .is('event_labeled', null) // Not shipped yet
       .neq('status', 'Cancelled') // Exclude cancelled
       .is('deleted_at', null) // Exclude soft-deleted records
 
@@ -185,7 +187,7 @@ export async function GET(request: NextRequest) {
 
     // Order by label generation date (most recent first) and paginate
     let { data: shipmentsData, error: shipmentsError, count } = await query
-      .order('label_generation_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
     // If full-text search failed (column doesn't exist), retry with client-side filtering
@@ -197,7 +199,7 @@ export async function GET(request: NextRequest) {
       let fallbackQuery = supabase
         .from('shipments')
         .select(selectFields, { count: 'exact' })
-        .is('shipped_date', null)
+        .is('event_labeled', null)
         .neq('status', 'Cancelled')
         .is('deleted_at', null)
 
@@ -206,7 +208,7 @@ export async function GET(request: NextRequest) {
       if (clientId) fallbackQuery = fallbackQuery.eq('client_id', clientId)
 
       const fallbackResult = await fallbackQuery
-        .order('label_generation_date', { ascending: false })
+        .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1)
 
       shipmentsData = fallbackResult.data
@@ -284,7 +286,7 @@ export async function GET(request: NextRequest) {
         storeOrderId: order.store_order_id || '',
         customerName: shipment.recipient_name || order.customer_name || 'Unknown',
         status: derivedStatus,
-        orderDate: order.order_import_date || shipment.label_generation_date,
+        orderDate: order.order_import_date || shipment.created_at,
         slaDate: shipment.estimated_fulfillment_date,
         itemCount: itemCounts[shipment.shipment_id] || 1,
         orderType: order.order_type || 'DTC',
@@ -427,7 +429,7 @@ function deriveGranularStatus(shipment: any): string {
       // Generic Processing - derive more detail
       case 'Processing':
         // Check if label has been created
-        if (shipment.label_generation_date) {
+        if (shipment.event_labeled) {
           // Has label, waiting to be picked/shipped
           if (efdStatus === 'PendingLate') {
             return 'Awaiting Pick (Late)'

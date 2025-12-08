@@ -285,12 +285,16 @@ function formatCurrency(amount: number, currency: string): string {
 }
 
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr)
+  // Parse YYYY-MM-DD as LOCAL date (not UTC) to avoid timezone shift
+  const [year, month, day] = dateStr.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
   return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function formatShortDate(dateStr: string): string {
-  const date = new Date(dateStr)
+  // Parse YYYY-MM-DD as LOCAL date (not UTC) to avoid timezone shift
+  const [year, month, day] = dateStr.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 

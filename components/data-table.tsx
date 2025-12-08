@@ -953,39 +953,41 @@ export function DataTable({
       onValueChange={handleTabChange}
     >
         {/* Sticky header with tabs and controls */}
-        <div className="sticky top-0 z-20 bg-zinc-50 dark:bg-zinc-900 -mx-4 px-4 lg:-mx-6 lg:px-6 pt-5 pb-6 border-b">
-          {/* Row 1: Tabs */}
-          <div className="flex items-center gap-4 mb-5">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/30 dark:bg-black/20">
+          {/* Row 1: Tabs - edge-to-edge with subtle background */}
+          <div className="">
             {/* Mobile/Tablet: Table selector dropdown */}
-            <Select value={currentTab} onValueChange={handleTabChange}>
-              <SelectTrigger className="w-[180px] lg:hidden">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
-                <SelectItem value="shipments">Shipments</SelectItem>
-                <SelectItem value="additional-services">Additional Services</SelectItem>
-                <SelectItem value="returns">Returns</SelectItem>
-                <SelectItem value="receiving">Receiving</SelectItem>
-                <SelectItem value="storage">Storage</SelectItem>
-                <SelectItem value="credits">Credits</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="lg:hidden px-4 py-3">
+              <Select value={currentTab} onValueChange={handleTabChange}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
+                  <SelectItem value="shipments">Shipments</SelectItem>
+                  <SelectItem value="additional-services">Additional Services</SelectItem>
+                  <SelectItem value="returns">Returns</SelectItem>
+                  <SelectItem value="receiving">Receiving</SelectItem>
+                  <SelectItem value="storage">Storage</SelectItem>
+                  <SelectItem value="credits">Credits</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-            {/* Desktop: Full-width tabs grid (matches Analytics page styling) */}
-            <TabsList className="hidden lg:grid w-full grid-cols-7 h-auto gap-1 bg-zinc-100 border border-zinc-200/60 dark:bg-zinc-800 dark:border-zinc-700/60">
-              <TabsTrigger value="unfulfilled" className="text-xs sm:text-sm">Unfulfilled</TabsTrigger>
-              <TabsTrigger value="shipments" className="text-xs sm:text-sm">Shipments</TabsTrigger>
-              <TabsTrigger value="additional-services" className="text-xs sm:text-sm">Additional Services</TabsTrigger>
-              <TabsTrigger value="returns" className="text-xs sm:text-sm">Returns</TabsTrigger>
-              <TabsTrigger value="receiving" className="text-xs sm:text-sm">Receiving</TabsTrigger>
-              <TabsTrigger value="storage" className="text-xs sm:text-sm">Storage</TabsTrigger>
-              <TabsTrigger value="credits" className="text-xs sm:text-sm">Credits</TabsTrigger>
+            {/* Desktop: Full-width tabs - edge-to-edge, squared */}
+            <TabsList className="hidden lg:grid w-full grid-cols-7 h-auto p-0 bg-transparent px-4 lg:px-6">
+              <TabsTrigger value="unfulfilled" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Unfulfilled</TabsTrigger>
+              <TabsTrigger value="shipments" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Shipments</TabsTrigger>
+              <TabsTrigger value="additional-services" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Additional Services</TabsTrigger>
+              <TabsTrigger value="returns" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Returns</TabsTrigger>
+              <TabsTrigger value="receiving" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Receiving</TabsTrigger>
+              <TabsTrigger value="storage" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Storage</TabsTrigger>
+              <TabsTrigger value="credits" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Credits</TabsTrigger>
             </TabsList>
           </div>
 
           {/* Row 2: Search + Date Range (left) | Filters button + Export + Columns (right) */}
-          <div className="flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 py-6 flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range (date range hidden on small screens) */}
             <div className="flex items-center gap-3">
               <div className="relative w-48 2xl:w-64">
@@ -997,7 +999,7 @@ export function DataTable({
                     setSearchInput(e.target.value)
                     debouncedSearch(e.target.value)
                   }}
-                  className="h-[30px] pl-9 text-sm bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
+                  className="h-[30px] pl-9 text-sm bg-background border-border text-muted-foreground placeholder:text-muted-foreground/60"
                 />
                 {searchInput && (
                   <button
@@ -1127,7 +1129,7 @@ export function DataTable({
                 size="sm"
                 onClick={() => setFiltersExpanded(!filtersExpanded)}
                 className={cn(
-                  "h-[30px] flex-shrink-0 gap-1.5",
+                  "h-[30px] flex-shrink-0 gap-1.5 text-muted-foreground",
                   filtersExpanded && "bg-accent text-accent-foreground"
                 )}
               >
@@ -1151,7 +1153,7 @@ export function DataTable({
                   variant="outline"
                   size="sm"
                   onClick={() => setExportSheetOpen(true)}
-                  className="h-[30px] flex-shrink-0"
+                  className="h-[30px] flex-shrink-0 text-muted-foreground"
                 >
                   <DownloadIcon className="h-4 w-4" />
                   <span className="ml-2 hidden lg:inline">Export</span>
@@ -1174,9 +1176,9 @@ export function DataTable({
                   <div className="flex items-center gap-2">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center">
+                        <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center text-muted-foreground">
                           <ColumnsIcon className="h-4 w-4" />
-                          <span className="ml-[3px] text-xs text-muted-foreground hidden lg:inline leading-none">
+                          <span className="ml-[3px] text-xs hidden lg:inline leading-none">
                             ({enabledColumnCount}/{MAX_VISIBLE_COLUMNS})
                           </span>
                           <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
@@ -1184,7 +1186,7 @@ export function DataTable({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56">
                         {/* Column limit message with Reset link */}
-                        <div className="px-2 py-1.5 text-xs text-muted-foreground border-b mb-1 flex items-center justify-between">
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
                           <span>
                             {enabledColumnCount} of {MAX_VISIBLE_COLUMNS} columns
                             {isAtLimit && <span className="text-amber-600 dark:text-amber-400 ml-1">(max)</span>}
@@ -1230,7 +1232,7 @@ export function DataTable({
 
           {/* Row 3: Expandable Filter Bar (for all tabs) */}
           {filtersExpanded && (
-            <div className="flex items-center justify-between gap-4 border-t border-border/50 mt-4 pt-4 animate-in slide-in-from-top-2 duration-200">
+            <div className="px-4 lg:px-6 pt-0 pb-6 flex items-center justify-between xl:justify-end gap-4 animate-in slide-in-from-top-2 duration-200">
               {/* LEFT SIDE: Date Range Presets - only visible on small screens (hidden on xl where it shows in Row 2) */}
               {currentTab !== "storage" && (
                 <div className="flex xl:hidden items-center gap-3">
@@ -1331,7 +1333,7 @@ export function DataTable({
               )}
 
               {/* Clear + Filter Dropdowns - right-aligned (ml-auto pushes to right on xl when date range is hidden) */}
-              <div className={cn("flex items-center gap-2", currentTab === "storage" ? "" : "xl:ml-auto")}>
+              <div className="flex items-center gap-2">
                 {/* Clear Filters - show first, only when filters are active */}
                 {currentTabFilters.hasFilters && (
                   <Button

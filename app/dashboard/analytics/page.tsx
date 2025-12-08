@@ -556,8 +556,8 @@ export default function AnalyticsPage() {
             {/* Tabs for Different Reports */}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
               {/* Sticky Header: Tabs + Date Filter */}
-              <div className="sticky top-0 z-20 bg-zinc-50 dark:bg-zinc-900 pb-4 -mx-4 px-4 lg:-mx-6 lg:px-6 pt-4">
-                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-7 h-auto gap-1 bg-zinc-100 border border-zinc-200/60 dark:bg-zinc-800 dark:border-zinc-700/60">
+              <div className="sticky top-0 z-20 bg-surface pb-4 -mx-4 px-4 lg:-mx-6 lg:px-6 pt-4">
+                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-7 h-auto gap-1 bg-surface-elevated border border-border">
                   <TabsTrigger value="state-performance" className="text-xs sm:text-sm">
                     Performance by State
                   </TabsTrigger>

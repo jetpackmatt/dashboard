@@ -24,7 +24,7 @@ function capitalizeCity(name: string): string {
 export function StateVolumeDetailsPanel({ stateData, cityData, onClose }: StateVolumeDetailsPanelProps) {
   return (
     <Card className="h-full overflow-hidden flex flex-col">
-      <CardHeader className="flex-shrink-0 border-b">
+      <CardHeader className="flex-shrink-0 border-b border-border">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{stateData.stateName}</CardTitle>
           <button

@@ -184,6 +184,13 @@ export const FEE_TYPE_CATEGORIES = {
       { value: 'Charge', label: 'WRO Receiving Fee' },
     ],
   },
+  insurance: {
+    label: 'Insurance',
+    description: 'Markup applies to shipment insurance (from SFTP cost breakdown)',
+    types: [
+      { value: 'Shipment Insurance', label: 'Shipment Insurance' },
+    ],
+  },
 } as const
 
 // Weight brackets for markup rules

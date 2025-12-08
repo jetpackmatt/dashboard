@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/sync-invoices",
-      "schedule": "46 22 * * *"
+      "schedule": "55 22 * * *"
     }
   ]
 }

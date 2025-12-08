@@ -66,11 +66,12 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { company_name, shipbob_user_id } = body
+    const { company_name, merchant_id, billing_address } = body
 
     const client = await updateClient(clientId, {
       company_name: company_name?.trim(),
-      shipbob_user_id: shipbob_user_id?.trim() || null,
+      merchant_id: merchant_id?.trim() || null,
+      billing_address: billing_address || null,
     })
 
     return NextResponse.json({ client })

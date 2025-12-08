@@ -84,42 +84,42 @@ function getUnfulfilledStatusColors(status: string) {
       status === "On Hold" || status.includes("Manual") ||
       status.includes("Invalid") || status.includes("Package Preference") ||
       status === "Awaiting Reset") {
-    return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
+    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-500 dark:border-amber-800/20"
   }
   if (status === "Exception") {
-    return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
+    return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
   }
   if (status.includes("Late")) {
-    return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
+    return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
   }
 
   // PROCESSING STATES (progress through fulfillment)
   // Labelled - furthest along (violet)
   if (status === "Labelled") {
-    return "bg-violet-100/50 text-violet-900 border-violet-200/50 dark:bg-violet-900/15 dark:text-violet-100 dark:border-violet-800/50"
+    return "bg-violet-100/50 text-violet-900 border-violet-200/50 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-800/30"
   }
   // Packed (indigo)
   if (status === "Packed") {
-    return "bg-indigo-100/50 text-indigo-900 border-indigo-200/50 dark:bg-indigo-900/15 dark:text-indigo-100 dark:border-indigo-800/50"
+    return "bg-indigo-100/50 text-indigo-900 border-indigo-200/50 dark:bg-indigo-900/20 dark:text-indigo-400 dark:border-indigo-800/30"
   }
   // Picked (cyan)
   if (status === "Picked") {
-    return "bg-cyan-100/50 text-cyan-900 border-cyan-200/50 dark:bg-cyan-900/15 dark:text-cyan-100 dark:border-cyan-800/50"
+    return "bg-cyan-100/50 text-cyan-900 border-cyan-200/50 dark:bg-cyan-900/20 dark:text-cyan-400 dark:border-cyan-800/30"
   }
   // Pick In-Progress (sky)
   if (status === "Pick In-Progress") {
-    return "bg-sky-100/50 text-sky-900 border-sky-200/50 dark:bg-sky-900/15 dark:text-sky-100 dark:border-sky-800/50"
+    return "bg-sky-100/50 text-sky-900 border-sky-200/50 dark:bg-sky-900/20 dark:text-sky-400 dark:border-sky-800/30"
   }
   // Awaiting Pick, Processing (blue)
   if (status === "Processing" || status.includes("Awaiting Pick")) {
-    return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+    return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/25"
   }
   // Import Review (amber)
   if (status === "Import Review") {
-    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-100 dark:border-amber-800/50"
+    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
   }
 
-  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
 }
 
 // Status icons for unfulfilled orders - Complete processing status hierarchy
@@ -275,7 +275,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   ),
 
   orderType: (row) => (
-    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
+    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
       {row.orderType}
     </Badge>
   ),
@@ -381,63 +381,63 @@ function getShipmentStatusColors(status: string) {
   switch (status) {
     // REFUNDED (red - billing refund recorded)
     case "Refunded":
-      return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-100 dark:border-red-700/50"
+      return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
 
     // DELIVERED
     case "Delivered":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+      return "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
 
     // SHIPPED - In Motion (orange)
     case "Out for Delivery":
     case "In Transit":
-      return "bg-orange-100/60 text-orange-900 border-orange-200/60 dark:bg-orange-900/20 dark:text-orange-100 dark:border-orange-700/50"
+      return "bg-orange-100/60 text-orange-900 border-orange-200/60 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800/30"
 
     // SHIPPED - Awaiting carrier (blue - waiting in staging bin)
     case "Awaiting Carrier":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+      return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
 
     // SHIPPED - Basic shipped (blue)
     case "Shipped":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+      return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
 
     // PROCESSING - Labelled (violet)
     case "Labelled":
-      return "bg-violet-100/50 text-violet-900 border-violet-200/50 dark:bg-violet-900/15 dark:text-violet-100 dark:border-violet-800/50"
+      return "bg-violet-100/50 text-violet-900 border-violet-200/50 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-800/30"
 
     // PROCESSING - Packed (indigo)
     case "Packed":
-      return "bg-indigo-100/50 text-indigo-900 border-indigo-200/50 dark:bg-indigo-900/15 dark:text-indigo-100 dark:border-indigo-800/50"
+      return "bg-indigo-100/50 text-indigo-900 border-indigo-200/50 dark:bg-indigo-900/20 dark:text-indigo-400 dark:border-indigo-800/30"
 
     // PROCESSING - Picked (cyan)
     case "Picked":
-      return "bg-cyan-100/50 text-cyan-900 border-cyan-200/50 dark:bg-cyan-900/15 dark:text-cyan-100 dark:border-cyan-800/50"
+      return "bg-cyan-100/50 text-cyan-900 border-cyan-200/50 dark:bg-cyan-900/20 dark:text-cyan-400 dark:border-cyan-800/30"
 
     // PROCESSING - Pick In-Progress (sky)
     case "Pick In-Progress":
-      return "bg-sky-100/50 text-sky-900 border-sky-200/50 dark:bg-sky-900/15 dark:text-sky-100 dark:border-sky-800/50"
+      return "bg-sky-100/50 text-sky-900 border-sky-200/50 dark:bg-sky-900/20 dark:text-sky-400 dark:border-sky-800/30"
 
     // PROCESSING - Awaiting Pick (slate)
     case "Awaiting Pick":
     case "Processing":
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/25"
 
     // IMPORT REVIEW (amber)
     case "Import Review":
-      return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-100 dark:border-amber-800/50"
+      return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
 
     // EXCEPTIONS (red)
     case "Action Required":
     case "Cancelled":
     case "Delivery Attempted":
     case "Exception":
-      return "bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
+      return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
 
     // OUT OF STOCK (amber warning)
     case "Out of Stock":
-      return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
+      return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-500 dark:border-amber-800/20"
 
     default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
   }
 }
 
@@ -570,7 +570,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   ),
 
   orderType: (row) => (
-    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50">
+    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
       {row.orderType}
     </Badge>
   ),
@@ -744,15 +744,15 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 function getBillingStatusColors(status: string) {
   const statusLower = status?.toLowerCase() || ''
   if (statusLower === 'invoiced') {
-    return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+    return "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
   }
   if (statusLower === 'pending') {
-    return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
+    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
   }
   if (statusLower === 'credited') {
-    return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+    return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
   }
-  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
 }
 
 // Format status for display (capitalize first letter)
@@ -832,15 +832,15 @@ export interface Return {
 function getReturnStatusColors(status: string) {
   const statusLower = status?.toLowerCase() || ''
   if (statusLower === 'completed' || statusLower === 'processed') {
-    return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+    return "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
   }
   if (statusLower === 'in transit' || statusLower === 'processing') {
-    return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+    return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
   }
   if (statusLower === 'pending' || statusLower === 'awaiting') {
-    return "bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
+    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
   }
-  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
 }
 
 export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {

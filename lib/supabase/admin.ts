@@ -44,12 +44,21 @@ export function createAdminClient(): any {
 // Client Token Management
 // ============================================================================
 
+export interface BillingAddress {
+  street: string
+  city: string
+  region: string
+  postalCode: string
+  country: string
+}
+
 export interface Client {
   id: string
   company_name: string
-  shipbob_user_id: string | null
+  merchant_id: string | null
   is_active: boolean
   created_at: string
+  billing_address?: BillingAddress | null
 }
 
 export interface ClientCredential {
@@ -61,16 +70,22 @@ export interface ClientCredential {
 }
 
 /**
- * Get all active clients
+ * Get all active clients (excludes internal/system entries by default)
  */
-export async function getClients(): Promise<Client[]> {
+export async function getClients(includeInternal = false): Promise<Client[]> {
   const supabase = createAdminClient()
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('clients')
     .select('*')
     .eq('is_active', true)
-    .order('company_name')
+
+  // Exclude internal clients (e.g., "ShipBob Payments", "Jetpack Costs") unless explicitly requested
+  if (!includeInternal) {
+    query = query.or('is_internal.is.null,is_internal.eq.false')
+  }
+
+  const { data, error } = await query.order('company_name')
 
   if (error) {
     console.error('Failed to fetch clients:', error)
@@ -143,7 +158,7 @@ export async function hasClientToken(
  */
 export async function createNewClient(data: {
   company_name: string
-  shipbob_user_id?: string | null
+  merchant_id?: string | null
 }): Promise<Client> {
   const supabase = createAdminClient()
 
@@ -151,7 +166,7 @@ export async function createNewClient(data: {
     .from('clients')
     .insert({
       company_name: data.company_name,
-      shipbob_user_id: data.shipbob_user_id || null,
+      merchant_id: data.merchant_id || null,
       is_active: true,
     })
     .select()
@@ -357,7 +372,7 @@ export async function inviteUser(data: {
  */
 export async function updateClient(
   clientId: string,
-  data: { company_name?: string; shipbob_user_id?: string | null }
+  data: { company_name?: string; merchant_id?: string | null; billing_address?: BillingAddress | null }
 ): Promise<Client> {
   const supabase = createAdminClient()
 
@@ -365,7 +380,8 @@ export async function updateClient(
     .from('clients')
     .update({
       ...(data.company_name && { company_name: data.company_name }),
-      ...(data.shipbob_user_id !== undefined && { shipbob_user_id: data.shipbob_user_id }),
+      ...(data.merchant_id !== undefined && { merchant_id: data.merchant_id }),
+      ...(data.billing_address !== undefined && { billing_address: data.billing_address }),
     })
     .eq('id', clientId)
     .select()

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAll } from '@/lib/shipbob/sync'
+import { syncAll, syncReturns } from '@/lib/shipbob/sync'
 
 /**
  * Cron endpoint for scheduled data sync
@@ -7,7 +7,7 @@ import { syncAll } from '@/lib/shipbob/sync'
  * Vercel Cron calls this endpoint every minute.
  * Protected by CRON_SECRET to prevent unauthorized access.
  *
- * Syncs all tables: orders, shipments, order_items, shipment_items, shipment_cartons, transactions
+ * Syncs all tables: orders, shipments, order_items, shipment_items, shipment_cartons, transactions, returns
  *
  * Per-minute sync strategy:
  * - Fetch only last 5 minutes of data (with overlap for safety)
@@ -34,10 +34,17 @@ export async function GET(request: NextRequest) {
     // This is fast and keeps data fresh without relying on webhooks
     const results = await syncAll({ minutesBack: 5 })
 
+    // Sync returns: fetch any return IDs from transactions that are missing from returns table
+    // This ensures we have return data (including insert_date) for all billed returns
+    const returnsResult = await syncReturns()
+
     const duration = Date.now() - startTime
 
     console.log(`[Cron Sync] Completed in ${duration}ms`)
     console.log(`[Cron Sync] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
+    if (returnsResult.synced > 0) {
+      console.log(`[Cron Sync] Returns synced: ${returnsResult.synced}`)
+    }
 
     // Build per-client summary
     const clientSummary = results.clients.map((c) => ({
@@ -59,6 +66,7 @@ export async function GET(request: NextRequest) {
         totalOrders: results.totalOrders,
         totalShipments: results.totalShipments,
         clientsProcessed: results.clients.length,
+        returnsSynced: returnsResult.synced,
       },
       clients: clientSummary,
       errors: results.errors.slice(0, 20), // Limit error output

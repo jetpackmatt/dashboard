@@ -7,7 +7,6 @@ import {
   generateSummary,
   generateExcelInvoice,
   storeInvoiceFiles,
-  markTransactionsAsInvoiced,
 } from '@/lib/billing/invoice-generator'
 import { generatePDFViaSubprocess } from '@/lib/billing/pdf-subprocess'
 import {
@@ -187,6 +186,14 @@ export async function GET(request: Request) {
 
         console.log(`✅ Pre-flight validation passed for ${client.company_name}`)
 
+        // Extract the actual ShipBob invoice IDs used for this client's transactions
+        // (subset of the global shipbobInvoiceIds that have transactions for this client)
+        const clientShipbobIds = [...new Set(
+          lineItems
+            .map(item => item.invoiceIdSb)
+            .filter((id): id is number => id !== null && id !== undefined)
+        )]
+
         // Step 5: Apply markups using the markup engine
         lineItems = await applyMarkupsToLineItems(client.id, lineItems)
 
@@ -265,6 +272,10 @@ export async function GET(request: Request) {
         }
 
         // Step 8: Create Jetpack invoice record
+        // Store shipbob_invoice_ids and line_items_json for the approval workflow
+        // - shipbob_invoice_ids: Used for regeneration
+        // - line_items_json: Used at approval to mark transactions with EXACT same amounts as files
+        // Transactions are NOT marked here - that happens on approval
         const { data: invoice, error: invoiceError } = await adminClient
           .from('invoices_jetpack')
           .insert({
@@ -279,6 +290,8 @@ export async function GET(request: Request) {
             status: 'draft',
             generated_at: new Date().toISOString(),
             regeneration_locked_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            shipbob_invoice_ids: clientShipbobIds,
+            line_items_json: lineItems,
           })
           .select()
           .single()
@@ -317,14 +330,11 @@ export async function GET(request: Request) {
         // Step 10: Store files in Supabase Storage
         await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
 
-        // Step 11: Mark transactions as invoiced and save markup data
-        const markResult = await markTransactionsAsInvoiced(lineItems, invoice.id)
-        console.log(`Marked ${markResult.updated} transactions as invoiced for ${client.company_name}`)
-        if (markResult.errors.length > 0) {
-          console.warn(`  Errors marking transactions:`, markResult.errors)
-        }
+        // NOTE: Transactions are NOT marked as invoiced here anymore.
+        // That happens when the invoice is APPROVED (not generated).
+        // This allows clean regeneration and deletion of drafts.
 
-        // Step 12: Increment client's next invoice number
+        // Step 11: Increment client's next invoice number
         await adminClient
           .from('clients')
           .update({ next_invoice_number: client.next_invoice_number + 1 })
@@ -347,25 +357,9 @@ export async function GET(request: Request) {
       }
     }
 
-    // Step 14: Mark ALL ShipBob invoices as processed (after all clients are done)
-    // ShipBob invoices are at PARENT TOKEN level (shared across clients)
-    // We only mark them if at least one Jetpack invoice was generated
-    if (generatedInvoices.length > 0) {
-      // Use comma-separated list of all generated invoice numbers as the marker
-      const markerInvoiceNumber = generatedInvoices.map(g => g.invoiceNumber).join(', ')
-      const shipbobInvoiceUuids = unprocessedInvoices.map((inv: { id: string }) => inv.id)
-
-      const { error: markError } = await adminClient
-        .from('invoices_sb')
-        .update({ jetpack_invoice_id: markerInvoiceNumber })
-        .in('id', shipbobInvoiceUuids)
-
-      if (markError) {
-        console.error(`Error marking ShipBob invoices as processed:`, markError)
-      } else {
-        console.log(`Marked ${shipbobInvoiceUuids.length} ShipBob invoices as processed with: ${markerInvoiceNumber}`)
-      }
-    }
+    // NOTE: ShipBob invoices (invoices_sb) are NOT marked as processed here anymore.
+    // That happens when invoices are APPROVED, not generated.
+    // This allows the same SB invoices to appear in preflight for regeneration.
 
     console.log(`Invoice generation complete: ${generatedInvoices.length} generated, ${errors.length} errors`)
 
@@ -376,7 +370,7 @@ export async function GET(request: Request) {
       invoices: generatedInvoices,
       errorDetails: errors,
       shippingBreakdown: breakdownStats,
-      shipbobInvoicesProcessed: generatedInvoices.length > 0 ? unprocessedInvoices.length : 0,
+      shipbobInvoicesAvailable: unprocessedInvoices.length,
       preflightValidation: validationResults.map(v => ({
         client: v.client,
         passed: v.validation.passed,

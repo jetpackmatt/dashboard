@@ -458,15 +458,34 @@ CONSTRAINT user_clients_role_check CHECK (role IN ('owner', 'editor', 'viewer'))
 - `approved_by` (admin user_id)
 - `approved_at`
 
-#### `invoice_line_items`
-- `id` (UUID, primary key)
-- `invoice_id` (foreign key)
-- `description`
-- `quantity`
-- `unit_price`
-- `markup_applied` (boolean)
-- `markup_percentage`
-- `total`
+#### Invoice Line Item Data (Stored on `transactions` table)
+
+When a transaction is invoiced, its markup data is stored directly on the transaction:
+- `invoiced_status_jp` (boolean) - True when included in a Jetpack invoice
+- `invoice_id_jp` (UUID, FK → invoices_jetpack) - Which invoice includes this transaction
+- `markup_percentage` (NUMERIC) - The markup percentage used (e.g., 0.18 for 18%)
+- `markup_rule_id` (UUID, FK → markup_rules) - Reference to the rule applied
+- `markup_applied` (NUMERIC) - Dollar amount of markup
+
+**Financial Columns - Different for Shipments vs Non-Shipments:**
+
+**For Shipments** (`reference_type='Shipment'`, `transaction_fee='Shipping'`):
+- `base_cost` - ShipBob base cost (internal only, NOT marked up)
+- `base_charge` - Marked up base = `base_cost × (1 + markup%)` (client sees as "Base Fulfillment Charge")
+- `surcharge` - Carrier surcharges (passed through, NO markup)
+- `total_charge` - `base_charge + surcharge` (client sees as "Total Charge")
+- `insurance_cost` - ShipBob insurance cost (internal only, NOT marked up)
+- `insurance_charge` - Marked up insurance = `insurance_cost × (1 + markup%)` (client sees as "Insurance")
+- `billed_amount` - `total_charge + insurance_charge` (universal total)
+
+**For Non-Shipments** (all other transaction types):
+- `cost` - ShipBob cost (internal only)
+- `billed_amount` - `cost × (1 + markup%)` (client sees as "Total Charge")
+- All breakdown columns are NULL
+
+**`billed_amount` = Universal Total Column:** Always the final amount charged to client regardless of transaction type.
+
+**Note:** There is no separate `invoice_line_items` table. This consolidation (Dec 2025) eliminates redundancy.
 
 #### `support_tickets`
 - `id` (UUID, primary key)

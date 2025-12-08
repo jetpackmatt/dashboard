@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
+// Credit transactions have transaction_fee='Credit' or negative amounts
+
 export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
@@ -21,8 +23,9 @@ export async function GET(request: NextRequest) {
 
   try {
     let query = supabase
-      .from('billing_credits')
+      .from('transactions')
       .select('*', { count: 'exact' })
+      .eq('transaction_fee', 'Credit')
 
     if (clientId) {
       query = query.eq('client_id', clientId)
@@ -30,19 +33,24 @@ export async function GET(request: NextRequest) {
 
     // Date range filter
     if (startDate) {
-      query = query.gte('transaction_date', startDate)
+      query = query.gte('charge_date', startDate)
     }
     if (endDate) {
-      query = query.lte('transaction_date', `${endDate}T23:59:59.999Z`)
+      query = query.lte('charge_date', `${endDate}T23:59:59.999Z`)
     }
 
-    // Status filter
+    // Status filter - convert to invoiced status
     if (statusFilter.length > 0) {
-      query = query.in('transaction_status', statusFilter)
+      const invoicedStatuses = statusFilter.map(s => s === 'invoiced' || s === 'completed')
+      if (invoicedStatuses.includes(true) && !invoicedStatuses.includes(false)) {
+        query = query.eq('invoiced_status_sb', true)
+      } else if (invoicedStatuses.includes(false) && !invoicedStatuses.includes(true)) {
+        query = query.eq('invoiced_status_sb', false)
+      }
     }
 
     const { data, error, count } = await query
-      .order('transaction_date', { ascending: false })
+      .order('charge_date', { ascending: false })
       .range(offset, offset + limit - 1)
 
     if (error) {
@@ -51,16 +59,22 @@ export async function GET(request: NextRequest) {
     }
 
     // Map to response format matching XLS columns
-    const mapped = (data || []).map((row: any) => ({
-      id: row.id,
-      referenceId: row.reference_id || '',
-      transactionDate: row.transaction_date,
-      creditInvoiceNumber: row.credit_invoice_number?.toString() || '',
-      invoiceDate: row.invoice_date,
-      creditReason: row.credit_reason || '',
-      creditAmount: parseFloat(row.credit_amount) || 0,
-      status: row.transaction_status || 'pending',
-    }))
+    // Credits are typically stored as negative amounts
+    const mapped = (data || []).map((row: Record<string, unknown>) => {
+      const details = row.additional_details as Record<string, unknown> || {}
+      const cost = parseFloat(String(row.cost || 0)) || 0
+
+      return {
+        id: row.id,
+        referenceId: String(row.reference_id || ''),
+        transactionDate: row.charge_date,
+        creditInvoiceNumber: row.invoice_id_sb?.toString() || '',
+        invoiceDate: row.invoice_date_sb,
+        creditReason: String(details.Comment || details.CreditReason || ''),
+        creditAmount: Math.abs(cost), // Display as positive
+        status: row.invoiced_status_sb ? 'invoiced' : 'pending',
+      }
+    })
 
     return NextResponse.json({
       data: mapped,

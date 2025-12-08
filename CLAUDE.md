@@ -40,6 +40,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | [CLAUDE.analytics.md](CLAUDE.analytics.md) | Analytics section work | Report specs, chart implementations, performance patterns, data schemas |
 | [CLAUDE.data.md](CLAUDE.data.md) | ShipBob API, database schema, data imports | Data strategy, webhook integration, billing API, GDPR compliance |
 | [CLAUDE.billing.md](CLAUDE.billing.md) | **Markup rules, invoicing, admin billing** | Markup engine, invoice generation, approval workflow, PDF/XLS formats |
+| [CLAUDE.billingtesting.md](CLAUDE.billingtesting.md) | **Testing markup engine and invoices** | Test scripts, validation criteria, reference XLSX comparison |
 | [CLAUDE.decisions.md](CLAUDE.decisions.md) | Need historical context on why something was done | Chronological decision log with rationale |
 | CLAUDE.local.md | N/A (personal notes) | Not in git - Matt's personal scratchpad |
 
@@ -99,7 +100,7 @@ Example: "I'll add this Redis caching decision to CLAUDE.decisions.md now."
 - **Phase 2: Billing & Invoicing System** (see [CLAUDE.billing.md](CLAUDE.billing.md))
   - Admin section with Markup Tables and Run Invoicing tabs
   - Invoice generation (PDF + XLS) with approval workflow
-  - Weekly cron job (Mondays 5am)
+  - Weekly cron job (Mondays 6pm EST)
 - MCP postgres server connected for direct database access (read-only queries via `mcp__postgres__query`)
 
 ### Known Issues

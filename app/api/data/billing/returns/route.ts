@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
+// Return transactions have reference_type='Return'
+
 export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
@@ -21,28 +23,34 @@ export async function GET(request: NextRequest) {
 
   try {
     let query = supabase
-      .from('billing_returns')
+      .from('transactions')
       .select('*', { count: 'exact' })
+      .eq('reference_type', 'Return')
 
     if (clientId) {
       query = query.eq('client_id', clientId)
     }
 
-    // Date range filter on return_creation_date
+    // Date range filter on charge_date
     if (startDate) {
-      query = query.gte('return_creation_date', startDate)
+      query = query.gte('charge_date', startDate)
     }
     if (endDate) {
-      query = query.lte('return_creation_date', `${endDate}T23:59:59.999Z`)
+      query = query.lte('charge_date', `${endDate}T23:59:59.999Z`)
     }
 
-    // Status filter
+    // Status filter - convert to invoiced status
     if (statusFilter.length > 0) {
-      query = query.in('transaction_status', statusFilter)
+      const invoicedStatuses = statusFilter.map(s => s === 'invoiced' || s === 'completed')
+      if (invoicedStatuses.includes(true) && !invoicedStatuses.includes(false)) {
+        query = query.eq('invoiced_status_sb', true)
+      } else if (invoicedStatuses.includes(false) && !invoicedStatuses.includes(true)) {
+        query = query.eq('invoiced_status_sb', false)
+      }
     }
 
     const { data, error, count } = await query
-      .order('return_creation_date', { ascending: false })
+      .order('charge_date', { ascending: false })
       .range(offset, offset + limit - 1)
 
     if (error) {
@@ -51,21 +59,25 @@ export async function GET(request: NextRequest) {
     }
 
     // Map to response format matching XLS columns
-    const mapped = (data || []).map((row: any) => ({
-      id: row.id,
-      returnId: row.return_id?.toString() || '',
-      originalOrderId: row.original_order_id?.toString() || '',
-      trackingId: row.tracking_id || '',
-      transactionType: row.transaction_type || '',
-      returnStatus: row.return_status || '',
-      returnType: row.return_type || '',
-      returnCreationDate: row.return_creation_date,
-      fcName: row.fc_name || '',
-      amount: parseFloat(row.amount) || 0,
-      invoiceNumber: row.invoice_number?.toString() || '',
-      invoiceDate: row.invoice_date,
-      status: row.transaction_status || 'pending',
-    }))
+    const mapped = (data || []).map((row: Record<string, unknown>) => {
+      const details = row.additional_details as Record<string, unknown> || {}
+
+      return {
+        id: row.id,
+        returnId: String(row.reference_id || ''),
+        originalOrderId: String(details.OriginalOrderId || ''),
+        trackingId: String(row.tracking_id || details.TrackingId || ''),
+        transactionType: String(row.transaction_type || ''),
+        returnStatus: String(details.ReturnStatus || ''),
+        returnType: String(details.ReturnType || ''),
+        returnCreationDate: row.charge_date,
+        fcName: String(row.fulfillment_center || ''),
+        amount: parseFloat(String(row.cost || 0)) || 0,
+        invoiceNumber: row.invoice_id_sb?.toString() || '',
+        invoiceDate: row.invoice_date_sb,
+        status: row.invoiced_status_sb ? 'invoiced' : 'pending',
+      }
+    })
 
     return NextResponse.json({
       data: mapped,

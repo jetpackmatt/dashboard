@@ -30,7 +30,7 @@ export function NationalVolumeOverviewPanel({ stateData, cityData }: NationalVol
 
   return (
     <Card className="h-full overflow-hidden flex flex-col">
-      <CardHeader className="flex-shrink-0 border-b">
+      <CardHeader className="flex-shrink-0 border-b border-border">
         <div className="flex items-center gap-2">
           <GlobeIcon className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-lg">National Overview</CardTitle>

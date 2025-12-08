@@ -64,15 +64,15 @@ interface ShippedOrder {
 function getStatusColors(status: string) {
   switch (status) {
     case "Delivered":
-      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+      return "bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/50"
     case "In Transit":
     case "Out for Delivery":
-      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+      return "bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700/50"
     case "Shipped":
     case "Labelled":
-      return "bg-sky-100/50 text-slate-900 border-sky-200/50 dark:bg-sky-900/15 dark:text-slate-100 dark:border-sky-800/50"
+      return "bg-sky-100/50 text-slate-900 border-sky-200/50 dark:bg-sky-900/30 dark:text-sky-300 dark:border-sky-700/50"
     default:
-      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+      return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/40 dark:text-slate-300 dark:border-slate-700/50"
   }
 }
 
@@ -323,7 +323,7 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
   if (error) {
     return (
       <div className="px-4 lg:px-6">
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive dark:border-destructive/40 dark:bg-destructive/10 dark:text-red-300">
           <p className="font-medium">Error loading data</p>
           <p className="text-sm">{error}</p>
         </div>

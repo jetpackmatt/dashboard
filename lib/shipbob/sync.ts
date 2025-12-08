@@ -4,6 +4,9 @@
  * Mirrors the logic from scripts/sync-orders-fast.js for production use.
  * Syncs: orders, shipments, order_items, shipment_items, shipment_cartons, transactions
  *
+ * Timeline events (event_created, event_intransit, event_delivered, etc.) are
+ * automatically fetched from the Timeline API after shipment upsert.
+ *
  * Uses the 2025-07 ShipBob API.
  */
 
@@ -11,6 +14,20 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
+const TIMELINE_DELAY_MS = 100 // Delay between timeline API calls to avoid rate limits
+
+// Map ShipBob timeline log_type_id to database column names
+const TIMELINE_EVENT_MAP: Record<number, string> = {
+  601: 'event_created',
+  602: 'event_picked',
+  603: 'event_packed',
+  604: 'event_labeled',
+  605: 'event_labelvalidated',
+  607: 'event_intransit',
+  608: 'event_outfordelivery',
+  609: 'event_delivered',
+  611: 'event_deliveryattemptfailed',
+}
 
 export interface SyncResult {
   success: boolean
@@ -19,6 +36,7 @@ export interface SyncResult {
   ordersFound: number
   ordersUpserted: number
   shipmentsUpserted: number
+  timelinesUpdated: number    // Shipments with timeline events updated
   orderItemsUpserted: number
   shipmentItemsInserted: number
   cartonsInserted: number
@@ -117,6 +135,155 @@ async function batchDelete(
   }
 }
 
+// Timeline event type from ShipBob API
+interface TimelineEvent {
+  log_type_id: number
+  timestamp: string
+  description?: string
+}
+
+/**
+ * Fetch timeline events for a shipment from ShipBob API
+ * Returns null on error, empty object on 404/empty, or timeline data
+ */
+async function fetchShipmentTimeline(
+  shipmentId: string,
+  token: string
+): Promise<Record<string, string> | null> {
+  try {
+    const res = await fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/timeline`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (res.status === 429) {
+      // Rate limited - return null to skip this one
+      console.log(`[Timeline] Rate limited on shipment ${shipmentId}`)
+      return null
+    }
+
+    if (res.status === 404) {
+      // Shipment not found in API (Processing/Exception status) - return empty
+      return {}
+    }
+
+    if (!res.ok) {
+      return null
+    }
+
+    const timeline: TimelineEvent[] = await res.json()
+    if (!timeline || timeline.length === 0) {
+      return {}
+    }
+
+    // Map timeline events to database columns
+    const update: Record<string, string> = {}
+    for (const event of timeline) {
+      const col = TIMELINE_EVENT_MAP[event.log_type_id]
+      if (col && event.timestamp) {
+        update[col] = event.timestamp
+      }
+    }
+
+    return update
+  } catch (e) {
+    console.error(`[Timeline] Error fetching shipment ${shipmentId}:`, e)
+    return null
+  }
+}
+
+/**
+ * Fetch and update timeline events for recently synced shipments
+ * Fetches for shipments that haven't been delivered yet (event_delivered is null)
+ * This ensures we capture all in-progress events: picked, packed, labeled, intransit, etc.
+ */
+async function syncShipmentTimelines(
+  supabase: ReturnType<typeof createAdminClient>,
+  shipmentIds: string[],
+  token: string
+): Promise<{ updated: number; skipped: number; errors: number }> {
+  const result = { updated: 0, skipped: 0, errors: 0 }
+
+  if (shipmentIds.length === 0) return result
+
+  // Get shipments that need timeline updates:
+  // 1. Not yet delivered (in-progress tracking)
+  // 2. OR have partial timeline data (event_labeled exists but event_created is null)
+  // This ensures we catch any shipments that had incomplete timeline fetches
+  // Process in batches of 100 to avoid query size limits
+  const needsTimeline: Array<{ id: string; shipment_id: string }> = []
+
+  for (let i = 0; i < shipmentIds.length; i += 100) {
+    const batch = shipmentIds.slice(i, i + 100)
+
+    // First: get shipments not yet delivered
+    const { data: undelivered } = await supabase
+      .from('shipments')
+      .select('id, shipment_id')
+      .in('shipment_id', batch)
+      .is('event_delivered', null)
+
+    if (undelivered) {
+      needsTimeline.push(...undelivered)
+    }
+
+    // Second: get shipments with partial timeline (event_labeled but no event_created)
+    // These were previously missed and need backfill
+    const undeliveredIds = new Set((undelivered || []).map((s: { id: string; shipment_id: string }) => s.shipment_id))
+    const { data: partial } = await supabase
+      .from('shipments')
+      .select('id, shipment_id')
+      .in('shipment_id', batch)
+      .not('event_labeled', 'is', null)
+      .is('event_created', null)
+
+    if (partial) {
+      // Only add if not already in undelivered list
+      for (const ship of partial) {
+        if (!undeliveredIds.has(ship.shipment_id)) {
+          needsTimeline.push(ship)
+        }
+      }
+    }
+  }
+
+  if (needsTimeline.length === 0) {
+    result.skipped = shipmentIds.length
+    return result
+  }
+
+  console.log(`[Timeline] Fetching timeline for ${needsTimeline.length} shipments...`)
+
+  // Fetch timeline for each shipment with rate limiting
+  for (const ship of needsTimeline) {
+    const timelineData = await fetchShipmentTimeline(ship.shipment_id, token)
+
+    if (timelineData === null) {
+      result.errors++
+    } else if (Object.keys(timelineData).length > 0) {
+      // Update the shipment with timeline data
+      const { error } = await supabase
+        .from('shipments')
+        .update(timelineData)
+        .eq('id', ship.id)
+
+      if (error) {
+        result.errors++
+      } else {
+        result.updated++
+      }
+    } else {
+      // Empty timeline (404 or no events yet) - skip for now, will retry until delivered
+      result.skipped++
+    }
+
+    // Delay between API calls to avoid rate limits
+    await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
+  }
+
+  console.log(`[Timeline] Complete: ${result.updated} updated, ${result.skipped} skipped, ${result.errors} errors`)
+  return result
+}
+
 export interface SyncOptions {
   daysBack?: number
   minutesBack?: number
@@ -141,6 +308,7 @@ export async function syncClient(
     ordersFound: 0,
     ordersUpserted: 0,
     shipmentsUpserted: 0,
+    timelinesUpdated: 0,
     orderItemsUpserted: 0,
     shipmentItemsInserted: 0,
     cartonsInserted: 0,
@@ -238,6 +406,7 @@ export async function syncClient(
       shipping_method?: string
       type?: string
       gift_message?: string
+      tags?: string[]
       channel?: { id?: number; name?: string }
       carrier?: { type?: string; payment_term?: string }
       financials?: { total_price?: number }
@@ -410,6 +579,7 @@ export async function syncClient(
       gift_message: order.gift_message || null,
       carrier_type: order.carrier?.type || null,
       payment_term: order.carrier?.payment_term || null,
+      tags: order.tags || null,
       updated_at: now,
       // Soft delete support: mark as verified and restore if previously deleted
       last_verified_at: now,
@@ -466,13 +636,12 @@ export async function syncClient(
           billableWeight = Math.max(actualWeight, dimWeight)
         }
 
-        const shippedTimestamp = shipment.actual_fulfillment_date || null
+        // Date field mapping:
+        // - created_at: when ShipBob record was created (shipment.created_date)
+        // - delivered_date: from shipment.delivery_date
+        // - Timeline event columns (event_created, event_intransit, etc.) are populated
+        //   after shipment upsert via the Timeline API (STEP 3b)
         const deliveredTimestamp = shipment.delivery_date || null
-        let transitTimeDays: number | null = null
-        if (shippedTimestamp && deliveredTimestamp) {
-          const diffMs = new Date(deliveredTimestamp).getTime() - new Date(shippedTimestamp).getTime()
-          transitTimeDays = Math.round((diffMs / (1000 * 60 * 60 * 24)) * 10) / 10
-        }
 
         shipmentRecords.push({
           client_id: clientId,
@@ -486,10 +655,9 @@ export async function syncClient(
           recipient_name: shipment.recipient?.name || shipment.recipient?.full_name || null,
           recipient_email: shipment.recipient?.email || null,
           recipient_phone: shipment.recipient?.phone_number || null,
-          label_generation_date: shipment.created_date || null,
-          shipped_date: shippedTimestamp,
+          created_at: shipment.created_date || null,
           delivered_date: deliveredTimestamp,
-          transit_time_days: transitTimeDays,
+          // Timeline event columns (event_created, event_intransit, etc.) populated in STEP 3b
           carrier: shipment.tracking?.carrier || null,
           carrier_service: shipment.ship_option || null,
           ship_option_id: getShipOptionId(shipment.ship_option || null),
@@ -510,8 +678,7 @@ export async function syncClient(
           package_material_type: shipment.package_material_type || null,
           require_signature: shipment.require_signature || false,
           gift_message: shipment.gift_message || null,
-          invoice_amount: shipment.invoice?.amount || null,
-          invoice_currency_code: shipment.invoice?.currency_code || null,
+          // Removed: invoice_amount, invoice_currency_code - API returns undefined, billing comes from transactions table
           tracking_bol: shipment.tracking?.bol || null,
           tracking_pro_number: shipment.tracking?.pro_number || null,
           tracking_scac: shipment.tracking?.scac || null,
@@ -533,6 +700,16 @@ export async function syncClient(
     const shipmentResult = await batchUpsert(supabase, 'shipments', shipmentRecords, 'shipment_id')
     result.shipmentsUpserted = shipmentResult.success
     result.errors.push(...shipmentResult.errors)
+
+    // STEP 3b: Fetch and update timeline events for newly synced shipments
+    // This populates event_created, event_intransit, event_delivered, etc.
+    if (shipmentIds.length > 0) {
+      const timelineResult = await syncShipmentTimelines(supabase, shipmentIds, token)
+      result.timelinesUpdated = timelineResult.updated
+      if (timelineResult.errors > 0) {
+        result.errors.push(`Timeline: ${timelineResult.errors} errors`)
+      }
+    }
 
     // STEP 4: Upsert Order Items
     const orderItemRecords: Record<string, unknown>[] = []
@@ -565,17 +742,30 @@ export async function syncClient(
     result.errors.push(...orderItemResult.errors)
 
     // STEP 5: Delete + Insert Shipment Items
+    // NOTE: ShipBob API quirk - order.products has quantity but no name,
+    // shipment.products has name but no quantity. We merge both sources.
     await batchDelete(supabase, 'shipment_items', 'shipment_id', shipmentIds)
 
     const shipmentItemRecords: Record<string, unknown>[] = []
     for (const order of apiOrders) {
       if (!order.shipments) continue
 
+      // Build a lookup of order.products by product ID to get quantity
+      // (shipment.products doesn't include quantity in the API response)
+      const orderProductQuantities: Record<number, number> = {}
+      for (const p of order.products || []) {
+        if (p.id && p.quantity) {
+          orderProductQuantities[p.id] = p.quantity
+        }
+      }
+
       for (const shipment of order.shipments) {
         if (!shipment.products || shipment.products.length === 0) continue
 
         for (const product of shipment.products) {
           const inventories = product.inventory || [{}]
+          // Get quantity from order.products lookup (since shipment.products doesn't have it)
+          const orderQuantity = product.id ? orderProductQuantities[product.id] : null
 
           for (const inv of inventories) {
             shipmentItemRecords.push({
@@ -589,7 +779,8 @@ export async function syncClient(
               inventory_id: inv.id || null,
               lot: inv.lot || null,
               expiration_date: inv.expiration_date || null,
-              quantity: inv.quantity || product.quantity || null,
+              // Priority: inventory quantity > order product quantity > shipment product quantity
+              quantity: inv.quantity || orderQuantity || product.quantity || null,
               quantity_committed: inv.quantity_committed || null,
               is_dangerous_goods: product.is_dangerous_goods || false,
               serial_numbers: inv.serial_numbers ? JSON.stringify(inv.serial_numbers) : null,
@@ -644,9 +835,11 @@ export async function syncClient(
         transaction_id: string
         reference_id: string
         reference_type: string
+        transaction_type: string
         transaction_fee: string
         amount: number
         charge_date: string
+        invoice_date?: string
         invoiced_status: boolean
         invoice_id?: number
         fulfillment_center?: string
@@ -678,13 +871,17 @@ export async function syncClient(
         merchant_id: merchantId,
         reference_id: tx.reference_id,
         reference_type: tx.reference_type,
+        transaction_type: tx.transaction_type || null,
         transaction_fee: tx.transaction_fee,
-        amount: tx.amount,
+        cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
         charge_date: tx.charge_date,
+        invoice_date_sb: tx.invoice_date || null,
         invoiced_status_sb: tx.invoiced_status || false,
         invoice_id_sb: tx.invoice_id || null,
         fulfillment_center: tx.fulfillment_center || null,
         additional_details: tx.additional_details || null,
+        // Extract tracking_id from additional_details.TrackingId
+        tracking_id: (tx.additional_details as Record<string, unknown>)?.TrackingId as string || null,
         created_at: new Date().toISOString(),
       }))
 
@@ -829,6 +1026,7 @@ export async function syncClientById(
       ordersFound: 0,
       ordersUpserted: 0,
       shipmentsUpserted: 0,
+      timelinesUpdated: 0,
       orderItemsUpserted: 0,
       shipmentItemsInserted: 0,
       cartonsInserted: 0,
@@ -852,6 +1050,7 @@ export async function syncClientById(
       ordersFound: 0,
       ordersUpserted: 0,
       shipmentsUpserted: 0,
+      timelinesUpdated: 0,
       orderItemsUpserted: 0,
       shipmentItemsInserted: 0,
       cartonsInserted: 0,
@@ -1023,6 +1222,18 @@ export async function syncAllTransactions(
     const jetpackCostsId = jetpackCostsClient?.id || null
     console.log(`[TransactionSync] System clients: ShipBob Payments=${shipbobPaymentsId}, Jetpack Costs=${jetpackCostsId}`)
 
+    // Build client_id -> client_info lookup for merchant_id population
+    console.log('[TransactionSync] Building client info lookup...')
+    const clientInfoLookup: Record<string, { merchant_id: string | null }> = {}
+    const { data: clientsData } = await supabase
+      .from('clients')
+      .select('id, merchant_id')
+
+    for (const c of clientsData || []) {
+      clientInfoLookup[c.id] = { merchant_id: c.merchant_id || null }
+    }
+    console.log(`[TransactionSync] Client info lookup: ${Object.keys(clientInfoLookup).length} clients`)
+
     // Build shipment_id -> client_id lookup from database
     console.log('[TransactionSync] Building client lookup from shipments...')
     const clientLookup: Record<string, string> = {}
@@ -1094,9 +1305,48 @@ export async function syncAllTransactions(
     }
     console.log(`[TransactionSync] Built returns lookup with ${Object.keys(returnLookup).length} returns`)
 
-    // NOTE: FC (Storage) transactions are NOT attributed during sync.
-    // They will be attributed via invoice-based fallback during Monday invoicing.
-    // This avoids dependency on billing_storage (legacy table being deleted).
+    // Build inventory_id -> client_id lookup from products.variants
+    // FC (Storage) transactions use this to attribute by inventory ID
+    console.log('[TransactionSync] Building inventory lookup from products...')
+    const inventoryLookup: Record<string, string> = {}
+    let productLastId: string | null = null
+
+    while (true) {
+      let query = supabase
+        .from('products')
+        .select('id, client_id, variants')
+        .order('id', { ascending: true })
+        .limit(pageSize)
+
+      if (productLastId) {
+        query = query.gt('id', productLastId)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('[TransactionSync] Error fetching products:', error.message)
+        break
+      }
+
+      if (!data || data.length === 0) break
+
+      for (const p of data) {
+        if (p.client_id && Array.isArray(p.variants)) {
+          // Extract inventory_id from each variant's inventory object
+          for (const variant of p.variants) {
+            const invId = variant?.inventory?.inventory_id
+            if (invId) {
+              inventoryLookup[String(invId)] = p.client_id
+            }
+          }
+        }
+        productLastId = p.id
+      }
+
+      if (data.length < pageSize) break
+    }
+    console.log(`[TransactionSync] Built inventory lookup with ${Object.keys(inventoryLookup).length} inventory IDs`)
 
     // Fetch ALL transactions by date range
     console.log(`[TransactionSync] Fetching transactions from ${startDate.toISOString()} to ${endDate.toISOString()}...`)
@@ -1105,9 +1355,11 @@ export async function syncAllTransactions(
       transaction_id: string
       reference_id: string
       reference_type: string
+      transaction_type: string
       transaction_fee: string
       amount: number
       charge_date: string
+      invoice_date?: string
       invoiced_status: boolean
       invoice_id?: number
       fulfillment_center?: string
@@ -1165,15 +1417,6 @@ export async function syncAllTransactions(
     // Transform to DB records with client attribution
     const now = new Date().toISOString()
 
-    // Group transactions by invoice for invoice-based fallback attribution
-    const invoiceGroups: Record<number, typeof transactions> = {}
-    for (const tx of transactions) {
-      if (tx.invoice_id) {
-        if (!invoiceGroups[tx.invoice_id]) invoiceGroups[tx.invoice_id] = []
-        invoiceGroups[tx.invoice_id].push(tx)
-      }
-    }
-
     const txRecords = transactions.map((tx) => {
       // Try to attribute client based on reference_type
       let clientId: string | null = null
@@ -1183,9 +1426,22 @@ export async function syncAllTransactions(
         clientId = clientLookup[tx.reference_id] || null
       }
 
-      // Strategy 2: FC (Storage) - leave unattributed for invoice-based fallback
-      // FC transactions will be attributed during Monday invoicing via invoice lookup.
-      // This avoids dependency on billing_storage (legacy table being deleted).
+      // Strategy 2: FC (Storage) - lookup by inventory ID from products.variants
+      // reference_id format: {FC_ID}-{InventoryId}-{LocationType}
+      // Also check additional_details.InventoryId as backup
+      else if (tx.reference_type === 'FC') {
+        const parts = tx.reference_id.split('-')
+        let invId: string | null = null
+        if (parts.length >= 2) {
+          invId = parts[1] // Middle part is InventoryId
+        }
+        if (!invId && tx.additional_details?.InventoryId) {
+          invId = String(tx.additional_details.InventoryId)
+        }
+        if (invId) {
+          clientId = inventoryLookup[invId] || null
+        }
+      }
 
       // Strategy 3: Return - lookup via returns table
       else if (tx.reference_type === 'Return') {
@@ -1202,46 +1458,21 @@ export async function syncAllTransactions(
           // CC processing fee is a parent-level cost to Jetpack
           clientId = jetpackCostsId
         } else if (fee === 'Credit') {
-          // Credits - try shipment lookup first, then invoice-based fallback
+          // Credits - try shipment lookup first
           clientId = clientLookup[tx.reference_id] || null
         }
-        // Warehousing Fee and other Default fees use invoice-based fallback below
+        // Warehousing Fee and other Default fees left unattributed if no direct match
       }
 
       // Strategy 5: TicketNumber - parse client name from additional_details.Comment
       else if (tx.reference_type === 'TicketNumber') {
-        const comment = tx.additional_details?.Comment as string || ''
         // Try to extract client name from comment
         // Format often: "Client Name - description" or "adjustment for Client Name"
         // For now, leave unattributed - can be enhanced later
       }
 
-      // Strategy 6: WRO/URO - leave for invoice-based fallback below
-      // These reference IDs don't match anything directly
-
-      // Fallback: Invoice-based attribution
-      // If transaction has invoice_id and we couldn't attribute, check if other
-      // transactions on same invoice are attributed
-      if (!clientId && tx.invoice_id && invoiceGroups[tx.invoice_id]) {
-        for (const siblingTx of invoiceGroups[tx.invoice_id]) {
-          // Skip self
-          if (siblingTx.transaction_id === tx.transaction_id) continue
-
-          // Try to find a sibling with known client
-          let siblingClientId: string | null = null
-          if (siblingTx.reference_type === 'Shipment') {
-            siblingClientId = clientLookup[siblingTx.reference_id] || null
-          } else if (siblingTx.reference_type === 'Return') {
-            siblingClientId = returnLookup[siblingTx.reference_id] || null
-          }
-          // Note: FC transactions can't help as siblings since they need attribution too
-
-          if (siblingClientId) {
-            clientId = siblingClientId
-            break
-          }
-        }
-      }
+      // Strategy 6: WRO/URO - these reference IDs don't match anything directly
+      // Left unattributed - will need manual review or enhanced parsing
 
       if (clientId) {
         result.attributed++
@@ -1249,18 +1480,30 @@ export async function syncAllTransactions(
         result.unattributed++
       }
 
+      // Look up merchant_id from client if attributed
+      let merchantId: string | null = null
+      if (clientId) {
+        const clientInfo = clientInfoLookup[clientId]
+        merchantId = clientInfo?.merchant_id || null
+      }
+
       return {
         transaction_id: tx.transaction_id,
         client_id: clientId,
+        merchant_id: merchantId,
         reference_id: tx.reference_id,
         reference_type: tx.reference_type,
+        transaction_type: tx.transaction_type || null,
         transaction_fee: tx.transaction_fee,
-        amount: tx.amount,
+        cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
         charge_date: tx.charge_date,
+        invoice_date_sb: tx.invoice_date || null,
         invoiced_status_sb: tx.invoiced_status || false,
         invoice_id_sb: tx.invoice_id || null,
         fulfillment_center: tx.fulfillment_center || null,
         additional_details: tx.additional_details || null,
+        // Extract tracking_id from additional_details.TrackingId
+        tracking_id: (tx.additional_details as Record<string, unknown>)?.TrackingId as string || null,
         updated_at: now,
       }
     })
@@ -1309,5 +1552,156 @@ export async function syncBillingTransactions() {
     invoicesFound: 0,
     invoicesInserted: 0,
     errors: [],
+  }
+}
+
+/**
+ * Sync returns from ShipBob API
+ *
+ * Strategy: Find return IDs from transactions table that are missing from returns table,
+ * then fetch each from the API. This ensures we have return data for all billed returns.
+ */
+export interface ReturnsSyncResult {
+  success: boolean
+  synced: number
+  skipped: number
+  errors: string[]
+  duration: number
+}
+
+export async function syncReturns(): Promise<ReturnsSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: ReturnsSyncResult = {
+    success: false,
+    synced: 0,
+    skipped: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  try {
+    // Get all clients with their tokens and merchant_ids
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, company_name, merchant_id, client_api_credentials(api_token, provider)')
+      .eq('is_active', true)
+
+    const clientLookup: Record<string, { token: string; merchantId: string | null; name: string }> = {}
+    for (const c of clients || []) {
+      const creds = c.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find(cred => cred.provider === 'shipbob')?.api_token
+      if (token) {
+        clientLookup[c.id] = { token, merchantId: c.merchant_id, name: c.company_name }
+      }
+    }
+
+    // Get return IDs from transactions
+    const { data: returnTxs } = await supabase
+      .from('transactions')
+      .select('reference_id, client_id')
+      .eq('reference_type', 'Return')
+
+    // Group by client
+    const returnsByClient: Record<string, Set<number>> = {}
+    for (const tx of returnTxs || []) {
+      const clientId = tx.client_id
+      if (!clientId || !clientLookup[clientId]) continue
+      if (!returnsByClient[clientId]) returnsByClient[clientId] = new Set()
+      const returnId = Number(tx.reference_id)
+      if (returnId > 0) returnsByClient[clientId].add(returnId)
+    }
+
+    // Process each client
+    for (const [clientId, returnIds] of Object.entries(returnsByClient)) {
+      const client = clientLookup[clientId]
+      const returnIdArray = Array.from(returnIds)
+
+      // Get existing returns
+      const { data: existing } = await supabase
+        .from('returns')
+        .select('shipbob_return_id')
+        .eq('client_id', clientId)
+        .in('shipbob_return_id', returnIdArray.slice(0, 1000))
+
+      const existingIds = new Set(existing?.map((r: { shipbob_return_id: number }) => r.shipbob_return_id) || [])
+
+      // Filter to only missing
+      const toSync = returnIdArray.filter(id => !existingIds.has(id))
+      result.skipped += existingIds.size
+
+      if (toSync.length === 0) continue
+
+      console.log(`[ReturnsSync] ${client.name}: syncing ${toSync.length} missing returns`)
+
+      // Fetch and upsert each missing return
+      const records: Array<Record<string, unknown>> = []
+      for (const returnId of toSync) {
+        try {
+          const res = await fetch(`https://api.shipbob.com/1.0/return/${returnId}`, {
+            headers: { Authorization: `Bearer ${client.token}` }
+          })
+          if (!res.ok) {
+            result.errors.push(`Failed to fetch return ${returnId}: ${res.status}`)
+            continue
+          }
+          const returnData = await res.json()
+          records.push({
+            client_id: clientId,
+            merchant_id: client.merchantId,
+            shipbob_return_id: returnData.id,
+            reference_id: returnData.reference_id || null,
+            status: returnData.status || null,
+            return_type: returnData.return_type || null,
+            tracking_number: returnData.tracking_number || null,
+            shipment_tracking_number: returnData.tracking_number || null,
+            original_shipment_id: returnData.original_shipment_id || null,
+            store_order_id: returnData.store_order_id || null,
+            customer_name: returnData.customer_name || null,
+            invoice_amount: returnData.invoice_amount || null,
+            invoice_currency: 'USD',
+            fc_id: returnData.fulfillment_center?.id || null,
+            fc_name: returnData.fulfillment_center?.name || null,
+            channel_id: returnData.channel?.id || null,
+            channel_name: returnData.channel?.name || null,
+            insert_date: returnData.insert_date || null,
+            awaiting_arrival_date: returnData.status === 'AwaitingArrival' ? returnData.insert_date : null,
+            arrived_date: returnData.arrived_date || null,
+            processing_date: returnData.processing_date || null,
+            completed_date: returnData.completed_date || null,
+            cancelled_date: returnData.cancelled_date || null,
+            status_history: returnData.status_history || null,
+            inventory: returnData.inventory || null,
+            synced_at: new Date().toISOString(),
+          })
+        } catch (e) {
+          result.errors.push(`Error fetching return ${returnId}: ${e instanceof Error ? e.message : 'Unknown'}`)
+        }
+
+        // Small delay to be nice to API
+        await new Promise(r => setTimeout(r, 100))
+      }
+
+      // Upsert all records
+      if (records.length > 0) {
+        const { error } = await supabase
+          .from('returns')
+          .upsert(records, { onConflict: 'shipbob_return_id' })
+
+        if (error) {
+          result.errors.push(`Upsert error for ${client.name}: ${error.message}`)
+        } else {
+          result.synced += records.length
+        }
+      }
+    }
+
+    result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.duration = Date.now() - startTime
+    return result
   }
 }

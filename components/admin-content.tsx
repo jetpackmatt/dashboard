@@ -14,11 +14,15 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
   Send,
   Eye,
   Download,
   CalendarIcon,
+  RotateCcw,
+  FileSpreadsheet,
+  XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -47,6 +51,28 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   Table,
   TableBody,
   TableCell,
@@ -65,6 +91,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { useClient } from '@/components/client-context'
 import { FEE_TYPE_CATEGORIES, WEIGHT_BRACKETS } from '@/lib/billing/types'
 import type { MarkupRuleFormData } from '@/lib/billing/types'
+
+/**
+ * Format a date string as a fixed date without timezone conversion.
+ * This prevents dates from shifting due to local timezone interpretation.
+ * Input: '2025-11-24' or '2025-11-24T05:00:00.000Z'
+ * Output: '11/24/2025'
+ */
+function formatDateFixed(dateStr: string): string {
+  // Extract just the YYYY-MM-DD part (handles both date-only and ISO strings)
+  const datePart = dateStr.split('T')[0]
+  const [year, month, day] = datePart.split('-')
+  return `${parseInt(month)}/${parseInt(day)}/${year}`
+}
 
 interface MarkupRule {
   id: string
@@ -514,9 +553,9 @@ function RuleSection({
                           )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
-                          {new Date(rule.effective_from).toLocaleDateString()}
+                          {formatDateFixed(rule.effective_from)}
                           {rule.effective_to && (
-                            <> - {new Date(rule.effective_to).toLocaleDateString()}</>
+                            <> - {formatDateFixed(rule.effective_to)}</>
                           )}
                         </TableCell>
                         <TableCell>
@@ -965,14 +1004,66 @@ function MarkupRuleDialog({
 // Invoicing Tab Content
 // ============================================
 
+interface PreflightValidationIssue {
+  category: string
+  severity: 'critical' | 'warning'
+  message: string
+  count: number
+  percentage: number
+}
+
+interface PreflightClientResult {
+  clientId: string
+  clientName: string
+  passed: boolean
+  issues: PreflightValidationIssue[]
+  warnings: PreflightValidationIssue[]
+  summary: {
+    shippingTransactions: number
+    additionalServiceTransactions: number
+    storageTransactions: number
+    returnsTransactions: number
+    receivingTransactions: number
+    creditsTransactions: number
+  }
+}
+
+interface PreflightResult {
+  success: boolean
+  shipbobInvoiceCount: number
+  clients: PreflightClientResult[]
+  summary: {
+    totalClients: number
+    passed: number
+    warnings: number
+    failed: number
+  }
+}
+
 function InvoicingContent({ clients }: { clients: Client[] }) {
   const [invoices, setInvoices] = React.useState<JetpackInvoice[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Preflight validation state
+  const [preflightResult, setPreflightResult] = React.useState<PreflightResult | null>(null)
+  const [isLoadingPreflight, setIsLoadingPreflight] = React.useState(false)
+  const [preflightExpanded, setPreflightExpanded] = React.useState(false)
+
+  // Confirmation dialog state
+  const [approveDialogOpen, setApproveDialogOpen] = React.useState(false)
+  const [approveAllDialogOpen, setApproveAllDialogOpen] = React.useState(false)
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = React.useState(false)
+  const [regenerateAllDialogOpen, setRegenerateAllDialogOpen] = React.useState(false)
+  const [selectedInvoiceId, setSelectedInvoiceId] = React.useState<string | null>(null)
+  const [isRegenerating, setIsRegenerating] = React.useState<string | null>(null)
+  const [isRegeneratingAll, setIsRegeneratingAll] = React.useState(false)
+  const [isApproving, setIsApproving] = React.useState<string | null>(null)
+
   React.useEffect(() => {
     fetchInvoices()
+    fetchPreflightValidation()
   }, [])
 
   async function fetchInvoices() {
@@ -989,16 +1080,28 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
     }
   }
 
-  async function handleGenerateInvoices() {
-    if (!confirm('Generate invoices for this week? This will create draft invoices for all clients.')) {
-      return
+  async function fetchPreflightValidation() {
+    setIsLoadingPreflight(true)
+    try {
+      const response = await fetch('/api/admin/invoices/preflight')
+      if (!response.ok) throw new Error('Failed to fetch preflight validation')
+      const data = await response.json()
+      setPreflightResult(data)
+    } catch (err) {
+      console.error('Error fetching preflight validation:', err)
+    } finally {
+      setIsLoadingPreflight(false)
     }
+  }
 
+  async function handleGenerateInvoices() {
     setIsGenerating(true)
+    setError(null)
     try {
       const response = await fetch('/api/admin/invoices/generate', { method: 'POST' })
       if (!response.ok) throw new Error('Failed to generate invoices')
       await fetchInvoices()
+      await fetchPreflightValidation()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate invoices')
     } finally {
@@ -1007,6 +1110,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   }
 
   async function handleApproveInvoice(invoiceId: string) {
+    setIsApproving(invoiceId)
     try {
       const response = await fetch(`/api/admin/invoices/${invoiceId}/approve`, {
         method: 'POST',
@@ -1015,17 +1119,161 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
       await fetchInvoices()
     } catch (err) {
       console.error('Error approving invoice:', err)
+      setError(err instanceof Error ? err.message : 'Failed to approve invoice')
+    } finally {
+      setIsApproving(null)
+      setApproveDialogOpen(false)
+      setSelectedInvoiceId(null)
     }
   }
 
   async function handleApproveAll() {
-    if (!confirm('Approve all draft invoices? This will finalize and send them to clients.')) {
-      return
-    }
-
     const draftInvoices = invoices.filter(i => i.status === 'draft')
     for (const invoice of draftInvoices) {
       await handleApproveInvoice(invoice.id)
+    }
+    setApproveAllDialogOpen(false)
+  }
+
+  async function handleRegenerateAll() {
+    setIsRegeneratingAll(true)
+    setError(null)
+    setRegenerateAllDialogOpen(false)
+
+    const draftInvoices = invoices.filter(i => i.status === 'draft')
+    let successCount = 0
+    let failCount = 0
+
+    for (const invoice of draftInvoices) {
+      try {
+        setIsRegenerating(invoice.id)
+        const response = await fetch(`/api/admin/invoices/${invoice.id}/regenerate`, {
+          method: 'POST',
+        })
+        if (response.ok) {
+          successCount++
+        } else {
+          failCount++
+        }
+      } catch {
+        failCount++
+      }
+    }
+
+    // Final refresh after all regenerations
+    setIsRegenerating(null)
+    setIsRegeneratingAll(false)
+    await fetchInvoices()
+    await fetchPreflightValidation()
+
+    if (failCount > 0) {
+      setError(`Regenerated ${successCount} invoices, ${failCount} failed`)
+    }
+  }
+
+  async function handleRegenerateInvoice(invoiceId: string) {
+    setIsRegenerating(invoiceId)
+    setError(null)
+
+    // Get current invoice state to detect when it changes
+    const currentInvoice = invoices.find(i => i.id === invoiceId)
+    const initialVersion = currentInvoice?.version || 1
+    const initialGeneratedAt = currentInvoice?.generated_at
+
+    try {
+      // Start regeneration (fire and forget - we'll poll for completion)
+      const regeneratePromise = fetch(`/api/admin/invoices/${invoiceId}/regenerate`, {
+        method: 'POST',
+      }).then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to regenerate invoice')
+        }
+        return data
+      })
+
+      // Poll for completion every 2 seconds (detect the moment it's done)
+      const maxAttempts = 150 // 5 minutes max (150 * 2s)
+      let attempts = 0
+      let completed = false
+
+      const pollForCompletion = async () => {
+        while (!completed && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          attempts++
+
+          try {
+            const checkResponse = await fetch('/api/admin/invoices')
+            if (checkResponse.ok) {
+              const checkData = await checkResponse.json()
+              const updatedInvoice = checkData.invoices?.find((i: JetpackInvoice) => i.id === invoiceId)
+
+              if (updatedInvoice) {
+                const versionIncreased = updatedInvoice.version > initialVersion
+                const generatedAtChanged = updatedInvoice.generated_at !== initialGeneratedAt
+
+                if (versionIncreased || generatedAtChanged) {
+                  completed = true
+                  // Clear spinner IMMEDIATELY when completion is detected
+                  setIsRegenerating(null)
+                  setRegenerateDialogOpen(false)
+                  setSelectedInvoiceId(null)
+                  setInvoices(checkData.invoices)
+                  // Do validation refresh async (don't block UI)
+                  fetchPreflightValidation()
+                  return true
+                }
+              }
+            }
+          } catch {
+            // Ignore polling errors, continue polling
+          }
+        }
+        return false
+      }
+
+      // Race: either polling detects completion OR the request finishes
+      const result = await Promise.race([
+        pollForCompletion(),
+        regeneratePromise.then(() => 'request_done' as const)
+      ])
+
+      // If request finished first, do a final refresh
+      if (result === 'request_done' && !completed) {
+        // Clear spinner immediately when request completes
+        setIsRegenerating(null)
+        setRegenerateDialogOpen(false)
+        setSelectedInvoiceId(null)
+        await fetchInvoices()
+        // Do validation refresh async
+        fetchPreflightValidation()
+      }
+    } catch (err) {
+      console.error('Error regenerating invoice:', err)
+      setError(err instanceof Error ? err.message : 'Failed to regenerate invoice')
+      // Clear spinner on error too
+      setIsRegenerating(null)
+      setRegenerateDialogOpen(false)
+      setSelectedInvoiceId(null)
+    }
+  }
+
+  async function handleDownloadFile(invoiceId: string, fileType: 'pdf' | 'xlsx') {
+    try {
+      const response = await fetch(`/api/admin/invoices/${invoiceId}/files`)
+      if (!response.ok) throw new Error('Failed to get file URL')
+      const data = await response.json()
+
+      const url = fileType === 'pdf' ? data.pdfUrl : data.xlsUrl
+      if (!url) {
+        throw new Error(`${fileType.toUpperCase()} file not available`)
+      }
+
+      // Open in new tab for viewing
+      window.open(url, '_blank')
+    } catch (err) {
+      console.error('Error downloading file:', err)
+      setError(err instanceof Error ? err.message : 'Failed to download file')
     }
   }
 
@@ -1040,189 +1288,481 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   const draftInvoices = invoices.filter(i => i.status === 'draft')
   const approvedInvoices = invoices.filter(i => i.status === 'approved' || i.status === 'sent')
 
-  return (
-    <>
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Invoice Management</h2>
-          <p className="text-sm text-muted-foreground">
-            Generate, review, and approve weekly client invoices
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchInvoices} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
-          <Button onClick={handleGenerateInvoices} disabled={isGenerating} className="gap-2">
-            {isGenerating ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FileText className="h-4 w-4" />
-            )}
-            Generate Invoices
-          </Button>
-        </div>
-      </div>
+  // Calculate preflight summary
+  const hasPreflightIssues = preflightResult && (
+    preflightResult.summary.failed > 0 || preflightResult.summary.warnings > 0
+  )
 
-      {error && (
+  return (
+    <TooltipProvider>
+      <>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Invoice Management</h2>
+            <p className="text-sm text-muted-foreground">
+              Generate, review, and approve weekly client invoices
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { fetchInvoices(); fetchPreflightValidation() }} className="gap-2">
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
+            <Button onClick={handleGenerateInvoices} disabled={isGenerating} className="gap-2">
+              {isGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+              Generate Invoices
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <Card>
+            <CardContent className="py-6">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-5 w-5" />
+                <p>{error}</p>
+                <Button variant="ghost" size="sm" onClick={() => setError(null)} className="ml-auto">
+                  <XCircle className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pre-flight Validation Card */}
+        <Card className={cn(
+          preflightResult?.summary.failed && preflightResult.summary.failed > 0 && "border-destructive",
+          preflightResult?.summary.warnings && preflightResult.summary.warnings > 0 && preflightResult.summary.failed === 0 && "border-yellow-500"
+        )}>
+          <Collapsible open={preflightExpanded} onOpenChange={setPreflightExpanded}>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {preflightExpanded ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                    <div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        Pre-flight Validation
+                        {isLoadingPreflight && <Loader2 className="h-4 w-4 animate-spin" />}
+                      </CardTitle>
+                      <CardDescription>
+                        Data quality checks before invoice generation
+                      </CardDescription>
+                    </div>
+                  </div>
+                  {preflightResult && (
+                    <div className="flex items-center gap-2">
+                      {preflightResult.summary.failed > 0 && (
+                        <Badge variant="destructive" className="gap-1">
+                          <XCircle className="h-3 w-3" />
+                          {preflightResult.summary.failed} Failed
+                        </Badge>
+                      )}
+                      {preflightResult.summary.warnings > 0 && (
+                        <Badge variant="outline" className="gap-1 border-yellow-500 text-yellow-600">
+                          <AlertTriangle className="h-3 w-3" />
+                          {preflightResult.summary.warnings} Warnings
+                        </Badge>
+                      )}
+                      {preflightResult.summary.passed > 0 && (
+                        <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
+                          <CheckCircle2 className="h-3 w-3" />
+                          {preflightResult.summary.passed} Passed
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0">
+                {!preflightResult ? (
+                  <p className="text-center text-muted-foreground py-4">
+                    No validation data available
+                  </p>
+                ) : preflightResult.clients.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-4">
+                    No unprocessed ShipBob invoices found
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {preflightResult.clients.map(client => (
+                      <div key={client.clientId} className="border rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            {client.passed ? (
+                              client.warnings.length > 0 ? (
+                                <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                              ) : (
+                                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                              )
+                            ) : (
+                              <XCircle className="h-5 w-5 text-destructive" />
+                            )}
+                            <span className="font-medium">{client.clientName}</span>
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {client.summary.shippingTransactions} shipments, {' '}
+                            {client.summary.additionalServiceTransactions} addl services, {' '}
+                            {client.summary.storageTransactions} storage, {' '}
+                            {client.summary.returnsTransactions} returns, {' '}
+                            {client.summary.receivingTransactions} receiving, {' '}
+                            {client.summary.creditsTransactions} credits
+                          </div>
+                        </div>
+
+                        {client.issues.length > 0 && (
+                          <div className="space-y-1 mt-2">
+                            {client.issues.map((issue, idx) => (
+                              <div key={idx} className="text-sm text-destructive flex items-start gap-2">
+                                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                <span>{issue.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {client.warnings.length > 0 && (
+                          <div className="space-y-1 mt-2">
+                            {client.warnings.map((warning, idx) => (
+                              <div key={idx} className="text-sm text-yellow-600 flex items-start gap-2">
+                                <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                <span>{warning.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Collapsible>
+        </Card>
+
+        {/* Draft Invoices - Pending Approval */}
         <Card>
-          <CardContent className="py-6">
-            <div className="flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              <p>{error}</p>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Pending Approval</CardTitle>
+                <CardDescription>
+                  Review and approve invoices before sending to clients
+                </CardDescription>
+              </div>
+              {draftInvoices.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setRegenerateAllDialogOpen(true)}
+                    className="gap-2"
+                    disabled={isRegeneratingAll}
+                  >
+                    {isRegeneratingAll ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4" />
+                    )}
+                    Re-generate All
+                  </Button>
+                  <Button onClick={() => setApproveAllDialogOpen(true)} className="gap-2">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Approve All ({draftInvoices.length})
+                  </Button>
+                </div>
+              )}
             </div>
+          </CardHeader>
+          <CardContent>
+            {draftInvoices.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No pending invoices. Generate new invoices to get started.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice #</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead className="text-right">Subtotal</TableHead>
+                    <TableHead className="text-right">Markup</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[180px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {draftInvoices.map(invoice => {
+                    const client = clients.find(c => c.id === invoice.client_id)
+                    return (
+                      <TableRow key={invoice.id}>
+                        <TableCell className="font-mono font-medium">
+                          {invoice.invoice_number}
+                          {invoice.version > 1 && (
+                            <Badge variant="outline" className="ml-2 text-xs">v{invoice.version}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>{client?.company_name || 'Unknown'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {formatDateFixed(invoice.period_start)} -{' '}
+                          {formatDateFixed(invoice.period_end)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          ${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right text-green-600">
+                          +${invoice.total_markup.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">Draft</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            {/* View/Download Dropdown */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleDownloadFile(invoice.id, 'pdf')}>
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  View PDF
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDownloadFile(invoice.id, 'xlsx')}>
+                                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                                  View XLSX
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+
+                            {/* Re-Run Button */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={isRegenerating === invoice.id}
+                                  onClick={() => {
+                                    setSelectedInvoiceId(invoice.id)
+                                    setRegenerateDialogOpen(true)
+                                  }}
+                                >
+                                  {isRegenerating === invoice.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-4 w-4 text-blue-600" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Re-generate invoice</TooltipContent>
+                            </Tooltip>
+
+                            {/* Approve Button */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={isApproving === invoice.id}
+                                  onClick={() => {
+                                    setSelectedInvoiceId(invoice.id)
+                                    setApproveDialogOpen(true)
+                                  }}
+                                >
+                                  {isApproving === invoice.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Approve invoice</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
-      )}
 
-      {/* Draft Invoices - Pending Approval */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Pending Approval</CardTitle>
-              <CardDescription>
-                Review and approve invoices before sending to clients
-              </CardDescription>
-            </div>
-            {draftInvoices.length > 0 && (
-              <Button onClick={handleApproveAll} className="gap-2">
-                <CheckCircle2 className="h-4 w-4" />
-                Approve All ({draftInvoices.length})
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {draftInvoices.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No pending invoices. Generate new invoices to get started.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead className="text-right">Subtotal</TableHead>
-                  <TableHead className="text-right">Markup</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-[150px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {draftInvoices.map(invoice => {
-                  const client = clients.find(c => c.id === invoice.client_id)
-                  return (
-                    <TableRow key={invoice.id}>
-                      <TableCell className="font-mono font-medium">
-                        {invoice.invoice_number}
-                      </TableCell>
-                      <TableCell>{client?.company_name || 'Unknown'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {new Date(invoice.period_start).toLocaleDateString()} -{' '}
-                        {new Date(invoice.period_end).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        ${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell className="text-right text-green-600">
-                        +${invoice.total_markup.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">Draft</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" title="Preview">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Approve"
-                            onClick={() => handleApproveInvoice(invoice.id)}
+        {/* Approved Invoices */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Invoices</CardTitle>
+            <CardDescription>Previously approved and sent invoices</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {approvedInvoices.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No approved invoices yet.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice #</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {approvedInvoices.slice(0, 10).map(invoice => {
+                    const client = clients.find(c => c.id === invoice.client_id)
+                    return (
+                      <TableRow key={invoice.id}>
+                        <TableCell className="font-mono font-medium">
+                          {invoice.invoice_number}
+                          {invoice.version > 1 && (
+                            <Badge variant="outline" className="ml-2 text-xs">v{invoice.version}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>{client?.company_name || 'Unknown'}</TableCell>
+                        <TableCell>
+                          {formatDateFixed(invoice.invoice_date)}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={invoice.status === 'sent' ? 'default' : 'secondary'}
                           >
-                            <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                            {invoice.status === 'sent' ? 'Sent' : 'Approved'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleDownloadFile(invoice.id, 'pdf')}>
+                                <FileText className="h-4 w-4 mr-2" />
+                                Download PDF
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDownloadFile(invoice.id, 'xlsx')}>
+                                <FileSpreadsheet className="h-4 w-4 mr-2" />
+                                Download XLSX
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-      {/* Approved Invoices */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Invoices</CardTitle>
-          <CardDescription>Previously approved and sent invoices</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {approvedInvoices.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No approved invoices yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {approvedInvoices.slice(0, 10).map(invoice => {
-                  const client = clients.find(c => c.id === invoice.client_id)
-                  return (
-                    <TableRow key={invoice.id}>
-                      <TableCell className="font-mono font-medium">
-                        {invoice.invoice_number}
-                      </TableCell>
-                      <TableCell>{client?.company_name || 'Unknown'}</TableCell>
-                      <TableCell>
-                        {new Date(invoice.invoice_date).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={invoice.status === 'sent' ? 'default' : 'secondary'}
-                        >
-                          {invoice.status === 'sent' ? 'Sent' : 'Approved'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" title="Download PDF">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-    </>
+        {/* Approve Single Invoice Confirmation Dialog */}
+        <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Approve Invoice?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will finalize the invoice and mark it as approved. Once approved, invoices cannot be modified. Are you sure you want to continue?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setSelectedInvoiceId(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedInvoiceId && handleApproveInvoice(selectedInvoiceId)}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                Yes, Approve Invoice
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Approve All Invoices Confirmation Dialog */}
+        <AlertDialog open={approveAllDialogOpen} onOpenChange={setApproveAllDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Approve All Invoices?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will approve {draftInvoices.length} draft invoice(s) and mark them as finalized. Once approved, invoices cannot be modified. Are you sure you want to continue?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleApproveAll}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                Yes, Approve All
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Re-generate All Invoices Confirmation Dialog */}
+        <AlertDialog open={regenerateAllDialogOpen} onOpenChange={setRegenerateAllDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Re-generate All Invoices?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will regenerate all {draftInvoices.length} draft invoice(s) with fresh data, recalculate markups, and create new PDF/XLSX files. Version numbers will be incremented. Use this after making sync corrections or markup rule changes.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleRegenerateAll}>
+                Yes, Re-generate All
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Regenerate Invoice Confirmation Dialog */}
+        <AlertDialog open={regenerateDialogOpen} onOpenChange={setRegenerateDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Regenerate Invoice?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will regenerate the invoice with fresh data, recalculate markups, and create new PDF/XLSX files. The version number will be incremented. Use this after making sync corrections or markup rule changes.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setSelectedInvoiceId(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedInvoiceId && handleRegenerateInvoice(selectedInvoiceId)}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Yes, Regenerate Invoice
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
+    </TooltipProvider>
   )
 }
 
