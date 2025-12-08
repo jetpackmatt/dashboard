@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { ShipBobClient, type ShipBobInvoice } from '@/lib/shipbob/client'
 import {
   fetchShippingBreakdown,
   updateTransactionsWithBreakdown,
@@ -15,16 +16,17 @@ import {
  *
  * Vercel Cron Job: Runs every Monday at 6:30pm PT (1:30am Tuesday UTC)
  *
- * This route ONLY syncs data and runs preflight validation.
+ * This route syncs new ShipBob invoices, SFTP breakdown, and runs preflight validation.
  * It does NOT generate invoices - that's a manual step in the Admin UI.
  *
  * Flow:
- * 1. Fetch SFTP shipping breakdown (if available)
- * 2. Update transactions with breakdown data
- * 3. Get all active clients
- * 4. Get ALL unprocessed ShipBob invoices
- * 5. For each client: run preflight validation
- * 6. Return results for admin review
+ * 1. Fetch new invoices from ShipBob API and upsert into invoices_sb
+ * 2. Fetch SFTP shipping breakdown (if available)
+ * 3. Update transactions with breakdown data
+ * 4. Get all active clients
+ * 5. Get ALL unprocessed ShipBob invoices
+ * 6. For each client: run preflight validation
+ * 7. Return results for admin review
  *
  * After this runs, an admin:
  * 1. Reviews preflight results in Admin UI
@@ -60,7 +62,101 @@ export async function GET(request: Request) {
 
     console.log(`Invoice date: ${invoiceDate.toISOString().split('T')[0]}`)
 
-    // Step 1: Fetch shipping breakdown data from SFTP (if available)
+    // Step 1: Fetch new invoices from ShipBob API
+    console.log('Fetching invoices from ShipBob API...')
+    const invoiceSyncStats = { fetched: 0, inserted: 0, existing: 0, errors: 0 }
+
+    try {
+      const shipbob = new ShipBobClient()
+
+      // Fetch invoices from last 30 days to ensure we catch any new ones
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+      const allInvoices: ShipBobInvoice[] = []
+      let cursor: string | undefined
+
+      // Paginate through all invoices
+      do {
+        const response = await shipbob.billing.getInvoices({
+          startDate: thirtyDaysAgo.toISOString().split('T')[0],
+          pageSize: 100,
+          cursor,
+        })
+
+        const items = response.items || []
+        allInvoices.push(...items)
+        cursor = response.next
+      } while (cursor)
+
+      console.log(`  Fetched ${allInvoices.length} invoices from ShipBob API`)
+      invoiceSyncStats.fetched = allInvoices.length
+
+      // Get existing invoice IDs from database
+      const { data: existingInvoices } = await adminClient
+        .from('invoices_sb')
+        .select('shipbob_invoice_id')
+
+      const existingIds = new Set((existingInvoices || []).map((inv: { shipbob_invoice_id: string }) => inv.shipbob_invoice_id))
+
+      // Filter to only new invoices
+      const newInvoices = allInvoices.filter(inv => !existingIds.has(String(inv.invoice_id)))
+      invoiceSyncStats.existing = allInvoices.length - newInvoices.length
+
+      if (newInvoices.length > 0) {
+        console.log(`  Found ${newInvoices.length} new invoices to insert`)
+
+        // Calculate period dates (invoice covers prior week Mon-Sun)
+        const getInvoicePeriod = (invoiceDateStr: string) => {
+          const invDate = new Date(invoiceDateStr)
+          // Period end is Sunday before invoice date
+          const periodEnd = new Date(invDate)
+          periodEnd.setDate(periodEnd.getDate() - 1)
+          // Period start is Monday of that week
+          const periodStart = new Date(periodEnd)
+          periodStart.setDate(periodStart.getDate() - 6)
+          return { periodStart, periodEnd }
+        }
+
+        // Prepare records for insert
+        const records = newInvoices.map(inv => {
+          const { periodStart, periodEnd } = getInvoicePeriod(inv.invoice_date)
+          return {
+            shipbob_invoice_id: String(inv.invoice_id),
+            invoice_date: inv.invoice_date,
+            invoice_type: inv.invoice_type,
+            base_amount: inv.amount,
+            currency_code: inv.currency_code || 'USD',
+            period_start: periodStart.toISOString(),
+            period_end: periodEnd.toISOString(),
+            raw_data: inv,
+          }
+        })
+
+        // Insert new invoices
+        const { error: insertError } = await adminClient
+          .from('invoices_sb')
+          .insert(records)
+
+        if (insertError) {
+          console.error('Error inserting invoices:', insertError)
+          invoiceSyncStats.errors = newInvoices.length
+        } else {
+          invoiceSyncStats.inserted = newInvoices.length
+          console.log(`  Inserted ${newInvoices.length} new invoices into invoices_sb`)
+          newInvoices.forEach(inv => {
+            console.log(`    - ${inv.invoice_id}: ${inv.invoice_type}, ${inv.invoice_date}, $${inv.amount}`)
+          })
+        }
+      } else {
+        console.log('  No new invoices to insert')
+      }
+    } catch (err) {
+      console.error('Error fetching invoices from ShipBob:', err)
+      // Continue with preflight even if invoice sync fails
+    }
+
+    // Step 2: Fetch shipping breakdown data from SFTP (if available)
     console.log('Fetching shipping breakdown from SFTP...')
     const sftpResult = await fetchShippingBreakdown(invoiceDate)
 
@@ -91,7 +187,7 @@ export async function GET(request: Request) {
       console.log('No breakdown data in SFTP file')
     }
 
-    // Step 2: Get all active clients with billing info (exclude internal/system entries)
+    // Step 3: Get all active clients with billing info (exclude internal/system entries)
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
       .select('id, company_name, short_code, merchant_id')
@@ -103,7 +199,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Failed to fetch clients' }, { status: 500 })
     }
 
-    // Step 3: Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
+    // Step 4: Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
     // Source of truth: invoices_sb.jetpack_invoice_id IS NULL
     // Exclude Payment type (not billable)
     const { data: unprocessedInvoices, error: invoicesError } = await adminClient
@@ -123,6 +219,7 @@ export async function GET(request: Request) {
       return NextResponse.json({
         success: true,
         message: 'No unprocessed ShipBob invoices',
+        invoiceSync: invoiceSyncStats,
         shippingBreakdown: breakdownStats,
         shipbobInvoices: [],
         preflightResults: [],
@@ -139,7 +236,7 @@ export async function GET(request: Request) {
     console.log(`  Invoice IDs: ${shipbobInvoiceIds.join(', ')}`)
     console.log(`  Types: ${[...new Set(unprocessedInvoices.map((i: { invoice_type: string }) => i.invoice_type))].join(', ')}`)
 
-    // Step 4: Run preflight validation for each client
+    // Step 5: Run preflight validation for each client
     const preflightResults: Array<{
       client: string
       clientId: string
@@ -228,6 +325,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       message: 'Sync complete - ready for admin review',
+      invoiceSync: invoiceSyncStats,
       shippingBreakdown: breakdownStats,
       shipbobInvoices: unprocessedInvoices.map((inv: { shipbob_invoice_id: string; invoice_type: string; base_amount: number; invoice_date: string }) => ({
         id: inv.shipbob_invoice_id,
