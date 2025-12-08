@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/cron/generate-invoices",
-      "schedule": "0 23 * * 1"
+      "schedule": "57 21 * * *"
     }
   ]
 }
