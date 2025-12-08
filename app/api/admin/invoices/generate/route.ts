@@ -9,7 +9,7 @@ import {
   generateExcelInvoice,
   generatePDFInvoice,
   storeInvoiceFiles,
-  saveLineItems,
+  markTransactionsAsInvoiced,
 } from '@/lib/billing/invoice-generator'
 
 /**
@@ -49,11 +49,12 @@ export async function POST() {
     const periodEnd = new Date(invoiceDate)
     periodEnd.setDate(invoiceDate.getDate() - 1)
 
-    // Get all active clients with billing info
+    // Get all active clients with billing info (exclude internal/system entries)
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
-      .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms')
+      .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id')
       .eq('is_active', true)
+      .or('is_internal.is.null,is_internal.eq.false')
 
     if (clientsError || !clients) {
       console.error('Error fetching clients:', clientsError)
@@ -135,6 +136,7 @@ export async function POST() {
             short_code: client.short_code,
             billing_email: client.billing_email,
             billing_terms: client.billing_terms || 'due_on_receipt',
+            merchant_id: client.merchant_id || null,
           },
           lineItems,
           summary,
@@ -149,8 +151,8 @@ export async function POST() {
         // Store files in Supabase Storage (both XLSX and PDF)
         await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
 
-        // Save line items to database
-        await saveLineItems(invoice.id, lineItems)
+        // Mark transactions as invoiced and save markup data
+        await markTransactionsAsInvoiced(lineItems, invoice.id)
 
         // Increment client's next invoice number
         await adminClient
