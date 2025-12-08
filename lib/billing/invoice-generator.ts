@@ -109,6 +109,7 @@ export interface InvoiceLineItem {
   id: string
   billingTable: string
   billingRecordId: string
+  invoiceIdSb?: number // ShipBob invoice ID (for tracking which SB invoice this came from)
   baseAmount: number // For shipments: base_cost from SFTP. For non-shipments: cost
   surcharge?: number // For shipments: pass-through surcharge (not marked up)
   insuranceCost?: number // For shipments: insurance cost from SFTP (not marked up)
@@ -456,6 +457,7 @@ export async function collectBillingTransactionsByInvoiceIds(
     const txTrackingId = String(tx.tracking_id || '')
     const txFulfillmentCenter = String(tx.fulfillment_center || '')
     const txTransactionType = String(tx.transaction_type || '')
+    const txInvoiceIdSb = tx.invoice_id_sb ? Number(tx.invoice_id_sb) : undefined
 
     // Skip if no cost
     if (baseAmount === 0) continue
@@ -466,6 +468,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_credits',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -492,6 +495,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           id: txId,
           billingTable: 'billing_shipments',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount: shipBaseAmount,
           surcharge: shipSurcharge,
           insuranceCost: shipInsuranceCost,
@@ -518,6 +522,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           id: txId,
           billingTable: 'billing_shipment_fees',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount,
           markupApplied: 0,
           billedAmount: 0,
@@ -536,6 +541,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           id: txId,
           billingTable: 'billing_shipment_fees',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount,
           markupApplied: 0,
           billedAmount: 0,
@@ -556,6 +562,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_storage',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -572,6 +579,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_returns',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -587,6 +595,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_receiving',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -603,6 +612,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_shipment_fees',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -623,6 +633,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         id: txId,
         billingTable: 'billing_shipment_fees',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -683,6 +694,7 @@ export async function collectUnprocessedBillingTransactions(
     const txTrackingId = String(tx.tracking_id || '')
     const txFulfillmentCenter = String(tx.fulfillment_center || '')
     const txTransactionType = String(tx.transaction_type || '')
+    const txInvoiceIdSb = tx.invoice_id_sb ? Number(tx.invoice_id_sb) : undefined
 
     if (baseAmount === 0) continue
 
@@ -691,6 +703,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_credits',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -717,6 +730,7 @@ export async function collectUnprocessedBillingTransactions(
           id: txId,
           billingTable: 'billing_shipments',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount: shipBaseAmount,
           surcharge: shipSurcharge,
           insuranceCost: shipInsuranceCost,
@@ -743,6 +757,7 @@ export async function collectUnprocessedBillingTransactions(
           id: txId,
           billingTable: 'billing_shipment_fees',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount,
           markupApplied: 0,
           billedAmount: 0,
@@ -761,6 +776,7 @@ export async function collectUnprocessedBillingTransactions(
           id: txId,
           billingTable: 'billing_shipment_fees',
           billingRecordId: txId,
+          invoiceIdSb: txInvoiceIdSb,
           baseAmount,
           markupApplied: 0,
           billedAmount: 0,
@@ -781,6 +797,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_storage',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -797,6 +814,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_returns',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -812,6 +830,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_receiving',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -828,6 +847,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_shipment_fees',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,
@@ -848,6 +868,7 @@ export async function collectUnprocessedBillingTransactions(
         id: txId,
         billingTable: 'billing_shipment_fees',
         billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
         baseAmount,
         markupApplied: 0,
         billedAmount: 0,

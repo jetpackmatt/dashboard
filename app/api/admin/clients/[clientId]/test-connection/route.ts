@@ -90,7 +90,6 @@ export async function POST(
       success: true,
       message: 'Connection successful',
       client_name: client.company_name,
-      shipbob_user_id: client.shipbob_user_id,
       orders_accessible: orderCount > 0,
       latency,
       tested_at: new Date().toISOString(),

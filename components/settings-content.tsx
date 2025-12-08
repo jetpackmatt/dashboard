@@ -19,6 +19,7 @@ import {
   Key,
   Eye,
   EyeOff,
+  MapPin,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -73,11 +74,20 @@ interface UserWithClients {
   }>
 }
 
+interface BillingAddress {
+  street: string
+  city: string
+  region: string
+  postalCode: string
+  country: string
+}
+
 interface ClientForManage {
   id: string
   company_name: string
   shipbob_user_id: string | null
   has_token: boolean
+  billing_address?: BillingAddress | null
 }
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -101,6 +111,12 @@ export function SettingsContent() {
   const [editCompanyName, setEditCompanyName] = React.useState('')
   const [editShipBobUserId, setEditShipBobUserId] = React.useState('')
   const [editToken, setEditToken] = React.useState('')
+  // Billing address fields
+  const [editBillingStreet, setEditBillingStreet] = React.useState('')
+  const [editBillingCity, setEditBillingCity] = React.useState('')
+  const [editBillingRegion, setEditBillingRegion] = React.useState('')
+  const [editBillingPostalCode, setEditBillingPostalCode] = React.useState('')
+  const [editBillingCountry, setEditBillingCountry] = React.useState('')
   const [isSaving, setIsSaving] = React.useState(false)
   const [isSavingToken, setIsSavingToken] = React.useState(false)
   const [isDeletingToken, setIsDeletingToken] = React.useState(false)
@@ -224,7 +240,7 @@ export function SettingsContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company_name: newClientName.trim(),
-          shipbob_user_id: newShipBobUserId.trim() || null,
+          merchant_id: newShipBobUserId.trim() || null,
         }),
       })
 
@@ -252,6 +268,12 @@ export function SettingsContent() {
     setEditCompanyName(client.company_name)
     setEditShipBobUserId(client.shipbob_user_id || '')
     setEditToken('')
+    // Initialize billing address fields
+    setEditBillingStreet(client.billing_address?.street || '')
+    setEditBillingCity(client.billing_address?.city || '')
+    setEditBillingRegion(client.billing_address?.region || '')
+    setEditBillingPostalCode(client.billing_address?.postalCode || '')
+    setEditBillingCountry(client.billing_address?.country || '')
     setManageError(null)
     setManageSuccess(null)
     setShowDeleteConfirm(false)
@@ -269,12 +291,23 @@ export function SettingsContent() {
     setManageError(null)
 
     try {
+      // Build billing address if any field is filled
+      const hasBillingAddress = editBillingStreet || editBillingCity || editBillingRegion || editBillingPostalCode || editBillingCountry
+      const billingAddress = hasBillingAddress ? {
+        street: editBillingStreet.trim(),
+        city: editBillingCity.trim(),
+        region: editBillingRegion.trim(),
+        postalCode: editBillingPostalCode.trim(),
+        country: editBillingCountry.trim(),
+      } : null
+
       const response = await fetch(`/api/admin/clients/${managingClient.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company_name: editCompanyName.trim(),
-          shipbob_user_id: editShipBobUserId.trim() || null,
+          merchant_id: editShipBobUserId.trim() || null,
+          billing_address: billingAddress,
         }),
       })
 
@@ -1174,6 +1207,64 @@ export function SettingsContent() {
                             placeholder="e.g., 386350"
                           />
                         </div>
+
+                        {/* Billing Address */}
+                        <div className="space-y-3 pt-3 border-t">
+                          <h4 className="font-medium text-sm flex items-center gap-2">
+                            <MapPin className="h-3.5 w-3.5" />
+                            Billing Address (for invoices)
+                          </h4>
+                          <div className="space-y-2">
+                            <Label htmlFor="edit_billing_street">Street Address</Label>
+                            <Input
+                              id="edit_billing_street"
+                              value={editBillingStreet}
+                              onChange={(e) => setEditBillingStreet(e.target.value)}
+                              placeholder="e.g., 123 Main St, Suite 400"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="edit_billing_city">City</Label>
+                              <Input
+                                id="edit_billing_city"
+                                value={editBillingCity}
+                                onChange={(e) => setEditBillingCity(e.target.value)}
+                                placeholder="e.g., Toronto"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="edit_billing_region">Province/State</Label>
+                              <Input
+                                id="edit_billing_region"
+                                value={editBillingRegion}
+                                onChange={(e) => setEditBillingRegion(e.target.value)}
+                                placeholder="e.g., ON"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="edit_billing_postal">Postal/ZIP Code</Label>
+                              <Input
+                                id="edit_billing_postal"
+                                value={editBillingPostalCode}
+                                onChange={(e) => setEditBillingPostalCode(e.target.value)}
+                                placeholder="e.g., M5V 1K4"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="edit_billing_country">Country</Label>
+                              <Input
+                                id="edit_billing_country"
+                                value={editBillingCountry}
+                                onChange={(e) => setEditBillingCountry(e.target.value)}
+                                placeholder="e.g., CANADA"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
                         <Button
                           size="sm"
                           onClick={handleSaveClientDetails}

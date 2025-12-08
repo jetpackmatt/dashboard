@@ -8,7 +8,6 @@ import {
   generateSummary,
   generateExcelInvoice,
   storeInvoiceFiles,
-  markTransactionsAsInvoiced,
 } from '@/lib/billing/invoice-generator'
 import { generatePDFViaSubprocess } from '@/lib/billing/pdf-subprocess'
 import {
@@ -50,7 +49,7 @@ export async function POST(
       .from('invoices_jetpack')
       .select(`
         *,
-        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id)
+        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id, billing_address)
       `)
       .eq('id', invoiceId)
       .single()
@@ -69,47 +68,13 @@ export async function POST(
 
     const client = invoice.client
 
-    // Get ShipBob invoice IDs from transactions already marked with this invoice
-    // IMPORTANT: Only use transactions that are already linked to this invoice
-    // Do NOT use invoice_id_jp IS NULL - that would pull in uninvoiced transactions from other periods!
-    // Note: invoice_id_jp stores human-readable format (e.g., "JPHS-0037-120125"), not UUID
-    // Use pagination to handle large transaction counts (Supabase default limit is 1000)
-    const invoiceIdSet = new Set<number>()
-    let offset = 0
-    const PAGE_SIZE = 1000
-    let hasMore = true
-
-    while (hasMore) {
-      const { data: transactions, error: txError } = await adminClient
-        .from('transactions')
-        .select('invoice_id_sb')
-        .eq('client_id', client.id)
-        .eq('invoice_id_jp', invoice.invoice_number)
-        .not('invoice_id_sb', 'is', null)
-        .order('id', { ascending: true }) // CRITICAL: ORDER BY required for stable pagination
-        .range(offset, offset + PAGE_SIZE - 1)
-
-      if (txError) {
-        console.error('Error fetching transactions:', txError)
-        return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 })
-      }
-
-      for (const t of transactions || []) {
-        const invId = (t as { invoice_id_sb: number | null }).invoice_id_sb
-        if (invId !== null) {
-          invoiceIdSet.add(invId)
-        }
-      }
-
-      hasMore = (transactions?.length || 0) === PAGE_SIZE
-      offset += PAGE_SIZE
-    }
-
-    const shipbobInvoiceIds = Array.from(invoiceIdSet)
+    // Get ShipBob invoice IDs from the invoice record
+    // These are stored at generation time and define exactly which SB invoices are included
+    const shipbobInvoiceIds: number[] = invoice.shipbob_invoice_ids || []
 
     if (shipbobInvoiceIds.length === 0) {
       return NextResponse.json(
-        { error: 'No ShipBob invoice IDs found for this invoice' },
+        { error: 'No ShipBob invoice IDs found on invoice record. This invoice may need to be re-generated from preflight.' },
         { status: 400 }
       )
     }
@@ -214,12 +179,21 @@ export async function POST(
     const pdfBuffer = await generatePDFViaSubprocess(invoiceData, {
       storagePeriodStart: storagePeriodStart ? formatLocalDate(storagePeriodStart) : undefined,
       storagePeriodEnd: storagePeriodEnd ? formatLocalDate(storagePeriodEnd) : undefined,
+      clientAddress: client.billing_address || undefined,
     })
 
     // Step 7: Store new files (upsert will overwrite existing)
     await storeInvoiceFiles(invoice.id, client.id, invoice.invoice_number, xlsBuffer, pdfBuffer)
 
-    // Step 8: Update invoice record with new totals and increment version
+    // Extract actual ShipBob IDs used (in case lineItems has a different set)
+    const actualShipbobIds = [...new Set(
+      lineItems
+        .map(item => item.invoiceIdSb)
+        .filter((id): id is number => id !== null && id !== undefined)
+    )]
+
+    // Step 8: Update invoice record with new totals, version, shipbob_invoice_ids, and line_items_json
+    // line_items_json stores the calculated markups so approval uses EXACT same amounts as files
     const { error: updateError } = await adminClient
       .from('invoices_jetpack')
       .update({
@@ -228,6 +202,8 @@ export async function POST(
         total_amount: summary.totalAmount,
         version: (invoice.version || 1) + 1,
         generated_at: new Date().toISOString(),
+        shipbob_invoice_ids: actualShipbobIds,
+        line_items_json: lineItems,
       })
       .eq('id', invoiceId)
 
@@ -236,12 +212,11 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to update invoice record' }, { status: 500 })
     }
 
-    // Step 9: Re-mark transactions as invoiced (updates markup_applied, etc.)
-    // Note: Pass invoice_number (human-readable) not invoice.id (UUID)
-    const markResult = await markTransactionsAsInvoiced(lineItems, invoice.invoice_number)
+    // NOTE: Transactions are NOT marked here - that happens on approval
+    // This allows clean regeneration without affecting transaction state
 
     console.log(`Regenerated invoice ${invoice.invoice_number} (v${(invoice.version || 1) + 1})`)
-    console.log(`  Transactions: ${lineItems.length}, Updated: ${markResult.updated}`)
+    console.log(`  Transactions: ${lineItems.length}, ShipBob invoices: ${actualShipbobIds.length}`)
 
     return NextResponse.json({
       success: true,
