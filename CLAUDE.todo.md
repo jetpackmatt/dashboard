@@ -64,7 +64,35 @@ Active tasks that should not be forgotten. Check this file at the start of each 
 
 ## High Priority
 
-### 0. CRITICAL: Transaction Sync Does Not Re-fetch Updated Records
+### 0. URGENT: Investigate Why Sync Stopped Around Dec 5
+**Status:** TODO - INVESTIGATE
+**Added:** 2025-12-08
+
+**Problem:**
+Our transaction sync stopped working around Dec 5, 2025. Dec 5 was partially synced (285 of ~635), Dec 6-7 were completely missing. Had to manually backfill with `scripts/backfill-dec-tx.ts`.
+
+**Symptoms:**
+- Dec 1-4: Normal counts (690-832/day)
+- Dec 5: Only 285 synced (should be ~635)
+- Dec 6-7: Zero transactions synced
+- Dec 8+: Resumed working
+
+**Theories:**
+1. Vercel cron failures? Check Vercel logs for Dec 5-7
+2. ShipBob API outage during that window?
+3. Our code threw uncaught errors?
+4. Rate limiting?
+
+**Files to Check:**
+- Vercel dashboard → Function logs for `/api/cron/sync-transactions`
+- `app/api/cron/sync-transactions/route.ts`
+
+**Workaround Applied:**
+Ran `npx tsx scripts/backfill-dec-tx.ts` to backfill Dec 1-7 (4,891 transactions)
+
+---
+
+### 0b. Transaction Sync Does Not Re-fetch Updated Records
 **Status:** TODO - CRITICAL for data accuracy
 **Added:** 2025-12-08
 
