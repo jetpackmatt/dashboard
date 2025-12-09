@@ -165,24 +165,8 @@ export async function GET(request: Request) {
 
       for (const invoice of invoicesToLink) {
         try {
-          // Use queryTransactions with invoice_ids filter instead of /invoices/{id}/transactions
-          // The endpoint approach fails for Storage and Shipping invoice types
-          // Handle pagination for large invoices
-          const allTransactions: { transaction_id: string }[] = []
-          let cursor: string | undefined
-
-          do {
-            const queryResponse = await shipbob.billing.queryTransactions({
-              invoice_ids: [invoice.invoice_id],
-              page_size: 1000,
-              cursor,
-            })
-            const items = queryResponse.items || []
-            allTransactions.push(...items)
-            cursor = queryResponse.next
-          } while (cursor)
-
-          const invoiceTransactions = allTransactions
+          // Use /invoices/{id}/transactions endpoint with pagination
+          const invoiceTransactions = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
 
           if (invoiceTransactions.length === 0) {
             continue
@@ -214,8 +198,14 @@ export async function GET(request: Request) {
               console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${linkedCount} linked, ${notFoundCount} not in DB`)
             }
           }
-        } catch (err) {
-          console.error(`  Error fetching transactions for invoice ${invoice.invoice_id}:`, err)
+        } catch (err: unknown) {
+          // Log detailed error info for debugging
+          const error = err as { status?: number; response?: unknown; message?: string }
+          console.error(`  Error fetching transactions for invoice ${invoice.invoice_id} (${invoice.invoice_type}):`, {
+            status: error.status,
+            message: error.message,
+            response: JSON.stringify(error.response)
+          })
         }
       }
 
