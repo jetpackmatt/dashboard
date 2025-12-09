@@ -142,14 +142,20 @@ interface TimelineEvent {
   description?: string
 }
 
+// Timeline fetch result with both event columns and full logs
+interface TimelineResult {
+  eventColumns: Record<string, string>
+  eventLogs: TimelineEvent[]
+}
+
 /**
  * Fetch timeline events for a shipment from ShipBob API
- * Returns null on error, empty object on 404/empty, or timeline data
+ * Returns null on error, empty result on 404/empty, or timeline data with full logs
  */
 async function fetchShipmentTimeline(
   shipmentId: string,
   token: string
-): Promise<Record<string, string> | null> {
+): Promise<TimelineResult | null> {
   try {
     const res = await fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/timeline`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -163,7 +169,7 @@ async function fetchShipmentTimeline(
 
     if (res.status === 404) {
       // Shipment not found in API (Processing/Exception status) - return empty
-      return {}
+      return { eventColumns: {}, eventLogs: [] }
     }
 
     if (!res.ok) {
@@ -172,19 +178,19 @@ async function fetchShipmentTimeline(
 
     const timeline: TimelineEvent[] = await res.json()
     if (!timeline || timeline.length === 0) {
-      return {}
+      return { eventColumns: {}, eventLogs: [] }
     }
 
     // Map timeline events to database columns
-    const update: Record<string, string> = {}
+    const eventColumns: Record<string, string> = {}
     for (const event of timeline) {
       const col = TIMELINE_EVENT_MAP[event.log_type_id]
       if (col && event.timestamp) {
-        update[col] = event.timestamp
+        eventColumns[col] = event.timestamp
       }
     }
 
-    return update
+    return { eventColumns, eventLogs: timeline }
   } catch (e) {
     console.error(`[Timeline] Error fetching shipment ${shipmentId}:`, e)
     return null
@@ -195,6 +201,7 @@ async function fetchShipmentTimeline(
  * Fetch and update timeline events for recently synced shipments
  * Fetches for shipments that haven't been delivered yet (event_delivered is null)
  * This ensures we capture all in-progress events: picked, packed, labeled, intransit, etc.
+ * Also stores the full event_logs JSONB for complete timeline history.
  */
 async function syncShipmentTimelines(
   supabase: ReturnType<typeof createAdminClient>,
@@ -255,15 +262,25 @@ async function syncShipmentTimelines(
 
   // Fetch timeline for each shipment with rate limiting
   for (const ship of needsTimeline) {
-    const timelineData = await fetchShipmentTimeline(ship.shipment_id, token)
+    const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
 
-    if (timelineData === null) {
+    if (timelineResult === null) {
       result.errors++
-    } else if (Object.keys(timelineData).length > 0) {
+    } else if (Object.keys(timelineResult.eventColumns).length > 0 || timelineResult.eventLogs.length > 0) {
+      // Build update object with event columns and full event_logs JSONB
+      const updateData: Record<string, unknown> = {
+        ...timelineResult.eventColumns,
+      }
+
+      // Store full timeline as event_logs JSONB
+      if (timelineResult.eventLogs.length > 0) {
+        updateData.event_logs = timelineResult.eventLogs
+      }
+
       // Update the shipment with timeline data
       const { error } = await supabase
         .from('shipments')
-        .update(timelineData)
+        .update(updateData)
         .eq('id', ship.id)
 
       if (error) {
@@ -336,8 +353,10 @@ export async function syncClient(
 
     if (opts.minutesBack) {
       startDate.setMinutes(startDate.getMinutes() - opts.minutesBack)
+      console.log(`[Sync] Using LastUpdateStartDate filter (catches modified orders since ${startDate.toISOString()})`)
     } else {
       startDate.setDate(startDate.getDate() - (opts.daysBack || 7))
+      console.log(`[Sync] Using StartDate filter (catches orders created since ${startDate.toISOString()})`)
     }
 
     // Build FC lookup
@@ -515,12 +534,23 @@ export async function syncClient(
     let totalPages: number | null = null
 
     while (true) {
+      // For per-minute syncs (minutesBack), use LastUpdateStartDate to catch MODIFIED orders
+      // For daily/weekly syncs (daysBack), use StartDate to catch NEW orders for reconciliation
       const params = new URLSearchParams({
-        StartDate: startDate.toISOString(),
-        EndDate: endDate.toISOString(),
         Limit: '250',
         Page: page.toString(),
       })
+
+      if (opts.minutesBack) {
+        // LastUpdateStartDate catches orders modified since the given time
+        // This includes new orders (created = modified) AND updates to existing orders
+        params.set('LastUpdateStartDate', startDate.toISOString())
+        params.set('LastUpdateEndDate', endDate.toISOString())
+      } else {
+        // StartDate filters by creation date - used for full syncs and reconciliation
+        params.set('StartDate', startDate.toISOString())
+        params.set('EndDate', endDate.toISOString())
+      }
 
       const response = await fetch(`${SHIPBOB_API_BASE}/order?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -836,7 +866,7 @@ export async function syncClient(
         reference_id: string
         reference_type: string
         transaction_type: string
-        transaction_fee: string
+        transaction_fee: string  // API returns transaction_fee, we map to fee_type
         amount: number
         charge_date: string
         invoice_date?: string
@@ -872,7 +902,7 @@ export async function syncClient(
         reference_id: tx.reference_id,
         reference_type: tx.reference_type,
         transaction_type: tx.transaction_type || null,
-        transaction_fee: tx.transaction_fee,
+        fee_type: tx.transaction_fee,
         cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
         charge_date: tx.charge_date,
         invoice_date_sb: tx.invoice_date || null,
@@ -1277,7 +1307,7 @@ export async function syncAllTransactions(
     while (true) {
       let query = supabase
         .from('returns')
-        .select('id, return_id, client_id')
+        .select('id, shipbob_return_id, client_id')
         .order('id', { ascending: true })
         .limit(pageSize)
 
@@ -1295,8 +1325,8 @@ export async function syncAllTransactions(
       if (!data || data.length === 0) break
 
       for (const r of data) {
-        if (r.return_id && r.client_id) {
-          returnLookup[r.return_id.toString()] = r.client_id
+        if (r.shipbob_return_id && r.client_id) {
+          returnLookup[r.shipbob_return_id.toString()] = r.client_id
         }
         returnLastId = r.id
       }
@@ -1494,7 +1524,7 @@ export async function syncAllTransactions(
         reference_id: tx.reference_id,
         reference_type: tx.reference_type,
         transaction_type: tx.transaction_type || null,
-        transaction_fee: tx.transaction_fee,
+        fee_type: tx.transaction_fee,
         cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
         charge_date: tx.charge_date,
         invoice_date_sb: tx.invoice_date || null,
@@ -1523,6 +1553,156 @@ export async function syncAllTransactions(
     return result
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : 'Unknown error')
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+/**
+ * Timeline Sync Result
+ */
+export interface TimelineSyncResult {
+  success: boolean
+  totalShipments: number
+  updated: number
+  skipped: number
+  errors: string[]
+  duration: number
+}
+
+/**
+ * Sync timeline events for ALL undelivered shipments across all clients.
+ * This should be called at the per-minute level to catch timeline updates
+ * for shipments that weren't recently modified in the Orders API.
+ *
+ * Filters to shipments where:
+ * - event_delivered IS NULL (not yet delivered)
+ * - deleted_at IS NULL (not soft-deleted)
+ * - status NOT IN ('Processing', 'Exception', 'Cancelled') (has tracking activity)
+ *
+ * @param batchSize - Number of shipments to process per run (default 100)
+ * @param maxAgeHours - Only process shipments created within this many hours (default 336 = 14 days)
+ */
+export async function syncAllUndeliveredTimelines(
+  batchSize: number = 100,
+  maxAgeHours: number = 336
+): Promise<TimelineSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: TimelineSyncResult = {
+    success: false,
+    totalShipments: 0,
+    updated: 0,
+    skipped: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  try {
+    // Get all clients with their tokens
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, company_name, client_api_credentials(api_token, provider)')
+      .eq('is_active', true)
+
+    const clientTokens: Record<string, string> = {}
+    for (const c of clients || []) {
+      const creds = c.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find(cred => cred.provider === 'shipbob')?.api_token
+      if (token) {
+        clientTokens[c.id] = token
+      }
+    }
+
+    if (Object.keys(clientTokens).length === 0) {
+      result.errors.push('No clients with ShipBob tokens found')
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    // Calculate cutoff date
+    const cutoffDate = new Date()
+    cutoffDate.setHours(cutoffDate.getHours() - maxAgeHours)
+
+    // Get undelivered shipments that need timeline updates
+    // Priority: oldest first (so we don't keep skipping the same shipments)
+    const { data: shipments, error: queryError } = await supabase
+      .from('shipments')
+      .select('id, shipment_id, client_id, status')
+      .is('event_delivered', null)
+      .is('deleted_at', null)
+      .not('status', 'in', '(Processing,Exception,Cancelled)')
+      .gte('created_at', cutoffDate.toISOString())
+      .order('created_at', { ascending: true })
+      .limit(batchSize)
+
+    if (queryError) {
+      result.errors.push(`Query error: ${queryError.message}`)
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    result.totalShipments = shipments?.length || 0
+
+    if (!shipments || shipments.length === 0) {
+      console.log('[TimelineSync] No undelivered shipments to update')
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    console.log(`[TimelineSync] Processing ${shipments.length} undelivered shipments...`)
+
+    // Process each shipment
+    for (const ship of shipments) {
+      const token = clientTokens[ship.client_id]
+      if (!token) {
+        result.skipped++
+        continue
+      }
+
+      const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
+
+      if (timelineResult === null) {
+        // API error - count but don't fail
+        result.errors.push(`API error for shipment ${ship.shipment_id}`)
+      } else if (Object.keys(timelineResult.eventColumns).length > 0 || timelineResult.eventLogs.length > 0) {
+        // Build update object with event columns and full event_logs JSONB
+        const updateData: Record<string, unknown> = {
+          ...timelineResult.eventColumns,
+        }
+
+        // Store full timeline as event_logs JSONB
+        if (timelineResult.eventLogs.length > 0) {
+          updateData.event_logs = timelineResult.eventLogs
+        }
+
+        // Update the shipment with timeline data
+        const { error } = await supabase
+          .from('shipments')
+          .update(updateData)
+          .eq('id', ship.id)
+
+        if (error) {
+          result.errors.push(`Update error for ${ship.shipment_id}: ${error.message}`)
+        } else {
+          result.updated++
+        }
+      } else {
+        // Empty timeline (404 or no events yet)
+        result.skipped++
+      }
+
+      // Delay between API calls to avoid rate limits
+      await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
+    }
+
+    console.log(`[TimelineSync] Complete: ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`)
+    result.success = result.errors.length < result.totalShipments // Allow some errors
+    result.duration = Date.now() - startTime
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
     result.duration = Date.now() - startTime
     return result
   }

@@ -7,7 +7,8 @@ import { syncAll, syncReturns } from '@/lib/shipbob/sync'
  * Vercel Cron calls this endpoint every minute.
  * Protected by CRON_SECRET to prevent unauthorized access.
  *
- * Syncs all tables: orders, shipments, order_items, shipment_items, shipment_cartons, transactions, returns
+ * Syncs: orders, shipments, order_items, shipment_items, shipment_cartons, transactions, returns
+ * NOTE: Timeline events are synced by separate /api/cron/sync-timelines endpoint
  *
  * Per-minute sync strategy:
  * - Fetch only last 5 minutes of data (with overlap for safety)
@@ -37,6 +38,8 @@ export async function GET(request: NextRequest) {
     // Sync returns: fetch any return IDs from transactions that are missing from returns table
     // This ensures we have return data (including insert_date) for all billed returns
     const returnsResult = await syncReturns()
+
+    // NOTE: Timeline events are synced by /api/cron/sync-timelines (separate cron)
 
     const duration = Date.now() - startTime
 
