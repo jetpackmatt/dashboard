@@ -175,28 +175,38 @@ export async function GET(request: Request) {
           // Get transaction IDs from this invoice
           const transactionIds = invoiceTransactions.map(tx => tx.transaction_id)
 
-          // Update transactions table to set invoice_id_sb
-          const { data: updated, error: updateError } = await adminClient
-            .from('transactions')
-            .update({
-              invoice_id_sb: invoice.invoice_id,
-              invoice_date_sb: invoice.invoice_date,
-              invoiced_status_sb: true
-            })
-            .in('transaction_id', transactionIds)
-            .select('id')
+          // Batch update in chunks of 500 (Supabase .in() has limits)
+          const BATCH_SIZE = 500
+          let totalLinked = 0
+          let totalErrors = 0
 
-          if (updateError) {
-            console.error(`  Error linking transactions for invoice ${invoice.invoice_id}:`, updateError)
-          } else {
-            const linkedCount = updated?.length || 0
-            const notFoundCount = transactionIds.length - linkedCount
-            transactionLinkStats.linked += linkedCount
-            transactionLinkStats.notFound += notFoundCount
+          for (let i = 0; i < transactionIds.length; i += BATCH_SIZE) {
+            const batch = transactionIds.slice(i, i + BATCH_SIZE)
 
-            if (linkedCount > 0 || notFoundCount > 0) {
-              console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${linkedCount} linked, ${notFoundCount} not in DB`)
+            const { data: updated, error: updateError } = await adminClient
+              .from('transactions')
+              .update({
+                invoice_id_sb: invoice.invoice_id,
+                invoice_date_sb: invoice.invoice_date,
+                invoiced_status_sb: true
+              })
+              .in('transaction_id', batch)
+              .select('id')
+
+            if (updateError) {
+              console.error(`  Error linking batch ${Math.floor(i / BATCH_SIZE) + 1} for invoice ${invoice.invoice_id}:`, updateError)
+              totalErrors++
+            } else {
+              totalLinked += updated?.length || 0
             }
+          }
+
+          const notFoundCount = transactionIds.length - totalLinked
+          transactionLinkStats.linked += totalLinked
+          transactionLinkStats.notFound += notFoundCount
+
+          if (totalLinked > 0 || notFoundCount > 0 || totalErrors > 0) {
+            console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${totalLinked} linked, ${notFoundCount} not in DB${totalErrors > 0 ? `, ${totalErrors} batch errors` : ''}`)
           }
         } catch (err: unknown) {
           // Log detailed error info for debugging
