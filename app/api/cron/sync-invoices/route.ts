@@ -165,7 +165,24 @@ export async function GET(request: Request) {
 
       for (const invoice of invoicesToLink) {
         try {
-          const invoiceTransactions = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
+          // Use queryTransactions with invoice_ids filter instead of /invoices/{id}/transactions
+          // The endpoint approach fails for Storage and Shipping invoice types
+          // Handle pagination for large invoices
+          const allTransactions: { transaction_id: string }[] = []
+          let cursor: string | undefined
+
+          do {
+            const queryResponse = await shipbob.billing.queryTransactions({
+              invoice_ids: [invoice.invoice_id],
+              page_size: 1000,
+              cursor,
+            })
+            const items = queryResponse.items || []
+            allTransactions.push(...items)
+            cursor = queryResponse.next
+          } while (cursor)
+
+          const invoiceTransactions = allTransactions
 
           if (invoiceTransactions.length === 0) {
             continue
