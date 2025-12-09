@@ -21,6 +21,8 @@ import {
  *
  * Flow:
  * 1. Fetch new invoices from ShipBob API and upsert into invoices_sb
+ * 1.5. Link transactions to invoices via /invoices/{id}/transactions API
+ *      (This is critical - updates transactions.invoice_id_sb so preflight can find them)
  * 2. Fetch SFTP shipping breakdown (if available)
  * 3. Update transactions with breakdown data
  * 4. Get all active clients
@@ -65,6 +67,7 @@ export async function GET(request: Request) {
     // Step 1: Fetch new invoices from ShipBob API
     console.log('Fetching invoices from ShipBob API...')
     const invoiceSyncStats = { fetched: 0, inserted: 0, existing: 0, errors: 0 }
+    const transactionLinkStats = { linked: 0, notFound: 0, invoicesProcessed: 0 }
 
     try {
       const shipbob = new ShipBobClient()
@@ -151,6 +154,56 @@ export async function GET(request: Request) {
       } else {
         console.log('  No new invoices to insert')
       }
+
+      // Step 1.5: Link transactions to invoices via /invoices/{id}/transactions API
+      // This updates transactions.invoice_id_sb for all transactions in each invoice
+      // Skip Payment invoices as they don't have transactions
+      const invoicesToLink = allInvoices.filter(inv => inv.invoice_type !== 'Payment')
+
+      console.log(`Linking transactions to ${invoicesToLink.length} invoices...`)
+      transactionLinkStats.invoicesProcessed = invoicesToLink.length
+
+      for (const invoice of invoicesToLink) {
+        try {
+          const invoiceTransactions = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
+
+          if (invoiceTransactions.length === 0) {
+            continue
+          }
+
+          // Get transaction IDs from this invoice
+          const transactionIds = invoiceTransactions.map(tx => tx.transaction_id)
+
+          // Update transactions table to set invoice_id_sb
+          const { data: updated, error: updateError } = await adminClient
+            .from('transactions')
+            .update({
+              invoice_id_sb: invoice.invoice_id,
+              invoice_date_sb: invoice.invoice_date,
+              invoiced_status_sb: true
+            })
+            .in('transaction_id', transactionIds)
+            .select('id')
+
+          if (updateError) {
+            console.error(`  Error linking transactions for invoice ${invoice.invoice_id}:`, updateError)
+          } else {
+            const linkedCount = updated?.length || 0
+            const notFoundCount = transactionIds.length - linkedCount
+            transactionLinkStats.linked += linkedCount
+            transactionLinkStats.notFound += notFoundCount
+
+            if (linkedCount > 0 || notFoundCount > 0) {
+              console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${linkedCount} linked, ${notFoundCount} not in DB`)
+            }
+          }
+        } catch (err) {
+          console.error(`  Error fetching transactions for invoice ${invoice.invoice_id}:`, err)
+        }
+      }
+
+      console.log(`Transaction linking complete: ${transactionLinkStats.linked} linked, ${transactionLinkStats.notFound} not found in DB`)
+
     } catch (err) {
       console.error('Error fetching invoices from ShipBob:', err)
       // Continue with preflight even if invoice sync fails
@@ -220,6 +273,7 @@ export async function GET(request: Request) {
         success: true,
         message: 'No unprocessed ShipBob invoices',
         invoiceSync: invoiceSyncStats,
+        transactionLinking: transactionLinkStats,
         shippingBreakdown: breakdownStats,
         shipbobInvoices: [],
         preflightResults: [],
@@ -326,6 +380,7 @@ export async function GET(request: Request) {
       success: true,
       message: 'Sync complete - ready for admin review',
       invoiceSync: invoiceSyncStats,
+      transactionLinking: transactionLinkStats,
       shippingBreakdown: breakdownStats,
       shipbobInvoices: unprocessedInvoices.map((inv: { shipbob_invoice_id: string; invoice_type: string; base_amount: number; invoice_date: string }) => ({
         id: inv.shipbob_invoice_id,

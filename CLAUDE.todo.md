@@ -64,6 +64,37 @@ Active tasks that should not be forgotten. Check this file at the start of each 
 
 ## High Priority
 
+### 0. CRITICAL: Transaction Sync Does Not Re-fetch Updated Records
+**Status:** TODO - CRITICAL for data accuracy
+**Added:** 2025-12-08
+
+**Problem:**
+Our sync jobs query ShipBob by `charge_date` range (last 5-10 minutes). This means:
+1. Transaction created Dec 1 with `invoice_id = null` → synced to DB
+2. ShipBob creates invoice Dec 8, updates transaction with `invoice_id = 8661966`
+3. Our Dec 8 sync queries `charge_date = last 10 min` → Dec 1 transaction NOT returned
+4. **DB never gets the updated `invoice_id` value**
+
+This is a ShipBob API limitation - they only support `from_date/to_date` filters on charge_date, not "modified since".
+
+**Current Workaround:**
+Added `/invoices/{id}/transactions` API call in `sync-invoices` cron to link transactions to invoices. This works for invoice_id specifically but doesn't catch other field updates.
+
+**Permanent Fix Needed:**
+1. **Option A:** Request ShipBob add "modified_since" filter to their API
+2. **Option B:** Periodically re-sync ALL transactions (expensive but thorough)
+3. **Option C:** Use webhooks for updates (if/when ShipBob supports them reliably)
+
+**Files:**
+- `lib/shipbob/sync.ts` - `syncAllTransactions()` uses date range query
+- `app/api/cron/sync-transactions/route.ts` - 10 minute lookback
+
+**Impact:**
+- Invoice linking: FIXED via invoice-transactions API
+- Other field updates: NOT synced (e.g., if ShipBob changes a transaction amount)
+
+---
+
 ### 1. Storage Tab - Per-Day Dates Not Available from API
 **Status:** BLOCKED - Need ShipBob SFTP export
 **Added:** 2025-12-06
