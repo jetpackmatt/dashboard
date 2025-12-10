@@ -38,7 +38,7 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
     { id: 'itemCount',    header: 'Picks',       width: 6,  priority: 6 },
     { id: 'orderType',    header: 'Type',        width: 6,  priority: 8 },
     { id: 'age',          header: 'Age',         width: 4,  priority: 5 },
-    { id: 'orderDate',    header: 'Order Date',  width: 15, priority: 3 },
+    { id: 'orderDate',    header: 'Order Imported',  width: 15, priority: 3 },
     { id: 'slaDate',      header: 'SLA Date',    width: 12, priority: 7 },
     // Optional columns (not visible by default) - priority 12+
     { id: 'totalShipments', header: '# Shipments', width: 6,  priority: 12, defaultVisible: false },
@@ -71,7 +71,7 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
     { id: 'transitTime',  header: 'Transit',       width: 6,  priority: 7 },
     { id: 'age',          header: 'Age',           width: 5,  priority: 11 },
-    { id: 'importDate',   header: 'Label Created', width: 15, priority: 10 },
+    { id: 'labelCreated', header: 'Label Created', width: 15, priority: 10 },
     // Optional columns (not visible by default) - priority 13+
     { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
     { id: 'channelName',  header: 'Channel',       width: 5,  priority: 14, defaultVisible: false },

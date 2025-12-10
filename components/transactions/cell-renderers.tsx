@@ -25,6 +25,16 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { CellRenderer } from "./transactions-table"
 
+// ShipBob merchant portal deep link helper
+// Uses Text Fragments to scroll to and highlight the shipment row
+const SHIPBOB_ORDERS_BASE = "https://web.shipbob.com/app/merchant/#/order-shipment-management/orders"
+const SHIPBOB_PAGE_STATE = "eJyrViotTi3yTFGyMrYwMzY10FEqTk0sSs5QslIyNjI3sDAwMbZQ0lFKy8wpSS0qBoqqmjupGhlBFIWkVpQAOarGjhDRssSc0lSogJERXD9IxMgZSOYXpBYlluQXwZWkFoKY5i5ApFQLAF5fJMI="
+
+function getShipBobOrderUrl(shipmentId: string): string {
+  // Use Text Fragment to highlight the shipment ID in the table
+  return `${SHIPBOB_ORDERS_BASE}?page-state=${SHIPBOB_PAGE_STATE}:~:text=${shipmentId}`
+}
+
 // ============================================
 // UNFULFILLED ORDERS TYPES & RENDERERS
 // ============================================
@@ -221,14 +231,18 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     }
     return (
       <div className="flex items-center gap-1.5">
-        <a
-          href={`https://web.shipbob.com/app/Merchant/#/Orders/details/${row.orderId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
-        >
-          {row.shipmentId || "-"}
-        </a>
+        {row.shipmentId ? (
+          <a
+            href={getShipBobOrderUrl(row.shipmentId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
+          >
+            {row.shipmentId}
+          </a>
+        ) : (
+          <span>-</span>
+        )}
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -361,7 +375,8 @@ export interface Shipment {
   orderType: string
   qty: number
   cost: number
-  importDate: string
+  importDate: string | null
+  labelCreated: string | null  // When label was created (event_labeled)
   slaDate: string | null
   shippedDate: string | null
   deliveredDate: string | null
@@ -524,14 +539,18 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        <a
-          href={`https://web.shipbob.com/app/Merchant/#/Orders/details/${row.orderId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
-        >
-          {row.shipmentId || "-"}
-        </a>
+        {row.shipmentId ? (
+          <a
+            href={getShipBobOrderUrl(row.shipmentId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
+          >
+            {row.shipmentId}
+          </a>
+        ) : (
+          <span>-</span>
+        )}
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -590,7 +609,26 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   },
 
   importDate: (row) => {
+    if (!row.importDate) return <span className="text-muted-foreground">-</span>
     const date = new Date(row.importDate)
+    return (
+      <span className="whitespace-nowrap text-sm">
+        {date.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}, {date.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })}
+      </span>
+    )
+  },
+
+  labelCreated: (row) => {
+    if (!row.labelCreated) return <span className="text-muted-foreground">-</span>
+    const date = new Date(row.labelCreated)
     return (
       <span className="whitespace-nowrap text-sm">
         {date.toLocaleDateString("en-US", {
@@ -663,9 +701,9 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   // New columns
   age: (row) => {
-    if (!row.importDate) return <span>-</span>
-    // Calculate age from import date to delivered date (or now if not delivered)
-    const startDate = new Date(row.importDate)
+    if (!row.labelCreated) return <span>-</span>
+    // Calculate age from label creation (event_labeled) to delivered date (or now if not delivered)
+    const startDate = new Date(row.labelCreated)
     const endDate = row.deliveredDate ? new Date(row.deliveredDate) : new Date()
     const hoursElapsed = differenceInHours(endDate, startDate)
     const days = hoursElapsed / 24

@@ -229,13 +229,20 @@ Timeline backfill completed for 72,855 historical shipments. The `sync-timelines
 | 3-14 days | 2 hours | Timeline events | `sync-timelines` |
 | 14-45 days | Nightly (3 AM UTC) | **Full refresh**: status, tracking, measurements, timeline | `sync-older-nightly` |
 
+**Per-client capacity (100 shipments/client/run):**
+- 70% (70 slots) reserved for fresh shipments (0-3d)
+- 30% (30 slots) reserved for older shipments (3-14d)
+- Unused fresh capacity rolls over to older queue
+- **Auto-scales with clients**: 3 clients = 300 shipments/run, 10 clients = 1000/run
+- Each client processed in parallel (own 150 req/min budget)
+
 **Key columns:**
 - `timeline_checked_at`: Tracks last API poll to prevent redundant checks
 - `event_delivered`: When set, shipment exits the sync queue
 
-**Math:**
-- Fresh shipments (0-3d): ~1,600 / 15 min = 107/min needed
-- Older shipments (3-14d): ~5,000 / 120 min = 42/min needed
+**Math (per client):**
+- Fresh shipments (0-3d): 70/min × 15 min window = ~1,050 capacity/client
+- Older shipments (3-14d): 30/min × 120 min window = ~3,600 capacity/client
 - Nightly catches 14-45 day stragglers (200/client/night)
 
 ---

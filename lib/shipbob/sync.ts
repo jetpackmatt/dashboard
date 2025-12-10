@@ -1697,152 +1697,189 @@ export async function syncAllUndeliveredTimelines(
     const olderCheckWindow = new Date(now)
     olderCheckWindow.setHours(olderCheckWindow.getHours() - 2) // 2 hours ago
 
-    // Get undelivered shipments that need timeline updates
-    // Priority: Fresh shipments first (more time-sensitive), then older ones
-    // Include Processing shipments - they may have progressed to Labeled at ShipBob
-    // Only exclude Cancelled (truly done) - we want to sync Processing/Exception too
+    // Per-client capacity split: 70% fresh, 30% older
+    // Each client gets their own batchSize (default 100) to maximize their rate limit budget
+    const freshLimitPerClient = Math.floor(batchSize * 0.7)  // 70 per client
+    const olderLimitPerClient = batchSize - freshLimitPerClient  // 30 per client
 
-    // Query fresh shipments (0-3 days old, not checked in 15 min)
-    const { data: freshShipments, error: freshError } = await supabase
-      .from('shipments')
-      .select('id, shipment_id, client_id, status')
-      .is('event_delivered', null)
-      .is('deleted_at', null)
-      .neq('status', 'Cancelled')
-      .gte('created_at', freshCutoff.toISOString())
-      .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${freshCheckWindow.toISOString()}`)
-      .order('timeline_checked_at', { ascending: true, nullsFirst: true })
-      .limit(batchSize)
+    // Query shipments PER CLIENT in parallel - each client has their own 150 req/min rate limit
+    const clientIds = Object.keys(clientTokens)
+    console.log(`[TimelineSync] Querying shipments for ${clientIds.length} clients (${batchSize} max each)...`)
 
-    if (freshError) {
-      result.errors.push(`Fresh query error: ${freshError.message}`)
+    // Fetch shipments for all clients in parallel
+    const clientShipmentResults = await Promise.all(
+      clientIds.map(async (clientId) => {
+        // Query fresh shipments for this client
+        const { data: freshShipments, error: freshError } = await supabase
+          .from('shipments')
+          .select('id, shipment_id, client_id, status')
+          .eq('client_id', clientId)
+          .is('event_delivered', null)
+          .is('deleted_at', null)
+          .neq('status', 'Cancelled')
+          .gte('created_at', freshCutoff.toISOString())
+          .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${freshCheckWindow.toISOString()}`)
+          .order('timeline_checked_at', { ascending: true, nullsFirst: true })
+          .limit(freshLimitPerClient)
+
+        const freshCount = freshShipments?.length || 0
+        const actualOlderLimit = olderLimitPerClient + (freshLimitPerClient - freshCount)
+
+        // Query older shipments for this client
+        const { data: olderShipments, error: olderError } = await supabase
+          .from('shipments')
+          .select('id, shipment_id, client_id, status')
+          .eq('client_id', clientId)
+          .is('event_delivered', null)
+          .is('deleted_at', null)
+          .neq('status', 'Cancelled')
+          .gte('created_at', cutoffDate.toISOString())
+          .lt('created_at', freshCutoff.toISOString())
+          .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${olderCheckWindow.toISOString()}`)
+          .order('timeline_checked_at', { ascending: true, nullsFirst: true })
+          .limit(actualOlderLimit)
+
+        const errors: string[] = []
+        if (freshError) errors.push(`Fresh query error for ${clientId}: ${freshError.message}`)
+        if (olderError) errors.push(`Older query error for ${clientId}: ${olderError.message}`)
+
+        return {
+          clientId,
+          shipments: [...(freshShipments || []), ...(olderShipments || [])],
+          freshCount,
+          olderCount: olderShipments?.length || 0,
+          errors,
+        }
+      })
+    )
+
+    // Aggregate results and build shipments by client map
+    const shipmentsByClient: Record<string, Array<{ id: string; shipment_id: string; client_id: string; status: string }>> = {}
+    let totalFresh = 0
+    let totalOlder = 0
+
+    for (const cr of clientShipmentResults) {
+      shipmentsByClient[cr.clientId] = cr.shipments
+      totalFresh += cr.freshCount
+      totalOlder += cr.olderCount
+      result.errors.push(...cr.errors)
     }
 
-    // If we have capacity, also get older shipments (3-14 days, not checked in 2 hours)
-    const freshCount = freshShipments?.length || 0
-    const remainingCapacity = batchSize - freshCount
+    const totalShipments = totalFresh + totalOlder
+    result.totalShipments = totalShipments
 
-    let olderShipments: typeof freshShipments = []
-    if (remainingCapacity > 0) {
-      const { data: older, error: olderError } = await supabase
-        .from('shipments')
-        .select('id, shipment_id, client_id, status')
-        .is('event_delivered', null)
-        .is('deleted_at', null)
-        .neq('status', 'Cancelled')
-        .gte('created_at', cutoffDate.toISOString())
-        .lt('created_at', freshCutoff.toISOString()) // Older than 3 days
-        .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${olderCheckWindow.toISOString()}`)
-        .order('timeline_checked_at', { ascending: true, nullsFirst: true })
-        .limit(remainingCapacity)
+    console.log(`[TimelineSync] Found ${totalFresh} fresh (0-3d) + ${totalOlder} older (3-14d) across ${clientIds.length} clients`)
 
-      if (olderError) {
-        result.errors.push(`Older query error: ${olderError.message}`)
-      }
-      olderShipments = older || []
-    }
-
-    // Combine results - fresh first, then older
-    const shipments = [...(freshShipments || []), ...olderShipments]
-
-    console.log(`[TimelineSync] Found ${freshCount} fresh (0-3d) + ${olderShipments.length} older (3-14d) shipments`)
-
-    result.totalShipments = shipments.length
-
-    if (shipments.length === 0) {
+    if (totalShipments === 0) {
       console.log('[TimelineSync] No undelivered shipments to update')
       result.success = true
       result.duration = Date.now() - startTime
       return result
     }
 
-    console.log(`[TimelineSync] Processing ${shipments.length} shipments...`)
+    console.log(`[TimelineSync] Processing ${totalShipments} shipments across ${clientIds.length} clients in parallel...`)
 
-    // Process each shipment
-    for (const ship of shipments) {
-      const token = clientTokens[ship.client_id]
-      if (!token) {
-        result.skipped++
-        continue
-      }
+    // Process each client's shipments in parallel (each client has own rate limit)
+    const clientResults = await Promise.all(
+      clientIds.map(async (clientId) => {
+        const clientShipments = shipmentsByClient[clientId]
+        const token = clientTokens[clientId]
+        const clientResult = { updated: 0, skipped: 0, errors: [] as string[] }
 
-      const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
-
-      if (timelineResult === null) {
-        // API error - count but don't fail
-        result.errors.push(`API error for shipment ${ship.shipment_id}`)
-      } else if (Object.keys(timelineResult.eventColumns).length > 0 || timelineResult.eventLogs.length > 0) {
-        // Build update object with event columns and full event_logs JSONB
-        const updateData: Record<string, unknown> = {
-          ...timelineResult.eventColumns,
+        if (!token) {
+          clientResult.skipped = clientShipments.length
+          return clientResult
         }
 
-        // Store full timeline as event_logs JSONB
-        if (timelineResult.eventLogs.length > 0) {
-          updateData.event_logs = timelineResult.eventLogs
-        }
+        for (const ship of clientShipments) {
+          const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
 
-        // Calculate transit_time_days when we have both intransit and delivered timestamps
-        const intransitDate = timelineResult.eventColumns.event_intransit as string | undefined
-        const deliveredDate = timelineResult.eventColumns.event_delivered as string | undefined
-        if (intransitDate && deliveredDate) {
-          const intransit = new Date(intransitDate).getTime()
-          const delivered = new Date(deliveredDate).getTime()
-          const transitMs = delivered - intransit
-          const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10 // Round to 1 decimal
-          if (transitDays >= 0) {
-            updateData.transit_time_days = transitDays
-          }
-        }
+          if (timelineResult === null) {
+            // API error - count but don't fail
+            clientResult.errors.push(`API error for shipment ${ship.shipment_id}`)
+          } else if (Object.keys(timelineResult.eventColumns).length > 0 || timelineResult.eventLogs.length > 0) {
+            // Build update object with event columns and full event_logs JSONB
+            const updateData: Record<string, unknown> = {
+              ...timelineResult.eventColumns,
+            }
 
-        // If timeline shows Labeled but our status is still pre-label, fetch full shipment for status/tracking
-        const preLabelStatuses = ['None', 'Processing', 'Pending', 'OnHold', 'Exception']
-        const hasLabeledEvent = timelineResult.eventColumns.event_labeled != null
-        if (hasLabeledEvent && preLabelStatuses.includes(ship.status)) {
-          try {
-            const shipRes = await fetch(`https://api.shipbob.com/1.0/shipment/${ship.shipment_id}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            })
-            if (shipRes.ok) {
-              const shipData = await shipRes.json()
-              updateData.status = shipData.status
-              updateData.status_details = shipData.status_details || null
-              if (shipData.tracking) {
-                updateData.tracking_id = shipData.tracking.tracking_number || null
-                updateData.tracking_url = shipData.tracking.tracking_url || null
-                updateData.carrier = shipData.tracking.carrier || null
+            // Store full timeline as event_logs JSONB
+            if (timelineResult.eventLogs.length > 0) {
+              updateData.event_logs = timelineResult.eventLogs
+            }
+
+            // Calculate transit_time_days when we have both intransit and delivered timestamps
+            const intransitDate = timelineResult.eventColumns.event_intransit as string | undefined
+            const deliveredDate = timelineResult.eventColumns.event_delivered as string | undefined
+            if (intransitDate && deliveredDate) {
+              const intransit = new Date(intransitDate).getTime()
+              const delivered = new Date(deliveredDate).getTime()
+              const transitMs = delivered - intransit
+              const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10 // Round to 1 decimal
+              if (transitDays >= 0) {
+                updateData.transit_time_days = transitDays
               }
             }
-            // Extra delay after full shipment fetch
-            await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
-          } catch {
-            // Ignore errors - we'll still update timeline data
+
+            // If timeline shows Labeled but our status is still pre-label, fetch full shipment for status/tracking
+            const preLabelStatuses = ['None', 'Processing', 'Pending', 'OnHold', 'Exception']
+            const hasLabeledEvent = timelineResult.eventColumns.event_labeled != null
+            if (hasLabeledEvent && preLabelStatuses.includes(ship.status)) {
+              try {
+                const shipRes = await fetch(`https://api.shipbob.com/1.0/shipment/${ship.shipment_id}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                })
+                if (shipRes.ok) {
+                  const shipData = await shipRes.json()
+                  updateData.status = shipData.status
+                  updateData.status_details = shipData.status_details || null
+                  if (shipData.tracking) {
+                    updateData.tracking_id = shipData.tracking.tracking_number || null
+                    updateData.tracking_url = shipData.tracking.tracking_url || null
+                    updateData.carrier = shipData.tracking.carrier || null
+                  }
+                }
+                // Extra delay after full shipment fetch
+                await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
+              } catch {
+                // Ignore errors - we'll still update timeline data
+              }
+            }
+
+            // Update the shipment with timeline data + mark as checked
+            updateData.timeline_checked_at = new Date().toISOString()
+            const { error } = await supabase
+              .from('shipments')
+              .update(updateData)
+              .eq('id', ship.id)
+
+            if (error) {
+              clientResult.errors.push(`Update error for ${ship.shipment_id}: ${error.message}`)
+            } else {
+              clientResult.updated++
+            }
+          } else {
+            // Empty timeline (404 or no events yet) - still mark as checked
+            await supabase
+              .from('shipments')
+              .update({ timeline_checked_at: new Date().toISOString() })
+              .eq('id', ship.id)
+            clientResult.skipped++
           }
+
+          // Delay between API calls to avoid rate limits (per client)
+          await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
         }
 
-        // Update the shipment with timeline data + mark as checked
-        updateData.timeline_checked_at = new Date().toISOString()
-        const { error } = await supabase
-          .from('shipments')
-          .update(updateData)
-          .eq('id', ship.id)
+        return clientResult
+      })
+    )
 
-        if (error) {
-          result.errors.push(`Update error for ${ship.shipment_id}: ${error.message}`)
-        } else {
-          result.updated++
-        }
-      } else {
-        // Empty timeline (404 or no events yet) - still mark as checked
-        await supabase
-          .from('shipments')
-          .update({ timeline_checked_at: new Date().toISOString() })
-          .eq('id', ship.id)
-        result.skipped++
-      }
-
-      // Delay between API calls to avoid rate limits
-      await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
+    // Aggregate results from all clients
+    for (const cr of clientResults) {
+      result.updated += cr.updated
+      result.skipped += cr.skipped
+      result.errors.push(...cr.errors)
     }
 
     console.log(`[TimelineSync] Complete: ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`)

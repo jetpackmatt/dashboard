@@ -12,9 +12,9 @@ import { syncAllUndeliveredTimelines } from '@/lib/shipbob/sync'
  * - Fresh shipments (0-3 days): Check every 15 minutes - actively moving
  * - Older shipments (3-14 days): Check every 2 hours - likely delivered or stuck
  *
- * Rate limiting: ShipBob allows 150 requests/min PER TOKEN (per client).
- * We process 100 shipments per run at 500ms delay = ~50 seconds runtime.
- * Fresh shipments are prioritized, older ones fill remaining capacity.
+ * Per-client scaling: Each client gets 100 shipments/run (70 fresh + 30 older).
+ * Clients are auto-detected and processed in parallel (each has own 150 req/min budget).
+ * Example: 3 clients = 300 shipments/run, 10 clients = 1000 shipments/run.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -29,9 +29,10 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // Process 100 shipments per run with tiered check frequency
+    // Process up to 100 shipments PER CLIENT with tiered check frequency
     // Fresh (0-3d) checked every 15 min, older (3-14d) every 2 hours
     // 14 days max age (336 hours) for regular sync
+    // Auto-scales: 3 clients = 300 shipments, 10 clients = 1000 shipments
     const result = await syncAllUndeliveredTimelines(100, 336)
 
     const duration = Date.now() - startTime

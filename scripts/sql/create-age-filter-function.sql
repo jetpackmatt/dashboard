@@ -29,21 +29,20 @@ AS $$
 BEGIN
   RETURN QUERY
   WITH age_calc AS (
-    -- Calculate age for all shipped shipments
+    -- Calculate age for shipped shipments
+    -- Age = time from label creation (event_labeled) to delivery (delivered_date) or now
     SELECT
       s.id as sid,
-      -- Age = delivered_date - import_date (if delivered) OR now - import_date (if in-transit)
-      EXTRACT(EPOCH FROM (COALESCE(s.delivered_date, NOW()) - o.order_import_date)) / 86400.0 as calc_age,
+      EXTRACT(EPOCH FROM (COALESCE(s.delivered_date, NOW()) - s.event_labeled)) / 86400.0 as calc_age,
       s.status,
       s.delivered_date,
       s.carrier,
-      s.label_generation_date,  -- Include for sorting
+      s.event_labeled,  -- Include for sorting (label creation date)
       o.order_type,
-      o.channel_name,
-      o.order_import_date
+      o.channel_name
     FROM shipments s
     INNER JOIN orders o ON s.order_id = o.id
-    WHERE s.shipped_date IS NOT NULL
+    WHERE s.event_labeled IS NOT NULL  -- Only include shipments with label date
       AND (p_client_id IS NULL OR s.client_id = p_client_id)
       -- Date range filter
       AND (p_start_date IS NULL OR o.order_import_date >= p_start_date)
@@ -57,7 +56,7 @@ BEGIN
   ),
   filtered AS (
     -- Filter by age ranges (match ANY of the provided ranges)
-    SELECT ac.sid, ac.calc_age, ac.label_generation_date
+    SELECT ac.sid, ac.calc_age, ac.event_labeled
     FROM age_calc ac
     WHERE EXISTS (
       SELECT 1 FROM jsonb_array_elements(p_age_ranges) r
@@ -74,7 +73,7 @@ BEGIN
     c.cnt as total_count
   FROM filtered f
   CROSS JOIN counted c
-  ORDER BY f.label_generation_date DESC NULLS LAST  -- Sort by label date (most recent first)
+  ORDER BY f.event_labeled DESC NULLS LAST  -- Sort by label date (most recent first)
   LIMIT p_limit
   OFFSET p_offset;
 END;

@@ -417,11 +417,13 @@ export async function GET(request: NextRequest) {
         console.log(`[Age Filter Fallback] Fetched ${allShipments.length} shipments in parallel`)
 
         // Filter by age client-side
+        // Age = time from label creation (event_labeled) to delivery (event_delivered) or now
         const now = new Date()
         const matchingShipments = allShipments.filter((s: any) => {
-          const importDate = new Date(s.orders?.order_import_date)
+          if (!s.event_labeled) return false  // Skip shipments without label date
+          const labelDate = new Date(s.event_labeled)
           const endDateValue = s.event_delivered ? new Date(s.event_delivered) : now
-          const ageInDays = (endDateValue.getTime() - importDate.getTime()) / (1000 * 60 * 60 * 24)
+          const ageInDays = (endDateValue.getTime() - labelDate.getTime()) / (1000 * 60 * 60 * 24)
 
           return ageFilterRanges.some(range => {
             if (range.max === Infinity) {
@@ -607,7 +609,8 @@ export async function GET(request: NextRequest) {
         orderType: order?.order_type || 'DTC',
         qty: itemCounts[row.shipment_id] || 1,
         cost: billing?.totalCost || 0,
-        importDate: order?.order_import_date || row.event_labeled || new Date().toISOString(),
+        importDate: order?.order_import_date || null,
+        labelCreated: row.event_labeled || null,  // When label was created
         slaDate: row.estimated_fulfillment_date || null,
         trackingId: row.tracking_id || '',
         carrier: row.carrier || '',
