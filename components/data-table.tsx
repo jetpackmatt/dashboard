@@ -952,8 +952,8 @@ export function DataTable({
       className="flex w-full flex-col h-[calc(100vh-64px)] px-4 lg:px-6"
       onValueChange={handleTabChange}
     >
-        {/* Sticky header with tabs and controls */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/90 dark:bg-black/90">
+        {/* Sticky header with tabs and controls - rounded top corners for content area */}
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted dark:bg-zinc-900 rounded-t-xl">
           {/* Row 1: Tabs - edge-to-edge with subtle background */}
           <div className="">
             {/* Mobile/Tablet: Table selector dropdown */}
