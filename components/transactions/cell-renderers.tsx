@@ -380,6 +380,8 @@ export interface Shipment {
   slaDate: string | null
   shippedDate: string | null
   deliveredDate: string | null
+  inTransitDate: string | null  // When carrier picked up (event_intransit)
+  transitTimeDays: number | null  // Stored transit time for delivered shipments
   channelName: string
   trackingId: string
   carrier: string
@@ -595,15 +597,32 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   ),
 
   transitTime: (row) => {
-    const shipped = row.shippedDate
-    const delivered = row.deliveredDate
-    if (!shipped || !delivered) return <span>-</span>
-    const shippedDate = new Date(shipped)
-    const deliveredDate = new Date(delivered)
-    const days = (deliveredDate.getTime() - shippedDate.getTime()) / (1000 * 60 * 60 * 24)
+    // Transit time = time from carrier pickup (event_intransit) to delivery
+    // If delivered: use stored transit_time_days or calculate from dates
+    // If in transit: calculate live from inTransitDate → now
+
+    // If delivered and we have stored transit time, use it
+    if (row.deliveredDate && row.transitTimeDays != null) {
+      return (
+        <span className="whitespace-nowrap text-muted-foreground">
+          {row.transitTimeDays.toFixed(1)}d
+        </span>
+      )
+    }
+
+    // Need inTransitDate to calculate
+    if (!row.inTransitDate) return <span className="text-muted-foreground">-</span>
+
+    const inTransitDate = new Date(row.inTransitDate)
+    const endDate = row.deliveredDate ? new Date(row.deliveredDate) : new Date()
+    const days = (endDate.getTime() - inTransitDate.getTime()) / (1000 * 60 * 60 * 24)
+
+    // For in-transit shipments, show with different styling to indicate it's live
+    const isLive = !row.deliveredDate
+
     return (
-      <span className="whitespace-nowrap text-muted-foreground">
-        {days.toFixed(1)}d
+      <span className={`whitespace-nowrap ${isLive ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`}>
+        {days.toFixed(1)}d{isLive ? '' : ''}
       </span>
     )
   },

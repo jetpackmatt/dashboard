@@ -13,7 +13,7 @@ Check at start of each session. Keep it simple - details go in docs.
 ## TODO (When Time Permits)
 
 ### Nice to Have
-- [ ] Storage tab: per-day dates (blocked - API doesn't provide)
+- [ ] Storage tab: per-day dates (blocked - API doesn't provide). Waiting for this to be added to SFTP sync by ShipBob
 
 ---
 

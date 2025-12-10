@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
         event_labeled,
         event_intransit,
         event_delivered,
+        transit_time_days,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         fc_name,
@@ -101,6 +102,7 @@ export async function GET(request: NextRequest) {
         event_labeled,
         event_intransit,
         event_delivered,
+        transit_time_days,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         fc_name,
@@ -617,6 +619,8 @@ export async function GET(request: NextRequest) {
         carrierService: row.carrier_service || '',
         shippedDate: row.event_labeled || row.event_intransit,
         deliveredDate: row.event_delivered,
+        inTransitDate: row.event_intransit || null,  // When carrier picked up
+        transitTimeDays: row.transit_time_days || null,  // Stored transit time for delivered
         fcName: row.fc_name || '',
         storeOrderId: order?.store_order_id || '',
         channelName: row.application_name || order?.application_name || order?.channel_name || '',
