@@ -617,12 +617,18 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     const endDate = row.deliveredDate ? new Date(row.deliveredDate) : new Date()
     const days = (endDate.getTime() - inTransitDate.getTime()) / (1000 * 60 * 60 * 24)
 
-    // For in-transit shipments, show with different styling to indicate it's live
-    const isLive = !row.deliveredDate
+    // For in-transit shipments (not delivered yet), show in blue
+    if (!row.deliveredDate) {
+      return (
+        <span className="whitespace-nowrap text-blue-600 dark:text-blue-400">
+          {days.toFixed(1)}d
+        </span>
+      )
+    }
 
     return (
-      <span className={`whitespace-nowrap ${isLive ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`}>
-        {days.toFixed(1)}d{isLive ? '' : ''}
+      <span className="whitespace-nowrap text-muted-foreground">
+        {days.toFixed(1)}d
       </span>
     )
   },
