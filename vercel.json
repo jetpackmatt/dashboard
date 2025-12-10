@@ -5,6 +5,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/sync-timelines",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/sync-transactions",
       "schedule": "* * * * *"
     },

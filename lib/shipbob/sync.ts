@@ -277,6 +277,19 @@ async function syncShipmentTimelines(
         updateData.event_logs = timelineResult.eventLogs
       }
 
+      // Calculate transit_time_days when we have both intransit and delivered timestamps
+      const intransitDate = timelineResult.eventColumns.event_intransit as string | undefined
+      const deliveredDate = timelineResult.eventColumns.event_delivered as string | undefined
+      if (intransitDate && deliveredDate) {
+        const intransit = new Date(intransitDate).getTime()
+        const delivered = new Date(deliveredDate).getTime()
+        const transitMs = delivered - intransit
+        const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10 // Round to 1 decimal
+        if (transitDays >= 0) {
+          updateData.transit_time_days = transitDays
+        }
+      }
+
       // Update the shipment with timeline data
       const { error } = await supabase
         .from('shipments')
@@ -359,13 +372,21 @@ export async function syncClient(
       console.log(`[Sync] Using StartDate filter (catches orders created since ${startDate.toISOString()})`)
     }
 
-    // Build FC lookup
-    const { data: fcList } = await supabase.from('fulfillment_centers').select('fc_id, name, country')
-    const fcLookup: Record<string, { fc_id: number; country: string }> = {}
-    for (const fc of fcList || []) {
-      fcLookup[fc.name] = { fc_id: fc.fc_id, country: fc.country }
-      const shortName = fc.name.split(' ')[0]
-      if (!fcLookup[shortName]) fcLookup[shortName] = { fc_id: fc.fc_id, country: fc.country }
+    // Helper to extract origin country from FC name
+    // FC names like "Twin Lakes (WI)", "Ontario 6 (CA)", "Feltham (UK)"
+    const getOriginCountry = (fcName: string | null): string => {
+      if (!fcName) return 'US'
+      const match = fcName.match(/\(([A-Z]{2})\)$/)
+      if (!match) return 'US'
+      const code = match[1]
+      // Canadian provinces
+      if (['ON', 'BC', 'AB', 'QC', 'MB', 'SK', 'NS', 'NB', 'PE', 'NL', 'YT', 'NT', 'NU'].includes(code)) return 'CA'
+      // UK
+      if (code === 'UK') return 'GB'
+      // Australian states
+      if (['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT'].includes(code)) return 'AU'
+      // Default to US (most state codes like WI, PA, CA, TX are US)
+      return 'US'
     }
 
     // Build ship_option_id lookup
@@ -607,8 +628,6 @@ export async function syncClient(
       purchase_date: order.purchase_date || null,
       total_price: order.financials?.total_price || null,
       gift_message: order.gift_message || null,
-      carrier_type: order.carrier?.type || null,
-      payment_term: order.carrier?.payment_term || null,
       tags: order.tags || null,
       updated_at: now,
       // Soft delete support: mark as verified and restore if previously deleted
@@ -654,8 +673,7 @@ export async function syncClient(
         const actualWeight = shipment.measurements?.total_weight_oz || 0
 
         const fcName = shipment.location?.name || null
-        const fcInfo = fcName ? fcLookup[fcName] || fcLookup[fcName?.split(' ')[0]] : null
-        const originCountry = fcInfo?.country || 'US'
+        const originCountry = getOriginCountry(fcName)
         const destCountry = order.recipient?.address?.country || 'US'
 
         let dimWeight: number | null = null
@@ -666,13 +684,8 @@ export async function syncClient(
           billableWeight = Math.max(actualWeight, dimWeight)
         }
 
-        // Date field mapping:
-        // - created_at: when ShipBob record was created (shipment.created_date)
-        // - delivered_date: from shipment.delivery_date
-        // - Timeline event columns (event_created, event_intransit, etc.) are populated
-        //   after shipment upsert via the Timeline API (STEP 3b)
-        const deliveredTimestamp = shipment.delivery_date || null
-
+        // Timeline event columns (event_created, event_intransit, event_delivered, etc.)
+        // are populated after shipment upsert via the Timeline API (STEP 3b)
         shipmentRecords.push({
           client_id: clientId,
           merchant_id: merchantId,
@@ -686,14 +699,12 @@ export async function syncClient(
           recipient_email: shipment.recipient?.email || null,
           recipient_phone: shipment.recipient?.phone_number || null,
           created_at: shipment.created_date || null,
-          delivered_date: deliveredTimestamp,
-          // Timeline event columns (event_created, event_intransit, etc.) populated in STEP 3b
+          // Timeline event columns (event_created, event_intransit, event_delivered, etc.) populated in STEP 3b
           carrier: shipment.tracking?.carrier || null,
           carrier_service: shipment.ship_option || null,
           ship_option_id: getShipOptionId(shipment.ship_option || null),
           zone_used: shipment.zone?.id || null,
           fc_name: fcName,
-          fc_id: fcInfo?.fc_id || null,
           actual_weight_oz: actualWeight || null,
           dim_weight_oz: dimWeight,
           billable_weight_oz: billableWeight || null,
@@ -704,7 +715,6 @@ export async function syncClient(
           estimated_fulfillment_date: shipment.estimated_fulfillment_date || null,
           estimated_fulfillment_date_status: shipment.estimated_fulfillment_date_status || null,
           last_update_at: shipment.last_update_at || null,
-          last_tracking_update_at: shipment.tracking?.last_update_at || null,
           package_material_type: shipment.package_material_type || null,
           require_signature: shipment.require_signature || false,
           gift_message: shipment.gift_message || null,
@@ -756,13 +766,10 @@ export async function syncClient(
           shipbob_product_id: product.id || null,
           sku: product.sku || null,
           reference_id: product.reference_id || null,
-          name: product.name || null,
           quantity: product.quantity || null,
           unit_price: product.unit_price || null,
-          gtin: product.gtin || null,
           upc: product.upc || null,
           external_line_id: product.external_line_id || null,
-          quantity_unit_of_measure_code: product.quantity_unit_of_measure_code || null,
         })
       }
     }
@@ -806,12 +813,10 @@ export async function syncClient(
               sku: product.sku || null,
               reference_id: product.reference_id || null,
               name: product.name || null,
-              inventory_id: inv.id || null,
               lot: inv.lot || null,
               expiration_date: inv.expiration_date || null,
               // Priority: inventory quantity > order product quantity > shipment product quantity
               quantity: inv.quantity || orderQuantity || product.quantity || null,
-              quantity_committed: inv.quantity_committed || null,
               is_dangerous_goods: product.is_dangerous_goods || false,
               serial_numbers: inv.serial_numbers ? JSON.stringify(inv.serial_numbers) : null,
             })
@@ -1378,6 +1383,45 @@ export async function syncAllTransactions(
     }
     console.log(`[TransactionSync] Built inventory lookup with ${Object.keys(inventoryLookup).length} inventory IDs`)
 
+    // Build WRO lookup from receiving_orders table
+    console.log('[TransactionSync] Building WRO lookup from receiving_orders...')
+    const wroLookup: Record<string, { client_id: string; merchant_id: string | null }> = {}
+    let wroLastId: string | null = null
+
+    while (true) {
+      let query = supabase
+        .from('receiving_orders')
+        .select('id, shipbob_receiving_id, client_id, merchant_id')
+        .order('id', { ascending: true })
+        .limit(pageSize)
+
+      if (wroLastId) {
+        query = query.gt('id', wroLastId)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('[TransactionSync] Error fetching receiving_orders:', error.message)
+        break
+      }
+
+      if (!data || data.length === 0) break
+
+      for (const wro of data) {
+        if (wro.shipbob_receiving_id && wro.client_id) {
+          wroLookup[String(wro.shipbob_receiving_id)] = {
+            client_id: wro.client_id,
+            merchant_id: wro.merchant_id || null,
+          }
+        }
+        wroLastId = wro.id
+      }
+
+      if (data.length < pageSize) break
+    }
+    console.log(`[TransactionSync] Built WRO lookup with ${Object.keys(wroLookup).length} WROs`)
+
     // Fetch ALL transactions by date range
     console.log(`[TransactionSync] Fetching transactions from ${startDate.toISOString()} to ${endDate.toISOString()}...`)
 
@@ -1488,8 +1532,19 @@ export async function syncAllTransactions(
           // CC processing fee is a parent-level cost to Jetpack
           clientId = jetpackCostsId
         } else if (fee === 'Credit') {
-          // Credits - try shipment lookup first
+          // Credits - try shipment lookup first, then return, then WRO
           clientId = clientLookup[tx.reference_id] || null
+          if (!clientId) {
+            // Fallback: check if reference_id is a return ID
+            clientId = returnLookup[tx.reference_id] || null
+          }
+          if (!clientId) {
+            // Fallback: check if reference_id is a WRO ID
+            const wroInfo = wroLookup[tx.reference_id]
+            if (wroInfo) {
+              clientId = wroInfo.client_id
+            }
+          }
         }
         // Warehousing Fee and other Default fees left unattributed if no direct match
       }
@@ -1501,8 +1556,13 @@ export async function syncAllTransactions(
         // For now, leave unattributed - can be enhanced later
       }
 
-      // Strategy 6: WRO/URO - these reference IDs don't match anything directly
-      // Left unattributed - will need manual review or enhanced parsing
+      // Strategy 6: WRO/URO - lookup via receiving_orders table
+      else if (tx.reference_type === 'WRO' || tx.reference_type === 'URO') {
+        const wroInfo = wroLookup[tx.reference_id]
+        if (wroInfo) {
+          clientId = wroInfo.client_id
+        }
+      }
 
       if (clientId) {
         result.attributed++
@@ -1626,12 +1686,14 @@ export async function syncAllUndeliveredTimelines(
 
     // Get undelivered shipments that need timeline updates
     // Priority: oldest first (so we don't keep skipping the same shipments)
+    // Include Processing shipments - they may have progressed to Labeled at ShipBob
+    // Only exclude Cancelled (truly done) - we want to sync Processing/Exception too
     const { data: shipments, error: queryError } = await supabase
       .from('shipments')
       .select('id, shipment_id, client_id, status')
       .is('event_delivered', null)
       .is('deleted_at', null)
-      .not('status', 'in', '(Processing,Exception,Cancelled)')
+      .neq('status', 'Cancelled')
       .gte('created_at', cutoffDate.toISOString())
       .order('created_at', { ascending: true })
       .limit(batchSize)
@@ -1675,6 +1737,44 @@ export async function syncAllUndeliveredTimelines(
         // Store full timeline as event_logs JSONB
         if (timelineResult.eventLogs.length > 0) {
           updateData.event_logs = timelineResult.eventLogs
+        }
+
+        // Calculate transit_time_days when we have both intransit and delivered timestamps
+        const intransitDate = timelineResult.eventColumns.event_intransit as string | undefined
+        const deliveredDate = timelineResult.eventColumns.event_delivered as string | undefined
+        if (intransitDate && deliveredDate) {
+          const intransit = new Date(intransitDate).getTime()
+          const delivered = new Date(deliveredDate).getTime()
+          const transitMs = delivered - intransit
+          const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10 // Round to 1 decimal
+          if (transitDays >= 0) {
+            updateData.transit_time_days = transitDays
+          }
+        }
+
+        // If timeline shows Labeled but our status is still pre-label, fetch full shipment for status/tracking
+        const preLabelStatuses = ['None', 'Processing', 'Pending', 'OnHold', 'Exception']
+        const hasLabeledEvent = timelineResult.eventColumns.event_labeled != null
+        if (hasLabeledEvent && preLabelStatuses.includes(ship.status)) {
+          try {
+            const shipRes = await fetch(`https://api.shipbob.com/1.0/shipment/${ship.shipment_id}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+            if (shipRes.ok) {
+              const shipData = await shipRes.json()
+              updateData.status = shipData.status
+              updateData.status_details = shipData.status_details || null
+              if (shipData.tracking) {
+                updateData.tracking_id = shipData.tracking.tracking_number || null
+                updateData.tracking_url = shipData.tracking.tracking_url || null
+                updateData.carrier = shipData.tracking.carrier || null
+              }
+            }
+            // Extra delay after full shipment fetch
+            await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
+          } catch {
+            // Ignore errors - we'll still update timeline data
+          }
         }
 
         // Update the shipment with timeline data
@@ -1837,7 +1937,6 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
             shipment_tracking_number: returnData.tracking_number || null,
             original_shipment_id: returnData.original_shipment_id || null,
             store_order_id: returnData.store_order_id || null,
-            customer_name: returnData.customer_name || null,
             invoice_amount: returnData.invoice_amount || null,
             invoice_currency: 'USD',
             fc_id: returnData.fulfillment_center?.id || null,
@@ -1882,6 +1981,340 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
   } catch (e) {
     result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
     result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+/**
+ * Receiving Orders (WRO) Sync Result
+ */
+export interface ReceivingSyncResult {
+  success: boolean
+  wrosFetched: number
+  wrosUpserted: number
+  errors: string[]
+  duration: number
+}
+
+/**
+ * ShipBob WRO API response types (2025-07)
+ */
+interface ShipBobWRO {
+  id: number
+  purchase_order_number?: string
+  status?: string
+  package_type?: string
+  box_packaging_type?: string
+  box_labels_uri?: string
+  expected_arrival_date?: string
+  insert_date?: string
+  last_updated_date?: string
+  fulfillment_center?: {
+    id?: number
+    name?: string
+    timezone?: string
+    address?: {
+      address1?: string
+      city?: string
+      state?: string
+      country?: string
+      zip_code?: string
+    }
+  }
+  status_history?: Array<{
+    id: number
+    status: string
+    timestamp: string
+  }>
+  inventory_quantities?: Array<{
+    inventory_id?: number
+    name?: string
+    expected_quantity?: number
+    received_quantity?: number
+    stowed_quantity?: number
+  }>
+}
+
+/**
+ * Sync Warehouse Receiving Orders (WROs) for all clients
+ *
+ * Uses the 2025-07 /receiving endpoint with InsertStartDate/InsertEndDate
+ * for incremental sync. Captures status_history timeline for receiving analytics.
+ *
+ * @param minutesBack - How far back to look for new/updated WROs (default 60)
+ */
+export async function syncReceivingOrders(minutesBack: number = 60): Promise<ReceivingSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: ReceivingSyncResult = {
+    success: false,
+    wrosFetched: 0,
+    wrosUpserted: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  try {
+    // Get all clients with their tokens
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, company_name, merchant_id, client_api_credentials(api_token, provider)')
+      .eq('is_active', true)
+
+    if (!clients || clients.length === 0) {
+      result.errors.push('No active clients found')
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    // Calculate date range
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setMinutes(startDate.getMinutes() - minutesBack)
+
+    console.log(`[ReceivingSync] Fetching WROs from ${startDate.toISOString()} to ${endDate.toISOString()}`)
+
+    // Process each client
+    for (const client of clients) {
+      const creds = client.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find(c => c.provider === 'shipbob')?.api_token
+
+      if (!token) {
+        console.log(`[ReceivingSync] Skipping ${client.company_name}: no ShipBob token`)
+        continue
+      }
+
+      try {
+        // Fetch WROs from API with date filter
+        const params = new URLSearchParams({
+          InsertStartDate: startDate.toISOString(),
+          InsertEndDate: endDate.toISOString(),
+          Limit: '100',
+        })
+
+        const res = await fetch(`${SHIPBOB_API_BASE}/receiving?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!res.ok) {
+          if (res.status === 429) {
+            console.log(`[ReceivingSync] Rate limited for ${client.company_name}`)
+            result.errors.push(`${client.company_name}: Rate limited`)
+            continue
+          }
+          result.errors.push(`${client.company_name}: API error ${res.status}`)
+          continue
+        }
+
+        const wros: ShipBobWRO[] = await res.json()
+        result.wrosFetched += wros.length
+
+        if (wros.length === 0) continue
+
+        console.log(`[ReceivingSync] ${client.company_name}: found ${wros.length} WROs`)
+
+        // Map to database records
+        const now = new Date().toISOString()
+        const records = wros.map(wro => ({
+          client_id: client.id,
+          merchant_id: client.merchant_id || null,
+          shipbob_receiving_id: wro.id,
+          purchase_order_number: wro.purchase_order_number || null,
+          status: wro.status || null,
+          package_type: wro.package_type || null,
+          box_packaging_type: wro.box_packaging_type || null,
+          box_labels_uri: wro.box_labels_uri || null,
+          expected_arrival_date: wro.expected_arrival_date || null,
+          insert_date: wro.insert_date || null,
+          last_updated_date: wro.last_updated_date || null,
+          fc_id: wro.fulfillment_center?.id || null,
+          fc_name: wro.fulfillment_center?.name || null,
+          fc_timezone: wro.fulfillment_center?.timezone || null,
+          fc_address: wro.fulfillment_center?.address?.address1 || null,
+          fc_city: wro.fulfillment_center?.address?.city || null,
+          fc_state: wro.fulfillment_center?.address?.state || null,
+          fc_country: wro.fulfillment_center?.address?.country || null,
+          fc_zip: wro.fulfillment_center?.address?.zip_code || null,
+          status_history: wro.status_history || null,
+          inventory_quantities: wro.inventory_quantities || null,
+          synced_at: now,
+        }))
+
+        // Upsert records
+        const { error } = await supabase
+          .from('receiving_orders')
+          .upsert(records, { onConflict: 'shipbob_receiving_id' })
+
+        if (error) {
+          result.errors.push(`${client.company_name}: Upsert error - ${error.message}`)
+        } else {
+          result.wrosUpserted += records.length
+        }
+      } catch (e) {
+        result.errors.push(`${client.company_name}: ${e instanceof Error ? e.message : 'Unknown error'}`)
+      }
+
+      // Small delay between clients to avoid rate limits
+      await new Promise(r => setTimeout(r, 100))
+    }
+
+    console.log(`[ReceivingSync] Complete: ${result.wrosUpserted} WROs upserted, ${result.errors.length} errors`)
+    result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+// ============================================================================
+// Fee Types Sync
+// ============================================================================
+
+export interface FeeTypesSyncResult {
+  success: boolean
+  feeTypesFetched: number
+  feeTypesUpserted: number
+  errors: string[]
+}
+
+/**
+ * Categorize fee types into the 6 billing categories matching UI tabs:
+ * - Shipments: Shipping, pick/pack, fulfillment, surcharges
+ * - Additional Services: B2B, VAS, ITO, WMS, kitting, admin, taxes
+ * - Returns: Return processing fees
+ * - Receiving: WRO, inbound, freight
+ * - Storage: Storage, warehousing
+ * - Credits: Credits, refunds
+ */
+function categorizeFeeType(feeType: string): string {
+  const ft = feeType.toLowerCase()
+
+  // Credits - credits, refunds
+  if (ft.includes('credit') || ft.includes('refund')) return 'Credits'
+
+  // Returns - return processing
+  if (ft.includes('return')) return 'Returns'
+
+  // Storage - storage, warehousing
+  if (ft.includes('storage') || ft.includes('warehousing')) return 'Storage'
+
+  // Receiving - WRO, inbound, freight, receiving
+  if (ft.includes('wro') || ft.includes('receiving') || ft.includes('freight') || ft.includes('inbound')) return 'Receiving'
+
+  // Shipments - shipping, pick/pack, fulfillment core, surcharges, carrier fees
+  if (
+    ft === 'shipping' ||
+    ft.includes('shipping') ||
+    ft.includes('pick') ||
+    ft.includes('pack') ||
+    ft.includes('surcharge') ||
+    ft.includes('correction') ||
+    ft.includes('residential') ||
+    ft.includes('carrier') ||
+    ft.includes('delivery') ||
+    ft.includes('handling')
+  ) return 'Shipments'
+
+  // Additional Services - everything else (B2B, VAS, ITO, WMS, admin, taxes, kitting, etc.)
+  return 'Additional Services'
+}
+
+/**
+ * Sync all fee types from ShipBob /transaction-fees endpoint
+ * Uses parent token (billing API access)
+ *
+ * IMPORTANT: Only INSERTS new fee types. Never updates existing records.
+ * This preserves manually-set categories in fee_type_categories table.
+ */
+export async function syncFeeTypes(): Promise<FeeTypesSyncResult> {
+  const result: FeeTypesSyncResult = {
+    success: false,
+    feeTypesFetched: 0,
+    feeTypesUpserted: 0,
+    errors: [],
+  }
+
+  const supabase = createAdminClient()
+  const token = process.env.SHIPBOB_API_TOKEN
+
+  if (!token) {
+    result.errors.push('SHIPBOB_API_TOKEN not configured')
+    return result
+  }
+
+  try {
+    console.log('[FeeTypesSync] Fetching fee types from ShipBob...')
+
+    const res = await fetch(`${SHIPBOB_API_BASE}/transaction-fees`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!res.ok) {
+      result.errors.push(`API error: ${res.status} ${res.statusText}`)
+      return result
+    }
+
+    const data = await res.json()
+    const feeList: string[] = data.fee_list || []
+    result.feeTypesFetched = feeList.length
+
+    console.log(`[FeeTypesSync] Found ${feeList.length} fee types from API`)
+
+    if (feeList.length === 0) {
+      result.success = true
+      return result
+    }
+
+    // Get existing fee types from database
+    const { data: existing } = await supabase
+      .from('fee_type_categories')
+      .select('fee_type')
+
+    const existingSet = new Set((existing || []).map((r: { fee_type: string }) => r.fee_type))
+
+    // Filter to only NEW fee types (not in database)
+    const newFeeTypes = feeList.filter(ft => !existingSet.has(ft))
+
+    if (newFeeTypes.length === 0) {
+      console.log('[FeeTypesSync] No new fee types to add')
+      result.success = true
+      return result
+    }
+
+    console.log(`[FeeTypesSync] Found ${newFeeTypes.length} NEW fee types to add`)
+
+    // Build records for new fee types only
+    const now = new Date().toISOString()
+    const records = newFeeTypes.map(feeType => ({
+      fee_type: feeType,
+      category: categorizeFeeType(feeType), // Auto-categorize new ones
+      display_name: feeType,
+      description: null,
+      is_active: true,
+      source: 'shipbob',
+      synced_at: now,
+    }))
+
+    // INSERT only (not upsert) - never overwrite existing
+    const { error } = await supabase
+      .from('fee_type_categories')
+      .insert(records)
+
+    if (error) {
+      result.errors.push(`Insert error: ${error.message}`)
+      return result
+    }
+
+    result.feeTypesUpserted = records.length
+    result.success = true
+    console.log(`[FeeTypesSync] Inserted ${records.length} new fee types`)
+
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
     return result
   }
 }
