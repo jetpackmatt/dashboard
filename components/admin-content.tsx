@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   Plus,
   Pencil,
@@ -23,6 +24,7 @@ import {
   RotateCcw,
   FileSpreadsheet,
   XCircle,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -161,20 +163,31 @@ interface RuleHistoryEntry {
 
 export function AdminContent() {
   const { clients } = useClient()
-  const [activeTab, setActiveTab] = React.useState('markup')
+
+  // Tab state with URL persistence - using Next.js hooks
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const validTabs = ['markup', 'invoicing', 'sync-health']
+  const tabFromUrl = searchParams.get('tab')
+  const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'markup'
+  const [activeTab, setActiveTab] = React.useState(initialTab)
+
+  // Sync tab to URL when it changes
+  const handleTabChange = React.useCallback((newTab: string) => {
+    setActiveTab(newTab)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', newTab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, router, pathname])
 
   return (
     <div className="p-4 lg:p-6">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
-          <TabsTrigger value="markup" className="gap-2">
-            <Percent className="h-4 w-4" />
-            Markup Tables
-          </TabsTrigger>
-          <TabsTrigger value="invoicing" className="gap-2">
-            <FileText className="h-4 w-4" />
-            Run Invoicing
-          </TabsTrigger>
+          <TabsTrigger value="markup">Markup Tables</TabsTrigger>
+          <TabsTrigger value="invoicing">Run Invoicing</TabsTrigger>
+          <TabsTrigger value="sync-health">Sync Health</TabsTrigger>
         </TabsList>
 
         {/* Markup Tables Tab */}
@@ -185,6 +198,11 @@ export function AdminContent() {
         {/* Run Invoicing Tab */}
         <TabsContent value="invoicing" className="space-y-6">
           <InvoicingContent clients={clients} />
+        </TabsContent>
+
+        {/* Sync Health Tab */}
+        <TabsContent value="sync-health" className="space-y-6">
+          <SyncHealthContent />
         </TabsContent>
       </Tabs>
     </div>
@@ -1940,5 +1958,258 @@ function MarkupHistoryDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ============================================
+// Sync Health Tab Content
+// ============================================
+
+interface HealthMetric {
+  label: string
+  description: string
+  value: number
+  total: number
+  percentage: number
+  status: 'good' | 'warning' | 'critical'
+}
+
+interface SyncHealthData {
+  metrics: HealthMetric[]
+  clientHealth: Array<{
+    clientId: string
+    clientName: string
+    shipmentsWithTimeline: number
+    totalDeliveredShipments: number
+    timelinePercentage: number
+  }>
+  recentActivity: {
+    ordersLast24h: number
+    shipmentsLast24h: number
+    transactionsLast24h: number
+  }
+  generatedAt: string
+}
+
+function SyncHealthContent() {
+  const [data, setData] = React.useState<SyncHealthData | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    fetchHealth()
+  }, [])
+
+  async function fetchHealth() {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/admin/sync-health')
+      if (!response.ok) throw new Error('Failed to fetch sync health')
+      const result = await response.json()
+      setData(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sync health')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  function getStatusColor(status: 'good' | 'warning' | 'critical') {
+    switch (status) {
+      case 'good':
+        return 'text-green-600 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-950/50 dark:border-green-800'
+      case 'warning':
+        return 'text-yellow-600 bg-yellow-50 border-yellow-200 dark:text-yellow-400 dark:bg-yellow-950/50 dark:border-yellow-800'
+      case 'critical':
+        return 'text-red-600 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-950/50 dark:border-red-800'
+    }
+  }
+
+  function getStatusIcon(status: 'good' | 'warning' | 'critical') {
+    switch (status) {
+      case 'good':
+        return <CheckCircle2 className="h-5 w-5 text-green-600" />
+      case 'warning':
+        return <AlertTriangle className="h-5 w-5 text-yellow-600" />
+      case 'critical':
+        return <XCircle className="h-5 w-5 text-red-600" />
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="py-12">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <AlertCircle className="h-12 w-12 text-destructive" />
+            <p className="text-muted-foreground">{error}</p>
+            <Button onClick={fetchHealth}>Try Again</Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!data) return null
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Sync Health Dashboard</h2>
+          <p className="text-sm text-muted-foreground">
+            Data quality and sync metrics across all tables
+          </p>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-muted-foreground">
+            Last updated: {new Date(data.generatedAt).toLocaleTimeString()}
+          </span>
+          <Button variant="outline" onClick={fetchHealth} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Recent Activity Summary */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recent Sync Activity (Last 24h)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="text-center p-4 bg-muted/50 rounded-lg">
+              <div className="text-2xl font-bold">{data.recentActivity.ordersLast24h.toLocaleString()}</div>
+              <div className="text-sm text-muted-foreground">Orders Synced</div>
+            </div>
+            <div className="text-center p-4 bg-muted/50 rounded-lg">
+              <div className="text-2xl font-bold">{data.recentActivity.shipmentsLast24h.toLocaleString()}</div>
+              <div className="text-sm text-muted-foreground">Shipments Synced</div>
+            </div>
+            <div className="text-center p-4 bg-muted/50 rounded-lg">
+              <div className="text-2xl font-bold">{data.recentActivity.transactionsLast24h.toLocaleString()}</div>
+              <div className="text-sm text-muted-foreground">Transactions Synced</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Data Quality Metrics */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Data Quality Metrics</CardTitle>
+          <CardDescription>
+            Key indicators for data completeness and sync health
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {data.metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className={cn(
+                  'p-4 rounded-lg border',
+                  getStatusColor(metric.status)
+                )}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      {getStatusIcon(metric.status)}
+                      <span className="font-medium">{metric.label}</span>
+                    </div>
+                    <p className="text-sm opacity-80 mb-2">{metric.description}</p>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-bold">{metric.percentage}%</span>
+                      <span className="text-sm opacity-70">
+                        ({metric.value.toLocaleString()} / {metric.total.toLocaleString()})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {/* Progress bar */}
+                <div className="mt-3 h-2 bg-black/10 dark:bg-white/20 rounded-full overflow-hidden">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all',
+                      metric.status === 'good' && 'bg-green-500',
+                      metric.status === 'warning' && 'bg-yellow-500',
+                      metric.status === 'critical' && 'bg-red-500'
+                    )}
+                    style={{ width: `${Math.min(metric.percentage, 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Per-Client Timeline Health (if available) */}
+      {data.clientHealth.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Timeline Events by Client</CardTitle>
+            <CardDescription>
+              Percentage of delivered shipments with timeline events populated
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead className="text-right">With Timeline</TableHead>
+                  <TableHead className="text-right">Total Delivered</TableHead>
+                  <TableHead className="text-right">Coverage</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.clientHealth.map((client) => {
+                  const status = client.timelinePercentage >= 90 ? 'good'
+                    : client.timelinePercentage >= 70 ? 'warning' : 'critical'
+                  return (
+                    <TableRow key={client.clientId}>
+                      <TableCell className="font-medium">{client.clientName}</TableCell>
+                      <TableCell className="text-right">
+                        {client.shipmentsWithTimeline.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {client.totalDeliveredShipments.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {client.timelinePercentage}%
+                      </TableCell>
+                      <TableCell>
+                        {status === 'good' && (
+                          <Badge className="bg-green-100 text-green-800 border-green-200">Good</Badge>
+                        )}
+                        {status === 'warning' && (
+                          <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Warning</Badge>
+                        )}
+                        {status === 'critical' && (
+                          <Badge className="bg-red-100 text-red-800 border-red-200">Critical</Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </>
   )
 }

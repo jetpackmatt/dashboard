@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
           carrier,
           carrier_service,
           shipped_date,
-          delivered_date,
+          event_delivered,
           status,
           status_details,
           invoice_amount
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
         carrierService: shipment.carrier_service || '',
         trackingId: shipment.tracking_id || '',
         shippedDate: shipment.shipped_date,
-        deliveredDate: shipment.delivered_date,
+        deliveredDate: shipment.event_delivered,
         itemCount: itemCounts[order.id] || 1,
         cost: shipment.invoice_amount || 0,
       }

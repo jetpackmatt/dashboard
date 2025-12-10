@@ -6,14 +6,15 @@ import { syncAllUndeliveredTimelines } from '@/lib/shipbob/sync'
  *
  * Runs every minute to update timeline events (event_created, event_picked,
  * event_packed, event_labeled, event_intransit, event_delivered, etc.)
- * for undelivered shipments.
+ * for in-transit shipments (Completed status = shipped from warehouse, not yet delivered).
  *
- * Separate from main sync to:
- * - Avoid competing for execution time with order/shipment sync
- * - Allow independent scaling (can process more shipments)
- * - Provide cleaner monitoring and fault isolation
+ * Tiered check frequency:
+ * - Fresh shipments (0-3 days): Check every 15 minutes - actively moving
+ * - Older shipments (3-14 days): Check every 2 hours - likely delivered or stuck
  *
- * Vercel Pro plan has 300s timeout - we process 1000 shipments (~100s)
+ * Rate limiting: ShipBob allows 150 requests/min PER TOKEN (per client).
+ * We process 100 shipments per run at 500ms delay = ~50 seconds runtime.
+ * Fresh shipments are prioritized, older ones fill remaining capacity.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret
@@ -28,10 +29,10 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // Process 1000 undelivered shipments per run
-    // At ~100ms per API call, this takes ~100 seconds (well within 300s Pro timeout)
-    // 14 days max age (336 hours) to focus on recent shipments
-    const result = await syncAllUndeliveredTimelines(1000, 336)
+    // Process 100 shipments per run with tiered check frequency
+    // Fresh (0-3d) checked every 15 min, older (3-14d) every 2 hours
+    // 14 days max age (336 hours) for regular sync
+    const result = await syncAllUndeliveredTimelines(100, 336)
 
     const duration = Date.now() - startTime
 

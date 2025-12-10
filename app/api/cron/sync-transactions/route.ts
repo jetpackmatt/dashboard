@@ -12,8 +12,8 @@ import { syncAllTransactions } from '@/lib/shipbob/sync'
  * - Credits/adjustments (Default, TicketNumber)
  * - All other reference types
  *
- * Runs every 5 minutes, syncing last 10 minutes of transactions.
- * Slower than the per-minute sync but captures everything.
+ * Runs every 1 minute, syncing last 3 minutes of transactions.
+ * Near real-time billing data capture.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret (Vercel automatically includes this header)
@@ -31,10 +31,10 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // Sync last 10 minutes of transactions (with overlap for safety)
+    // Sync last 3 minutes of transactions (with overlap for safety)
     const endDate = new Date()
     const startDate = new Date()
-    startDate.setMinutes(startDate.getMinutes() - 10)
+    startDate.setMinutes(startDate.getMinutes() - 3)
 
     const result = await syncAllTransactions(startDate, endDate)
 

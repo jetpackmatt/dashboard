@@ -73,7 +73,7 @@ export function getInvoiceType(transactionFee: string | null): InvoiceType {
  * Group transactions by invoice type and sum amounts
  */
 export function aggregateByInvoiceType(
-  transactions: Array<{ transaction_fee: string | null; amount: number }>
+  transactions: Array<{ fee_type: string | null; amount: number }>
 ): Record<InvoiceType, number> {
   const result: Record<InvoiceType, number> = {
     Shipping: 0,
@@ -86,7 +86,7 @@ export function aggregateByInvoiceType(
   }
 
   for (const tx of transactions) {
-    const invoiceType = getInvoiceType(tx.transaction_fee)
+    const invoiceType = getInvoiceType(tx.fee_type)
     result[invoiceType] += tx.amount
   }
 

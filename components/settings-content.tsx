@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   Building2,
   CheckCircle2,
@@ -94,11 +95,42 @@ const isDev = process.env.NODE_ENV === 'development'
 
 export function SettingsContent() {
   const { clients, isLoading, isAdmin, refreshClients } = useClient()
+
+  // Tab state with URL persistence - using Next.js hooks
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  const validTabs = ['profile', 'users', 'brands', 'dev']
+  const tabFromUrl = searchParams.get('tab')
+  const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'profile'
+  const [activeTab, setActiveTab] = React.useState(initialTab)
+
+  // Sync tab to URL when it changes
+  const handleTabChange = React.useCallback((newTab: string) => {
+    setActiveTab(newTab)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', newTab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, router, pathname])
+
   const [testResults, setTestResults] = React.useState<
     Record<string, ConnectionTestResult>
   >({})
   const [isRefreshing, setIsRefreshing] = React.useState(false)
-  const [devRole, setDevRole] = React.useState<'admin' | 'client'>('client')
+  const [devRole, setDevRole] = React.useState<'admin' | 'client'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('jetpack_dev_role')
+      if (saved === 'admin' || saved === 'client') return saved
+    }
+    return 'client'
+  })
+
+  // Persist devRole to localStorage when it changes
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('jetpack_dev_role', devRole)
+    }
+  }, [devRole])
   const [addClientOpen, setAddClientOpen] = React.useState(false)
   const [newClientName, setNewClientName] = React.useState('')
   const [newShipBobUserId, setNewShipBobUserId] = React.useState('')
@@ -317,9 +349,9 @@ export function SettingsContent() {
         return
       }
 
-      setManageSuccess('Brand details updated')
-      await refreshClients()
-      setTimeout(() => setManageSuccess(null), 2000)
+      // Close dialog and refresh in background
+      setManageOpen(false)
+      refreshClients()
     } catch {
       setManageError('Network error')
     } finally {
@@ -622,27 +654,15 @@ export function SettingsContent() {
 
   return (
     <div className="p-4 lg:p-6">
-      <Tabs defaultValue="profile" className="space-y-6">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
-          <TabsTrigger value="profile" className="gap-2">
-            <User className="h-4 w-4" />
-            Profile
-          </TabsTrigger>
-          <TabsTrigger value="users" className="gap-2">
-            <Users className="h-4 w-4" />
-            Users
-          </TabsTrigger>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="users">Users</TabsTrigger>
           {effectiveIsAdmin && (
-            <TabsTrigger value="brands" className="gap-2">
-              <Building2 className="h-4 w-4" />
-              Brands
-            </TabsTrigger>
+            <TabsTrigger value="brands">Brands</TabsTrigger>
           )}
           {isDev && (
-            <TabsTrigger value="dev" className="gap-2">
-              <Wrench className="h-4 w-4" />
-              Dev Tools
-            </TabsTrigger>
+            <TabsTrigger value="dev">Dev Tools</TabsTrigger>
           )}
         </TabsList>
 

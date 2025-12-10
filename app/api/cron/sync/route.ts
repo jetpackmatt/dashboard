@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAll, syncReturns } from '@/lib/shipbob/sync'
+import { syncAll, syncReturns, syncReceivingOrders } from '@/lib/shipbob/sync'
 
 /**
  * Cron endpoint for scheduled data sync
@@ -7,7 +7,7 @@ import { syncAll, syncReturns } from '@/lib/shipbob/sync'
  * Vercel Cron calls this endpoint every minute.
  * Protected by CRON_SECRET to prevent unauthorized access.
  *
- * Syncs: orders, shipments, order_items, shipment_items, shipment_cartons, transactions, returns
+ * Syncs: orders, shipments, order_items, shipment_items, shipment_cartons, transactions, returns, receiving_orders
  * NOTE: Timeline events are synced by separate /api/cron/sync-timelines endpoint
  *
  * Per-minute sync strategy:
@@ -39,6 +39,10 @@ export async function GET(request: NextRequest) {
     // This ensures we have return data (including insert_date) for all billed returns
     const returnsResult = await syncReturns()
 
+    // Sync receiving orders (WROs): fetch from /receiving API with 60 min lookback
+    // This captures status_history timeline for receiving analytics
+    const receivingResult = await syncReceivingOrders(60)
+
     // NOTE: Timeline events are synced by /api/cron/sync-timelines (separate cron)
 
     const duration = Date.now() - startTime
@@ -47,6 +51,9 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron Sync] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
     if (returnsResult.synced > 0) {
       console.log(`[Cron Sync] Returns synced: ${returnsResult.synced}`)
+    }
+    if (receivingResult.wrosUpserted > 0) {
+      console.log(`[Cron Sync] WROs synced: ${receivingResult.wrosUpserted}`)
     }
 
     // Build per-client summary
@@ -70,6 +77,7 @@ export async function GET(request: NextRequest) {
         totalShipments: results.totalShipments,
         clientsProcessed: results.clients.length,
         returnsSynced: returnsResult.synced,
+        wrosSynced: receivingResult.wrosUpserted,
       },
       clients: clientSummary,
       errors: results.errors.slice(0, 20), // Limit error output

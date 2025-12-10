@@ -8,7 +8,7 @@ import { syncAll } from '@/lib/shipbob/sync'
  * 1. Catch any orders/shipments/transactions missed by per-minute sync
  * 2. Run soft-delete reconciliation (detect deleted records in ShipBob)
  *
- * Uses a 2-hour lookback window for safety margin.
+ * Uses a 20-day lookback window to catch orders that get cancelled/deleted.
  */
 export async function GET(request: NextRequest) {
   // Verify cron secret (Vercel automatically includes this header)
@@ -26,11 +26,10 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // Hourly sync: 2-hour lookback to catch anything missed + run reconciliation
+    // Hourly sync: 20-day lookback to catch cancelled/deleted orders
     // Note: daysBack triggers reconciliation, minutesBack skips it
-    // So we use a fractional day: 2 hours = 2/24 ≈ 0.083 days
-    // But the API works in whole days, so we'll sync 1 day and let reconciliation run
-    const results = await syncAll({ daysBack: 1 })
+    // Uses StartDate filter to fetch orders created in the last 20 days
+    const results = await syncAll({ daysBack: 20 })
 
     const duration = Date.now() - startTime
 

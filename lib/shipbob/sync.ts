@@ -14,7 +14,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
-const TIMELINE_DELAY_MS = 100 // Delay between timeline API calls to avoid rate limits
+const TIMELINE_DELAY_MS = 500 // Delay between timeline API calls (500ms = max 120/min, leaves room for other crons)
 
 // Map ShipBob timeline log_type_id to database column names
 const TIMELINE_EVENT_MAP: Record<number, string> = {
@@ -1680,40 +1680,83 @@ export async function syncAllUndeliveredTimelines(
       return result
     }
 
-    // Calculate cutoff date
-    const cutoffDate = new Date()
+    // Calculate cutoff dates for tiered check frequency
+    const now = new Date()
+    const cutoffDate = new Date(now)
     cutoffDate.setHours(cutoffDate.getHours() - maxAgeHours)
 
+    // Tiered check windows based on shipment age:
+    // - Fresh (0-3 days): Check every 15 minutes - actively moving through carrier network
+    // - Older (3+ days): Check every 2 hours - likely delivered or stuck
+    const freshCutoff = new Date(now)
+    freshCutoff.setDate(freshCutoff.getDate() - 3) // 3 days ago
+
+    const freshCheckWindow = new Date(now)
+    freshCheckWindow.setMinutes(freshCheckWindow.getMinutes() - 15) // 15 min ago
+
+    const olderCheckWindow = new Date(now)
+    olderCheckWindow.setHours(olderCheckWindow.getHours() - 2) // 2 hours ago
+
     // Get undelivered shipments that need timeline updates
-    // Priority: oldest first (so we don't keep skipping the same shipments)
+    // Priority: Fresh shipments first (more time-sensitive), then older ones
     // Include Processing shipments - they may have progressed to Labeled at ShipBob
     // Only exclude Cancelled (truly done) - we want to sync Processing/Exception too
-    const { data: shipments, error: queryError } = await supabase
+
+    // Query fresh shipments (0-3 days old, not checked in 15 min)
+    const { data: freshShipments, error: freshError } = await supabase
       .from('shipments')
       .select('id, shipment_id, client_id, status')
       .is('event_delivered', null)
       .is('deleted_at', null)
       .neq('status', 'Cancelled')
-      .gte('created_at', cutoffDate.toISOString())
-      .order('created_at', { ascending: true })
+      .gte('created_at', freshCutoff.toISOString())
+      .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${freshCheckWindow.toISOString()}`)
+      .order('timeline_checked_at', { ascending: true, nullsFirst: true })
       .limit(batchSize)
 
-    if (queryError) {
-      result.errors.push(`Query error: ${queryError.message}`)
-      result.duration = Date.now() - startTime
-      return result
+    if (freshError) {
+      result.errors.push(`Fresh query error: ${freshError.message}`)
     }
 
-    result.totalShipments = shipments?.length || 0
+    // If we have capacity, also get older shipments (3-14 days, not checked in 2 hours)
+    const freshCount = freshShipments?.length || 0
+    const remainingCapacity = batchSize - freshCount
 
-    if (!shipments || shipments.length === 0) {
+    let olderShipments: typeof freshShipments = []
+    if (remainingCapacity > 0) {
+      const { data: older, error: olderError } = await supabase
+        .from('shipments')
+        .select('id, shipment_id, client_id, status')
+        .is('event_delivered', null)
+        .is('deleted_at', null)
+        .neq('status', 'Cancelled')
+        .gte('created_at', cutoffDate.toISOString())
+        .lt('created_at', freshCutoff.toISOString()) // Older than 3 days
+        .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${olderCheckWindow.toISOString()}`)
+        .order('timeline_checked_at', { ascending: true, nullsFirst: true })
+        .limit(remainingCapacity)
+
+      if (olderError) {
+        result.errors.push(`Older query error: ${olderError.message}`)
+      }
+      olderShipments = older || []
+    }
+
+    // Combine results - fresh first, then older
+    const shipments = [...(freshShipments || []), ...olderShipments]
+
+    console.log(`[TimelineSync] Found ${freshCount} fresh (0-3d) + ${olderShipments.length} older (3-14d) shipments`)
+
+    result.totalShipments = shipments.length
+
+    if (shipments.length === 0) {
       console.log('[TimelineSync] No undelivered shipments to update')
       result.success = true
       result.duration = Date.now() - startTime
       return result
     }
 
-    console.log(`[TimelineSync] Processing ${shipments.length} undelivered shipments...`)
+    console.log(`[TimelineSync] Processing ${shipments.length} shipments...`)
 
     // Process each shipment
     for (const ship of shipments) {
@@ -1777,7 +1820,8 @@ export async function syncAllUndeliveredTimelines(
           }
         }
 
-        // Update the shipment with timeline data
+        // Update the shipment with timeline data + mark as checked
+        updateData.timeline_checked_at = new Date().toISOString()
         const { error } = await supabase
           .from('shipments')
           .update(updateData)
@@ -1789,7 +1833,11 @@ export async function syncAllUndeliveredTimelines(
           result.updated++
         }
       } else {
-        // Empty timeline (404 or no events yet)
+        // Empty timeline (404 or no events yet) - still mark as checked
+        await supabase
+          .from('shipments')
+          .update({ timeline_checked_at: new Date().toISOString() })
+          .eq('id', ship.id)
         result.skipped++
       }
 

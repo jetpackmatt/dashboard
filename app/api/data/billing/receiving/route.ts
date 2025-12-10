@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('transactions')
       .select('*', { count: 'exact' })
-      .or('reference_type.eq.WRO,transaction_fee.ilike.%Receiving%')
+      .or('reference_type.eq.WRO,fee_type.ilike.%Receiving%')
 
     if (clientId) {
       query = query.eq('client_id', clientId)
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
     const mapped = (data || []).map((row: Record<string, unknown>) => ({
       id: row.id,
       referenceId: String(row.reference_id || ''),
-      feeType: String(row.transaction_fee || ''),
+      feeType: String(row.fee_type || ''),
       amount: parseFloat(String(row.cost || 0)) || 0,
       transactionType: String(row.transaction_type || ''),
       transactionDate: row.charge_date,

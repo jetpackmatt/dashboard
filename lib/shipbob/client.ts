@@ -33,7 +33,7 @@ export interface ShipBobTransaction {
   invoice_date: string | null
   invoice_id: number | null
   invoice_type: string | null
-  transaction_fee: string // "Shipping", "Per Pick Fee", "Warehousing Fee", etc.
+  transaction_fee: string // "Shipping", "Per Pick Fee", "Warehousing Fee", etc. (maps to DB fee_type column)
   reference_id: string // Shipment ID or Order ID depending on reference_type
   reference_type: string // "Shipment", "Order", etc.
   transaction_type: string // "Charge", "Refund", "Credit"
@@ -213,8 +213,8 @@ export class ShipBobClient {
       let cursor: string | undefined
 
       do {
-        const params = new URLSearchParams({ pageSize: '1000' })
-        if (cursor) params.set('cursor', cursor)
+        const params = new URLSearchParams({ PageSize: '1000' })
+        if (cursor) params.set('Cursor', cursor)
 
         const endpoint = `/invoices/${invoiceId}/transactions?${params.toString()}`
         const response = await this.request<CursorPaginatedResponse<ShipBobTransaction>>(

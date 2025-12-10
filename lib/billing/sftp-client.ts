@@ -255,7 +255,7 @@ export async function updateTransactionsWithBreakdown(
         .select('id')
         .eq('reference_type', 'Shipment')
         .eq('reference_id', row.shipment_id)
-        .eq('transaction_fee', 'Shipping')
+        .eq('fee_type', 'Shipping')
         .maybeSingle()
 
       if (findError) {

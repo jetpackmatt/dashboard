@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
       .from('transactions')
       .select('*', { count: 'exact' })
       .eq('reference_type', 'Shipment') // Only shipment-related fees
-      .in('transaction_fee', ADDITIONAL_SERVICE_FEES)
+      .in('fee_type', ADDITIONAL_SERVICE_FEES)
 
     if (clientId) {
       query = query.eq('client_id', clientId)
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
     const mapped = (data || []).map((row: Record<string, unknown>) => ({
       id: row.id,
       referenceId: row.reference_id || '',
-      feeType: row.transaction_fee || '',
+      feeType: row.fee_type || '',
       amount: parseFloat(String(row.cost || 0)) || 0,
       transactionDate: row.charge_date,
       invoiceNumber: row.invoice_id_sb?.toString() || '',

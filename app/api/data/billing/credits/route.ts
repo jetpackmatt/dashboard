@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('transactions')
       .select('*', { count: 'exact' })
-      .eq('transaction_fee', 'Credit')
+      .eq('fee_type', 'Credit')
 
     if (clientId) {
       query = query.eq('client_id', clientId)

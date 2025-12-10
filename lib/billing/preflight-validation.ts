@@ -139,7 +139,7 @@ export async function runPreflightValidation(
       .from('transactions')
       .select('id, reference_id, base_cost, surcharge, tracking_id')
       .eq('client_id', clientId)
-      .eq('transaction_fee', 'Shipping')
+      .eq('fee_type', 'Shipping')
       .eq('reference_type', 'Shipment')
       .in('invoice_id_sb', invoiceIds)
       .range(shippingOffset, shippingOffset + PAGE_SIZE - 1)
@@ -286,11 +286,11 @@ export async function runPreflightValidation(
   while (hasMoreAddl) {
     const { data: addlBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, transaction_fee, charge_date')
+      .select('id, reference_id, fee_type, charge_date')
       .eq('client_id', clientId)
       .eq('reference_type', 'Shipment')
-      .neq('transaction_fee', 'Shipping')
-      .neq('transaction_fee', 'Credit')
+      .neq('fee_type', 'Shipping')
+      .neq('fee_type', 'Credit')
       .in('invoice_id_sb', invoiceIds)
       .range(addlOffset, addlOffset + PAGE_SIZE - 1)
 
@@ -376,7 +376,7 @@ export async function runPreflightValidation(
   while (hasMoreReceiving) {
     const { data: receivingBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, transaction_fee, transaction_type, charge_date')
+      .select('id, reference_id, fee_type, transaction_type, charge_date')
       .eq('client_id', clientId)
       .eq('reference_type', 'WRO')
       .in('invoice_id_sb', invoiceIds)
@@ -401,7 +401,7 @@ export async function runPreflightValidation(
       .from('transactions')
       .select('id, reference_id, charge_date, additional_details')
       .eq('client_id', clientId)
-      .eq('transaction_fee', 'Credit')
+      .eq('fee_type', 'Credit')
       .in('invoice_id_sb', invoiceIds)
       .range(creditsOffset, creditsOffset + PAGE_SIZE - 1)
 
@@ -466,7 +466,7 @@ export async function runPreflightValidation(
     additionalServices: {
       total: additionalServicesTransactions.length,
       withReferenceId: additionalServicesTransactions.filter(tx => tx.reference_id).length,
-      withFeeType: additionalServicesTransactions.filter(tx => tx.transaction_fee).length,
+      withFeeType: additionalServicesTransactions.filter(tx => tx.fee_type).length,
       withTransactionDate: additionalServicesTransactions.filter(tx => tx.charge_date).length,
     },
 
@@ -485,9 +485,9 @@ export async function runPreflightValidation(
     receiving: {
       total: receivingTransactions.length,
       withWroId: receivingTransactions.filter(tx => tx.reference_id).length,
-      withFeeType: receivingTransactions.filter(tx => tx.transaction_fee).length,
-      // transaction_type may be null if transaction_fee already contains the type info
-      withTransactionType: receivingTransactions.filter(tx => tx.transaction_type || tx.transaction_fee).length,
+      withFeeType: receivingTransactions.filter(tx => tx.fee_type).length,
+      // transaction_type may be null if fee_type already contains the type info
+      withTransactionType: receivingTransactions.filter(tx => tx.transaction_type || tx.fee_type).length,
       withTransactionDate: receivingTransactions.filter(tx => tx.charge_date).length,
     },
 

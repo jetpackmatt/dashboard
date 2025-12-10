@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
@@ -21,7 +22,9 @@ export default async function AdminPage() {
       <SiteHeader sectionName="Admin" />
       <div className="flex flex-1 flex-col overflow-x-hidden">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
-          <AdminContent />
+          <Suspense fallback={null}>
+            <AdminContent />
+          </Suspense>
         </div>
       </div>
     </>

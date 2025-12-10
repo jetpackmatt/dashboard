@@ -218,7 +218,7 @@ export async function collectBillingTransactions(
 
   for (const tx of transactions || []) {
     const referenceType = tx.reference_type || ''
-    const transactionFee = tx.transaction_fee || ''
+    const transactionFee = tx.fee_type || ''
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const baseAmount = Number(tx.cost) || 0
 
@@ -448,7 +448,7 @@ export async function collectBillingTransactionsByInvoiceIds(
 
   for (const tx of transactions || []) {
     const referenceType = String(tx.reference_type || '')
-    const transactionFee = String(tx.transaction_fee || '')
+    const transactionFee = String(tx.fee_type || '')
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const baseAmount = Number(tx.cost) || 0
     const txId = String(tx.id)
@@ -685,7 +685,7 @@ export async function collectUnprocessedBillingTransactions(
 
   for (const tx of transactions || []) {
     const referenceType = String(tx.reference_type || '')
-    const transactionFee = String(tx.transaction_fee || '')
+    const transactionFee = String(tx.fee_type || '')
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const baseAmount = Number(tx.cost) || 0
     const txId = String(tx.id)
@@ -975,7 +975,7 @@ export async function applyMarkupsToLineItems(
         .select('reference_id, cost, base_cost, markup_percentage, markup_rule_id, invoiced_status_jp')
         .eq('client_id', clientId)
         .eq('reference_type', 'Shipment')
-        .eq('transaction_fee', 'Shipping')
+        .eq('fee_type', 'Shipping')
         .in('reference_id', batch)
 
       for (const tx of shipmentTxs || []) {
@@ -1660,7 +1660,7 @@ export async function collectDetailedBillingData(
 
   for (const tx of transactions || []) {
     const referenceType = tx.reference_type || ''
-    const transactionFee = tx.transaction_fee || ''
+    const transactionFee = tx.fee_type || ''
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const cost = Number(tx.cost) || 0
 
@@ -1850,7 +1850,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
   // We need: event_labeled (label gen timestamp), delivered_date, order info, etc.
   // Transaction Date = event_labeled (from ShipBob timeline API, backfilled)
   const shipmentIds = transactions
-    .filter(tx => tx.reference_type === 'Shipment' && tx.transaction_fee === 'Shipping')
+    .filter(tx => tx.reference_type === 'Shipment' && tx.fee_type === 'Shipping')
     .map(tx => String(tx.reference_id))
     .filter(id => id && id !== 'undefined')
 
@@ -1862,7 +1862,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
     const { data: shipmentData } = await supabase
       .from('shipments')
       .select(`
-        shipment_id, tracking_id, created_at, event_created, event_labeled, delivered_date, carrier, carrier_service,
+        shipment_id, tracking_id, created_at, event_created, event_labeled, carrier, carrier_service,
         ship_option_id, zone_used, actual_weight_oz, dim_weight_oz, billable_weight_oz,
         length, width, height, fc_name, order_id, shipbob_order_id, status,
         transit_time_days, event_intransit, event_delivered
@@ -2016,7 +2016,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
 
   for (const tx of transactions || []) {
     const referenceType = String(tx.reference_type || '')
-    const transactionFee = String(tx.transaction_fee || '')
+    const transactionFee = String(tx.fee_type || '')
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const cost = Number(tx.cost) || 0
 
@@ -2086,8 +2086,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
           destination_country: orderData?.country as string || String(details.DestinationCountry || ''),
           order_created_timestamp: shipmentData?.event_created as string || null, // From shipments.event_created
           label_generation_timestamp: labelGenTimestamp,
-          // Use event_delivered (from timeline tracking), fall back to delivered_date for older records
-          delivered_date: shipmentData?.event_delivered as string || shipmentData?.delivered_date as string || String(details.DeliveredDate || '') || null,
+          delivered_date: shipmentData?.event_delivered as string || String(details.DeliveredDate || '') || null,
           transit_time_days: transitDays,
           fc_name: shipmentData?.fc_name as string || tx.fulfillment_center as string,
           order_category: orderData?.order_type as string || String(details.OrderCategory || ''),
@@ -2255,7 +2254,7 @@ export async function collectUnprocessedDetailedBillingData(
 
   for (const tx of transactions || []) {
     const referenceType = String(tx.reference_type || '')
-    const transactionFee = String(tx.transaction_fee || '')
+    const transactionFee = String(tx.fee_type || '')
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const cost = Number(tx.cost) || 0
 

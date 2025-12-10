@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
         carrier_service,
         event_labeled,
         event_intransit,
-        delivered_date,
+        event_delivered,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         fc_name,
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
         carrier_service,
         event_labeled,
         event_intransit,
-        delivered_date,
+        event_delivered,
         estimated_fulfillment_date,
         estimated_fulfillment_date_status,
         fc_name,
@@ -145,8 +145,8 @@ export async function GET(request: NextRequest) {
       for (const status of statusFilter) {
         switch (status.toLowerCase()) {
           case 'delivered':
-            // Delivered shipments have delivered_date set
-            dbFilters.push('delivered_date.not.is.null')
+            // Delivered shipments have event_delivered set
+            dbFilters.push('event_delivered.not.is.null')
             break
           case 'exception':
             // Exceptions are in status_details JSONB (DeliveryException)
@@ -326,7 +326,7 @@ export async function GET(request: NextRequest) {
             .from('shipments')
             .select(`
               id,
-              delivered_date,
+              event_delivered,
               event_labeled,
               orders!inner(order_import_date)
             `)
@@ -342,7 +342,7 @@ export async function GET(request: NextRequest) {
             const dbFilters: string[] = []
             for (const status of statusFilter) {
               switch (status.toLowerCase()) {
-                case 'delivered': dbFilters.push('delivered_date.not.is.null'); break
+                case 'delivered': dbFilters.push('event_delivered.not.is.null'); break
                 case 'exception': dbFilters.push('status_details->0->>name.eq.DeliveryException'); dbFilters.push('status_details->0->>name.eq.DeliveryAttemptFailed'); break
                 case 'labelled': dbFilters.push('status.eq.LabeledCreated'); break
                 case 'awaiting carrier': dbFilters.push('status.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>name.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>description.ilike.*Carrier*'); break
@@ -420,7 +420,7 @@ export async function GET(request: NextRequest) {
         const now = new Date()
         const matchingShipments = allShipments.filter((s: any) => {
           const importDate = new Date(s.orders?.order_import_date)
-          const endDateValue = s.delivered_date ? new Date(s.delivered_date) : now
+          const endDateValue = s.event_delivered ? new Date(s.event_delivered) : now
           const ageInDays = (endDateValue.getTime() - importDate.getTime()) / (1000 * 60 * 60 * 24)
 
           return ageFilterRanges.some(range => {
@@ -475,7 +475,7 @@ export async function GET(request: NextRequest) {
         const dbFilters: string[] = []
         for (const status of statusFilter) {
           switch (status.toLowerCase()) {
-            case 'delivered': dbFilters.push('delivered_date.not.is.null'); break
+            case 'delivered': dbFilters.push('event_delivered.not.is.null'); break
             case 'exception': dbFilters.push('status_details->0->>name.eq.DeliveryException'); dbFilters.push('status_details->0->>name.eq.DeliveryAttemptFailed'); break
             case 'labelled': dbFilters.push('status.eq.LabeledCreated'); break
             case 'awaiting carrier': dbFilters.push('status.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>name.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>description.ilike.*Carrier*'); break
@@ -589,7 +589,7 @@ export async function GET(request: NextRequest) {
     let shipments = (shipmentsData || []).map((row: any) => {
       // Order data comes from the JOIN (nested under 'orders' key)
       const order = row.orders || null
-      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled || row.event_intransit, row.delivered_date)
+      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled || row.event_intransit, row.event_delivered)
       const billing = billingMap[row.shipment_id]
 
       // Override status to "Refunded" if this shipment has a refund in billing
@@ -613,7 +613,7 @@ export async function GET(request: NextRequest) {
         carrier: row.carrier || '',
         carrierService: row.carrier_service || '',
         shippedDate: row.event_labeled || row.event_intransit,
-        deliveredDate: row.delivered_date,
+        deliveredDate: row.event_delivered,
         fcName: row.fc_name || '',
         storeOrderId: order?.store_order_id || '',
         channelName: row.application_name || order?.application_name || order?.channel_name || '',

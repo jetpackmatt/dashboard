@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
@@ -16,7 +17,9 @@ export default async function SettingsPage() {
       <SiteHeader sectionName="Settings" />
       <div className="flex flex-1 flex-col overflow-x-hidden">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
-          <SettingsContent />
+          <Suspense fallback={null}>
+            <SettingsContent />
+          </Suspense>
         </div>
       </div>
     </>
