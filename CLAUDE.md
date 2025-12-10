@@ -51,7 +51,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | Path | Schedule | Purpose |
 |------|----------|---------|
 | `/api/cron/sync` | Every 1 min | Orders & shipments (child tokens, LastUpdateStartDate) |
-| `/api/cron/sync-timelines` | Every 1 min | Timeline events for 0-14 day shipments (tiered frequency) |
+| `/api/cron/sync-timelines` | Every 1 min | Timeline events (0-14d, per-client parallel, auto-scales) |
 | `/api/cron/sync-transactions` | Every 1 min | All billing transactions (parent token) |
 | `/api/cron/sync-reconcile` | Every hour | Soft-delete detection (20-day lookback) |
 | `/api/cron/sync-invoices` | Daily 1:36 AM UTC | ShipBob invoice sync |

@@ -240,10 +240,33 @@ Timeline backfill completed for 72,855 historical shipments. The `sync-timelines
 - `timeline_checked_at`: Tracks last API poll to prevent redundant checks
 - `event_delivered`: When set, shipment exits the sync queue
 
+**⚠️ Why not use `last_update_at`?**
+Tested Dec 2025: ShipBob's `last_update_at` does NOT change when timeline events are added.
+It only updates when the shipment record itself changes (status, tracking, etc.).
+Age-based polling with `timeline_checked_at` is the correct approach.
+
 **Math (per client):**
 - Fresh shipments (0-3d): 70/min × 15 min window = ~1,050 capacity/client
 - Older shipments (3-14d): 30/min × 120 min window = ~3,600 capacity/client
 - Nightly catches 14-45 day stragglers (200/client/night)
+
+---
+
+## UI Age Calculations
+
+Different tabs calculate "Age" differently:
+
+| Tab | Age Formula | Start Date | End Date |
+|-----|-------------|------------|----------|
+| **Shipments** | `event_labeled` → `delivered_date` or now | When label was created | When delivered (or now if in transit) |
+| **Unfulfilled** | `order_import_date` → now | When order was imported to ShipBob | Now (order is still processing) |
+
+**Key insight:** Shipped orders use `event_labeled` (label creation) as the start point because that's when the shipment actually began. Unfulfilled orders use `order_import_date` because they haven't shipped yet.
+
+**Related columns:**
+- `orders.order_import_date` - When order arrived in ShipBob
+- `shipments.event_labeled` - When shipping label was created
+- `shipments.delivered_date` - When carrier marked delivered
 
 ---
 

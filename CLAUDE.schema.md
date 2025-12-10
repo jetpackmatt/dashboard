@@ -103,6 +103,12 @@
 | `deleted_at` | timestamptz | Soft delete |
 | `last_verified_at` | timestamptz | |
 | `timeline_checked_at` | timestamptz | Last timeline API poll (prevents re-checking too often) |
+| `last_update_at` | timestamptz | ShipBob's update timestamp (⚠️ see note below) |
+
+**⚠️ `last_update_at` Limitation:**
+This field does NOT update when timeline events are added (tested Dec 2025).
+It only changes when the shipment record itself changes (status, tracking, etc.).
+Do NOT use for timeline sync optimization - use age-based polling instead.
 
 ### Timeline Event Columns
 | Column | Type | log_type_id |
