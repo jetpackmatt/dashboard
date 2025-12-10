@@ -169,7 +169,7 @@ export function TransactionsTable<T>({
                 <col key={column.id} style={{ width: getColumnWidth(column.id) }} />
               ))}
             </colgroup>
-            <thead className="sticky top-0 bg-muted/50 dark:bg-[hsl(220,8%,10%)] z-10">
+            <thead className="sticky top-0 bg-muted/90 dark:bg-[hsl(220,8%,10%)]/90 z-10">
               <tr className="h-10">
                 {visibleColumns.map((column, index) => {
                   // Determine padding based on position and integrated mode

@@ -953,7 +953,7 @@ export function DataTable({
       onValueChange={handleTabChange}
     >
         {/* Sticky header with tabs and controls */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/30 dark:bg-black/20">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/90 dark:bg-black/90">
           {/* Row 1: Tabs - edge-to-edge with subtle background */}
           <div className="">
             {/* Mobile/Tablet: Table selector dropdown */}
