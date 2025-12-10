@@ -723,7 +723,7 @@ function getShipmentStatus(
 
   if (status) {
     switch (status) {
-      case 'Completed': return 'Shipped'
+      case 'Completed': return 'Awaiting Carrier'
       case 'LabeledCreated': return 'Labelled'
       case 'Cancelled': return 'Cancelled'
       case 'Exception':
@@ -739,14 +739,14 @@ function getShipmentStatus(
   }
 
   if (shippedDate) {
-    return 'Shipped'
+    return 'Awaiting Carrier'
   }
 
   if (efdStatus) {
     switch (efdStatus) {
       case 'FulfilledOnTime':
       case 'FulfilledLate':
-        return shippedDate ? 'Shipped' : 'Pending'
+        return shippedDate ? 'Awaiting Carrier' : 'Pending'
       case 'AwaitingInventoryAllocation': return 'Out of Stock'
       case 'PendingOnTime':
       case 'PendingLate': return 'Awaiting Pick'

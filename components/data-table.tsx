@@ -242,7 +242,6 @@ const TYPE_OPTIONS: FilterOption[] = [
 
 const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Labelled', label: 'Labelled' },
-  { value: 'Shipped', label: 'Shipped' },
   { value: 'Awaiting Carrier', label: 'Awaiting Carrier' },
   { value: 'In Transit', label: 'In Transit' },
   { value: 'Out for Delivery', label: 'Out for Delivery' },
