@@ -55,7 +55,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/sync-transactions` | Every 1 min | All billing transactions (parent token) |
 | `/api/cron/sync-reconcile` | Every hour | Soft-delete detection (20-day lookback) |
 | `/api/cron/sync-invoices` | Daily 1:36 AM UTC | ShipBob invoice sync |
-| `/api/cron/sync-timelines-nightly` | Daily 3:00 AM UTC | Full refresh for older shipments (14-45 days) |
+| `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | Full refresh for older shipments (14-45 days) |
 
 ---
 

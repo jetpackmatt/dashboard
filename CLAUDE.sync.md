@@ -223,11 +223,11 @@ Timeline backfill completed for 72,855 historical shipments. The `sync-timelines
 
 **Tiered check frequency (Dec 2025):**
 
-| Shipment Age | Check Interval | What's Synced |
-|--------------|----------------|---------------|
-| 0-3 days | 15 minutes | Timeline events only |
-| 3-14 days | 2 hours | Timeline events only |
-| 14-45 days | Nightly (3 AM UTC) | **Full refresh**: status, tracking, measurements, timeline |
+| Shipment Age | Check Interval | What's Synced | Cron |
+|--------------|----------------|---------------|------|
+| 0-3 days | 15 minutes | Timeline events | `sync-timelines` |
+| 3-14 days | 2 hours | Timeline events | `sync-timelines` |
+| 14-45 days | Nightly (3 AM UTC) | **Full refresh**: status, tracking, measurements, timeline | `sync-older-nightly` |
 
 **Key columns:**
 - `timeline_checked_at`: Tracks last API poll to prevent redundant checks
@@ -248,7 +248,7 @@ Timeline backfill completed for 72,855 historical shipments. The `sync-timelines
 | `lib/shipbob/client.ts` | ShipBob API client wrapper |
 | `app/api/cron/sync/route.ts` | 1-minute cron: orders & shipments |
 | `app/api/cron/sync-timelines/route.ts` | 1-minute cron: timeline events (0-14 days, tiered) |
-| `app/api/cron/sync-timelines-nightly/route.ts` | Nightly cron: older shipments (14-45 days) |
+| `app/api/cron/sync-older-nightly/route.ts` | Nightly cron: full refresh for older shipments (14-45 days) |
 | `app/api/cron/sync-transactions/route.ts` | 1-minute cron: billing transactions |
 | `app/api/cron/sync-reconcile/route.ts` | Hourly: soft-delete detection |
 | `app/api/cron/sync-invoices/route.ts` | Daily: ShipBob invoice sync |

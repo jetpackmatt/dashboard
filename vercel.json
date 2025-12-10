@@ -21,7 +21,7 @@
       "schedule": "36 1 * * *"
     },
     {
-      "path": "/api/cron/sync-timelines-nightly",
+      "path": "/api/cron/sync-older-nightly",
       "schedule": "0 3 * * *"
     }
   ]
