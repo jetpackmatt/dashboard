@@ -228,49 +228,65 @@ export async function runPreflightValidation(
     }
   }
 
-  // ===== 4b. Get order_items as fallback for quantity =====
-  // If shipment_items.quantity is null, use order_items.quantity
-  // Build shipment_id -> order_id mapping
+  // ===== 4b. Get order_items as fallback for products_sold =====
+  // Fallback cases:
+  // 1. shipment_items exist with name but missing quantity -> use order_items.quantity
+  // 2. NO shipment_items exist at all -> use order_items for both name and quantity
   const shipmentToOrderMap = new Map(shipmentsData.map(s => [String(s.shipment_id), String(s.order_id)]))
 
-  // Find shipments missing quantity
+  // Find shipments missing quantity (have name but no quantity)
   const shipmentsMissingQty = [...shipmentItemsMap.entries()]
     .filter(([, v]) => v.hasName && !v.hasQuantity)
     .map(([sid]) => sid)
 
-  if (shipmentsMissingQty.length > 0) {
-    // Get order_ids for shipments missing quantity
+  // Find shipments with NO shipment_items at all
+  const shipmentsWithNoItems = shipmentsData
+    .map(s => String(s.shipment_id))
+    .filter(sid => !shipmentItemsMap.has(sid))
+
+  // Combine both sets of shipments needing fallback
+  const allShipmentsNeedingFallback = [...new Set([...shipmentsMissingQty, ...shipmentsWithNoItems])]
+
+  if (allShipmentsNeedingFallback.length > 0) {
+    // Get order_ids for shipments needing fallback
     const orderIdsForFallback = [...new Set(
-      shipmentsMissingQty.map(sid => shipmentToOrderMap.get(sid)).filter(Boolean)
+      allShipmentsNeedingFallback.map(sid => shipmentToOrderMap.get(sid)).filter(Boolean)
     )] as string[]
 
     // Fetch order_items for these orders
+    // Note: order_items has sku (not name), so we use sku as fallback for product name
     let orderItemsData: Record<string, unknown>[] = []
     for (let i = 0; i < orderIdsForFallback.length; i += 50) {
       const { data } = await supabase
         .from('order_items')
-        .select('order_id, name, quantity')
+        .select('order_id, sku, quantity')
         .in('order_id', orderIdsForFallback.slice(i, i + 50))
         .limit(1000)
 
       if (data) orderItemsData.push(...data)
     }
 
-    // Build order_id -> hasQuantity lookup
-    const orderItemsMap = new Map<string, boolean>()
+    // Build order_id -> { hasName, hasQuantity } lookup
+    // Use sku as fallback for name (it's always populated in order_items)
+    const orderItemsMap = new Map<string, { hasName: boolean; hasQuantity: boolean }>()
     for (const item of orderItemsData) {
-      if (item.quantity !== null && item.quantity !== undefined) {
-        orderItemsMap.set(String(item.order_id), true)
-      }
+      const oid = String(item.order_id)
+      const existing = orderItemsMap.get(oid) || { hasName: false, hasQuantity: false }
+      if (item.sku) existing.hasName = true  // SKU serves as product identifier
+      if (item.quantity !== null && item.quantity !== undefined) existing.hasQuantity = true
+      orderItemsMap.set(oid, existing)
     }
 
-    // Update shipmentItemsMap with fallback quantity from order_items
-    for (const sid of shipmentsMissingQty) {
+    // Update shipmentItemsMap with fallback from order_items
+    for (const sid of allShipmentsNeedingFallback) {
       const orderId = shipmentToOrderMap.get(sid)
-      if (orderId && orderItemsMap.get(orderId)) {
-        const existing = shipmentItemsMap.get(sid)
-        if (existing) {
-          existing.hasQuantity = true
+      if (orderId) {
+        const orderItems = orderItemsMap.get(orderId)
+        if (orderItems) {
+          const existing = shipmentItemsMap.get(sid) || { hasName: false, hasQuantity: false }
+          // Use order_items as fallback for missing fields
+          if (orderItems.hasName && !existing.hasName) existing.hasName = true
+          if (orderItems.hasQuantity && !existing.hasQuantity) existing.hasQuantity = true
           shipmentItemsMap.set(sid, existing)
         }
       }
