@@ -260,7 +260,7 @@ export async function updateTransactionsWithBreakdown(
 
     const { data: transactions, error: lookupError } = await supabase
       .from('transactions')
-      .select('id, reference_id, invoice_id_sb')
+      .select('id, reference_id, invoice_id_sb, transaction_type')
       .eq('reference_type', 'Shipment')
       .eq('fee_type', 'Shipping')
       .in('reference_id', batchIds)
@@ -270,14 +270,25 @@ export async function updateTransactionsWithBreakdown(
       continue
     }
 
-    // Build lookup map: shipment_id → transaction info
-    // If same shipment appears multiple times, keep track by invoice_id_sb
+    // Build lookup map: shipment_id:invoice_id:type → transaction info
+    // Use transaction_type to distinguish charge vs refund for same shipment in same invoice
     for (const tx of transactions || []) {
-      const key = tx.invoice_id_sb
-        ? `${tx.reference_id}:${tx.invoice_id_sb}`
-        : tx.reference_id
-      txLookup.set(key, { id: tx.id, invoice_id_sb: tx.invoice_id_sb })
-      // Also store without invoice_id for fallback matching
+      const isRefund = tx.transaction_type === 'Refund'
+      const typeKey = isRefund ? 'refund' : 'charge'
+
+      if (tx.invoice_id_sb) {
+        // Primary key: shipment:invoice:type (handles refund+charge in same invoice)
+        const fullKey = `${tx.reference_id}:${tx.invoice_id_sb}:${typeKey}`
+        txLookup.set(fullKey, { id: tx.id, invoice_id_sb: tx.invoice_id_sb })
+
+        // Also store by shipment:invoice for backwards compatibility
+        const invoiceKey = `${tx.reference_id}:${tx.invoice_id_sb}`
+        if (!txLookup.has(invoiceKey)) {
+          txLookup.set(invoiceKey, { id: tx.id, invoice_id_sb: tx.invoice_id_sb })
+        }
+      }
+
+      // Fallback: just shipment_id
       if (!txLookup.has(tx.reference_id)) {
         txLookup.set(tx.reference_id, { id: tx.id, invoice_id_sb: tx.invoice_id_sb })
       }
@@ -291,13 +302,25 @@ export async function updateTransactionsWithBreakdown(
   const updatePromises: Promise<{ success: boolean; shipmentId: string; error?: string }>[] = []
 
   for (const row of rows) {
-    // Try to find matching transaction - first with invoice_id, then without
+    // Determine if this SFTP row is a refund (negative amounts) or charge (positive)
+    const isRefundRow = row.base_cost < 0 || row.total < 0
+    const typeKey = isRefundRow ? 'refund' : 'charge'
+
+    // Try to find matching transaction:
+    // 1. First by shipment:invoice:type (most specific, handles refund+charge in same invoice)
+    // 2. Then by shipment:invoice (backwards compat)
+    // 3. Finally by just shipment (fallback)
     const invoiceId = row.invoice_id_sb ? parseInt(row.invoice_id_sb, 10) : null
-    const keyWithInvoice = invoiceId && !isNaN(invoiceId)
+    const fullKey = invoiceId && !isNaN(invoiceId)
+      ? `${row.shipment_id}:${invoiceId}:${typeKey}`
+      : null
+    const invoiceKey = invoiceId && !isNaN(invoiceId)
       ? `${row.shipment_id}:${invoiceId}`
       : null
 
-    const tx = (keyWithInvoice && txLookup.get(keyWithInvoice)) || txLookup.get(row.shipment_id)
+    const tx = (fullKey && txLookup.get(fullKey))
+      || (invoiceKey && txLookup.get(invoiceKey))
+      || txLookup.get(row.shipment_id)
 
     if (!tx) {
       result.notFound++
