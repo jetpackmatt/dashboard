@@ -12,7 +12,6 @@ import { generatePDFViaSubprocess } from '@/lib/billing/pdf-subprocess'
 import {
   fetchShippingBreakdown,
   updateTransactionsWithBreakdown,
-  populateRefundBreakdowns,
 } from '@/lib/billing/sftp-client'
 import {
   runPreflightValidation,
@@ -90,34 +89,11 @@ export async function GET(request: Request) {
       if (updateResult.errors.length > 0) {
         console.log(`  ${updateResult.errors.length} errors:`, updateResult.errors.slice(0, 3))
       }
-
-      // Step 1b: Populate refund breakdown data from matching charges
-      // Refunds don't appear in SFTP files, so we derive their breakdown from charges
-      console.log('Populating refund breakdown data...')
-      const refundResult = await populateRefundBreakdowns(adminClient)
-      if (refundResult.updated > 0) {
-        console.log(`Updated ${refundResult.updated} refund transactions with breakdown data`)
-      }
-      if (refundResult.errors.length > 0) {
-        console.log(`  ${refundResult.errors.length} refund errors:`, refundResult.errors.slice(0, 3))
-      }
     } else if (!sftpResult.success) {
       console.log(`SFTP fetch failed: ${sftpResult.error}`)
       console.log('Continuing with invoice generation (breakdown data will be null)')
-      // Still try to populate refund breakdowns from existing charge data
-      console.log('Populating refund breakdown data...')
-      const refundResult = await populateRefundBreakdowns(adminClient)
-      if (refundResult.updated > 0) {
-        console.log(`Updated ${refundResult.updated} refund transactions with breakdown data`)
-      }
     } else {
       console.log('No breakdown data in SFTP file')
-      // Still try to populate refund breakdowns from existing charge data
-      console.log('Populating refund breakdown data...')
-      const refundResult = await populateRefundBreakdowns(adminClient)
-      if (refundResult.updated > 0) {
-        console.log(`Updated ${refundResult.updated} refund transactions with breakdown data`)
-      }
     }
 
     // Step 2: Get all active clients with billing info (exclude internal/system entries)
