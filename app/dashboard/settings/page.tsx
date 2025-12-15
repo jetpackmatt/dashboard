@@ -15,7 +15,7 @@ export default async function SettingsPage() {
   return (
     <>
       <SiteHeader sectionName="Settings" />
-      <div className="flex flex-1 flex-col overflow-x-hidden">
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
           <Suspense fallback={null}>
             <SettingsContent />

@@ -87,6 +87,7 @@ interface ClientForManage {
   id: string
   company_name: string
   shipbob_user_id: string | null
+  short_code: string | null
   has_token: boolean
   billing_address?: BillingAddress | null
 }
@@ -134,6 +135,7 @@ export function SettingsContent() {
   const [addClientOpen, setAddClientOpen] = React.useState(false)
   const [newClientName, setNewClientName] = React.useState('')
   const [newShipBobUserId, setNewShipBobUserId] = React.useState('')
+  const [newShortCode, setNewShortCode] = React.useState('')
   const [isAddingClient, setIsAddingClient] = React.useState(false)
   const [addClientError, setAddClientError] = React.useState<string | null>(null)
 
@@ -142,6 +144,7 @@ export function SettingsContent() {
   const [managingClient, setManagingClient] = React.useState<ClientForManage | null>(null)
   const [editCompanyName, setEditCompanyName] = React.useState('')
   const [editShipBobUserId, setEditShipBobUserId] = React.useState('')
+  const [editShortCode, setEditShortCode] = React.useState('')
   const [editToken, setEditToken] = React.useState('')
   // Billing address fields
   const [editBillingStreet, setEditBillingStreet] = React.useState('')
@@ -267,12 +270,20 @@ export function SettingsContent() {
     setAddClientError(null)
 
     try {
+      // Validate short_code format (2-3 uppercase letters)
+      const trimmedShortCode = newShortCode.trim().toUpperCase()
+      if (trimmedShortCode && !/^[A-Z]{2,3}$/.test(trimmedShortCode)) {
+        setAddClientError('Short code must be 2-3 uppercase letters')
+        return
+      }
+
       const response = await fetch('/api/admin/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company_name: newClientName.trim(),
           merchant_id: newShipBobUserId.trim() || null,
+          short_code: trimmedShortCode || null,
         }),
       })
 
@@ -287,6 +298,7 @@ export function SettingsContent() {
       setAddClientOpen(false)
       setNewClientName('')
       setNewShipBobUserId('')
+      setNewShortCode('')
       await refreshClients()
     } catch {
       setAddClientError('Network error')
@@ -299,6 +311,7 @@ export function SettingsContent() {
     setManagingClient(client)
     setEditCompanyName(client.company_name)
     setEditShipBobUserId(client.shipbob_user_id || '')
+    setEditShortCode(client.short_code || '')
     setEditToken('')
     // Initialize billing address fields
     setEditBillingStreet(client.billing_address?.street || '')
@@ -316,6 +329,13 @@ export function SettingsContent() {
     if (!managingClient) return
     if (!editCompanyName.trim()) {
       setManageError('Company name is required')
+      return
+    }
+
+    // Validate short_code format (2-3 uppercase letters)
+    const trimmedShortCode = editShortCode.trim().toUpperCase()
+    if (trimmedShortCode && !/^[A-Z]{2,3}$/.test(trimmedShortCode)) {
+      setManageError('Short code must be 2-3 uppercase letters')
       return
     }
 
@@ -339,6 +359,7 @@ export function SettingsContent() {
         body: JSON.stringify({
           company_name: editCompanyName.trim(),
           merchant_id: editShipBobUserId.trim() || null,
+          short_code: trimmedShortCode || null,
           billing_address: billingAddress,
         }),
       })
@@ -1057,6 +1078,19 @@ export function SettingsContent() {
                               The ShipBob user ID for API authentication. Can be added later.
                             </p>
                           </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="short_code">Short Code (for invoices)</Label>
+                            <Input
+                              id="short_code"
+                              placeholder="e.g., HS (2-3 letters)"
+                              value={newShortCode}
+                              onChange={(e) => setNewShortCode(e.target.value.toUpperCase())}
+                              maxLength={3}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              2-3 letter code for invoice numbers (e.g., JPHS-0001). Required for billing.
+                            </p>
+                          </div>
                           {addClientError && (
                             <div className="text-sm text-red-600 dark:text-red-400">
                               {addClientError}
@@ -1226,6 +1260,19 @@ export function SettingsContent() {
                             onChange={(e) => setEditShipBobUserId(e.target.value)}
                             placeholder="e.g., 386350"
                           />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit_short_code">Short Code (for invoices)</Label>
+                          <Input
+                            id="edit_short_code"
+                            value={editShortCode}
+                            onChange={(e) => setEditShortCode(e.target.value.toUpperCase())}
+                            placeholder="e.g., HS (2-3 letters)"
+                            maxLength={3}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            2-3 letter code for invoice numbers (e.g., JPHS-0001). Required for billing.
+                          </p>
                         </div>
 
                         {/* Billing Address */}

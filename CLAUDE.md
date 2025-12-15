@@ -16,6 +16,43 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 
 ---
 
+## CRITICAL: Systems Thinking Required
+
+**Never fix one component in isolation.** This codebase has deeply interconnected systems where changes ripple across multiple components. Before implementing ANY fix or feature:
+
+### Ask These Questions First
+
+1. **Data Dependencies**: What data does this component need? Where does that data come from? Is it guaranteed to exist when needed?
+2. **Timing Dependencies**: What runs first? What order do cron jobs execute? Can race conditions occur?
+3. **Attribution Chain**: How does data get attributed to a client? What happens if attribution fails at any step?
+4. **Scalability**: Will this approach work with 50-100 clients? Does it make O(clients) or O(clients * items) API calls?
+
+### Key Interdependencies
+
+| System | Depends On | Feeds Into |
+|--------|------------|------------|
+| Transaction Sync | shipments, returns, orders, receiving_orders, products tables | Billing calculations |
+| Return Sync | Transaction client_id OR proactive sync | Transaction attribution |
+| Order Sync | Client tokens | Return attribution (via Comment parsing) |
+| Shipment Sync | Client tokens | Transaction attribution |
+| Invoice Attribution | At least one sibling transaction having client_id | Unattributed transaction recovery |
+
+### Attribution Strategies (Order of Priority)
+
+1. **Direct lookup**: shipment_id → shipments table, return_id → returns table
+2. **Order reference**: Parse "Order 123456" from Comment → orders table lookup
+3. **Invoice siblings**: If one transaction on an invoice has client_id, all do
+4. **Proactive sync**: Sync ALL returns/orders for ALL clients to build lookup tables BEFORE transactions arrive
+
+### Anti-Patterns to Avoid
+
+- **Iterating through clients per item**: Making N API calls per unattributed item doesn't scale
+- **Chicken-and-egg logic**: Don't require client_id to sync data that's needed for attribution
+- **Assuming data exists**: Always handle the case where lookup tables are incomplete
+- **FC-based attribution**: Multiple clients share the same fulfillment centers - NEVER use FC to determine client ownership
+
+---
+
 ## Tech Stack
 
 | Layer | Choice |
@@ -85,6 +122,38 @@ See [CLAUDE.schema.md](CLAUDE.schema.md) for full schema.
 
 ---
 
+## Client IDs - ALWAYS VERIFY
+
+**CRITICAL: Never use hardcoded or memorized client_ids.** Client IDs can change or be misremembered. Always verify by querying the database.
+
+### How to Get Client IDs
+
+```javascript
+// Query the clients table to get current client IDs
+const { data: clients } = await supabase
+  .from('clients')
+  .select('id, name')
+  .order('name')
+
+// Or query transactions to see which client_ids have data
+const { data: txByClient } = await supabase
+  .from('transactions')
+  .select('client_id')
+  .in('invoice_id_sb', invoiceIds)
+  // Then group and count
+```
+
+### Current Clients (Dec 2025)
+
+| Name | client_id |
+|------|-----------|
+| Henson Shaving | `6b94c274-0446-4167-9d02-b998f8be59ad` |
+| Methyl-Life | `ca33dd0e-bd81-4ff7-88d1-18a3caf81d8e` |
+
+**Note:** This table may become stale. When in doubt, query the database directly.
+
+---
+
 ## Terminology
 
 | Database | UI | Notes |
@@ -116,6 +185,24 @@ CREATE FUNCTION my_func() ... SET search_path = public ...
 - NEVER query data from browser client
 - All data fetching via API routes with `service_role` key
 - Use UPSERT pattern for all sync operations
+
+### Date Formatting (Timezone Fix)
+When displaying date-only values (e.g., invoice dates), **DO NOT** use `new Date(dateString)` directly.
+
+**Problem:** `new Date("2025-01-15")` interprets the string as UTC midnight, which shifts back a day in US timezones.
+
+**Solution:** Use `formatDateFixed()` from `components/transactions/cell-renderers.tsx`:
+```typescript
+function formatDateFixed(dateStr: string): string {
+  if (!dateStr) return '-'
+  const datePart = dateStr.split('T')[0]
+  const [year, month, day] = datePart.split('-')
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`
+}
+```
+
+**When to use:** Any date-only display (invoice dates, billing dates, etc.) where you need "Jan 15, 2025" format without time component.
 
 ---
 

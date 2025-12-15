@@ -7,6 +7,7 @@ import { DateRange } from "react-day-picker"
 import { UNFULFILLED_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable } from "./transactions-table"
 import { UnfulfilledOrder, unfulfilledCellRenderers } from "./cell-renderers"
+import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 
 // Calculate age in days from order date (used for filtering)
 function calculateAge(orderDate: string): number {
@@ -34,6 +35,9 @@ interface UnfulfilledTableProps {
   // Pre-fetched data for instant initial render
   initialData?: UnfulfilledOrder[]
   initialTotalCount?: number
+  // Page size persistence
+  initialPageSize?: number
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function UnfulfilledTable({
@@ -50,6 +54,8 @@ export function UnfulfilledTable({
   // Pre-fetched data for instant initial render
   initialData,
   initialTotalCount = 0,
+  initialPageSize = 50,
+  onPageSizeChange,
 }: UnfulfilledTableProps) {
   // Use initial data if provided, otherwise start empty
   const hasInitialData = initialData && initialData.length > 0
@@ -61,6 +67,10 @@ export function UnfulfilledTable({
 
   // Track if we've used the initial data (to skip first fetch)
   const [usedInitialData, setUsedInitialData] = React.useState(hasInitialData)
+
+  // Shipment details drawer state
+  const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
 
   // Extract platform types from initial data on mount
   React.useEffect(() => {
@@ -77,9 +87,22 @@ export function UnfulfilledTable({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Pagination state
+  // Pagination state - use initialPageSize from props for persistence
   const [pageIndex, setPageIndex] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(50)
+  const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Wrap setPageSize to notify parent for persistence
+  const setPageSize = React.useCallback((size: number) => {
+    setPageSizeState(size)
+    onPageSizeChange?.(size)
+  }, [onPageSizeChange])
+
+  // Sync pageSize when initialPageSize changes (e.g., after localStorage loads)
+  React.useEffect(() => {
+    if (initialPageSize !== pageSize) {
+      setPageSizeState(initialPageSize)
+    }
+  }, [initialPageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent of loading state changes
   React.useEffect(() => {
@@ -229,6 +252,12 @@ export function UnfulfilledTable({
     }
   }, [pageSize])
 
+  // Handle row click to open shipment details drawer
+  const handleRowClick = React.useCallback((row: UnfulfilledOrder) => {
+    setSelectedShipmentId(row.shipmentId)
+    setDrawerOpen(true)
+  }, [])
+
   if (error) {
     return (
       <div className="px-4 lg:px-6">
@@ -241,21 +270,29 @@ export function UnfulfilledTable({
   }
 
   return (
-    <TransactionsTable
-      config={UNFULFILLED_TABLE_CONFIG}
-      data={data}
-      cellRenderers={unfulfilledCellRenderers}
-      getRowKey={(row) => row.id}
-      isLoading={isLoading}
-      isPageLoading={isPageLoading}
-      totalCount={totalCount}
-      pageIndex={pageIndex}
-      pageSize={pageSize}
-      onPageChange={handlePageChange}
-      userColumnVisibility={userColumnVisibility}
-      emptyMessage="No unfulfilled orders found."
-      itemName="orders"
-      integratedHeader={true}
-    />
+    <>
+      <TransactionsTable
+        config={UNFULFILLED_TABLE_CONFIG}
+        data={data}
+        cellRenderers={unfulfilledCellRenderers}
+        getRowKey={(row) => row.id}
+        isLoading={isLoading}
+        isPageLoading={isPageLoading}
+        totalCount={totalCount}
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        onPageChange={handlePageChange}
+        userColumnVisibility={userColumnVisibility}
+        emptyMessage="No unfulfilled orders found."
+        itemName="orders"
+        integratedHeader={true}
+        onRowClick={handleRowClick}
+      />
+      <ShipmentDetailsDrawer
+        shipmentId={selectedShipmentId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
+    </>
   )
 }

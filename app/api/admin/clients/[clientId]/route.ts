@@ -66,11 +66,23 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { company_name, merchant_id, billing_address } = body
+    const { company_name, merchant_id, short_code, billing_address } = body
+
+    // Validate short_code format if provided
+    const trimmedShortCode = short_code !== undefined
+      ? (short_code?.trim().toUpperCase() || null)
+      : undefined
+    if (trimmedShortCode && !/^[A-Z]{2,3}$/.test(trimmedShortCode)) {
+      return NextResponse.json(
+        { error: 'Short code must be 2-3 uppercase letters' },
+        { status: 400 }
+      )
+    }
 
     const client = await updateClient(clientId, {
       company_name: company_name?.trim(),
       merchant_id: merchant_id?.trim() || null,
+      short_code: trimmedShortCode,
       billing_address: billing_address || null,
     })
 

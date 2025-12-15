@@ -57,7 +57,7 @@ interface ShippedOrder {
   shippedDate: string | null
   deliveredDate: string | null
   itemCount: number
-  cost: number
+  charge: number
 }
 
 // Status badge colors
@@ -224,11 +224,11 @@ const columns: ColumnDef<ShippedOrder>[] = [
     ),
   },
   {
-    accessorKey: "cost",
-    header: "Cost",
+    accessorKey: "charge",
+    header: "Charge",
     cell: ({ row }) => {
-      const cost = row.getValue("cost") as number
-      return cost ? `$${cost.toFixed(2)}` : "-"
+      const charge = row.getValue("charge") as number
+      return charge ? `$${charge.toFixed(2)}` : "-"
     },
   },
 ]
@@ -345,11 +345,11 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
       <div className="px-4 lg:px-6">
         <div className="rounded-md border">
           <Table>
-            <TableHeader>
+            <TableHeader className="bg-[#fcfcfc] dark:bg-zinc-900">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
+                    <TableHead key={header.id} className="text-xs">
                       {header.isPlaceholder
                         ? null
                         : flexRender(
@@ -364,7 +364,7 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
             <TableBody>
               {table.getRowModel().rows?.length ? (
                 table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
+                  <TableRow key={row.id} className="border-b border-border/50">
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
                         {flexRender(

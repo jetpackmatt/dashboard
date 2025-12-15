@@ -541,47 +541,36 @@ export async function GET(request: NextRequest) {
         }, {})
       }
 
-      // Get billing data
-      const shipmentIdsForBilling = shipmentIds.map((id: string) => parseInt(id)).filter((id: number) => !isNaN(id))
-
-      if (shipmentIdsForBilling.length > 0) {
+      // Get billing data from transactions table by tracking_id
+      // Sum all billed_amount for each tracking_id (includes shipping + fees)
+      if (trackingIds.length > 0) {
         const { data: billingData } = await supabase
-          .from('billing_shipments')
-          .select(`
-            order_id,
-            fulfillment_cost,
-            surcharge,
-            pick_fees,
-            b2b_fees,
-            insurance
-          `)
-          .in('order_id', shipmentIdsForBilling)
+          .from('transactions')
+          .select('tracking_id, billed_amount, transaction_type')
+          .in('tracking_id', trackingIds)
 
         if (billingData) {
-          billingMap = billingData.reduce((acc: Record<string, { totalCost: number }>, bill: any) => {
-            const totalCost =
-              (parseFloat(bill.fulfillment_cost) || 0) +
-              (parseFloat(bill.surcharge) || 0) +
-              (parseFloat(bill.pick_fees) || 0) +
-              (parseFloat(bill.b2b_fees) || 0) +
-              (parseFloat(bill.insurance) || 0)
-            acc[bill.order_id.toString()] = { totalCost }
+          // Group by tracking_id and sum billed_amount (excluding refunds)
+          billingMap = billingData.reduce((acc: Record<string, { totalCost: number }>, tx: any) => {
+            if (tx.tracking_id && tx.transaction_type !== 'Refund') {
+              const amount = parseFloat(tx.billed_amount) || 0
+              if (!acc[tx.tracking_id]) {
+                acc[tx.tracking_id] = { totalCost: 0 }
+              }
+              acc[tx.tracking_id].totalCost += amount
+            }
             return acc
           }, {})
-        }
-      }
 
-      // Check for refunds in billing_shipments by tracking_id (shipment_id in billing table)
-      if (trackingIds.length > 0) {
-        const { data: refundData } = await supabase
-          .from('billing_shipments')
-          .select('shipment_id')
-          .eq('transaction_type', 'Refund')
-          .in('shipment_id', trackingIds)
-
-        if (refundData) {
-          refundedTrackingIds = new Set(refundData.map((r: any) => r.shipment_id))
-          console.log(`[Refund Check] Found ${refundedTrackingIds.size} refunded shipments`)
+          // Also track refunded tracking IDs
+          for (const tx of billingData) {
+            if (tx.transaction_type === 'Refund' && tx.tracking_id) {
+              refundedTrackingIds.add(tx.tracking_id)
+            }
+          }
+          if (refundedTrackingIds.size > 0) {
+            console.log(`[Refund Check] Found ${refundedTrackingIds.size} refunded shipments`)
+          }
         }
       }
     }
@@ -594,7 +583,8 @@ export async function GET(request: NextRequest) {
       // Order data comes from the JOIN (nested under 'orders' key)
       const order = row.orders || null
       let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled || row.event_intransit, row.event_delivered)
-      const billing = billingMap[row.shipment_id]
+      // Look up billing by tracking_id (transactions table is keyed by tracking_id)
+      const billing = row.tracking_id ? billingMap[row.tracking_id] : null
 
       // Override status to "Refunded" if this shipment has a refund in billing
       const isRefunded = row.tracking_id && refundedTrackingIds.has(row.tracking_id)
@@ -610,7 +600,7 @@ export async function GET(request: NextRequest) {
         customerName: row.recipient_name || order?.customer_name || 'Unknown',
         orderType: order?.order_type || 'DTC',
         qty: itemCounts[row.shipment_id] || 1,
-        cost: billing?.totalCost || 0,
+        charge: billing?.totalCost || 0,  // Sum of billed_amount from transactions table
         importDate: order?.order_import_date || null,
         labelCreated: row.event_labeled || null,  // When label was created
         slaDate: row.estimated_fulfillment_date || null,

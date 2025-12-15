@@ -6,6 +6,7 @@ export interface ClientInfo {
   id: string
   company_name: string
   shipbob_user_id: string | null
+  short_code: string | null
   has_token: boolean
 }
 

@@ -14,15 +14,24 @@ const EMPTY_STATUS_FILTER: string[] = []
 interface AdditionalServicesTableProps {
   clientId: string
   statusFilter?: string[]
+  feeTypeFilter?: string
   dateRange?: DateRange
+  searchQuery?: string
   userColumnVisibility?: Record<string, boolean>
+  // Page size persistence
+  initialPageSize?: number
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function AdditionalServicesTable({
   clientId,
   statusFilter,
+  feeTypeFilter,
   dateRange,
+  searchQuery = "",
   userColumnVisibility = {},
+  initialPageSize = DEFAULT_PAGE_SIZE,
+  onPageSizeChange,
 }: AdditionalServicesTableProps) {
   // Use stable reference for empty array
   const effectiveStatusFilter = statusFilter ?? EMPTY_STATUS_FILTER
@@ -31,7 +40,20 @@ export function AdditionalServicesTable({
   const [isPageLoading, setIsPageLoading] = React.useState(false)
   const [totalCount, setTotalCount] = React.useState(0)
   const [pageIndex, setPageIndex] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Wrap setPageSize to notify parent for persistence
+  const setPageSize = React.useCallback((size: number) => {
+    setPageSizeState(size)
+    onPageSizeChange?.(size)
+  }, [onPageSizeChange])
+
+  // Sync pageSize when initialPageSize changes (e.g., after localStorage loads)
+  React.useEffect(() => {
+    if (initialPageSize !== pageSize) {
+      setPageSizeState(initialPageSize)
+    }
+  }, [initialPageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch data from API
   const fetchData = React.useCallback(async (page: number, size: number, isInitial: boolean = false) => {
@@ -61,6 +83,16 @@ export function AdditionalServicesTable({
         params.set('status', effectiveStatusFilter.join(','))
       }
 
+      // Add fee type filter
+      if (feeTypeFilter && feeTypeFilter !== 'all') {
+        params.set('feeType', feeTypeFilter)
+      }
+
+      // Add search query
+      if (searchQuery) {
+        params.set('search', searchQuery)
+      }
+
       const response = await fetch(`/api/data/billing/additional-services?${params.toString()}`)
 
       if (!response.ok) {
@@ -78,13 +110,13 @@ export function AdditionalServicesTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, dateRange, effectiveStatusFilter])
+  }, [clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery])
 
   // Initial load
   React.useEffect(() => {
     setPageIndex(0)
     fetchData(0, pageSize, true)
-  }, [clientId, dateRange, effectiveStatusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle page change
   const handlePageChange = (newPageIndex: number, newPageSize: number) => {

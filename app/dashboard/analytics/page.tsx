@@ -550,7 +550,7 @@ export default function AnalyticsPage() {
   return (
     <>
       <SiteHeader sectionName="Analytics" />
-      <div className="flex flex-1 flex-col overflow-x-clip">
+      <div className="flex flex-1 flex-col overflow-x-clip bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col w-full">
           <div className="flex flex-col gap-4 w-full px-4 lg:px-6">
             {/* Tabs for Different Reports */}

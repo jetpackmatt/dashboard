@@ -100,18 +100,49 @@
 
 ## Transaction Attribution Logic
 
-When syncing transactions with parent token, `client_id` is determined by:
+### CRITICAL: Chicken-and-Egg Problem
 
-| reference_type | Attribution Strategy |
-|----------------|---------------------|
-| **Shipment** | `reference_id` → `shipments.shipment_id` → `client_id` |
-| **FC** | Parse InventoryId from `{FC_ID}-{InventoryId}-{LocationType}` → `products.variants[].inventory.inventory_id` |
-| **Return** | `reference_id` → `returns.return_id` → `client_id` |
-| **Default** | Route by `transaction_fee`: Payment → ShipBob Payments, CC Fee → Jetpack Costs |
-| **WRO/URO** | Currently unattributed (manual review needed) |
-| **TicketNumber** | Currently unattributed |
+The biggest challenge in transaction sync is the **attribution chicken-and-egg problem**:
 
-System clients (in `clients` table with `is_internal=true`):
+1. **Transaction Sync** uses parent token → gets ALL merchants' transactions → needs lookup tables to attribute `client_id`
+2. **Lookup tables** (shipments, returns, orders) → built from child token syncs → require knowing which client to sync
+3. **New Return transaction** arrives → return not in `returns` table yet → can't attribute → stays `client_id: null`
+
+**Solutions implemented:**
+1. **Direct lookup**: Works when data already exists in lookup tables
+2. **Order reference parsing**: Parse "Order 123456" from Comment → lookup in orders table
+3. **Invoice sibling attribution**: If ANY transaction on same invoice has client_id, use that for all
+4. **Proactive sync**: Sync returns/orders for ALL clients (not just based on transactions)
+
+### Attribution Priority Order
+
+When syncing transactions with parent token, `client_id` is determined in this order:
+
+| Priority | reference_type | Attribution Strategy |
+|----------|----------------|---------------------|
+| 1 | **Shipment** | `reference_id` → `shipments.shipment_id` → `client_id` |
+| 2 | **FC** | Parse InventoryId from `{FC_ID}-{InventoryId}-{LocationType}` → `products.variants[].inventory.inventory_id` |
+| 3a | **Return** | `reference_id` → `returns.return_id` → `client_id` |
+| 3b | **Return** | (fallback) Parse "Order XXXXX" from Comment → `orders.shipbob_order_id` → `client_id` |
+| 4 | **WRO/URO** | `reference_id` → `receiving_orders.shipbob_receiving_id` → `client_id` |
+| 5 | **Default** | Route by `transaction_fee`: Payment → ShipBob Payments, CC Fee → Jetpack Costs |
+| 6 | **Invoice Sibling** | If `invoice_id_sb` exists, find any sibling transaction with `client_id` |
+| 7 | **TicketNumber** | Parse client name from Comment (fuzzy matching) |
+
+### Why NOT to Iterate Through Clients
+
+**Anti-pattern:** For each unattributed transaction, try each client's token until one works.
+
+**Why it doesn't scale:**
+- With 50 clients × 20 unattributed transactions = 1,000 API calls
+- API rate limit is 150/min per token, but creates unnecessary load
+- Sequential iteration adds latency
+
+**Correct approach:** Build complete lookup tables FIRST (sync all returns for all clients), THEN attribute.
+
+### System Clients
+
+In `clients` table with `is_internal=true`:
 - **ShipBob Payments**: Holds ACH payment transactions
 - **Jetpack Costs**: Holds parent-level fees (CC processing, etc.)
 

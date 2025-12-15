@@ -787,12 +787,14 @@ export async function syncClient(
     for (const order of apiOrders) {
       if (!order.shipments) continue
 
-      // Build a lookup of order.products by product ID to get quantity
+      // Build lookups of order.products by product ID and SKU to get quantity
       // (shipment.products doesn't include quantity in the API response)
-      const orderProductQuantities: Record<number, number> = {}
+      const orderProductQuantitiesById: Record<number, number> = {}
+      const orderProductQuantitiesBySku: Record<string, number> = {}
       for (const p of order.products || []) {
-        if (p.id && p.quantity) {
-          orderProductQuantities[p.id] = p.quantity
+        if (p.quantity) {
+          if (p.id) orderProductQuantitiesById[p.id] = p.quantity
+          if (p.sku) orderProductQuantitiesBySku[p.sku] = p.quantity
         }
       }
 
@@ -802,7 +804,10 @@ export async function syncClient(
         for (const product of shipment.products) {
           const inventories = product.inventory || [{}]
           // Get quantity from order.products lookup (since shipment.products doesn't have it)
-          const orderQuantity = product.id ? orderProductQuantities[product.id] : null
+          // Priority: product ID match > SKU match
+          const orderQuantityById = product.id ? orderProductQuantitiesById[product.id] : null
+          const orderQuantityBySku = product.sku ? orderProductQuantitiesBySku[product.sku] : null
+          const orderQuantity = orderQuantityById ?? orderQuantityBySku
 
           for (const inv of inventories) {
             shipmentItemRecords.push({
@@ -828,6 +833,145 @@ export async function syncClient(
     const shipmentItemResult = await batchInsert(supabase, 'shipment_items', shipmentItemRecords)
     result.shipmentItemsInserted = shipmentItemResult.success
     result.errors.push(...shipmentItemResult.errors)
+
+    // STEP 5b: Backfill missing quantities from order_items (database fallback)
+    // This handles cases where API didn't provide quantity but order_items has it
+    if (shipmentIds.length > 0) {
+      // Find shipment_items with NULL quantity for these shipments
+      const { data: missingQtyItems } = await supabase
+        .from('shipment_items')
+        .select('id, shipment_id, shipbob_product_id')
+        .in('shipment_id', shipmentIds)
+        .is('quantity', null)
+        .not('shipbob_product_id', 'is', null)
+
+      if (missingQtyItems && missingQtyItems.length > 0) {
+        // Get order_ids for these shipments
+        const { data: shipmentOrders } = await supabase
+          .from('shipments')
+          .select('shipment_id, order_id')
+          .in('shipment_id', shipmentIds)
+
+        const shipmentToOrderId: Record<string, string> = {}
+        for (const s of shipmentOrders || []) {
+          shipmentToOrderId[s.shipment_id] = s.order_id
+        }
+
+        // Get order_items quantities for matching product IDs
+        const orderIds = [...new Set(Object.values(shipmentToOrderId))]
+        const productIds = [...new Set(missingQtyItems.map((i: { id: string; shipment_id: string; shipbob_product_id: number }) => i.shipbob_product_id))]
+
+        const { data: orderItemsQty } = await supabase
+          .from('order_items')
+          .select('order_id, shipbob_product_id, quantity')
+          .in('order_id', orderIds)
+          .in('shipbob_product_id', productIds)
+          .not('quantity', 'is', null)
+
+        // Build lookup: order_id + product_id -> quantity
+        const qtyLookup: Record<string, number> = {}
+        for (const oi of orderItemsQty || []) {
+          qtyLookup[`${oi.order_id}:${oi.shipbob_product_id}`] = oi.quantity
+        }
+
+        // Update items that have a matching quantity
+        type MissingQtyItem = { id: string; shipment_id: string; shipbob_product_id: number }
+        const updates = missingQtyItems
+          .map((item: MissingQtyItem) => {
+            const orderId = shipmentToOrderId[item.shipment_id]
+            const qty = qtyLookup[`${orderId}:${item.shipbob_product_id}`]
+            return qty !== undefined ? { id: item.id, quantity: qty } : null
+          })
+          .filter((u: { id: string; quantity: number } | null): u is { id: string; quantity: number } => u !== null)
+
+        if (updates.length > 0) {
+          // Batch update in chunks
+          for (let i = 0; i < updates.length; i += 50) {
+            const chunk = updates.slice(i, i + 50)
+            for (const upd of chunk) {
+              await supabase
+                .from('shipment_items')
+                .update({ quantity: upd.quantity })
+                .eq('id', upd.id)
+            }
+          }
+        }
+      }
+    }
+
+    // STEP 5c: Create shipment_items from order_items for shipments with NO items
+    // This handles archived shipments where ShipBob API returns no products data
+    if (shipmentIds.length > 0) {
+      // Find shipments that have zero items
+      const { data: itemCounts } = await supabase
+        .from('shipment_items')
+        .select('shipment_id')
+        .in('shipment_id', shipmentIds)
+
+      const shipmentsWithItems = new Set((itemCounts || []).map((i: { shipment_id: string }) => i.shipment_id))
+      const shipmentsWithoutItems = shipmentIds.filter(id => !shipmentsWithItems.has(id))
+
+      if (shipmentsWithoutItems.length > 0) {
+        // Get order_ids for shipments without items
+        const { data: shipmentOrders } = await supabase
+          .from('shipments')
+          .select('shipment_id, order_id')
+          .in('shipment_id', shipmentsWithoutItems)
+
+        const shipmentToOrderId: Record<string, string> = {}
+        for (const s of shipmentOrders || []) {
+          if (s.order_id) shipmentToOrderId[s.shipment_id] = s.order_id
+        }
+
+        const orderIds = [...new Set(Object.values(shipmentToOrderId))]
+        if (orderIds.length > 0) {
+          // Get order_items for these orders
+          const { data: orderItems } = await supabase
+            .from('order_items')
+            .select('order_id, sku, quantity, shipbob_product_id, name')
+            .in('order_id', orderIds)
+
+          // Build order_id -> items lookup
+          const orderItemsLookup: Record<string, Array<{sku: string | null, quantity: number | null, shipbob_product_id: number | null, name: string | null}>> = {}
+          for (const oi of orderItems || []) {
+            if (!orderItemsLookup[oi.order_id]) orderItemsLookup[oi.order_id] = []
+            orderItemsLookup[oi.order_id].push({
+              sku: oi.sku,
+              quantity: oi.quantity,
+              shipbob_product_id: oi.shipbob_product_id,
+              name: oi.name
+            })
+          }
+
+          // Create shipment_items from order_items
+          const newItemRecords: Record<string, unknown>[] = []
+          for (const shipmentId of shipmentsWithoutItems) {
+            const orderId = shipmentToOrderId[shipmentId]
+            const items = orderId ? orderItemsLookup[orderId] : null
+            if (!items || items.length === 0) continue
+
+            for (const item of items) {
+              // Use SKU as name if name is missing
+              const itemName = item.name || item.sku || 'Unknown Product'
+              newItemRecords.push({
+                client_id: clientId,
+                merchant_id: merchantId,
+                shipment_id: shipmentId,
+                shipbob_product_id: item.shipbob_product_id,
+                sku: item.sku,
+                name: itemName,
+                quantity: item.quantity,
+              })
+            }
+          }
+
+          if (newItemRecords.length > 0) {
+            const fallbackResult = await batchInsert(supabase, 'shipment_items', newItemRecords)
+            result.errors.push(...fallbackResult.errors)
+          }
+        }
+      }
+    }
 
     // STEP 6: Delete + Insert Cartons
     await batchDelete(supabase, 'shipment_cartons', 'shipment_id', shipmentIds)
@@ -1422,6 +1566,43 @@ export async function syncAllTransactions(
     }
     console.log(`[TransactionSync] Built WRO lookup with ${Object.keys(wroLookup).length} WROs`)
 
+    // Build order_id -> client_id lookup from orders table
+    // Used for Return transactions that reference an order in additional_details.Comment
+    console.log('[TransactionSync] Building orders lookup from orders...')
+    const orderLookup: Record<string, string> = {}
+    let orderLastId: string | null = null
+
+    while (true) {
+      let query = supabase
+        .from('orders')
+        .select('id, shipbob_order_id, client_id')
+        .order('id', { ascending: true })
+        .limit(pageSize)
+
+      if (orderLastId) {
+        query = query.gt('id', orderLastId)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('[TransactionSync] Error fetching orders:', error.message)
+        break
+      }
+
+      if (!data || data.length === 0) break
+
+      for (const o of data) {
+        if (o.shipbob_order_id && o.client_id) {
+          orderLookup[o.shipbob_order_id.toString()] = o.client_id
+        }
+        orderLastId = o.id
+      }
+
+      if (data.length < pageSize) break
+    }
+    console.log(`[TransactionSync] Built orders lookup with ${Object.keys(orderLookup).length} orders`)
+
     // Fetch ALL transactions by date range
     console.log(`[TransactionSync] Fetching transactions from ${startDate.toISOString()} to ${endDate.toISOString()}...`)
 
@@ -1517,9 +1698,23 @@ export async function syncAllTransactions(
         }
       }
 
-      // Strategy 3: Return - lookup via returns table
+      // Strategy 3: Return - lookup via returns table, then order reference
       else if (tx.reference_type === 'Return') {
+        // 3a: Direct lookup in returns table
         clientId = returnLookup[tx.reference_id] || null
+
+        // 3b: Fallback - Parse order ID from additional_details.Comment
+        // Format: "Return to sender fee for Order 307909309"
+        if (!clientId && tx.additional_details) {
+          const comment = (tx.additional_details as { Comment?: string }).Comment
+          if (comment) {
+            const match = comment.match(/Order\s+(\d+)/i)
+            if (match) {
+              const orderId = match[1]
+              clientId = orderLookup[orderId] || null
+            }
+          }
+        }
       }
 
       // Strategy 4: Default - route by transaction_fee
@@ -1605,7 +1800,102 @@ export async function syncAllTransactions(
     result.errors.push(...txResult.errors)
 
     console.log(
-      `[TransactionSync] Done: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed`
+      `[TransactionSync] Initial pass: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed`
+    )
+
+    // ==========================================
+    // SECOND PASS: Invoice-based attribution
+    // ==========================================
+    // For transactions that couldn't be attributed via direct lookups,
+    // check if other transactions on the same invoice HAVE a client_id.
+    // If so, use that client_id (all transactions on same invoice belong to same client).
+    // This is scalable because it's purely database-driven, no API calls needed.
+
+    const unattributedWithInvoice = txRecords.filter(
+      (tx) => tx.client_id === null && tx.invoice_id_sb !== null
+    )
+
+    if (unattributedWithInvoice.length > 0) {
+      console.log(`[TransactionSync] Invoice attribution: ${unattributedWithInvoice.length} unattributed with invoice_id`)
+
+      // Group by invoice_id_sb
+      const byInvoice: Record<number, typeof unattributedWithInvoice> = {}
+      for (const tx of unattributedWithInvoice) {
+        const invoiceId = tx.invoice_id_sb as number
+        if (!byInvoice[invoiceId]) byInvoice[invoiceId] = []
+        byInvoice[invoiceId].push(tx)
+      }
+
+      const invoiceIds = Object.keys(byInvoice).map(Number)
+      console.log(`[TransactionSync] Checking ${invoiceIds.length} invoices for attributed siblings...`)
+
+      // Query for attributed transactions on these invoices
+      // We do this in batches to avoid query size limits
+      const INVOICE_BATCH_SIZE = 100
+      const invoiceAttribution: Record<number, { client_id: string; merchant_id: string | null }> = {}
+
+      for (let i = 0; i < invoiceIds.length; i += INVOICE_BATCH_SIZE) {
+        const batchIds = invoiceIds.slice(i, i + INVOICE_BATCH_SIZE)
+
+        const { data: attributedSiblings } = await supabase
+          .from('transactions')
+          .select('invoice_id_sb, client_id, merchant_id')
+          .in('invoice_id_sb', batchIds)
+          .not('client_id', 'is', null)
+
+        // Build lookup: invoice_id -> { client_id, merchant_id }
+        for (const sibling of attributedSiblings || []) {
+          if (sibling.invoice_id_sb && sibling.client_id && !invoiceAttribution[sibling.invoice_id_sb]) {
+            invoiceAttribution[sibling.invoice_id_sb] = {
+              client_id: sibling.client_id,
+              merchant_id: sibling.merchant_id,
+            }
+          }
+        }
+      }
+
+      // Update unattributed transactions using invoice lookup
+      const updates: { transaction_id: string; client_id: string; merchant_id: string | null }[] = []
+      for (const [invoiceIdStr, txs] of Object.entries(byInvoice)) {
+        const invoiceId = Number(invoiceIdStr)
+        const attr = invoiceAttribution[invoiceId]
+        if (attr) {
+          for (const tx of txs) {
+            updates.push({
+              transaction_id: tx.transaction_id,
+              client_id: attr.client_id,
+              merchant_id: attr.merchant_id,
+            })
+          }
+        }
+      }
+
+      if (updates.length > 0) {
+        console.log(`[TransactionSync] Invoice attribution: Updating ${updates.length} transactions...`)
+
+        // Batch update
+        for (const upd of updates) {
+          const { error } = await supabase
+            .from('transactions')
+            .update({ client_id: upd.client_id, merchant_id: upd.merchant_id })
+            .eq('transaction_id', upd.transaction_id)
+
+          if (error) {
+            result.errors.push(`Invoice attribution update failed: ${error.message}`)
+          } else {
+            result.attributed++
+            result.unattributed--
+          }
+        }
+
+        console.log(`[TransactionSync] Invoice attribution: ${updates.length} transactions attributed via invoice siblings`)
+      } else {
+        console.log('[TransactionSync] Invoice attribution: No invoice siblings found for attribution')
+      }
+    }
+
+    console.log(
+      `[TransactionSync] Final: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed`
     )
 
     result.success = result.errors.length === 0
@@ -1961,11 +2251,121 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
       }
     }
 
-    // Get return IDs from transactions
+    // ==========================================
+    // PROACTIVE SYNC: Fetch recent returns for ALL clients
+    // ==========================================
+    // This ensures returns are in the database BEFORE transactions reference them,
+    // solving the chicken-and-egg problem where transactions can't be attributed
+    // because the return doesn't exist in our returns table yet.
+    //
+    // This is O(clients) API calls, not O(clients * unattributed_returns).
+
+    console.log(`[ReturnsSync] Proactive sync: Fetching recent returns for ${Object.keys(clientLookup).length} clients`)
+
+    for (const [clientId, client] of Object.entries(clientLookup)) {
+      try {
+        // Fetch recent returns for this client (last 60 days, paginated)
+        let cursor: string | null = null
+        let totalFetched = 0
+        const returnRecords: Array<Record<string, unknown>> = []
+
+        do {
+          let url = `https://api.shipbob.com/2025-07/return?Limit=250`
+          if (cursor) url += `&cursor=${cursor}`
+
+          const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${client.token}` }
+          })
+
+          if (!res.ok) {
+            if (res.status !== 404) {
+              console.log(`[ReturnsSync] ${client.name}: API error ${res.status}`)
+            }
+            break
+          }
+
+          const data = await res.json()
+          const returns = data.items || []
+          if (returns.length === 0) break
+
+          for (const ret of returns) {
+            returnRecords.push({
+              client_id: clientId,
+              merchant_id: client.merchantId,
+              shipbob_return_id: ret.id,
+              reference_id: ret.reference_id || null,
+              status: ret.status || null,
+              return_type: ret.return_type || null,
+              tracking_number: ret.tracking_number || null,
+              shipment_tracking_number: ret.tracking_number || null,
+              original_shipment_id: ret.original_shipment_id || null,
+              store_order_id: ret.store_order_id || null,
+              invoice_amount: ret.invoice_amount || null,
+              invoice_currency: 'USD',
+              fc_id: ret.fulfillment_center?.id || null,
+              fc_name: ret.fulfillment_center?.name || null,
+              channel_id: ret.channel?.id || null,
+              channel_name: ret.channel?.name || null,
+              insert_date: ret.insert_date || null,
+              awaiting_arrival_date: ret.status === 'AwaitingArrival' ? ret.insert_date : null,
+              arrived_date: ret.arrived_date || null,
+              processing_date: ret.processing_date || null,
+              completed_date: ret.completed_date || null,
+              cancelled_date: ret.cancelled_date || null,
+              status_history: ret.status_history || null,
+              inventory: ret.inventory || null,
+              synced_at: new Date().toISOString(),
+            })
+          }
+
+          totalFetched += returns.length
+
+          // Extract cursor from next URL if present
+          if (data.next) {
+            const nextUrl = new URL(data.next)
+            cursor = nextUrl.searchParams.get('cursor')
+          } else {
+            cursor = null
+          }
+
+          // Limit to ~500 returns per client per run to avoid rate limits
+          if (totalFetched >= 500) break
+
+        } while (cursor)
+
+        if (returnRecords.length > 0) {
+          // Batch upsert
+          const { error } = await supabase
+            .from('returns')
+            .upsert(returnRecords, { onConflict: 'shipbob_return_id' })
+
+          if (error) {
+            result.errors.push(`${client.name}: Upsert error - ${error.message}`)
+          } else {
+            result.synced += returnRecords.length
+            console.log(`[ReturnsSync] ${client.name}: synced ${returnRecords.length} returns`)
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 100)) // Small delay between clients
+
+      } catch (e) {
+        result.errors.push(`${client.name}: ${e instanceof Error ? e.message : 'Unknown error'}`)
+      }
+    }
+
+    // ==========================================
+    // TRANSACTION-BASED SYNC: Fetch specific missing returns
+    // ==========================================
+    // For transactions that reference returns not caught by proactive sync
+    // (older returns or ones created between syncs), fetch them individually.
+
+    // Get return IDs from transactions that have client_id attributed
     const { data: returnTxs } = await supabase
       .from('transactions')
       .select('reference_id, client_id')
       .eq('reference_type', 'Return')
+      .not('client_id', 'is', null)
 
     // Group by client
     const returnsByClient: Record<string, Set<number>> = {}
@@ -1977,7 +2377,7 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
       if (returnId > 0) returnsByClient[clientId].add(returnId)
     }
 
-    // Process each client
+    // Process each client - only fetch returns missing from proactive sync
     for (const [clientId, returnIds] of Object.entries(returnsByClient)) {
       const client = clientLookup[clientId]
       const returnIdArray = Array.from(returnIds)
@@ -1997,7 +2397,7 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
 
       if (toSync.length === 0) continue
 
-      console.log(`[ReturnsSync] ${client.name}: syncing ${toSync.length} missing returns`)
+      console.log(`[ReturnsSync] ${client.name}: fetching ${toSync.length} specific missing returns`)
 
       // Fetch and upsert each missing return
       const records: Array<Record<string, unknown>> = []
@@ -2057,6 +2457,72 @@ export async function syncReturns(): Promise<ReturnsSyncResult> {
         } else {
           result.synced += records.length
         }
+      }
+    }
+
+    // ==========================================
+    // ATTRIBUTION FIX: Update unattributed transactions from returns table
+    // ==========================================
+    // Now that we have a complete returns table from proactive sync,
+    // update any unattributed Return transactions using the returns table lookup.
+    // This is O(1) per transaction (database lookup), not O(clients) API calls.
+
+    const { data: unattributedTxs } = await supabase
+      .from('transactions')
+      .select('transaction_id, reference_id')
+      .eq('reference_type', 'Return')
+      .is('client_id', null)
+
+    if (unattributedTxs && unattributedTxs.length > 0) {
+      console.log(`[ReturnsSync] Found ${unattributedTxs.length} unattributed return transactions, checking returns table...`)
+
+      // Get return IDs
+      const returnIds = unattributedTxs
+        .map((tx: { reference_id: string }) => Number(tx.reference_id))
+        .filter((id: number) => id > 0)
+
+      // Look up client_id from returns table
+      const { data: returns } = await supabase
+        .from('returns')
+        .select('shipbob_return_id, client_id, merchant_id')
+        .in('shipbob_return_id', returnIds.slice(0, 1000))
+
+      // Build lookup
+      const returnClientMap: Record<number, { client_id: string; merchant_id: string | null }> = {}
+      for (const ret of returns || []) {
+        if (ret.client_id) {
+          returnClientMap[ret.shipbob_return_id] = {
+            client_id: ret.client_id,
+            merchant_id: ret.merchant_id,
+          }
+        }
+      }
+
+      // Update transactions
+      let attributed = 0
+      for (const tx of unattributedTxs) {
+        const returnId = Number(tx.reference_id)
+        const returnInfo = returnClientMap[returnId]
+
+        if (returnInfo) {
+          const { error } = await supabase
+            .from('transactions')
+            .update({ client_id: returnInfo.client_id, merchant_id: returnInfo.merchant_id })
+            .eq('transaction_id', tx.transaction_id)
+
+          if (!error) {
+            attributed++
+          }
+        }
+      }
+
+      if (attributed > 0) {
+        console.log(`[ReturnsSync] Attributed ${attributed} return transactions from returns table`)
+      }
+
+      const stillUnattributed = unattributedTxs.length - attributed
+      if (stillUnattributed > 0) {
+        console.log(`[ReturnsSync] ${stillUnattributed} return transactions still unattributed (returns not in table yet, will be caught by invoice-based attribution)`)
       }
     }
 
@@ -2152,12 +2618,12 @@ export async function syncReceivingOrders(minutesBack: number = 60): Promise<Rec
       return result
     }
 
-    // Calculate date range
+    // Calculate date range - use LastUpdateStartDate to catch status changes, not just new WROs
     const endDate = new Date()
     const startDate = new Date()
     startDate.setMinutes(startDate.getMinutes() - minutesBack)
 
-    console.log(`[ReceivingSync] Fetching WROs from ${startDate.toISOString()} to ${endDate.toISOString()}`)
+    console.log(`[ReceivingSync] Fetching updated WROs from ${startDate.toISOString()} to ${endDate.toISOString()}`)
 
     // Process each client
     for (const client of clients) {
@@ -2170,10 +2636,10 @@ export async function syncReceivingOrders(minutesBack: number = 60): Promise<Rec
       }
 
       try {
-        // Fetch WROs from API with date filter
+        // Fetch WROs from API with LastUpdate date filter to catch status changes
         const params = new URLSearchParams({
-          InsertStartDate: startDate.toISOString(),
-          InsertEndDate: endDate.toISOString(),
+          LastUpdateStartDate: startDate.toISOString(),
+          LastUpdateEndDate: endDate.toISOString(),
           Limit: '100',
         })
 

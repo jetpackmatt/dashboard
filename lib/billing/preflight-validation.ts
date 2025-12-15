@@ -221,7 +221,7 @@ export async function runPreflightValidation(
     for (let i = 0; i < orderIds.length; i += 50) {
       const { data } = await supabase
         .from('orders')
-        .select('id, customer_name, zip_code, city, state, country, store_order_id, channel_name')
+        .select('id, customer_name, zip_code, city, state, country, store_order_id, channel_name, order_type')
         .in('id', orderIds.slice(i, i + 50))
 
       if (data) ordersData.push(...data)
@@ -369,6 +369,7 @@ export async function runPreflightValidation(
   const returnsDataMap = new Map(returnsData.map(r => [String(r.shipbob_return_id), r]))
 
   // ===== 8. Get RECEIVING (WRO) transactions (with pagination) =====
+  // Only include actual receiving fees - exclude "Inventory Placement Program Fee" which goes to Additional Services
   const receivingTransactions: Record<string, unknown>[] = []
   let receivingOffset = 0
   let hasMoreReceiving = true
@@ -379,6 +380,7 @@ export async function runPreflightValidation(
       .select('id, reference_id, fee_type, transaction_type, charge_date')
       .eq('client_id', clientId)
       .eq('reference_type', 'WRO')
+      .like('fee_type', 'WRO%')  // Only actual WRO fees (WRO Receiving Fee, etc.)
       .in('invoice_id_sb', invoiceIds)
       .range(receivingOffset, receivingOffset + PAGE_SIZE - 1)
 
@@ -437,7 +439,24 @@ export async function runPreflightValidation(
       withEventLabeled: shipmentsData.filter(s => s.event_labeled).length,
       withEventCreated: shipmentsData.filter(s => s.event_created).length,
       // Products sold: both name and quantity required (quantity falls back to order_items)
-      withProductsSold: [...shipmentItemsMap.values()].filter(v => v.hasName && v.hasQuantity).length,
+      // Exception: B2B orders and manual orders
+      withProductsSold: shipmentsData.filter(s => {
+        const sid = String(s.shipment_id)
+        const items = shipmentItemsMap.get(sid)
+        const order = orderDataMap.get(String(s.order_id))
+        const o = order as { order_type?: string; store_order_id?: string; channel_name?: string } | undefined
+
+        // B2B orders don't have quantity data - skip validation
+        if (o?.order_type === 'B2B') return true
+
+        // Manual orders (no store_order_id and ShipBob Default/N/A/null channel) - skip validation
+        const isManualOrder = !o?.store_order_id &&
+          (!o?.channel_name || o.channel_name === 'ShipBob Default' || o.channel_name === 'N/A')
+        if (isManualOrder) return true
+
+        // Normal orders: require both name and quantity
+        return items?.hasName && items?.hasQuantity
+      }).length,
       withCustomerName: shipmentsData.filter(s => {
         const order = orderDataMap.get(String(s.order_id))
         return order && (order as { customer_name?: string }).customer_name
@@ -451,14 +470,16 @@ export async function runPreflightValidation(
         if (o.country && o.country !== 'US') return true
         return !!o.zip_code
       }).length,
-      // store_order_id: only required for non-ShipBob Default orders
-      // Orders from "ShipBob Default" channel are manually created and don't have external store IDs
+      // store_order_id: only required for DTC orders from external channels
+      // Manual orders (ShipBob Default, N/A channels) and B2B orders don't have external store IDs
       withStoreOrderId: shipmentsData.filter(s => {
         const order = orderDataMap.get(String(s.order_id))
         if (!order) return false
-        const o = order as { store_order_id?: string; channel_name?: string }
-        // ShipBob Default orders don't have store_order_id - this is expected
-        if (o.channel_name === 'ShipBob Default') return true
+        const o = order as { store_order_id?: string; channel_name?: string; order_type?: string }
+        // B2B orders don't have external store_order_id - this is expected
+        if (o.order_type === 'B2B') return true
+        // ShipBob Default and N/A channel orders are manually created - no external store ID
+        if (o.channel_name === 'ShipBob Default' || o.channel_name === 'N/A' || !o.channel_name) return true
         return !!o.store_order_id
       }).length,
     },

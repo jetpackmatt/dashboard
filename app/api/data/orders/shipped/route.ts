@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
         shippedDate: shipment.shipped_date,
         deliveredDate: shipment.event_delivered,
         itemCount: itemCounts[order.id] || 1,
-        cost: shipment.invoice_amount || 0,
+        charge: shipment.invoice_amount || 0,  // TODO: Should use billed_amount from transactions table
       }
     })
 

@@ -60,6 +60,9 @@ export interface TransactionsTableProps<T> {
 
   // EXPERIMENTAL: Integrate table header into page header (removes border, matches header bg)
   integratedHeader?: boolean
+
+  // Row click handler - when provided, rows become clickable
+  onRowClick?: (row: T) => void
 }
 
 // ============================================
@@ -74,6 +77,7 @@ interface TableRowProps<T> {
   getColumnWidth: (columnId: string) => string
   isPageLoading: boolean
   integratedHeader?: boolean
+  onRowClick?: (row: T) => void
 }
 
 // Generic memoized row component to prevent unnecessary re-renders
@@ -85,11 +89,19 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
   getColumnWidth,
   isPageLoading,
   integratedHeader = false,
+  onRowClick,
 }: TableRowProps<T>) {
+  const handleClick = React.useCallback(() => {
+    if (onRowClick) {
+      onRowClick(row)
+    }
+  }, [onRowClick, row])
+
   return (
     <tr
       key={rowKey}
-      className={`h-12 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/50 ${isPageLoading ? 'opacity-50' : ''}`}
+      onClick={handleClick}
+      className={`h-12 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 ${isPageLoading ? 'opacity-50' : ''} ${onRowClick ? 'cursor-pointer' : ''}`}
     >
       {visibleColumns.map((column, index) => {
         // Status and orderType columns contain Badges - don't apply text-ellipsis
@@ -140,6 +152,7 @@ export function TransactionsTable<T>({
   emptyMessage = "No data found.",
   itemName = "items",
   integratedHeader = false,
+  onRowClick,
 }: TransactionsTableProps<T>) {
   // Get responsive column visibility
   const {
@@ -161,16 +174,16 @@ export function TransactionsTable<T>({
   return (
     <div className="flex flex-col h-full">
       {/* Scrollable table area */}
-      <div className={`flex-1 overflow-y-auto min-h-0 ${integratedHeader ? '-mx-4 lg:-mx-6' : 'pt-5'}`}>
-        <div className={integratedHeader ? '' : 'rounded-md border border-border overflow-hidden'}>
+      <div className={`flex-1 overflow-y-auto min-h-0 ${integratedHeader ? '-mx-4 lg:-mx-6' : ''}`}>
+        <div className={integratedHeader ? '' : ''}>
           <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
             <colgroup>
               {visibleColumns.map((column) => (
                 <col key={column.id} style={{ width: getColumnWidth(column.id) }} />
               ))}
             </colgroup>
-            <thead className="sticky top-0 bg-muted/90 dark:bg-[hsl(220,8%,10%)]/90 z-10">
-              <tr className="h-10">
+            <thead className="sticky top-0 bg-[#fcfcfc] dark:bg-zinc-900 z-10">
+              <tr className="h-11">
                 {visibleColumns.map((column, index) => {
                   // Determine padding based on position and integrated mode
                   const isFirst = index === 0
@@ -186,7 +199,7 @@ export function TransactionsTable<T>({
                     <th
                       key={column.id}
                       style={{ width: getColumnWidth(column.id) }}
-                      className={`${paddingClass} text-left align-middle font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
+                      className={`${paddingClass} text-left align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
                     >
                       {column.header}
                     </th>
@@ -232,6 +245,7 @@ export function TransactionsTable<T>({
                     getColumnWidth={getColumnWidth}
                     isPageLoading={isPageLoading}
                     integratedHeader={integratedHeader}
+                    onRowClick={onRowClick}
                   />
                 ))
               ) : (
@@ -250,7 +264,7 @@ export function TransactionsTable<T>({
       </div>
 
       {/* Pagination - sticky at bottom */}
-      <div className="flex-shrink-0 sticky bottom-0 bg-background py-5 -mx-4 px-4 lg:-mx-6 lg:px-6 flex items-center justify-between">
+      <div className="flex-shrink-0 sticky bottom-0 bg-background py-3 -mx-4 px-4 lg:-mx-6 lg:px-6 flex items-center justify-between border-t border-border/40">
         <div className="flex items-center gap-4">
           <span className="text-sm text-muted-foreground">
             {data.length.toLocaleString()} of {totalCount.toLocaleString()} {itemName}
@@ -263,7 +277,7 @@ export function TransactionsTable<T>({
                 onPageChange(0, Number(value))
               }}
             >
-              <SelectTrigger className="h-7 w-[60px]">
+              <SelectTrigger className="h-7 w-[70px]">
                 <SelectValue placeholder={pageSize} />
               </SelectTrigger>
               <SelectContent>

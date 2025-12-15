@@ -301,18 +301,30 @@ export async function POST(request: NextRequest) {
           summary,
         }
 
-        // Collect detailed data for XLSX
-        const detailedData = await collectDetailedBillingDataByInvoiceIds(client.id, shipbobInvoiceIds)
+        // Wrap file generation in try-catch to clean up invoice record on failure
+        try {
+          // Collect detailed data for XLSX
+          const detailedData = await collectDetailedBillingDataByInvoiceIds(client.id, shipbobInvoiceIds)
 
-        const xlsBuffer = await generateExcelInvoice(invoiceData, detailedData)
-        const pdfBuffer = await generatePDFViaSubprocess(invoiceData, {
-          storagePeriodStart: storagePeriodStart ? formatLocalDate(storagePeriodStart) : undefined,
-          storagePeriodEnd: storagePeriodEnd ? formatLocalDate(storagePeriodEnd) : undefined,
-          clientAddress: client.billing_address || undefined,
-        })
+          const xlsBuffer = await generateExcelInvoice(invoiceData, detailedData)
+          const pdfBuffer = await generatePDFViaSubprocess(invoiceData, {
+            storagePeriodStart: storagePeriodStart ? formatLocalDate(storagePeriodStart) : undefined,
+            storagePeriodEnd: storagePeriodEnd ? formatLocalDate(storagePeriodEnd) : undefined,
+            clientAddress: client.billing_address || undefined,
+          })
 
-        // Store files in Supabase Storage
-        await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
+          // Store files in Supabase Storage
+          await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
+        } catch (fileError) {
+          // File generation failed - clean up the invoice record to prevent orphans
+          console.error(`File generation failed for ${invoiceNumber}, cleaning up invoice record:`, fileError)
+          await adminClient
+            .from('invoices_jetpack')
+            .delete()
+            .eq('id', invoice.id)
+          // Rethrow to be caught by outer catch
+          throw fileError
+        }
 
         // NOTE: Transactions are NOT marked as invoiced here anymore.
         // That happens when the invoice is APPROVED (not generated).

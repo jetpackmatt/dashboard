@@ -65,7 +65,7 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'shipmentId',   header: 'Shipment ID',   width: 11, priority: 12 },
     { id: 'status',       header: 'Status',        width: 12, priority: 2 },
     { id: 'customerName', header: 'Customer',      width: 11, priority: 5 },
-    { id: 'cost',         header: 'Cost',          width: 7,  priority: 4 },
+    { id: 'charge',       header: 'Charge',        width: 7,  priority: 4 },
     { id: 'qty',          header: 'Items',         width: 5,  priority: 8 },
     { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9 },
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
@@ -92,18 +92,18 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
 }
 
 // ============================================
-// ADDITIONAL SERVICES TABLE CONFIG (billing_shipment_fees)
+// ADDITIONAL SERVICES TABLE CONFIG (transactions table - shipment fees)
 // XLS columns: Reference ID, Fee Type, Invoice Amount, Transaction Date, Invoice Number, Invoice Date, Transaction Status
 // ============================================
 export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 1 },
-    { id: 'feeType',         header: 'Fee Type',         width: 20, priority: 2 },
-    { id: 'amount',          header: 'Amount',           width: 10, priority: 3 },
-    { id: 'transactionDate', header: 'Transaction Date', width: 14, priority: 4 },
-    { id: 'status',          header: 'Status',           width: 12, priority: 5 },
-    { id: 'invoiceNumber',   header: 'Invoice #',        width: 10, priority: 6 },
-    { id: 'invoiceDate',     header: 'Invoice Date',     width: 12, priority: 7 },
+    { id: 'transactionDate', header: 'Transaction Date', width: 15, priority: 1 },
+    { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 2 },
+    { id: 'feeType',         header: 'Fee Type',         width: 16, priority: 3 },
+    { id: 'charge',          header: 'Charge',           width: 13, priority: 5 },
+    { id: 'status',          header: 'Status',           width: 14, priority: 4 },
+    { id: 'invoiceNumber',   header: 'Invoice #',        width: 14, priority: 6 },
+    { id: 'invoiceDate',     header: 'Invoice Date',     width: 14, priority: 7 },
   ],
   breakpoints: {
     xl: 7,
@@ -115,21 +115,21 @@ export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
 }
 
 // ============================================
-// RETURNS TABLE CONFIG (billing_returns)
+// RETURNS TABLE CONFIG (transactions table - returns)
 // XLS columns: Return ID, Original Order ID, Tracking ID, Transaction Type, Return Status, Return Type, Return Creation Date, FC Name, Amount, Invoice Number, Invoice Date, Status
 // ============================================
 export const RETURNS_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'returnId',           header: 'Return ID',      width: 10, priority: 1 },
-    { id: 'originalOrderId',    header: 'Original Order', width: 12, priority: 2 },
-    { id: 'trackingId',         header: 'Tracking ID',    width: 14, priority: 6 },
-    { id: 'transactionType',    header: 'Transaction',    width: 14, priority: 4 },
-    { id: 'returnStatus',       header: 'Return Status',  width: 10, priority: 3 },
-    { id: 'returnType',         header: 'Return Type',    width: 10, priority: 7 },
-    { id: 'returnCreationDate', header: 'Created',        width: 12, priority: 5 },
-    { id: 'fcName',             header: 'FC',             width: 10, priority: 8 },
-    { id: 'amount',             header: 'Amount',         width: 8,  priority: 9 },
-    { id: 'status',             header: 'Status',         width: 10, priority: 10 },
+    { id: 'returnCreationDate', header: 'Created',           width: 10, priority: 1 },
+    { id: 'returnId',           header: 'Return ID',         width: 8, priority: 2 },
+    { id: 'returnStatus',       header: 'Return Status',     width: 10, priority: 3 },
+    { id: 'returnType',         header: 'Return Type',       width: 12, priority: 4 },
+    { id: 'charge',             header: 'Charge',            width: 7, priority: 5 },
+    { id: 'originalShipmentId', header: 'Original Shipment', width: 12, priority: 6 },
+    { id: 'trackingNumber',     header: 'Tracking #',        width: 12, priority: 7 },
+    { id: 'fcName',             header: 'FC',                width: 11, priority: 8, defaultVisible: false },
+    { id: 'invoiceNumber',      header: 'Invoice #',         width: 10, priority: 9 },
+    { id: 'invoiceDate',        header: 'Invoice Date',      width: 9, priority: 10 },
   ],
   breakpoints: {
     xl: 10,
@@ -141,19 +141,19 @@ export const RETURNS_TABLE_CONFIG: TableConfig = {
 }
 
 // ============================================
-// RECEIVING TABLE CONFIG (billing_receiving)
-// XLS columns: Reference ID, Fee Type, Invoice Amount, Transaction Type, Transaction Status, Invoice Number, Transaction Date, Invoice Date
+// RECEIVING TABLE CONFIG (transactions table - receiving)
+// Joined with receiving_orders table for status and contents
 // ============================================
 export const RECEIVING_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 1 },
-    { id: 'feeType',         header: 'Fee Type',         width: 18, priority: 2 },
-    { id: 'amount',          header: 'Amount',           width: 10, priority: 3 },
-    { id: 'transactionType', header: 'Transaction Type', width: 12, priority: 5 },
-    { id: 'transactionDate', header: 'Transaction Date', width: 14, priority: 4 },
-    { id: 'status',          header: 'Status',           width: 10, priority: 6 },
-    { id: 'invoiceNumber',   header: 'Invoice #',        width: 10, priority: 7 },
-    { id: 'invoiceDate',     header: 'Invoice Date',     width: 12, priority: 8 },
+    { id: 'transactionDate',  header: 'Transaction Date', width: 14, priority: 1 },
+    { id: 'wroId',            header: 'WRO ID',           width: 10, priority: 2 },
+    { id: 'receivingStatus',  header: 'Status',           width: 12, priority: 3 },
+    { id: 'contents',         header: 'Contents',         width: 14, priority: 4 },
+    { id: 'feeType',          header: 'Fee Type',         width: 16, priority: 5 },
+    { id: 'charge',           header: 'Charge',           width: 10, priority: 6 },
+    { id: 'invoiceNumber',    header: 'Invoice #',        width: 12, priority: 7 },
+    { id: 'invoiceDate',      header: 'Invoice Date',     width: 12, priority: 8 },
   ],
   breakpoints: {
     xl: 8,
@@ -165,7 +165,7 @@ export const RECEIVING_TABLE_CONFIG: TableConfig = {
 }
 
 // ============================================
-// STORAGE TABLE CONFIG (billing_storage)
+// STORAGE TABLE CONFIG (transactions table - storage)
 // XLS columns: ChargeStartdate, FC Name, Inventory ID, Location Type, Comment, Transaction Status, Invoice Number, Amount, Invoice Date
 // Note: No date range filter for storage
 // ============================================
@@ -175,7 +175,7 @@ export const STORAGE_TABLE_CONFIG: TableConfig = {
     { id: 'fcName',          header: 'FC Name',        width: 14, priority: 2 },
     { id: 'locationType',    header: 'Location Type',  width: 10, priority: 3 },
     { id: 'chargeStartDate', header: 'Charge Start',   width: 12, priority: 5 },
-    { id: 'amount',          header: 'Amount',         width: 10, priority: 4 },
+    { id: 'charge',          header: 'Charge',         width: 10, priority: 4 },
     { id: 'status',          header: 'Status',         width: 10, priority: 6 },
     { id: 'invoiceNumber',   header: 'Invoice #',      width: 10, priority: 7 },
     { id: 'invoiceDate',     header: 'Invoice Date',   width: 12, priority: 8 },
@@ -191,21 +191,22 @@ export const STORAGE_TABLE_CONFIG: TableConfig = {
 }
 
 // ============================================
-// CREDITS TABLE CONFIG (billing_credits)
+// CREDITS TABLE CONFIG (transactions table - credits)
 // XLS columns: Reference ID, Transaction Date, Credit Invoice Number, Invoice Date, Credit Reason, Credit Amount, Transaction Status
 // ============================================
 export const CREDITS_TABLE_CONFIG: TableConfig = {
   columns: [
     { id: 'referenceId',         header: 'Reference ID',     width: 12, priority: 1 },
-    { id: 'creditReason',        header: 'Credit Reason',    width: 18, priority: 2 },
-    { id: 'creditAmount',        header: 'Amount',           width: 10, priority: 3 },
-    { id: 'transactionDate',     header: 'Transaction Date', width: 14, priority: 4 },
-    { id: 'status',              header: 'Status',           width: 10, priority: 5 },
-    { id: 'creditInvoiceNumber', header: 'Credit Invoice #', width: 12, priority: 6 },
-    { id: 'invoiceDate',         header: 'Invoice Date',     width: 12, priority: 7 },
+    { id: 'sbTicketReference',   header: 'ShipBob Ticket',   width: 12, priority: 2 },
+    { id: 'creditAmount',        header: 'Credit',           width: 10, priority: 3 },
+    { id: 'creditReason',        header: 'Credit Reason',    width: 18, priority: 4 },
+    { id: 'transactionDate',     header: 'Transaction Date', width: 14, priority: 5 },
+    { id: 'status',              header: 'Status',           width: 10, priority: 6 },
+    { id: 'creditInvoiceNumber', header: 'Credit Invoice #', width: 12, priority: 7 },
+    { id: 'invoiceDate',         header: 'Invoice Date',     width: 12, priority: 8 },
   ],
   breakpoints: {
-    xl: 7,
+    xl: 8,
     lg: 6,
     md: 5,
     sm: 4,
@@ -227,7 +228,7 @@ export const SHIPPED_TABLE_CONFIG: TableConfig = {
     { id: 'shippedDate',   header: 'Shipped',      width: 11, priority: 3 },
     { id: 'deliveredDate', header: 'Delivered',    width: 11, priority: 7 },
     { id: 'itemCount',     header: 'Items',        width: 6,  priority: 8 },
-    { id: 'cost',          header: 'Cost',         width: 8,  priority: 10 },
+    { id: 'charge',        header: 'Charge',       width: 8,  priority: 10 },
   ],
   breakpoints: {
     xl: 10,

@@ -227,6 +227,37 @@ draft → approved → sent → paid
 
 ---
 
+## Transactions Tab APIs
+
+Each billing tab has a dedicated API route with search and filter support:
+
+| Tab | Route | Search Fields |
+|-----|-------|---------------|
+| Unfulfilled | `/api/data/orders/unfulfilled` | recipient_name, order_id, shipment_id |
+| Shipments | `/api/data/shipments` | recipient_name, order_id, tracking_id |
+| Additional Services | `/api/data/billing/additional-services` | reference_id |
+| Returns | `/api/data/billing/returns` | return_id, original_shipment, tracking_#, invoice_#, charge |
+| Receiving | `/api/data/billing/receiving` | wro_id, contents, invoice_#, charge |
+| Storage | `/api/data/billing/storage` | inventory_id, invoice_#, charge |
+| Credits | `/api/data/billing/credits` | reference_id, sb_ticket, credit_invoice_#, amount |
+
+### Filter Options
+
+Dynamic filter options are loaded from `/filter-options` endpoints:
+- Returns: `/api/data/billing/returns/filter-options` → statuses, types
+- Receiving: `/api/data/billing/receiving/filter-options` → statuses
+- Storage: `/api/data/billing/storage/filter-options` → FCs, location types
+- Credits: `/api/data/billing/credits/credit-reasons` → reasons
+
+### Receiving Contents Logic
+
+WRO Contents column uses fallback logic in `getWroContents()`:
+1. Try `purchase_order_number` from receiving_orders
+2. Fallback: Extract unique SKUs from `inventory_quantities` JSONB
+3. Show first 3 SKUs, then "+N more" if more exist
+
+---
+
 ## Manual Operations
 
 ### Generate invoice for specific client

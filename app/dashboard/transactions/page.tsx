@@ -1,14 +1,40 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 
 import { SiteHeader } from "@/components/site-header"
 import { DataTable } from "@/components/data-table"
 import { useClient } from "@/components/client-context"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 // Default client ID (Henson Shaving) for non-admin users
 const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 const DEFAULT_PAGE_SIZE = 50
+
+// Transaction categories for the header dropdown (Unfulfilled first, but Shipments is default)
+const TRANSACTION_CATEGORIES = [
+  { value: "unfulfilled", label: "Unfulfilled" },
+  { value: "shipments", label: "Shipments" },
+  { value: "additional-services", label: "Additional Services" },
+  { value: "returns", label: "Returns" },
+  { value: "receiving", label: "Receiving" },
+  { value: "storage", label: "Storage" },
+  { value: "credits", label: "Credits" },
+] as const
+
+type TabValue = typeof TRANSACTION_CATEGORIES[number]["value"]
+const VALID_TABS: TabValue[] = TRANSACTION_CATEGORIES.map(c => c.value)
+
+function isValidTab(tab: string | null): tab is TabValue {
+  return tab !== null && VALID_TABS.includes(tab as TabValue)
+}
 
 // Calculate 60-day date range for shipments pre-fetch
 function get60DayRange(): { startDate: string; endDate: string } {
@@ -25,6 +51,26 @@ function get60DayRange(): { startDate: string; endDate: string } {
 
 export default function TransactionsPage() {
   const { selectedClientId, isAdmin, isLoading: isClientLoading } = useClient()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  // Tab state - initialized from URL or default to "shipments"
+  const tabFromUrl = searchParams.get("tab")
+  const initialTab = isValidTab(tabFromUrl) ? tabFromUrl : "shipments"
+  const [currentTab, setCurrentTab] = React.useState<TabValue>(initialTab)
+
+  // Handle tab change - update state and URL
+  const handleTabChange = React.useCallback((newTab: string) => {
+    if (isValidTab(newTab)) {
+      setCurrentTab(newTab)
+    }
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", newTab)
+    // Clear search when switching tabs (search is tab-specific)
+    params.delete("search")
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, router, pathname])
 
   // Unfulfilled data state (pre-fetched for instant tab switching)
   const [unfulfilledData, setUnfulfilledData] = React.useState<any[]>([])
@@ -115,16 +161,35 @@ export default function TransactionsPage() {
     }
   }, [effectiveClientId, isClientLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Get the current category label for the dropdown
+  const currentCategoryLabel = TRANSACTION_CATEGORIES.find(c => c.value === currentTab)?.label || "Shipments"
+
   return (
     <>
-      <SiteHeader sectionName="Transactions" />
-      <div className="flex flex-col overflow-x-hidden">
+      <SiteHeader sectionName="Transactions">
+        <Select value={currentTab} onValueChange={handleTabChange}>
+          <SelectTrigger className="h-7 w-auto gap-1.5 border-0 bg-transparent px-2 text-base font-medium text-foreground hover:bg-accent focus:ring-0 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-50">
+            <SelectValue>{currentCategoryLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent align="start">
+            {TRANSACTION_CATEGORIES.map((category) => (
+              <SelectItem key={category.value} value={category.value}>
+                {category.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SiteHeader>
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-col w-full">
           <div className="flex flex-col w-full">
             <DataTable
               clientId={effectiveClientId}
               defaultPageSize={DEFAULT_PAGE_SIZE}
               showExport={true}
+              // Controlled tab state from header dropdown
+              currentTab={currentTab}
+              onTabChange={handleTabChange}
               // Pre-fetched unfulfilled data for instant tab switching
               unfulfilledData={unfulfilledData}
               unfulfilledTotalCount={unfulfilledTotalCount}

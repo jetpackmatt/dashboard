@@ -10,6 +10,8 @@ import {
   CopyIcon,
   DoorOpenIcon,
   EyeIcon,
+  FileSpreadsheet,
+  FileText,
   HandIcon,
   InboxIcon,
   LoaderIcon,
@@ -23,7 +25,31 @@ import { format, differenceInHours } from "date-fns"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { CellRenderer } from "./transactions-table"
+
+// ============================================
+// FEE TYPE DISPLAY NAME MAPPING
+// Some fees have been rebranded - map DB values to display names
+// ============================================
+const FEE_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  'Inventory Placement Program Fee': 'MultiHub IQ Fee',
+  // Add more mappings as needed
+}
+
+/**
+ * Get the display name for a fee type (handles rebranding)
+ * Use this everywhere fee types are shown to users or in invoices
+ */
+export function getFeeTypeDisplayName(feeType: string | null | undefined): string {
+  if (!feeType) return ''
+  return FEE_TYPE_DISPLAY_NAMES[feeType] || feeType
+}
 
 // ShipBob merchant portal deep link helper
 // Uses Text Fragments to scroll to and highlight the shipment row
@@ -374,7 +400,7 @@ export interface Shipment {
   customerName: string
   orderType: string
   qty: number
-  cost: number
+  charge: number
   importDate: string | null
   labelCreated: string | null  // When label was created (event_labeled)
   slaDate: string | null
@@ -582,8 +608,8 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     </div>
   ),
 
-  cost: (row) => (
-    <div className="font-medium">{row.cost != null ? `$${row.cost.toFixed(2)}` : '-'}</div>
+  charge: (row) => (
+    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
   ),
 
   qty: (row) => (
@@ -824,16 +850,123 @@ function formatBillingStatus(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
 }
 
+/**
+ * Format a date string without timezone conversion.
+ * Prevents dates from shifting a day due to UTC interpretation.
+ * Input: '2025-01-15' or '2025-01-15T00:00:00.000Z'
+ * Output: 'Jan 15, 2025'
+ */
+function formatDateFixed(dateStr: string): string {
+  if (!dateStr) return '-'
+  // Extract just the YYYY-MM-DD part (handles both date-only and ISO strings)
+  const datePart = dateStr.split('T')[0]
+  const [year, month, day] = datePart.split('-')
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`
+}
+
+// ============================================
+// PENDING BADGE COMPONENT
+// Shows a "Pending" badge matching the status column style for uninvoiced items
+// ============================================
+
+function PendingBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="px-1.5 font-medium whitespace-nowrap bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+    >
+      Pending
+    </Badge>
+  )
+}
+
+// ============================================
+// CLICKABLE INVOICE CELL WITH DROPDOWN
+// Fetches invoice files and shows PDF/XLS download menu
+// ============================================
+
+interface InvoiceCellProps {
+  invoiceNumber: string
+}
+
+function InvoiceCell({ invoiceNumber }: InvoiceCellProps) {
+  const [isOpen, setIsOpen] = React.useState(false)
+  const [isLoading, setIsLoading] = React.useState(false)
+  const [urls, setUrls] = React.useState<{ pdfUrl: string | null; xlsUrl: string | null } | null>(null)
+
+  if (!invoiceNumber) {
+    return <PendingBadge />
+  }
+
+  async function handleOpenChange(open: boolean) {
+    setIsOpen(open)
+    if (open && !urls) {
+      setIsLoading(true)
+      try {
+        const response = await fetch(`/api/invoices/${invoiceNumber}/files`)
+        if (response.ok) {
+          const data = await response.json()
+          setUrls({ pdfUrl: data.pdfUrl, xlsUrl: data.xlsUrl })
+        } else {
+          toast.error('Failed to load invoice files')
+        }
+      } catch {
+        toast.error('Failed to load invoice files')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+  }
+
+  function handleDownload(url: string | null, type: string) {
+    if (!url) {
+      toast.error(`${type} file not available`)
+      return
+    }
+    window.open(url, '_blank')
+  }
+
+  return (
+    <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline truncate text-left">
+          {invoiceNumber}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {isLoading ? (
+          <DropdownMenuItem disabled>
+            <LoaderIcon className="h-4 w-4 mr-2 animate-spin" />
+            Loading...
+          </DropdownMenuItem>
+        ) : (
+          <>
+            <DropdownMenuItem onClick={() => handleDownload(urls?.pdfUrl || null, 'PDF')}>
+              <FileText className="h-4 w-4 mr-2" />
+              View PDF
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleDownload(urls?.xlsUrl || null, 'XLSX')}>
+              <FileSpreadsheet className="h-4 w-4 mr-2" />
+              View XLSX
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 // ============================================
 // ADDITIONAL SERVICES TYPES & RENDERERS
-// (billing_shipment_fees table)
+// (transactions table - shipment fees)
 // ============================================
 
 export interface AdditionalService {
   id: string
   referenceId: string
   feeType: string
-  amount: number
+  charge: number
   transactionDate: string
   invoiceNumber: string
   invoiceDate: string
@@ -845,15 +978,13 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
     <div className="font-medium text-foreground truncate">{row.referenceId || '-'}</div>
   ),
   feeType: (row) => (
-    <div className="truncate">{row.feeType || '-'}</div>
+    <div className="truncate">{getFeeTypeDisplayName(row.feeType) || '-'}</div>
   ),
-  amount: (row) => (
-    <div className="font-medium">{row.amount != null ? `$${row.amount.toFixed(2)}` : '-'}</div>
+  charge: (row) => (
+    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
   ),
   transactionDate: (row) => (
-    row.transactionDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.transactionDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -861,31 +992,30 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
     </Badge>
   ),
   invoiceNumber: (row) => (
-    <div className="text-muted-foreground truncate">{row.invoiceNumber || '-'}</div>
+    <InvoiceCell invoiceNumber={row.invoiceNumber} />
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.invoiceDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+    ) : <PendingBadge />
   ),
 }
 
 // ============================================
 // RETURNS TYPES & RENDERERS
-// (billing_returns table)
+// (transactions table - returns)
 // ============================================
 
 export interface Return {
   id: string
   returnId: string
-  originalOrderId: string
-  trackingId: string
-  transactionType: string
+  originalShipmentId: string
+  trackingNumber: string
   returnStatus: string
   returnType: string
   returnCreationDate: string
   fcName: string
-  amount: number
+  charge: number
   invoiceNumber: string
   invoiceDate: string
   status: string
@@ -910,15 +1040,58 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
   returnId: (row) => (
     <div className="font-medium text-foreground truncate">{row.returnId || '-'}</div>
   ),
-  originalOrderId: (row) => (
-    <div className="truncate">{row.originalOrderId || '-'}</div>
-  ),
-  trackingId: (row) => (
-    <div className="text-muted-foreground truncate">{row.trackingId || '-'}</div>
-  ),
-  transactionType: (row) => (
-    <div className="truncate">{row.transactionType || '-'}</div>
-  ),
+  originalShipmentId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.originalShipmentId)
+      toast.success("Shipment ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        {row.originalShipmentId ? (
+          <>
+            <span className="truncate">{row.originalShipmentId}</span>
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Copy Shipment ID"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <span>-</span>
+        )}
+      </div>
+    )
+  },
+  trackingNumber: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.trackingNumber)
+      toast.success("Tracking # copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        {row.trackingNumber ? (
+          <>
+            <span className="text-muted-foreground truncate">{row.trackingNumber}</span>
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Copy Tracking #"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <span>-</span>
+        )}
+      </div>
+    )
+  },
   returnStatus: (row) => (
     row.returnStatus ? (
       <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getReturnStatusColors(row.returnStatus)}`}>
@@ -930,57 +1103,13 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
     <div className="truncate">{row.returnType || '-'}</div>
   ),
   returnCreationDate: (row) => (
-    row.returnCreationDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.returnCreationDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.returnCreationDate)}</span>
   ),
   fcName: (row) => (
     <div className="truncate">{row.fcName || '-'}</div>
   ),
-  amount: (row) => (
-    <div className="font-medium">{row.amount != null ? `$${row.amount.toFixed(2)}` : '-'}</div>
-  ),
-  status: (row) => (
-    <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
-      {formatBillingStatus(row.status)}
-    </Badge>
-  ),
-}
-
-// ============================================
-// RECEIVING TYPES & RENDERERS
-// (billing_receiving table)
-// ============================================
-
-export interface Receiving {
-  id: string
-  referenceId: string
-  feeType: string
-  amount: number
-  transactionType: string
-  transactionDate: string
-  invoiceNumber: string
-  invoiceDate: string
-  status: string
-}
-
-export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
-  referenceId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.referenceId || '-'}</div>
-  ),
-  feeType: (row) => (
-    <div className="truncate">{row.feeType || '-'}</div>
-  ),
-  amount: (row) => (
-    <div className="font-medium">{row.amount != null ? `$${row.amount.toFixed(2)}` : '-'}</div>
-  ),
-  transactionType: (row) => (
-    <div className="truncate">{row.transactionType || '-'}</div>
-  ),
-  transactionDate: (row) => (
-    row.transactionDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.transactionDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+  charge: (row) => (
+    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -988,18 +1117,94 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
     </Badge>
   ),
   invoiceNumber: (row) => (
-    <div className="text-muted-foreground truncate">{row.invoiceNumber || '-'}</div>
+    <InvoiceCell invoiceNumber={row.invoiceNumber} />
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.invoiceDate), "MMM d, yyyy")}</span>
+      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+    ) : <PendingBadge />
+  ),
+}
+
+// ============================================
+// RECEIVING TYPES & RENDERERS
+// (transactions table - receiving, joined with receiving_orders)
+// ============================================
+
+export interface Receiving {
+  id: string
+  wroId: string
+  receivingStatus: string
+  contents: string
+  feeType: string
+  charge: number
+  transactionDate: string
+  invoiceNumber: string
+  invoiceDate: string
+  isPending?: boolean  // true if WRO hasn't been billed yet
+}
+
+// Receiving status colors (similar to return status)
+function getReceivingStatusColors(status: string) {
+  const statusLower = status?.toLowerCase() || ''
+  if (statusLower === 'completed' || statusLower === 'received') {
+    return "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
+  }
+  if (statusLower === 'processing' || statusLower === 'in progress') {
+    return "bg-blue-100/50 text-blue-900 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
+  }
+  if (statusLower === 'awaiting' || statusLower === 'pending') {
+    return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+  }
+  return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
+}
+
+// Format PascalCase status strings (e.g., "InternalTransfer" -> "Internal Transfer")
+function formatReceivingStatus(status: string): string {
+  if (!status) return ''
+  return status.replace(/([a-z])([A-Z])/g, '$1 $2')
+}
+
+export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
+  transactionDate: (row) => (
+    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
+  ),
+  wroId: (row) => (
+    <div className="font-medium text-foreground truncate">{row.wroId || '-'}</div>
+  ),
+  receivingStatus: (row) => (
+    row.receivingStatus ? (
+      <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getReceivingStatusColors(row.receivingStatus)}`}>
+        {formatReceivingStatus(row.receivingStatus)}
+      </Badge>
     ) : <span>-</span>
+  ),
+  contents: (row) => (
+    <div className="truncate">{row.contents || '-'}</div>
+  ),
+  feeType: (row) => (
+    <div className="truncate">{getFeeTypeDisplayName(row.feeType) || '-'}</div>
+  ),
+  charge: (row) => (
+    row.isPending ? (
+      <PendingBadge />
+    ) : (
+      <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+    )
+  ),
+  invoiceNumber: (row) => (
+    <InvoiceCell invoiceNumber={row.invoiceNumber} />
+  ),
+  invoiceDate: (row) => (
+    row.invoiceDate ? (
+      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+    ) : <PendingBadge />
   ),
 }
 
 // ============================================
 // STORAGE TYPES & RENDERERS
-// (billing_storage table)
+// (transactions table - storage)
 // ============================================
 
 export interface Storage {
@@ -1010,7 +1215,7 @@ export interface Storage {
   locationType: string
   quantity: number
   ratePerMonth: number
-  amount: number
+  charge: number
   invoiceNumber: string
   invoiceDate: string
   status: string
@@ -1028,12 +1233,10 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
     <div className="truncate">{row.locationType || '-'}</div>
   ),
   chargeStartDate: (row) => (
-    row.chargeStartDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.chargeStartDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.chargeStartDate)}</span>
   ),
-  amount: (row) => (
-    <div className="font-medium">{row.amount != null ? `$${row.amount.toFixed(2)}` : '-'}</div>
+  charge: (row) => (
+    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -1041,12 +1244,12 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
     </Badge>
   ),
   invoiceNumber: (row) => (
-    <div className="text-muted-foreground truncate">{row.invoiceNumber || '-'}</div>
+    <InvoiceCell invoiceNumber={row.invoiceNumber} />
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.invoiceDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+    ) : <PendingBadge />
   ),
   comment: (row) => (
     <div className="truncate text-muted-foreground">{row.comment || '-'}</div>
@@ -1055,13 +1258,14 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
 
 // ============================================
 // CREDITS TYPES & RENDERERS
-// (billing_credits table)
+// (transactions table - credits)
 // ============================================
 
 export interface Credit {
   id: string
   referenceId: string
   transactionDate: string
+  sbTicketReference: string
   creditInvoiceNumber: string
   invoiceDate: string
   creditReason: string
@@ -1070,9 +1274,58 @@ export interface Credit {
 }
 
 export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
-  referenceId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.referenceId || '-'}</div>
-  ),
+  referenceId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.referenceId)
+      toast.success("Reference ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        {row.referenceId ? (
+          <>
+            <span className="font-medium text-foreground truncate">{row.referenceId}</span>
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Copy Reference ID"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <span>-</span>
+        )}
+      </div>
+    )
+  },
+  sbTicketReference: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.sbTicketReference)
+      toast.success("Ticket # copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        {row.sbTicketReference ? (
+          <>
+            <span className="truncate">{row.sbTicketReference}</span>
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Copy Ticket #"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : (
+          <span>-</span>
+        )}
+      </div>
+    )
+  },
   creditReason: (row) => (
     <div className="truncate">{row.creditReason || '-'}</div>
   ),
@@ -1082,9 +1335,7 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     </div>
   ),
   transactionDate: (row) => (
-    row.transactionDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.transactionDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -1092,12 +1343,12 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     </Badge>
   ),
   creditInvoiceNumber: (row) => (
-    <div className="text-muted-foreground truncate">{row.creditInvoiceNumber || '-'}</div>
+    <InvoiceCell invoiceNumber={row.creditInvoiceNumber} />
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.invoiceDate), "MMM d, yyyy")}</span>
-    ) : <span>-</span>
+      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+    ) : <PendingBadge />
   ),
 }
 
@@ -1117,7 +1368,7 @@ export interface ShippedOrder {
   shippedDate: string | null
   deliveredDate: string | null
   itemCount: number
-  cost: number
+  charge: number
 }
 
 // Use same status colors as shipments for consistency
@@ -1254,7 +1505,7 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
   itemCount: (row) => (
     <div className="text-center">{row.itemCount}</div>
   ),
-  cost: (row) => (
-    row.cost ? <div className="font-medium">${row.cost.toFixed(2)}</div> : <span>-</span>
+  charge: (row) => (
+    row.charge ? <div className="font-medium">${row.charge.toFixed(2)}</div> : <span>-</span>
   ),
 }

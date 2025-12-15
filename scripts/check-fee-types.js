@@ -1,5 +1,5 @@
 /**
- * Check if unmatched transactions are Shipping Zone/Dimensional types
+ * Check all distinct fee_type values in transactions table
  */
 require('dotenv').config({ path: '.env.local' })
 const { createClient } = require('@supabase/supabase-js')
@@ -10,63 +10,98 @@ const supabase = createClient(
 )
 
 async function check() {
-  console.log('=== UNMATCHED SHIPPING BY TRANSACTION_FEE TYPE ===\n')
+  console.log('=== ALL DISTINCT FEE_TYPE VALUES ===\n')
 
-  // Get unmatched shipping transactions by type
-  for (const feeType of ['Shipping', 'Shipping Zone', 'Dimensional Shipping Upgrade']) {
-    const { count: total } = await supabase
+  // Get total count
+  const { count: totalCount } = await supabase
+    .from('transactions')
+    .select('*', { count: 'exact', head: true })
+
+  console.log(`Total transactions in database: ${totalCount}\n`)
+
+  // Get unique fee types by querying in batches
+  const counts = {}
+  let offset = 0
+  const batchSize = 1000
+
+  while (offset < totalCount) {
+    const { data, error } = await supabase
       .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('transaction_fee', feeType)
+      .select('fee_type')
+      .range(offset, offset + batchSize - 1)
 
-    const { count: matched } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('transaction_fee', feeType)
-      .not('invoice_id_jp', 'is', null)
+    if (error) {
+      console.error('Error:', error)
+      return
+    }
 
-    const { count: unmatched } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('transaction_fee', feeType)
-      .is('invoice_id_jp', null)
+    for (const row of data || []) {
+      const ft = row.fee_type || '(null)'
+      counts[ft] = (counts[ft] || 0) + 1
+    }
 
-    console.log(`${feeType}:`)
-    console.log(`  Total: ${total}`)
-    console.log(`  Matched: ${matched} (${Math.round(matched/total*100)}%)`)
-    console.log(`  Unmatched: ${unmatched}`)
-    console.log()
+    offset += batchSize
+    process.stdout.write(`\rProcessed ${Math.min(offset, totalCount)}/${totalCount}...`)
   }
 
-  // Check if unmatched 'Shipping Zone' have matching 'Shipping' with invoice
-  console.log('=== CHECKING IF SHIPPING ZONE MATCHES HAVE INVOICED SHIPPING ===')
+  console.log('\n')
 
-  const { data: unmatchedZone } = await supabase
+  // Sort by count descending
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1])
+
+  for (const [ft, count] of sorted) {
+    console.log(`  ${ft}: ${count}`)
+  }
+
+  // Check specifically for IPP Fee
+  console.log('\n\n=== SEARCHING FOR INVENTORY/MULTI-HUB FEES ===')
+  const ippMatches = sorted.filter(([ft]) =>
+    ft.toLowerCase().includes('inventory') ||
+    ft.toLowerCase().includes('ipp') ||
+    ft.toLowerCase().includes('placement') ||
+    ft.toLowerCase().includes('multi')
+  )
+  if (ippMatches.length > 0) {
+    for (const [ft, count] of ippMatches) {
+      console.log(`  Found: "${ft}" (${count} records)`)
+    }
+  } else {
+    console.log('  No matches found for Inventory/Multi-Hub related fees')
+  }
+
+  // Check which clients have IPP Fee
+  console.log('\n\n=== IPP FEE BY CLIENT ===')
+  const { data: ippByClient, error: ippError } = await supabase
     .from('transactions')
-    .select('reference_id')
-    .eq('transaction_fee', 'Shipping Zone')
-    .is('invoice_id_jp', null)
-    .limit(100)
+    .select('client_id')
+    .eq('fee_type', 'Inventory Placement Program Fee')
 
-  const zoneRefIds = unmatchedZone?.map(r => r.reference_id) || []
-  console.log(`Sample unmatched Shipping Zone reference_ids: ${zoneRefIds.length}`)
+  if (ippError) {
+    console.error('Error:', ippError)
+  } else {
+    // Count by client_id
+    const clientCounts = {}
+    for (const row of ippByClient || []) {
+      const clientId = row.client_id || 'Unknown'
+      clientCounts[clientId] = (clientCounts[clientId] || 0) + 1
+    }
 
-  // Check if these reference_ids have matched 'Shipping' transactions
-  const { data: correspondingShipping } = await supabase
-    .from('transactions')
-    .select('reference_id, invoice_id_jp')
-    .eq('transaction_fee', 'Shipping')
-    .in('reference_id', zoneRefIds)
+    // Get client names
+    const clientIds = Object.keys(clientCounts)
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, brand_name')
+      .in('id', clientIds)
 
-  const matchedShippingCount = correspondingShipping?.filter(r => r.invoice_id_jp).length || 0
-  console.log(`Of ${zoneRefIds.length} unmatched Shipping Zone, ${matchedShippingCount} have corresponding matched 'Shipping' transaction`)
+    const clientNames = {}
+    for (const c of clients || []) {
+      clientNames[c.id] = c.brand_name || c.id
+    }
 
-  // Conclusion
-  console.log('\n=== CONCLUSION ===')
-  console.log('The import script only matches transaction_fee="Shipping"')
-  console.log('Shipping Zone and Dimensional Shipping Upgrade transactions are NOT matched')
-  console.log('These share the same reference_id as the main Shipping transaction')
-  console.log('They should inherit the invoice_id_jp from their parent Shipping transaction')
+    for (const [clientId, count] of Object.entries(clientCounts).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${clientNames[clientId] || clientId}: ${count}`)
+    }
+  }
 }
 
 check().catch(console.error)

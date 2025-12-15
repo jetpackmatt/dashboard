@@ -15,8 +15,12 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
-  // Status filter
-  const statusFilter = searchParams.get('status')?.split(',').filter(Boolean) || []
+  // FC and Location Type filters
+  const fcFilter = searchParams.get('fc')
+  const locationTypeFilter = searchParams.get('locationType')
+
+  // Search query
+  const search = searchParams.get('search')?.trim().toLowerCase()
 
   try {
     let query = supabase
@@ -28,19 +32,17 @@ export async function GET(request: NextRequest) {
       query = query.eq('client_id', clientId)
     }
 
-    // Status filter - convert to invoiced status
-    if (statusFilter.length > 0) {
-      const invoicedStatuses = statusFilter.map(s => s === 'invoiced' || s === 'completed')
-      if (invoicedStatuses.includes(true) && !invoicedStatuses.includes(false)) {
-        query = query.eq('invoiced_status_sb', true)
-      } else if (invoicedStatuses.includes(false) && !invoicedStatuses.includes(true)) {
-        query = query.eq('invoiced_status_sb', false)
-      }
+    // FC filter (fulfillment_center column)
+    if (fcFilter) {
+      query = query.eq('fulfillment_center', fcFilter)
     }
+
+    // Location type filter - requires post-processing since it's in reference_id
+    // reference_id format: {FC_ID}-{InventoryId}-{LocationType}
+    // We'll filter after fetching since Supabase can't do this easily
 
     const { data, error, count } = await query
       .order('charge_date', { ascending: false })
-      .range(offset, offset + limit - 1)
 
     if (error) {
       console.error('Error fetching storage:', error)
@@ -48,8 +50,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Map to response format matching XLS columns
+    // Use billed_amount (marked-up amount) for Charge column
     // reference_id for FC is format: {FC_ID}-{InventoryId}-{LocationType}
-    const mapped = (data || []).map((row: Record<string, unknown>) => {
+    let mapped = (data || []).map((row: Record<string, unknown>) => {
       const refParts = String(row.reference_id || '').split('-')
       const fcId = refParts[0] || ''
       const inventoryId = refParts[1] || ''
@@ -64,18 +67,38 @@ export async function GET(request: NextRequest) {
         locationType: locationType || String(details.LocationType || ''),
         quantity: Number(details.Quantity || 1),
         ratePerMonth: 0, // Not available in transactions
-        amount: parseFloat(String(row.cost || 0)) || 0,
-        invoiceNumber: row.invoice_id_sb?.toString() || '',
-        invoiceDate: row.invoice_date_sb,
-        status: row.invoiced_status_sb ? 'invoiced' : 'pending',
+        charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,
+        invoiceNumber: row.invoice_id_jp?.toString() || '',
+        invoiceDate: row.invoice_date_jp,
+        status: row.invoiced_status_jp ? 'invoiced' : 'pending',
         comment: String(details.Comment || ''),
       }
     })
 
+    // Apply location type filter after mapping
+    if (locationTypeFilter) {
+      mapped = mapped.filter((item: { locationType: string }) => item.locationType === locationTypeFilter)
+    }
+
+    // Apply search filter
+    if (search) {
+      mapped = mapped.filter((item: { inventoryId: string; invoiceNumber: string; charge: number }) =>
+        item.inventoryId.toLowerCase().includes(search) ||
+        item.invoiceNumber.toLowerCase().includes(search) ||
+        item.charge.toString().includes(search)
+      )
+    }
+
+    // Calculate total count after filtering
+    const totalCount = mapped.length
+
+    // Apply pagination
+    const paginatedData = mapped.slice(offset, offset + limit)
+
     return NextResponse.json({
-      data: mapped,
-      totalCount: count || 0,
-      hasMore: (offset + limit) < (count || 0),
+      data: paginatedData,
+      totalCount,
+      hasMore: (offset + limit) < totalCount,
     })
   } catch (err) {
     console.error('Storage API error:', err)

@@ -173,7 +173,7 @@ export async function GET(request: NextRequest) {
         // Note: Can only search shipments table columns in .or() - joined table columns don't work
         const searchPattern = `%${searchTerm}%`
         query = query.or(
-          `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern}`
+          `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern}`
         )
       } else {
         // Use full-text search for name searches (GIN indexed, very fast)

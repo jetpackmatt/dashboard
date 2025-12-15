@@ -11,6 +11,17 @@ import type { JetpackInvoice, LineCategory } from './types'
 import ExcelJS from 'exceljs'
 import { generatePDFInvoice } from './pdf-generator'
 
+// Fee type display name mappings (server-compatible version)
+// Duplicated from components/transactions/cell-renderers.tsx since that's client-only
+const FEE_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  'Inventory Placement Program Fee': 'MultiHub IQ Fee',
+}
+
+function getFeeTypeDisplayName(feeType: string | null | undefined): string {
+  if (!feeType) return ''
+  return FEE_TYPE_DISPLAY_NAMES[feeType] || feeType
+}
+
 // Types for invoice generation
 export interface DetailedBillingData {
   shipments: DetailedShipment[]
@@ -346,8 +357,25 @@ export async function collectBillingTransactions(
         feeType: tx.transaction_type,
         transactionDate: tx.charge_date,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
+      // These are WRO-based but should be categorized as Additional Services with markup
+      items.push({
+        id: tx.id,
+        billingTable: 'billing_shipment_fees',
+        billingRecordId: tx.id,
+        baseAmount,
+        markupApplied: 0,
+        billedAmount: 0,
+        markupRuleId: null,
+        markupPercentage: 0,
+        lineCategory: 'Additional Services',
+        description: `WRO ${tx.reference_id || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
+        feeType: transactionFee,
+        transactionDate: tx.charge_date,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
-      // Receiving (WRO = Warehouse Receiving Order)
+      // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: tx.id,
         billingTable: 'billing_receiving',
@@ -433,6 +461,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         .select('*')
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
+        .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination
         .range(offset, offset + 999)
@@ -590,7 +619,25 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: txTransactionType,
         transactionDate: txChargeDate,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
+      items.push({
+        id: txId,
+        billingTable: 'billing_shipment_fees',
+        billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
+        baseAmount,
+        markupApplied: 0,
+        billedAmount: 0,
+        markupRuleId: null,
+        markupPercentage: 0,
+        lineCategory: 'Additional Services',
+        description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
+        feeType: transactionFee,
+        transactionDate: txChargeDate,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+      // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: txId,
         billingTable: 'billing_receiving',
@@ -825,7 +872,25 @@ export async function collectUnprocessedBillingTransactions(
         feeType: txTransactionType,
         transactionDate: txChargeDate,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
+      items.push({
+        id: txId,
+        billingTable: 'billing_shipment_fees',
+        billingRecordId: txId,
+        invoiceIdSb: txInvoiceIdSb,
+        baseAmount,
+        markupApplied: 0,
+        billedAmount: 0,
+        markupRuleId: null,
+        markupPercentage: 0,
+        lineCategory: 'Additional Services',
+        description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
+        feeType: transactionFee,
+        transactionDate: txChargeDate,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+      // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: txId,
         billingTable: 'billing_receiving',
@@ -1010,7 +1075,7 @@ export async function applyMarkupsToLineItems(
   // For non-shipments:
   //   billed_amount = cost × (1 + markup%)
   // For credits: if credit amount matches shipment base cost exactly, apply same markup
-  return lineItems.map(item => {
+  const processedItems = lineItems.map(item => {
     const result = markupResults.get(item.id)
     const surcharge = item.surcharge || 0
     const insuranceCost = item.insuranceCost || 0
@@ -1037,18 +1102,32 @@ export async function applyMarkupsToLineItems(
     }
 
     if (result) {
-      // Convert markup percentage from result (which is in % like 18.00) to decimal (0.18)
-      const markupDecimal = result.markupPercentage / 100
+      // Get the actual configured rule percentage (not the effective percentage which has rounding errors)
+      // appliedRules[0].markupValue is the rule's percentage (e.g., 18 for 18%)
+      // result.markupPercentage is back-calculated and can be different due to rounding (e.g., 17.94)
+      const rulePercentage = result.appliedRules.length > 0 && result.appliedRules[0].markupType === 'percentage'
+        ? result.appliedRules[0].markupValue
+        : result.markupPercentage // fallback to effective for fixed amounts
+      const markupDecimal = rulePercentage / 100
 
       if (isShipment) {
         // For shipments: calculate all the breakdown fields
-        const baseCharge = Math.round(result.billedAmount * 100) / 100 // base_cost × (1 + markup%)
-        const totalCharge = Math.round((baseCharge + surcharge) * 100) / 100
-        const insuranceCharge = Math.round((insuranceCost * (1 + markupDecimal)) * 100) / 100
-        const billedAmount = Math.round((totalCharge + insuranceCharge) * 100) / 100
+        // Match Excel formula: base_cost * (1 + markup%) + surcharge + insurance * (1 + markup%)
+        // Round ONLY the final billedAmount, not intermediate values
+        const baseChargeRaw = item.baseAmount * (1 + markupDecimal) // base_cost × (1 + markup%)
+        const insuranceChargeRaw = insuranceCost * (1 + markupDecimal) // insurance × (1 + markup%)
+        const billedAmountRaw = baseChargeRaw + surcharge + insuranceChargeRaw
+
+        // Round final billedAmount ONCE (matches Excel's approach)
+        const billedAmount = Math.round(billedAmountRaw * 100) / 100
+
+        // For display fields, round individually
+        const baseCharge = Math.round(baseChargeRaw * 100) / 100
+        const totalCharge = Math.round((baseChargeRaw + surcharge) * 100) / 100
+        const insuranceCharge = Math.round(insuranceChargeRaw * 100) / 100
 
         // Total markup = markup on base + markup on insurance
-        const totalMarkup = Math.round((result.markupAmount + (insuranceCost * markupDecimal)) * 100) / 100
+        const totalMarkup = Math.round((item.baseAmount * markupDecimal + insuranceCost * markupDecimal) * 100) / 100
 
         return {
           ...item,
@@ -1075,9 +1154,9 @@ export async function applyMarkupsToLineItems(
     // No markup rule found - pass through at cost
     if (isShipment) {
       const baseCharge = item.baseAmount
-      const totalCharge = Math.round((baseCharge + surcharge) * 100) / 100
+      const totalCharge = baseCharge + surcharge // No extra rounding - matches Excel
       const insuranceCharge = insuranceCost
-      const billedAmount = Math.round((totalCharge + insuranceCharge) * 100) / 100
+      const billedAmount = totalCharge + insuranceCharge
 
       return {
         ...item,
@@ -1093,6 +1172,145 @@ export async function applyMarkupsToLineItems(
       billedAmount: item.baseAmount, // No markup if no rule found
     }
   })
+
+  // ROUNDING RECONCILIATION: Match Excel's "formula on totals" approach
+  // This ensures our totals match Excel while preserving per-line detail
+  //
+  // Two reconciliations needed:
+  // 1. Shipping items - formula: base*(1+markup%) + surcharge + insurance*(1+markup%)
+  // 2. Additional Services (Pick Fees + B2B + Additional Services combined) - formula: cost*(1+markup%)
+
+  // === SHIPPING RECONCILIATION ===
+  // Group by markup percentage (converted to integer for grouping)
+  const markupGroups = new Map<number, { items: typeof processedItems; indices: number[] }>()
+
+  for (let i = 0; i < processedItems.length; i++) {
+    const item = processedItems[i]
+    // Only reconcile shipping items (they have special formula with surcharge/insurance)
+    if (item.billingTable === 'billing_shipments' && item.markupPercentage && item.markupPercentage > 0) {
+      const markupPct = Math.round((item.markupPercentage || 0) * 10000) // Use high precision for grouping
+      if (!markupGroups.has(markupPct)) {
+        markupGroups.set(markupPct, { items: [], indices: [] })
+      }
+      markupGroups.get(markupPct)!.items.push(item)
+      markupGroups.get(markupPct)!.indices.push(i)
+    }
+  }
+
+  // For each markup group, reconcile rounding difference
+  for (const [markupPct, group] of markupGroups) {
+    if (group.items.length === 0) continue
+
+    const markupDecimal = markupPct / 10000
+
+    // Calculate aggregated totals (Excel approach)
+    let sumBase = 0
+    let sumSurcharge = 0
+    let sumInsurance = 0
+    let sumPerLineRounded = 0
+
+    for (const item of group.items) {
+      sumBase += item.baseAmount || 0
+      sumSurcharge += item.surcharge || 0
+      sumInsurance += item.insuranceCost || 0
+      sumPerLineRounded += item.billedAmount || 0
+    }
+
+    // Expected total using formula on aggregated values
+    const expectedTotal = sumBase * (1 + markupDecimal) + sumSurcharge + sumInsurance * (1 + markupDecimal)
+    const expectedTotalRounded = Math.round(expectedTotal * 100) / 100
+
+    // Difference to reconcile
+    const roundingDiff = expectedTotalRounded - sumPerLineRounded
+
+    // If there's a difference, distribute it proportionally across items
+    // (or apply to the largest item for simplicity and minimal per-item impact)
+    // Use 0.005 threshold to handle floating point precision (0.01 might be 0.00999...)
+    if (Math.abs(roundingDiff) >= 0.005) {
+      // Find the largest item in the group (by billedAmount) to absorb the rounding
+      let largestIdx = group.indices[0]
+      let largestAmount = Math.abs(processedItems[largestIdx].billedAmount || 0)
+
+      for (const idx of group.indices) {
+        const amount = Math.abs(processedItems[idx].billedAmount || 0)
+        if (amount > largestAmount) {
+          largestAmount = amount
+          largestIdx = idx
+        }
+      }
+
+      // Adjust the largest item's billedAmount
+      const item = processedItems[largestIdx]
+      item.billedAmount = Math.round((item.billedAmount + roundingDiff) * 100) / 100
+
+      // Also adjust markupApplied proportionally
+      if (item.markupApplied !== undefined) {
+        item.markupApplied = Math.round((item.markupApplied + roundingDiff) * 100) / 100
+      }
+    }
+  }
+
+  // === ADDITIONAL SERVICES RECONCILIATION ===
+  // The "Additional Services" category (not Pick Fees or B2B) uses formula-on-totals
+  // Group by markup percentage and reconcile
+  const additionalServicesMarkupGroups = new Map<number, { items: typeof processedItems; indices: number[] }>()
+
+  for (let i = 0; i < processedItems.length; i++) {
+    const item = processedItems[i]
+    // ONLY "Additional Services" category, not "Pick Fees" or "B2B Fees"
+    if (item.lineCategory === 'Additional Services' && item.markupPercentage && item.markupPercentage > 0) {
+      const markupPct = Math.round((item.markupPercentage || 0) * 10000)
+      if (!additionalServicesMarkupGroups.has(markupPct)) {
+        additionalServicesMarkupGroups.set(markupPct, { items: [], indices: [] })
+      }
+      additionalServicesMarkupGroups.get(markupPct)!.items.push(item)
+      additionalServicesMarkupGroups.get(markupPct)!.indices.push(i)
+    }
+  }
+
+  // Reconcile Additional Services by markup group
+  for (const [markupPct, group] of additionalServicesMarkupGroups) {
+    if (group.items.length === 0) continue
+
+    const markupDecimal = markupPct / 10000
+
+    let sumBaseAmount = 0
+    let sumPerLineRounded = 0
+
+    for (const item of group.items) {
+      sumBaseAmount += item.baseAmount || 0
+      sumPerLineRounded += item.billedAmount || 0
+    }
+
+    // Formula on totals: base * (1 + markup%)
+    const expectedTotal = sumBaseAmount * (1 + markupDecimal)
+    const expectedTotalRounded = Math.round(expectedTotal * 100) / 100
+    const roundingDiff = expectedTotalRounded - sumPerLineRounded
+
+    // Use 0.005 threshold to handle floating point precision (0.01 might be 0.00999...)
+    if (Math.abs(roundingDiff) >= 0.005) {
+      // Find largest item to absorb rounding
+      let largestIdx = group.indices[0]
+      let largestAmount = Math.abs(processedItems[largestIdx].billedAmount || 0)
+
+      for (const idx of group.indices) {
+        const amount = Math.abs(processedItems[idx].billedAmount || 0)
+        if (amount > largestAmount) {
+          largestAmount = amount
+          largestIdx = idx
+        }
+      }
+
+      const item = processedItems[largestIdx]
+      item.billedAmount = Math.round((item.billedAmount + roundingDiff) * 100) / 100
+
+      if (item.markupApplied !== undefined) {
+        item.markupApplied = Math.round((item.markupApplied + roundingDiff) * 100) / 100
+      }
+    }
+  }
+
+  return processedItems
 }
 
 /**
@@ -1113,11 +1331,13 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
 
   let subtotal = 0
   let totalMarkup = 0
+  let totalAmount = 0
 
   for (const item of lineItems) {
     const surcharge = item.surcharge || 0
     subtotal += item.baseAmount + surcharge
     totalMarkup += item.markupApplied
+    totalAmount += item.billedAmount // Sum actual billed amounts to match Excel
 
     const cat = byCategory[item.lineCategory]
     if (cat) {
@@ -1131,7 +1351,7 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
   return {
     subtotal: Math.round(subtotal * 100) / 100,
     totalMarkup: Math.round(totalMarkup * 100) / 100,
-    totalAmount: Math.round((subtotal + totalMarkup) * 100) / 100,
+    totalAmount: Math.round(totalAmount * 100) / 100, // Use summed billedAmounts
     byCategory,
   }
 }
@@ -1156,13 +1376,14 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     }
   }
 
-  // Helper to add total row
-  const addTotalRow = (sheet: ExcelJS.Worksheet, row: number, colIndex: number, total: number) => {
+  // Helper to add total row (returns the total row number for cell-level formatting)
+  const addTotalRow = (sheet: ExcelJS.Worksheet, row: number, colIndex: number, total: number): number => {
     sheet.getCell(row, 1).value = 'Total'
     sheet.getCell(row, 1).font = { bold: true }
     sheet.getCell(row, colIndex).value = total
     sheet.getCell(row, colIndex).font = { bold: true }
     sheet.getCell(row, colIndex).numFmt = '#,##0.00'
+    return row  // Return the total row number for cell formatting range
   }
 
   // Excel date/time format for timestamps
@@ -1241,21 +1462,11 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     ]
     row++
   }
-  addTotalRow(shipmentsSheet, row, 12, shipmentsTotal) // Total Fulfillment Charge is col 12
+  const shipmentsTotalRow = addTotalRow(shipmentsSheet, row, 12, shipmentsTotal) // Total Fulfillment Charge is col 12
 
-  // Auto-fit columns
-  shipmentsSheet.columns.forEach(col => { col.width = 15 })
-  // Apply date/time format to date columns (new indices after adding User ID and removing Total)
-  shipmentsSheet.getColumn(7).numFmt = dateTimeFormat  // Transaction Date
-  shipmentsSheet.getColumn(30).numFmt = dateTimeFormat // Order Created
-  shipmentsSheet.getColumn(31).numFmt = dateTimeFormat // Label Generated
-  shipmentsSheet.getColumn(32).numFmt = dateTimeFormat // Delivered
-  // Apply currency format to financial columns
-  const currencyFormat = '#,##0.00'
-  shipmentsSheet.getColumn(10).numFmt = currencyFormat // Base Fulfillment Charge
-  shipmentsSheet.getColumn(11).numFmt = currencyFormat // Surcharges
-  shipmentsSheet.getColumn(12).numFmt = currencyFormat // Total Fulfillment Charge
-  shipmentsSheet.getColumn(13).numFmt = currencyFormat // Insurance
+  // Set column widths individually (not using .columns array to avoid phantom rows)
+  for (let i = 1; i <= 35; i++) shipmentsSheet.getColumn(i).width = 15
+  // Cell-level formatting is applied at the end of the function
 
   // 2. ADDITIONAL SERVICES SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1284,16 +1495,16 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       f.order_id || f.id,
-      f.fee_type || '',
+      getFeeTypeDisplayName(f.fee_type) || '',
       billedAmt,
       f.transaction_date ? formatExcelDate(f.transaction_date) : ''
     ]
     row++
   }
-  addTotalRow(feesSheet, row, 5, feesTotal)
-  feesSheet.columns = [{ width: 12 }, { width: 20 }, { width: 15 }, { width: 25 }, { width: 15 }, { width: 20 }]
-  feesSheet.getColumn(5).numFmt = currencyFormat // Total Charge
-  feesSheet.getColumn(6).numFmt = dateTimeFormat // Transaction Date
+  const feesTotalRow = addTotalRow(feesSheet, row, 5, feesTotal)
+  // Set column widths individually
+  const feesWidths = [12, 20, 15, 25, 15, 20]
+  for (let i = 0; i < feesWidths.length; i++) feesSheet.getColumn(i + 1).width = feesWidths[i]
 
   // 3. RETURNS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1334,10 +1545,9 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     ]
     row++
   }
-  addTotalRow(returnsSheet, row, 6, returnsTotal)
-  returnsSheet.columns.forEach(col => { col.width = 15 })
-  returnsSheet.getColumn(6).numFmt = currencyFormat // Total Charge
-  returnsSheet.getColumn(10).numFmt = dateTimeFormat // Return Date
+  const returnsTotalRow = addTotalRow(returnsSheet, row, 6, returnsTotal)
+  // Set column widths individually
+  for (let i = 1; i <= 11; i++) returnsSheet.getColumn(i).width = 15
 
   // 4. RECEIVING SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1366,16 +1576,17 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       r.wro_id || '',
-      r.fee_type || 'WRO Receiving Fee',
+      getFeeTypeDisplayName(r.fee_type) || 'WRO Receiving Fee',
       billedAmt,
       r.transaction_type || '',
       r.transaction_date ? formatExcelDate(r.transaction_date) : ''
     ]
     row++
   }
-  addTotalRow(receivingSheet, row, 5, receivingTotal)
-  receivingSheet.columns = [{ width: 12 }, { width: 20 }, { width: 15 }, { width: 20 }, { width: 15 }, { width: 15 }, { width: 20 }]
-  receivingSheet.getColumn(7).numFmt = dateTimeFormat // Transaction Date
+  const receivingTotalRow = addTotalRow(receivingSheet, row, 5, receivingTotal)
+  // Set column widths individually
+  const receivingWidths = [12, 20, 15, 20, 15, 15, 20]
+  for (let i = 0; i < receivingWidths.length; i++) receivingSheet.getColumn(i + 1).width = receivingWidths[i]
 
   // 5. STORAGE SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1413,9 +1624,9 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     ]
     row++
   }
-  addTotalRow(storageSheet, row, 7, storageTotal)
-  storageSheet.columns.forEach(col => { col.width = 15 })
-  storageSheet.getColumn(3).numFmt = dateOnlyFormat // Charge Date (date only)
+  const storageTotalRow = addTotalRow(storageSheet, row, 7, storageTotal)
+  // Set column widths individually
+  for (let i = 1; i <= 8; i++) storageSheet.getColumn(i).width = 15
 
   // 6. CREDITS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1450,26 +1661,88 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     ]
     row++
   }
-  addTotalRow(creditsSheet, row, 6, creditsTotal)
-  creditsSheet.columns = [{ width: 12 }, { width: 20 }, { width: 15 }, { width: 20 }, { width: 30 }, { width: 15 }]
-  creditsSheet.getColumn(4).numFmt = dateTimeFormat // Transaction Date
+  const creditsTotalRow = addTotalRow(creditsSheet, row, 6, creditsTotal)
+  const creditsWidths = [12, 20, 15, 20, 30, 15]
+  for (let i = 0; i < creditsWidths.length; i++) creditsSheet.getColumn(i + 1).width = creditsWidths[i]
+  // NOTE: Column-level numFmt removed to prevent phantom rows in Excel
 
-  // Format number columns across all sheets (all financial values with 2 decimal places)
-  const formatCurrencyColumns = (sheet: ExcelJS.Worksheet, cols: number[]) => {
-    cols.forEach(colNum => {
-      sheet.getColumn(colNum).numFmt = '#,##0.00'
-    })
+  // Format cells row-by-row (not entire columns) to prevent phantom blank rows in Excel
+  // This applies formatting only to cells with actual data
+  const formatCells = (sheet: ExcelJS.Worksheet, cols: number[], lastRow: number, numFmt: string) => {
+    for (let r = 2; r <= lastRow; r++) {  // Start at row 2 to skip header
+      cols.forEach(colNum => {
+        const cell = sheet.getCell(r, colNum)
+        if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+          cell.numFmt = numFmt
+        }
+      })
+    }
   }
 
-  // Apply currency format to all financial columns (client-facing only)
-  // With User ID added and Total removed: Base Fulfillment Charge(10), Surcharges(11), Total Fulfillment Charge(12), Insurance(13)
-  formatCurrencyColumns(shipmentsSheet, [10, 11, 12, 13])
-  // With User ID added to all sheets, column indices shift by 1
-  formatCurrencyColumns(feesSheet, [5])                        // Total Charge
-  formatCurrencyColumns(returnsSheet, [6])                     // Total Charge
-  formatCurrencyColumns(receivingSheet, [5])                   // Total Charge
-  formatCurrencyColumns(storageSheet, [7])                     // Total Charge
-  formatCurrencyColumns(creditsSheet, [6])                     // Credit Amount
+  // Apply currency and date formatting cell-by-cell (not column-level) to prevent blank rows
+  // Shipments sheet - currency columns: 10=Base, 11=Surcharges, 12=Total, 13=Insurance
+  //                 - date columns: 7=Transaction Date, 30=Order Created, 31=Label Generated, 32=Delivered
+  formatCells(shipmentsSheet, [10, 11, 12, 13], shipmentsTotalRow, '#,##0.00')
+  formatCells(shipmentsSheet, [7, 30, 31, 32], shipmentsTotalRow, dateTimeFormat)
+
+  // Fees sheet - col 5=Total Charge (currency), col 6=Transaction Date
+  formatCells(feesSheet, [5], feesTotalRow, '#,##0.00')
+  formatCells(feesSheet, [6], feesTotalRow, dateTimeFormat)
+
+  // Returns sheet - col 6=Total Charge (currency), col 10=Return Date
+  formatCells(returnsSheet, [6], returnsTotalRow, '#,##0.00')
+  formatCells(returnsSheet, [10], returnsTotalRow, dateTimeFormat)
+
+  // Receiving sheet - col 5=Total Charge (currency), col 7=Transaction Date
+  formatCells(receivingSheet, [5], receivingTotalRow, '#,##0.00')
+  formatCells(receivingSheet, [7], receivingTotalRow, dateTimeFormat)
+
+  // Storage sheet - col 7=Total Charge (currency), col 3=Charge Date (date only)
+  formatCells(storageSheet, [7], storageTotalRow, '#,##0.00')
+  formatCells(storageSheet, [3], storageTotalRow, dateOnlyFormat)
+
+  // Credits sheet - col 6=Credit Amount (currency), col 4=Transaction Date
+  formatCells(creditsSheet, [6], creditsTotalRow, '#,##0.00')
+  formatCells(creditsSheet, [4], creditsTotalRow, dateTimeFormat)
+
+  // Add auto-filter to define the exact data range (prevents Excel from showing blank rows as data)
+  // The filter range tells Excel exactly where the data starts and ends
+  const colToLetter = (col: number): string => {
+    let letter = ''
+    while (col > 0) {
+      const remainder = (col - 1) % 26
+      letter = String.fromCharCode(65 + remainder) + letter
+      col = Math.floor((col - 1) / 26)
+    }
+    return letter
+  }
+
+  // Set autoFilter for each sheet to define the data range
+  shipmentsSheet.autoFilter = `A1:${colToLetter(35)}${shipmentsTotalRow}`
+  feesSheet.autoFilter = `A1:${colToLetter(6)}${feesTotalRow}`
+  returnsSheet.autoFilter = `A1:${colToLetter(11)}${returnsTotalRow}`
+  receivingSheet.autoFilter = `A1:${colToLetter(7)}${receivingTotalRow}`
+  storageSheet.autoFilter = `A1:${colToLetter(8)}${storageTotalRow}`
+  creditsSheet.autoFilter = `A1:${colToLetter(6)}${creditsTotalRow}`
+
+  // Trim each worksheet by removing any rows beyond the total row
+  // This is more aggressive than autoFilter and directly removes phantom rows
+  const trimSheet = (sheet: ExcelJS.Worksheet, lastRow: number) => {
+    // ExcelJS tracks rows internally - we need to delete any that exist beyond our data
+    // Use rowCount which gives us the actual number of rows ExcelJS thinks exist
+    const actualRowCount = sheet.rowCount
+    if (actualRowCount > lastRow) {
+      // Delete rows from lastRow+1 to actualRowCount (delete count = actualRowCount - lastRow)
+      sheet.spliceRows(lastRow + 1, actualRowCount - lastRow)
+    }
+  }
+
+  trimSheet(shipmentsSheet, shipmentsTotalRow)
+  trimSheet(feesSheet, feesTotalRow)
+  trimSheet(returnsSheet, returnsTotalRow)
+  trimSheet(receivingSheet, receivingTotalRow)
+  trimSheet(storageSheet, storageTotalRow)
+  trimSheet(creditsSheet, creditsTotalRow)
 
   // Generate buffer
   const buffer = await workbook.xlsx.writeBuffer()
@@ -1768,6 +2041,15 @@ export async function collectDetailedBillingData(
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
+      shipmentFees.push({
+        id: tx.id,
+        order_id: tx.reference_id,
+        fee_type: transactionFee,
+        amount: cost,
+        transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO = Warehouse Receiving Order) - decode ULID for full timestamp
       receiving.push({
@@ -1832,6 +2114,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         .select('*')
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
+        .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination
         .range(offset, offset + 999)
@@ -2147,6 +2430,15 @@ export async function collectDetailedBillingDataByInvoiceIds(
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center as string,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
+      shipmentFees.push({
+        id: tx.id as string,
+        order_id: tx.reference_id as string,
+        fee_type: transactionFee,
+        amount: cost,
+        transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp (matches reference XLSX)
       receiving.push({
@@ -2360,6 +2652,15 @@ export async function collectUnprocessedDetailedBillingData(
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center as string,
       })
+    } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
+      // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
+      shipmentFees.push({
+        id: tx.id as string,
+        order_id: tx.reference_id as string,
+        fee_type: transactionFee,
+        amount: cost,
+        transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+      })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp
       receiving.push({
@@ -2436,11 +2737,12 @@ export async function markTransactionsAsInvoiced(
     ? (typeof invoiceDate === 'string' ? new Date(invoiceDate).toISOString() : invoiceDate.toISOString())
     : new Date().toISOString()
 
-  // Update each transaction with its markup data
-  for (let i = 0; i < lineItems.length; i += 500) {
-    const batch = lineItems.slice(i, i + 500)
+  // Update each transaction with its markup data - parallelized within batches
+  for (let i = 0; i < lineItems.length; i += 100) {
+    const batch = lineItems.slice(i, i + 100)
 
-    for (const item of batch) {
+    // Process batch in parallel
+    const results = await Promise.all(batch.map(async (item) => {
       const isShipment = item.billingTable === 'billing_shipments'
 
       // Build update object with common fields
@@ -2467,8 +2769,13 @@ export async function markTransactionsAsInvoiced(
         .update(updateData)
         .eq('id', item.id)
 
-      if (error) {
-        errors.push(`Transaction ${item.id}: ${error.message}`)
+      return { id: item.id, error }
+    }))
+
+    // Count successes and failures
+    for (const result of results) {
+      if (result.error) {
+        errors.push(`Transaction ${result.id}: ${result.error.message}`)
       } else {
         updated++
       }

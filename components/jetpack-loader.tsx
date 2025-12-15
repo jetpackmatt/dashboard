@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 
 interface JetpackLoaderProps {
   className?: string
-  size?: "sm" | "md" | "lg"
+  size?: "sm" | "md" | "lg" | "xl"
 }
 
 export function JetpackLoader({ className, size = "md" }: JetpackLoaderProps) {
@@ -12,6 +12,7 @@ export function JetpackLoader({ className, size = "md" }: JetpackLoaderProps) {
     sm: "w-4 h-3",
     md: "w-5 h-4",
     lg: "w-8 h-6",
+    xl: "w-12 h-9",
   }
 
   return (

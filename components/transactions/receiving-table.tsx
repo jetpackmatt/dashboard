@@ -8,30 +8,48 @@ import { TransactionsTable } from "./transactions-table"
 import { Receiving, receivingCellRenderers } from "./cell-renderers"
 
 const DEFAULT_PAGE_SIZE = 50
-// Stable empty array reference to prevent re-render loops
-const EMPTY_STATUS_FILTER: string[] = []
 
 interface ReceivingTableProps {
   clientId: string
-  statusFilter?: string[]
+  statusFilter?: string
   dateRange?: DateRange
+  searchQuery?: string
   userColumnVisibility?: Record<string, boolean>
+  // Page size persistence
+  initialPageSize?: number
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 export function ReceivingTable({
   clientId,
   statusFilter,
   dateRange,
+  searchQuery = "",
   userColumnVisibility = {},
+  initialPageSize = DEFAULT_PAGE_SIZE,
+  onPageSizeChange,
 }: ReceivingTableProps) {
-  // Use stable reference for empty array
-  const effectiveStatusFilter = statusFilter ?? EMPTY_STATUS_FILTER
+  // Convert "all" to undefined for API
+  const effectiveStatusFilter = statusFilter === "all" ? undefined : statusFilter
   const [data, setData] = React.useState<Receiving[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [isPageLoading, setIsPageLoading] = React.useState(false)
   const [totalCount, setTotalCount] = React.useState(0)
   const [pageIndex, setPageIndex] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Wrap setPageSize to notify parent for persistence
+  const setPageSize = React.useCallback((size: number) => {
+    setPageSizeState(size)
+    onPageSizeChange?.(size)
+  }, [onPageSizeChange])
+
+  // Sync pageSize when initialPageSize changes (e.g., after localStorage loads)
+  React.useEffect(() => {
+    if (initialPageSize !== pageSize) {
+      setPageSizeState(initialPageSize)
+    }
+  }, [initialPageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch data from API
   const fetchData = React.useCallback(async (page: number, size: number, isInitial: boolean = false) => {
@@ -56,9 +74,14 @@ export function ReceivingTable({
         params.set('endDate', dateRange.to.toISOString().split('T')[0])
       }
 
-      // Add status filter
-      if (effectiveStatusFilter.length > 0) {
-        params.set('status', effectiveStatusFilter.join(','))
+      // Add receiving status filter
+      if (effectiveStatusFilter) {
+        params.set('receivingStatus', effectiveStatusFilter)
+      }
+
+      // Add search query
+      if (searchQuery) {
+        params.set('search', searchQuery)
       }
 
       const response = await fetch(`/api/data/billing/receiving?${params.toString()}`)
@@ -78,13 +101,13 @@ export function ReceivingTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, dateRange, effectiveStatusFilter])
+  }, [clientId, dateRange, effectiveStatusFilter, searchQuery])
 
   // Initial load
   React.useEffect(() => {
     setPageIndex(0)
     fetchData(0, pageSize, true)
-  }, [clientId, dateRange, effectiveStatusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, dateRange, effectiveStatusFilter, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle page change
   const handlePageChange = (newPageIndex: number, newPageSize: number) => {

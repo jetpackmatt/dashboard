@@ -14,7 +14,7 @@ export default async function Page() {
   return (
     <>
       <SiteHeader sectionName={`Welcome Back, ${displayName}`} />
-      <div className="flex flex-1 flex-col overflow-x-hidden">
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
           <DashboardContent />
         </div>

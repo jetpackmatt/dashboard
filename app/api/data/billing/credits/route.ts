@@ -18,8 +18,11 @@ export async function GET(request: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
 
-  // Status filter
-  const statusFilter = searchParams.get('status')?.split(',').filter(Boolean) || []
+  // Credit reason filter
+  const creditReason = searchParams.get('creditReason')
+
+  // Search query
+  const search = searchParams.get('search')?.trim().toLowerCase()
 
   try {
     let query = supabase
@@ -39,14 +42,9 @@ export async function GET(request: NextRequest) {
       query = query.lte('charge_date', `${endDate}T23:59:59.999Z`)
     }
 
-    // Status filter - convert to invoiced status
-    if (statusFilter.length > 0) {
-      const invoicedStatuses = statusFilter.map(s => s === 'invoiced' || s === 'completed')
-      if (invoicedStatuses.includes(true) && !invoicedStatuses.includes(false)) {
-        query = query.eq('invoiced_status_sb', true)
-      } else if (invoicedStatuses.includes(false) && !invoicedStatuses.includes(true)) {
-        query = query.eq('invoiced_status_sb', false)
-      }
+    // Credit reason filter - filter by CreditReason in additional_details JSON
+    if (creditReason) {
+      query = query.contains('additional_details', { CreditReason: creditReason })
     }
 
     const { data, error, count } = await query
@@ -59,27 +57,43 @@ export async function GET(request: NextRequest) {
     }
 
     // Map to response format matching XLS columns
+    // Use billed_amount (marked-up amount) for Credit column
     // Credits are typically stored as negative amounts
-    const mapped = (data || []).map((row: Record<string, unknown>) => {
+    let mapped = (data || []).map((row: Record<string, unknown>) => {
       const details = row.additional_details as Record<string, unknown> || {}
-      const cost = parseFloat(String(row.cost || 0)) || 0
+      const amount = parseFloat(String(row.billed_amount || row.cost || 0)) || 0
 
       return {
         id: row.id,
         referenceId: String(row.reference_id || ''),
         transactionDate: row.charge_date,
-        creditInvoiceNumber: row.invoice_id_sb?.toString() || '',
-        invoiceDate: row.invoice_date_sb,
+        sbTicketReference: String(details.TicketReference || ''),
+        creditInvoiceNumber: row.invoice_id_jp?.toString() || '',
+        invoiceDate: row.invoice_date_jp,
         creditReason: String(details.Comment || details.CreditReason || ''),
-        creditAmount: Math.abs(cost), // Display as positive
-        status: row.invoiced_status_sb ? 'invoiced' : 'pending',
+        creditAmount: Math.abs(amount), // Display as positive
+        status: row.invoiced_status_jp ? 'invoiced' : 'pending',
       }
     })
 
+    // Apply search filter post-mapping
+    if (search) {
+      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; creditInvoiceNumber: string; creditAmount: number }) =>
+        item.referenceId.toLowerCase().includes(search) ||
+        item.sbTicketReference.toLowerCase().includes(search) ||
+        item.creditInvoiceNumber.toLowerCase().includes(search) ||
+        item.creditAmount.toString().includes(search)
+      )
+    }
+
+    // Apply pagination after search filter
+    const totalCount = search ? mapped.length : (count || 0)
+    const paginatedData = search ? mapped.slice(offset, offset + limit) : mapped
+
     return NextResponse.json({
-      data: mapped,
-      totalCount: count || 0,
-      hasMore: (offset + limit) < (count || 0),
+      data: paginatedData,
+      totalCount,
+      hasMore: (offset + limit) < totalCount,
     })
   } catch (err) {
     console.error('Credits API error:', err)

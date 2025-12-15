@@ -12,6 +12,9 @@ import {
   DollarSign,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Loader2,
   CheckCircle2,
   AlertCircle,
@@ -185,8 +188,8 @@ export function AdminContent() {
     <div className="p-4 lg:p-6">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
-          <TabsTrigger value="markup">Markup Tables</TabsTrigger>
-          <TabsTrigger value="invoicing">Run Invoicing</TabsTrigger>
+          <TabsTrigger value="markup">Markups</TabsTrigger>
+          <TabsTrigger value="invoicing">Invoicing</TabsTrigger>
           <TabsTrigger value="sync-health">Sync Health</TabsTrigger>
         </TabsList>
 
@@ -1064,6 +1067,14 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Filter state
+  const [clientFilter, setClientFilter] = React.useState<string>('all')
+  const [dateFilter, setDateFilter] = React.useState<string>('all')
+
+  // Pagination state
+  const [pageIndex, setPageIndex] = React.useState(0)
+  const [pageSize, setPageSize] = React.useState(50)
+
   // Preflight validation state
   const [preflightResult, setPreflightResult] = React.useState<PreflightResult | null>(null)
   const [isLoadingPreflight, setIsLoadingPreflight] = React.useState(false)
@@ -1083,6 +1094,57 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
     fetchInvoices()
     fetchPreflightValidation()
   }, [])
+
+  // Filter approved invoices by client and date - must be before early returns
+  const approvedInvoices = React.useMemo(() => {
+    let filtered = invoices.filter(i => i.status === 'approved' || i.status === 'sent')
+
+    // Client filter
+    if (clientFilter !== 'all') {
+      filtered = filtered.filter(i => i.client_id === clientFilter)
+    }
+
+    // Date filter
+    if (dateFilter !== 'all') {
+      const now = new Date()
+      let cutoffDate: Date
+
+      switch (dateFilter) {
+        case '7d':
+          cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          break
+        case '30d':
+          cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+          break
+        case '90d':
+          cutoffDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+          break
+        default:
+          cutoffDate = new Date(0) // Beginning of time
+      }
+
+      filtered = filtered.filter(i => {
+        const invoiceDate = new Date(i.invoice_date)
+        return invoiceDate >= cutoffDate
+      })
+    }
+
+    return filtered
+  }, [invoices, clientFilter, dateFilter])
+
+  // Paginated invoices - slice the filtered results
+  const paginatedInvoices = React.useMemo(() => {
+    const start = pageIndex * pageSize
+    return approvedInvoices.slice(start, start + pageSize)
+  }, [approvedInvoices, pageIndex, pageSize])
+
+  // Total pages calculation
+  const totalPages = Math.ceil(approvedInvoices.length / pageSize)
+
+  // Reset page when filters change
+  React.useEffect(() => {
+    setPageIndex(0)
+  }, [clientFilter, dateFilter])
 
   async function fetchInvoices() {
     setIsLoading(true)
@@ -1304,7 +1366,6 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   }
 
   const draftInvoices = invoices.filter(i => i.status === 'draft')
-  const approvedInvoices = invoices.filter(i => i.status === 'approved' || i.status === 'sent')
 
   // Calculate preflight summary
   const hasPreflightIssues = preflightResult && (
@@ -1626,15 +1687,48 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
         {/* Approved Invoices */}
         <Card>
           <CardHeader>
-            <CardTitle>Recent Invoices</CardTitle>
-            <CardDescription>Previously approved and sent invoices</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Recent Invoices</CardTitle>
+                <CardDescription>Previously approved and sent invoices</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={clientFilter} onValueChange={setClientFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="All Brands" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Brands</SelectItem>
+                    {clients.map(client => (
+                      <SelectItem key={client.id} value={client.id}>
+                        {client.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={dateFilter} onValueChange={setDateFilter}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="All Time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Time</SelectItem>
+                    <SelectItem value="7d">Last 7 days</SelectItem>
+                    <SelectItem value="30d">Last 30 days</SelectItem>
+                    <SelectItem value="90d">Last 3 months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {approvedInvoices.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">
-                No approved invoices yet.
+                {clientFilter !== 'all' || dateFilter !== 'all'
+                  ? 'No invoices match the selected filters.'
+                  : 'No approved invoices yet.'}
               </p>
             ) : (
+              <>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1647,7 +1741,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {approvedInvoices.slice(0, 10).map(invoice => {
+                  {paginatedInvoices.map(invoice => {
                     const client = clients.find(c => c.id === invoice.client_id)
                     return (
                       <TableRow key={invoice.id}>
@@ -1695,6 +1789,81 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                   })}
                 </TableBody>
               </Table>
+
+              {/* Pagination Footer */}
+              <div className="flex items-center justify-between px-2 py-4 border-t">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-muted-foreground">
+                    {paginatedInvoices.length.toLocaleString()} of {approvedInvoices.length.toLocaleString()} invoices
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Rows</span>
+                    <Select
+                      value={pageSize.toString()}
+                      onValueChange={(value) => {
+                        setPageSize(Number(value))
+                        setPageIndex(0)
+                      }}
+                    >
+                      <SelectTrigger className="h-7 w-[70px]">
+                        <SelectValue placeholder={pageSize} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[25, 50, 100, 200].map((size) => (
+                          <SelectItem key={size} value={size.toString()}>
+                            {size}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">
+                    Page {pageIndex + 1} of {totalPages || 1}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setPageIndex(0)}
+                      disabled={pageIndex === 0}
+                    >
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setPageIndex(Math.max(0, pageIndex - 1))}
+                      disabled={pageIndex === 0}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setPageIndex(Math.min(totalPages - 1, pageIndex + 1))}
+                      disabled={pageIndex >= totalPages - 1}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setPageIndex(totalPages - 1)}
+                      disabled={pageIndex >= totalPages - 1}
+                    >
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              </>
             )}
           </CardContent>
         </Card>

@@ -5,18 +5,28 @@ import { ClientSelector } from "@/components/client-selector"
 
 interface SiteHeaderProps {
   sectionName?: string
+  children?: React.ReactNode
 }
 
-export function SiteHeader({ sectionName = "Dashboard" }: SiteHeaderProps) {
+export function SiteHeader({ sectionName = "Dashboard", children }: SiteHeaderProps) {
   return (
     <header className="group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 flex h-12 shrink-0 items-center gap-2 transition-[width,height] ease-linear">
       <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
         <SidebarTrigger className="-ml-1" />
         <Separator
           orientation="vertical"
-          className="mx-2 data-[orientation=vertical]:h-4"
+          className="mx-2 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
         />
         <h1 className="text-base font-medium">{sectionName}</h1>
+        {children && (
+          <>
+            <Separator
+              orientation="vertical"
+              className="mx-1 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
+            />
+            {children}
+          </>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <ClientSelector />
           <ModeToggle />

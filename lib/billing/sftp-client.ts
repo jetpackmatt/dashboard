@@ -250,13 +250,22 @@ export async function updateTransactionsWithBreakdown(
 
     for (const row of batch) {
       // Find matching transaction by shipment_id (reference_id for Shipment transactions)
-      const { data: tx, error: findError } = await supabase
+      // Include invoice_id_sb filter to handle edge cases where same shipment
+      // appears on multiple invoices (e.g., re-ships, adjustments)
+      let query = supabase
         .from('transactions')
         .select('id')
         .eq('reference_type', 'Shipment')
         .eq('reference_id', row.shipment_id)
         .eq('fee_type', 'Shipping')
-        .maybeSingle()
+
+      // If invoice_id is provided in SFTP file, filter by it to ensure uniqueness
+      const invoiceId = row.invoice_id_sb ? parseInt(row.invoice_id_sb, 10) : null
+      if (invoiceId && !isNaN(invoiceId)) {
+        query = query.eq('invoice_id_sb', invoiceId)
+      }
+
+      const { data: tx, error: findError } = await query.maybeSingle()
 
       if (findError) {
         result.errors.push(`Error finding shipment ${row.shipment_id}: ${findError.message}`)

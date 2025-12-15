@@ -159,6 +159,7 @@ export async function hasClientToken(
 export async function createNewClient(data: {
   company_name: string
   merchant_id?: string | null
+  short_code?: string | null
 }): Promise<Client> {
   const supabase = createAdminClient()
 
@@ -167,6 +168,7 @@ export async function createNewClient(data: {
     .insert({
       company_name: data.company_name,
       merchant_id: data.merchant_id || null,
+      short_code: data.short_code || null,
       is_active: true,
     })
     .select()
@@ -372,7 +374,7 @@ export async function inviteUser(data: {
  */
 export async function updateClient(
   clientId: string,
-  data: { company_name?: string; merchant_id?: string | null; billing_address?: BillingAddress | null }
+  data: { company_name?: string; merchant_id?: string | null; short_code?: string | null; billing_address?: BillingAddress | null }
 ): Promise<Client> {
   const supabase = createAdminClient()
 
@@ -381,6 +383,7 @@ export async function updateClient(
     .update({
       ...(data.company_name && { company_name: data.company_name }),
       ...(data.merchant_id !== undefined && { merchant_id: data.merchant_id }),
+      ...(data.short_code !== undefined && { short_code: data.short_code }),
       ...(data.billing_address !== undefined && { billing_address: data.billing_address }),
     })
     .eq('id', clientId)

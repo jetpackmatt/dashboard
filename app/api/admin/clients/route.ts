@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { company_name, merchant_id } = body
+    const { company_name, merchant_id, short_code } = body
 
     if (!company_name || typeof company_name !== 'string') {
       return NextResponse.json(
@@ -71,9 +71,19 @@ export async function POST(request: Request) {
       )
     }
 
+    // Validate short_code format if provided
+    const trimmedShortCode = short_code?.trim().toUpperCase() || null
+    if (trimmedShortCode && !/^[A-Z]{2,3}$/.test(trimmedShortCode)) {
+      return NextResponse.json(
+        { error: 'Short code must be 2-3 uppercase letters' },
+        { status: 400 }
+      )
+    }
+
     const client = await createNewClient({
       company_name: company_name.trim(),
       merchant_id: merchant_id?.trim() || null,
+      short_code: trimmedShortCode,
     })
 
     return NextResponse.json({ client }, { status: 201 })

@@ -60,6 +60,7 @@ import { cn } from "@/lib/utils"
 import { useDebouncedCallback } from "use-debounce"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
+import { useTablePreferences } from "@/hooks/use-table-preferences"
 import {
   Sheet,
   SheetClose,
@@ -93,44 +94,8 @@ import {
   CREDITS_TABLE_CONFIG,
 } from "@/lib/table-config"
 
-// Cookie helpers for column visibility persistence
-const COOKIE_PREFIX = 'jetpack_columns_'
-const COOKIE_MAX_AGE = 365 * 24 * 60 * 60 // 1 year in seconds
-
-function getColumnVisibilityFromCookie(tabName: string): VisibilityState | null {
-  if (typeof document === 'undefined') return null
-
-  const cookieName = `${COOKIE_PREFIX}${tabName}`
-  const cookies = document.cookie.split(';')
-
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=')
-    if (name === cookieName && value) {
-      try {
-        return JSON.parse(decodeURIComponent(value))
-      } catch {
-        return null
-      }
-    }
-  }
-  return null
-}
-
-function saveColumnVisibilityToCookie(tabName: string, visibility: VisibilityState) {
-  if (typeof document === 'undefined') return
-
-  const cookieName = `${COOKIE_PREFIX}${tabName}`
-  const value = encodeURIComponent(JSON.stringify(visibility))
-  document.cookie = `${cookieName}=${value}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`
-}
-
-function clearColumnVisibilityCookie(tabName: string) {
-  if (typeof document === 'undefined') return
-
-  const cookieName = `${COOKIE_PREFIX}${tabName}`
-  document.cookie = `${cookieName}=; max-age=0; path=/; SameSite=Lax`
-}
-import { getCarrierDisplayName } from "@/components/transactions/cell-renderers"
+// Table preferences are now managed via useTablePreferences hook (localStorage)
+import { getCarrierDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
 
 // Normalize channel names for display (e.g., "Walmartv2" -> "Walmart", "Shopifyv3" -> "Shopify")
 function normalizeChannelName(name: string): string {
@@ -249,23 +214,18 @@ const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Exception', label: 'Exception' },
 ]
 
-const ADDITIONAL_SERVICES_TYPE_OPTIONS = ['Pick & Pack', 'Assembly', 'Kitting', 'Labeling', 'Inspection', 'Other']
-const ADDITIONAL_SERVICES_STATUS_OPTIONS = ['Pending', 'Completed', 'Invoiced']
+// Fee types are now loaded dynamically from the API
+// Status options are inline: pending, invoiced
 
-const RETURNS_STATUS_OPTIONS = ['Pending', 'Processing', 'Completed', 'Rejected']
-const RETURNS_REASON_OPTIONS = ['Damaged', 'Wrong Item', 'Quality Issue', 'Customer Return', 'Other']
-
-const RECEIVING_FEE_TYPE_OPTIONS = ['Standard', 'Oversize', 'Special Handling', 'Pallet']
-
-const STORAGE_LOCATION_OPTIONS = ['Rack', 'Bin', 'Pallet', 'Floor']
-
-const CREDITS_STATUS_OPTIONS = ['Pending', 'Approved', 'Applied', 'Denied']
-const CREDITS_REASON_OPTIONS = ['Damaged Goods', 'Shipping Error', 'Billing Adjustment', 'Service Credit', 'Other']
+// Dynamic filter options are loaded from APIs below
 
 export function DataTable({
   clientId,
   defaultPageSize = 30,
   showExport = false,
+  // Controlled tab state (optional - for header integration)
+  currentTab: controlledTab,
+  onTabChange: controlledOnTabChange,
   // Pre-fetched unfulfilled data for instant tab switching
   unfulfilledData,
   unfulfilledTotalCount = 0,
@@ -281,6 +241,9 @@ export function DataTable({
   clientId: string
   defaultPageSize?: number
   showExport?: boolean
+  // Controlled tab state (optional - for header integration)
+  currentTab?: string
+  onTabChange?: (tab: string) => void
   // Pre-fetched unfulfilled data for instant tab switching
   unfulfilledData?: any[]
   unfulfilledTotalCount?: number
@@ -298,16 +261,14 @@ export function DataTable({
   // ============================================================================
   const [rowSelection, setRowSelection] = React.useState({})
 
-  // Separate column visibility state for each main tab (persisted via cookies)
-  // Initialize empty to avoid SSR hydration mismatch - cookies are loaded via useEffect
-  const [shipmentsColumnVisibility, setShipmentsColumnVisibility] =
-    React.useState<VisibilityState>({})
-  const [unfulfilledColumnVisibility, setUnfulfilledColumnVisibility] =
-    React.useState<VisibilityState>({})
-
-  // Legacy columnVisibility for other tabs (not persisted)
-  const [columnVisibility, setColumnVisibility] =
-    React.useState<VisibilityState>({})
+  // Table preferences with localStorage persistence for all tabs
+  const shipmentsPrefs = useTablePreferences('shipments', 50)
+  const unfulfilledPrefs = useTablePreferences('unfulfilled', 50)
+  const additionalServicesPrefs = useTablePreferences('additional-services', 50)
+  const returnsPrefs = useTablePreferences('returns', 50)
+  const receivingPrefs = useTablePreferences('receiving', 50)
+  const storagePrefs = useTablePreferences('storage', 50)
+  const creditsPrefs = useTablePreferences('credits', 50)
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
     pageSize: defaultPageSize,
@@ -318,22 +279,45 @@ export function DataTable({
   const [filtersExpanded, setFiltersExpanded] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
 
-  // Tab state with URL persistence
+  // Tab state with URL persistence (supports controlled mode via props)
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
   const validTabs = ["shipments", "unfulfilled", "additional-services", "returns", "receiving", "storage", "credits"]
   const tabFromUrl = searchParams.get("tab")
   const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : "shipments"
-  const [currentTab, setCurrentTab] = React.useState(initialTab)
+  const [internalTab, setInternalTab] = React.useState(initialTab)
+
+  // Use controlled tab if provided, otherwise use internal state
+  const currentTab = controlledTab ?? internalTab
+  const isControlled = controlledTab !== undefined
+
+  // Sync tab state when URL tab param changes (e.g., from external navigation)
+  React.useEffect(() => {
+    const urlTab = searchParams.get('tab')
+    if (urlTab && validTabs.includes(urlTab) && urlTab !== internalTab && !isControlled) {
+      setInternalTab(urlTab)
+    }
+  }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync tab to URL when it changes, with scroll position restoration
   const handleTabChange = React.useCallback((newTab: string) => {
-    setCurrentTab(newTab)
+    // If controlled, call the external handler
+    if (isControlled && controlledOnTabChange) {
+      controlledOnTabChange(newTab)
+    } else {
+      setInternalTab(newTab)
+    }
 
-    // Update URL
+    // Clear search when switching tabs (search is tab-specific)
+    setSearchInput('')
+    setSearchQuery('')
+    setSearchExpanded(false)
+
+    // Update URL - remove search param when switching tabs
     const params = new URLSearchParams(searchParams.toString())
     params.set("tab", newTab)
+    params.delete("search")
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
 
     // Get saved position from click handler, or save now if not available
@@ -373,7 +357,7 @@ export function DataTable({
 
     // Start RAF monitoring
     requestAnimationFrame(checkAndRestore)
-  }, [searchParams, router, pathname])
+  }, [searchParams, router, pathname, isControlled, controlledOnTabChange])
 
   // Unfulfilled tab filter state (lifted from UnfulfilledTable for header integration)
   // Now using arrays for multi-select support
@@ -397,42 +381,7 @@ export function DataTable({
     setIsUnfulfilledLoading(unfulfilledLoading)
   }, [unfulfilledLoading])
 
-  // Load column visibility from cookies on mount (client-side only, after hydration)
-  const [hasMounted, setHasMounted] = React.useState(false)
-  React.useEffect(() => {
-    setHasMounted(true)
-    const savedShipments = getColumnVisibilityFromCookie('shipments')
-    const savedUnfulfilled = getColumnVisibilityFromCookie('unfulfilled')
-    if (savedShipments) setShipmentsColumnVisibility(savedShipments)
-    if (savedUnfulfilled) setUnfulfilledColumnVisibility(savedUnfulfilled)
-  }, [])
-
-  // Persist column visibility to cookies when changed (only after mount to avoid overwriting with empty state)
-  React.useEffect(() => {
-    if (!hasMounted) return
-    // Only save if there are actual changes (not the initial empty state)
-    if (Object.keys(shipmentsColumnVisibility).length > 0) {
-      saveColumnVisibilityToCookie('shipments', shipmentsColumnVisibility)
-    }
-  }, [shipmentsColumnVisibility, hasMounted])
-
-  React.useEffect(() => {
-    if (!hasMounted) return
-    if (Object.keys(unfulfilledColumnVisibility).length > 0) {
-      saveColumnVisibilityToCookie('unfulfilled', unfulfilledColumnVisibility)
-    }
-  }, [unfulfilledColumnVisibility, hasMounted])
-
-  // Reset column visibility to defaults (clears cookie and state)
-  const resetShipmentsColumns = React.useCallback(() => {
-    clearColumnVisibilityCookie('shipments')
-    setShipmentsColumnVisibility({})
-  }, [])
-
-  const resetUnfulfilledColumns = React.useCallback(() => {
-    clearColumnVisibilityCookie('unfulfilled')
-    setUnfulfilledColumnVisibility({})
-  }, [])
+  // Column visibility and page size are now persisted via useTablePreferences hooks above
 
   // Shipments tab filter state - now using arrays for multi-select
   const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>([])
@@ -470,8 +419,27 @@ export function DataTable({
   })
 
   // Search state - shared across tabs, debounced for performance
-  const [searchInput, setSearchInput] = React.useState("")
-  const [searchQuery, setSearchQuery] = React.useState("")
+  // Initialize from URL search param if present
+  const initialSearch = searchParams.get('search') || ''
+  const [searchInput, setSearchInput] = React.useState(initialSearch)
+  const [searchQuery, setSearchQuery] = React.useState(initialSearch)
+
+  // Expand search bar if URL has search param on mount
+  React.useEffect(() => {
+    if (initialSearch) {
+      setSearchExpanded(true)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync search state when URL search param changes (e.g., from external navigation)
+  React.useEffect(() => {
+    const urlSearch = searchParams.get('search') || ''
+    if (urlSearch && urlSearch !== searchQuery) {
+      setSearchInput(urlSearch)
+      setSearchQuery(urlSearch)
+      setSearchExpanded(true)
+    }
+  }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search - triggers API call 300ms after typing stops
   const debouncedSearch = useDebouncedCallback((value: string) => {
@@ -483,26 +451,122 @@ export function DataTable({
   const [additionalServicesStatusFilter, setAdditionalServicesStatusFilter] = React.useState<string>("all")
   const [additionalServicesDateRange, setAdditionalServicesDateRange] = React.useState<DateRange | undefined>(undefined)
   const [additionalServicesDatePreset, setAdditionalServicesDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [additionalServicesFeeTypes, setAdditionalServicesFeeTypes] = React.useState<string[]>([])
+
+  // Memoize the status filter array to prevent infinite re-render loops
+  // Creating [statusFilter] inline would create a new array on every render
+  const additionalServicesStatusFilterArray = React.useMemo(() =>
+    additionalServicesStatusFilter !== 'all' ? [additionalServicesStatusFilter] : undefined,
+    [additionalServicesStatusFilter]
+  )
+
+  // Load dynamic fee types for Additional Services
+  React.useEffect(() => {
+    async function loadFeeTypes() {
+      try {
+        const response = await fetch(`/api/data/billing/additional-services/fee-types?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setAdditionalServicesFeeTypes(data.feeTypes || [])
+        }
+      } catch (err) {
+        console.error('Failed to load fee types:', err)
+      }
+    }
+    loadFeeTypes()
+  }, [clientId])
+
+  // Load dynamic credit reasons for Credits tab
+  React.useEffect(() => {
+    async function loadCreditReasons() {
+      try {
+        const response = await fetch(`/api/data/billing/credits/credit-reasons?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setCreditReasons(data.creditReasons || [])
+        }
+      } catch (err) {
+        console.error('Failed to load credit reasons:', err)
+      }
+    }
+    loadCreditReasons()
+  }, [clientId])
+
+  // Load dynamic filter options for Returns tab
+  React.useEffect(() => {
+    async function loadReturnsFilterOptions() {
+      try {
+        const response = await fetch(`/api/data/billing/returns/filter-options?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setReturnStatuses(data.statuses || [])
+          setReturnTypes(data.types || [])
+        }
+      } catch (err) {
+        console.error('Failed to load returns filter options:', err)
+      }
+    }
+    loadReturnsFilterOptions()
+  }, [clientId])
+
+  // Load dynamic filter options for Receiving tab
+  React.useEffect(() => {
+    async function loadReceivingFilterOptions() {
+      try {
+        const response = await fetch(`/api/data/billing/receiving/filter-options?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setReceivingStatuses(data.statuses || [])
+        }
+      } catch (err) {
+        console.error('Failed to load receiving filter options:', err)
+      }
+    }
+    loadReceivingFilterOptions()
+  }, [clientId])
+
+  // Load dynamic filter options for Storage tab
+  React.useEffect(() => {
+    async function loadStorageFilterOptions() {
+      try {
+        const response = await fetch(`/api/data/billing/storage/filter-options?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setStorageFcs(data.fcs || [])
+          setStorageLocationTypes(data.locationTypes || [])
+        }
+      } catch (err) {
+        console.error('Failed to load storage filter options:', err)
+      }
+    }
+    loadStorageFilterOptions()
+  }, [clientId])
 
   // Returns tab filter state
-  const [returnsStatusFilter, setReturnsStatusFilter] = React.useState<string>("all")
-  const [returnsReasonFilter, setReturnsReasonFilter] = React.useState<string>("all")
+  const [returnStatusFilter, setReturnStatusFilter] = React.useState<string>("all")
+  const [returnTypeFilter, setReturnTypeFilter] = React.useState<string>("all")
   const [returnsDateRange, setReturnsDateRange] = React.useState<DateRange | undefined>(undefined)
   const [returnsDatePreset, setReturnsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [returnStatuses, setReturnStatuses] = React.useState<string[]>([])
+  const [returnTypes, setReturnTypes] = React.useState<string[]>([])
 
   // Receiving tab filter state
-  const [receivingFeeTypeFilter, setReceivingFeeTypeFilter] = React.useState<string>("all")
+  const [receivingStatusFilter, setReceivingStatusFilter] = React.useState<string>("all")
   const [receivingDateRange, setReceivingDateRange] = React.useState<DateRange | undefined>(undefined)
   const [receivingDatePreset, setReceivingDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [receivingStatuses, setReceivingStatuses] = React.useState<string[]>([])
 
   // Storage tab filter state
-  const [storageLocationFilter, setStorageLocationFilter] = React.useState<string>("all")
+  const [storageFcFilter, setStorageFcFilter] = React.useState<string>("all")
+  const [storageLocationTypeFilter, setStorageLocationTypeFilter] = React.useState<string>("all")
+  const [storageFcs, setStorageFcs] = React.useState<string[]>([])
+  const [storageLocationTypes, setStorageLocationTypes] = React.useState<string[]>([])
 
   // Credits tab filter state
-  const [creditsStatusFilter, setCreditsStatusFilter] = React.useState<string>("all")
   const [creditsReasonFilter, setCreditsReasonFilter] = React.useState<string>("all")
   const [creditsDateRange, setCreditsDateRange] = React.useState<DateRange | undefined>(undefined)
   const [creditsDatePreset, setCreditsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [creditReasons, setCreditReasons] = React.useState<string[]>([])
 
   // Date preset state for unfulfilled filter
   const [unfulfilledDatePreset, setUnfulfilledDatePreset] = React.useState<DateRangePreset | undefined>('all')
@@ -629,51 +693,53 @@ export function DataTable({
   }
 
   // Returns tab computed values
-  const hasReturnsFilters = returnsStatusFilter !== "all" || returnsReasonFilter !== "all" || returnsDateRange?.from
+  const hasReturnsFilters = returnStatusFilter !== "all" || returnTypeFilter !== "all" || returnsDateRange?.from
   const returnsFilterCount = [
-    returnsStatusFilter !== "all",
-    returnsReasonFilter !== "all",
+    returnStatusFilter !== "all",
+    returnTypeFilter !== "all",
     returnsDateRange?.from,
   ].filter(Boolean).length
 
   const clearReturnsFilters = () => {
-    setReturnsStatusFilter("all")
-    setReturnsReasonFilter("all")
+    setReturnStatusFilter("all")
+    setReturnTypeFilter("all")
     setReturnsDateRange(undefined)
     setReturnsDatePreset(undefined)
   }
 
   // Receiving tab computed values
-  const hasReceivingFilters = receivingFeeTypeFilter !== "all" || receivingDateRange?.from
+  const hasReceivingFilters = receivingStatusFilter !== "all" || receivingDateRange?.from
   const receivingFilterCount = [
-    receivingFeeTypeFilter !== "all",
+    receivingStatusFilter !== "all",
     receivingDateRange?.from,
   ].filter(Boolean).length
 
   const clearReceivingFilters = () => {
-    setReceivingFeeTypeFilter("all")
+    setReceivingStatusFilter("all")
     setReceivingDateRange(undefined)
     setReceivingDatePreset(undefined)
   }
 
   // Storage tab computed values
-  const hasStorageFilters = storageLocationFilter !== "all"
-  const storageFilterCount = storageLocationFilter !== "all" ? 1 : 0
+  const hasStorageFilters = storageFcFilter !== "all" || storageLocationTypeFilter !== "all"
+  const storageFilterCount = [
+    storageFcFilter !== "all",
+    storageLocationTypeFilter !== "all",
+  ].filter(Boolean).length
 
   const clearStorageFilters = () => {
-    setStorageLocationFilter("all")
+    setStorageFcFilter("all")
+    setStorageLocationTypeFilter("all")
   }
 
   // Credits tab computed values
-  const hasCreditsFilters = creditsStatusFilter !== "all" || creditsReasonFilter !== "all" || creditsDateRange?.from
+  const hasCreditsFilters = creditsReasonFilter !== "all" || creditsDateRange?.from
   const creditsFilterCount = [
-    creditsStatusFilter !== "all",
     creditsReasonFilter !== "all",
     creditsDateRange?.from,
   ].filter(Boolean).length
 
   const clearCreditsFilters = () => {
-    setCreditsStatusFilter("all")
     setCreditsReasonFilter("all")
     setCreditsDateRange(undefined)
     setCreditsDatePreset(undefined)
@@ -785,47 +851,34 @@ export function DataTable({
     }
   }, [currentTab])
 
-  // Get current column visibility state and setter based on tab
-  const currentColumnVisibility = React.useMemo(() => {
+  // Get current table preferences based on tab
+  const currentPrefs = React.useMemo(() => {
     switch (currentTab) {
-      case "unfulfilled": return unfulfilledColumnVisibility
-      case "shipments": return shipmentsColumnVisibility
-      default: return columnVisibility
+      case "unfulfilled": return unfulfilledPrefs
+      case "shipments": return shipmentsPrefs
+      case "additional-services": return additionalServicesPrefs
+      case "returns": return returnsPrefs
+      case "receiving": return receivingPrefs
+      case "storage": return storagePrefs
+      case "credits": return creditsPrefs
+      default: return shipmentsPrefs
     }
-  }, [currentTab, unfulfilledColumnVisibility, shipmentsColumnVisibility, columnVisibility])
+  }, [currentTab, unfulfilledPrefs, shipmentsPrefs, additionalServicesPrefs, returnsPrefs, receivingPrefs, storagePrefs, creditsPrefs])
+
+  // Get current column visibility state and setter based on tab
+  const currentColumnVisibility = currentPrefs.columnVisibility
 
   const setCurrentColumnVisibility = React.useCallback((update: VisibilityState | ((prev: VisibilityState) => VisibilityState)) => {
-    switch (currentTab) {
-      case "unfulfilled":
-        if (typeof update === 'function') {
-          setUnfulfilledColumnVisibility(update)
-        } else {
-          setUnfulfilledColumnVisibility(update)
-        }
-        break
-      case "shipments":
-        if (typeof update === 'function') {
-          setShipmentsColumnVisibility(update)
-        } else {
-          setShipmentsColumnVisibility(update)
-        }
-        break
-      default:
-        if (typeof update === 'function') {
-          setColumnVisibility(update)
-        } else {
-          setColumnVisibility(update)
-        }
+    if (typeof update === 'function') {
+      currentPrefs.setColumnVisibility(update(currentPrefs.columnVisibility))
+    } else {
+      currentPrefs.setColumnVisibility(update)
     }
-  }, [currentTab])
+  }, [currentPrefs])
 
   const resetCurrentColumns = React.useCallback(() => {
-    switch (currentTab) {
-      case "unfulfilled": resetUnfulfilledColumns(); break
-      case "shipments": resetShipmentsColumns(); break
-      default: setColumnVisibility({})
-    }
-  }, [currentTab, resetUnfulfilledColumns, resetShipmentsColumns])
+    currentPrefs.resetPreferences()
+  }, [currentPrefs])
 
   // Check if current column visibility has any customizations
   const hasColumnCustomizations = React.useMemo(() => {
@@ -952,43 +1005,11 @@ export function DataTable({
       className="flex w-full flex-col h-[calc(100vh-64px)] px-4 lg:px-6"
       onValueChange={handleTabChange}
     >
-        {/* Sticky header with tabs and controls - rounded top corners for content area */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted dark:bg-zinc-900 rounded-t-xl">
-          {/* Row 1: Tabs - edge-to-edge with subtle background */}
-          <div className="">
-            {/* Mobile/Tablet: Table selector dropdown */}
-            <div className="lg:hidden px-4 py-3">
-              <Select value={currentTab} onValueChange={handleTabChange}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unfulfilled">Unfulfilled</SelectItem>
-                  <SelectItem value="shipments">Shipments</SelectItem>
-                  <SelectItem value="additional-services">Additional Services</SelectItem>
-                  <SelectItem value="returns">Returns</SelectItem>
-                  <SelectItem value="receiving">Receiving</SelectItem>
-                  <SelectItem value="storage">Storage</SelectItem>
-                  <SelectItem value="credits">Credits</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Desktop: Full-width tabs - edge-to-edge, squared */}
-            <TabsList className="hidden lg:grid w-full grid-cols-7 h-auto p-0 bg-transparent px-4 lg:px-6">
-              <TabsTrigger value="unfulfilled" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Unfulfilled</TabsTrigger>
-              <TabsTrigger value="shipments" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Shipments</TabsTrigger>
-              <TabsTrigger value="additional-services" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Additional Services</TabsTrigger>
-              <TabsTrigger value="returns" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Returns</TabsTrigger>
-              <TabsTrigger value="receiving" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Receiving</TabsTrigger>
-              <TabsTrigger value="storage" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Storage</TabsTrigger>
-              <TabsTrigger value="credits" className="text-xs sm:text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none py-3">Credits</TabsTrigger>
-            </TabsList>
-          </div>
-
-          {/* Row 2: Search + Date Range (left) | Filters button + Export + Columns (right) */}
-          <div className="px-4 lg:px-6 py-6 flex items-center justify-between gap-4">
-            {/* LEFT SIDE: Search + Date Range (date range hidden on small screens) */}
+        {/* Sticky header with controls */}
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl">
+          {/* Controls row: Search + Date Range (left) | Filters + Export + Columns (right) */}
+          <div className="px-4 lg:px-6 py-4 flex items-center justify-between gap-4">
+            {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               <div className="relative w-48 2xl:w-64">
                 <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1014,102 +1035,105 @@ export function DataTable({
                 )}
               </div>
 
-              {/* Date Range Presets - visible on xl screens, hidden on smaller (not for storage tab) */}
+              {/* Date Range Dropdown - compact replacement for inline buttons */}
               {currentTab !== "storage" && (
-                <div className="hidden xl:inline-flex rounded-md border border-border overflow-hidden">
-                  {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => handleGenericDatePresetChange(option.value)}
-                      className={cn(
-                        "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
-                        currentTabDateState.preset === option.value
-                          ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                          : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
-                      )}
+                <Popover
+                  open={isCustomRangeOpen}
+                  onOpenChange={(open) => {
+                    if (open) {
+                      setIsCustomRangeOpen(true)
+                      setIsAwaitingEndDate(false)
+                    } else {
+                      setIsCustomRangeOpen(false)
+                    }
+                  }}
+                  modal={false}
+                >
+                  <div className="flex items-center gap-1">
+                    <Select
+                      value={currentTabDateState.preset === 'custom' ? 'custom' : (currentTabDateState.preset || '60d')}
+                      onValueChange={(value) => {
+                        if (value === 'custom') {
+                          setIsCustomRangeOpen(true)
+                        } else {
+                          handleGenericDatePresetChange(value as DateRangePreset)
+                          setIsCustomRangeOpen(false)
+                        }
+                      }}
                     >
-                      {option.label}
-                    </button>
-                  ))}
-                  <Popover
-                    open={isCustomRangeOpen}
-                    onOpenChange={(open) => {
-                      if (open) {
-                        setIsCustomRangeOpen(true)
-                        // Reset selection state when opening - always start fresh
-                        setIsAwaitingEndDate(false)
-                      }
-                    }}
-                    modal={false}
+                      <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
+                        <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                        <SelectValue>
+                          {currentTabDateState.preset === 'custom'
+                            ? currentCustomRangeLabel
+                            : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="start">
+                        {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="custom">Custom Range...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <PopoverContent
+                    className="w-auto p-3"
+                    align="start"
+                    onInteractOutside={(e) => e.preventDefault()}
+                    onPointerDownOutside={(e) => e.preventDefault()}
+                    onFocusOutside={(e) => e.preventDefault()}
                   >
-                    <PopoverTrigger asChild>
-                      <button
-                        className={cn(
-                          "px-2.5 py-1 text-sm font-medium transition-all",
-                          currentTabDateState.preset === 'custom'
-                            ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                            : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
-                        )}
-                      >
-                        {currentTabDateState.preset === 'custom' ? currentCustomRangeLabel : 'Custom'}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className="w-auto p-3"
-                      align="start"
-                      onInteractOutside={(e) => e.preventDefault()}
-                      onPointerDownOutside={(e) => e.preventDefault()}
-                      onFocusOutside={(e) => e.preventDefault()}
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">Select Date Range</span>
-                        </div>
-                        {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
-                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                            <div className="flex-1 text-xs">
-                              <span className="text-muted-foreground">From: </span>
-                              <span className="font-medium">
-                                {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
-                              </span>
-                            </div>
-                            <div className="flex-1 text-xs">
-                              <span className="text-muted-foreground">To: </span>
-                              <span className="font-medium">
-                                {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => {
-                                currentTabDateState.setDateRange(undefined)
-                                currentTabDateState.setPreset(undefined)
-                                setIsCustomRangeOpen(false)
-                                setIsAwaitingEndDate(false)
-                              }}
-                              className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                              Reset
-                            </button>
-                          </div>
-                        )}
-                        <div className="text-[11px] text-muted-foreground px-1">
-                          {isAwaitingEndDate
-                            ? "Click a date to select end date"
-                            : "Click a date to select start date"}
-                        </div>
-                        <Calendar
-                          mode="range"
-                          selected={{
-                            from: currentTabDateState.dateRange?.from,
-                            to: currentTabDateState.dateRange?.to,
-                          }}
-                          onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
-                          numberOfMonths={2}
-                        />
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Select Date Range</span>
                       </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
+                      {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
+                        <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                          <div className="flex-1 text-xs">
+                            <span className="text-muted-foreground">From: </span>
+                            <span className="font-medium">
+                              {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
+                            </span>
+                          </div>
+                          <div className="flex-1 text-xs">
+                            <span className="text-muted-foreground">To: </span>
+                            <span className="font-medium">
+                              {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              currentTabDateState.setDateRange(undefined)
+                              currentTabDateState.setPreset(undefined)
+                              setIsCustomRangeOpen(false)
+                              setIsAwaitingEndDate(false)
+                            }}
+                            className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Reset
+                          </button>
+                        </div>
+                      )}
+                      <div className="text-[11px] text-muted-foreground px-1">
+                        {isAwaitingEndDate
+                          ? "Click a date to select end date"
+                          : "Click a date to select start date"}
+                      </div>
+                      <Calendar
+                        mode="range"
+                        selected={{
+                          from: currentTabDateState.dateRange?.from,
+                          to: currentTabDateState.dateRange?.to,
+                        }}
+                        onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
+                        numberOfMonths={2}
+                      />
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
 
               {/* Jetpack Loading Indicator - shows when data is loading */}
@@ -1232,107 +1256,8 @@ export function DataTable({
 
           {/* Row 3: Expandable Filter Bar (for all tabs) */}
           {filtersExpanded && (
-            <div className="px-4 lg:px-6 pt-0 pb-6 flex items-center justify-between xl:justify-end gap-4 animate-in slide-in-from-top-2 duration-200">
-              {/* LEFT SIDE: Date Range Presets - only visible on small screens (hidden on xl where it shows in Row 2) */}
-              {currentTab !== "storage" && (
-                <div className="flex xl:hidden items-center gap-3">
-                  <div className="inline-flex rounded-md border border-border overflow-hidden">
-                    {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => handleGenericDatePresetChange(option.value)}
-                        className={cn(
-                          "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
-                          currentTabDateState.preset === option.value
-                            ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                            : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                    <Popover
-                      open={isCustomRangeOpen}
-                      onOpenChange={(open) => {
-                        if (open) {
-                          setIsCustomRangeOpen(true)
-                          setIsAwaitingEndDate(false)
-                        }
-                      }}
-                      modal={false}
-                    >
-                      <PopoverTrigger asChild>
-                        <button
-                          className={cn(
-                            "px-2.5 py-1 text-sm font-medium transition-all",
-                            currentTabDateState.preset === 'custom'
-                              ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                              : "bg-background text-muted-foreground hover:bg-emerald-50/50 hover:text-emerald-800 dark:hover:bg-emerald-950/20 dark:hover:text-emerald-200"
-                          )}
-                        >
-                          {currentTabDateState.preset === 'custom' ? currentCustomRangeLabel : 'Custom'}
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className="w-auto p-3"
-                        align="start"
-                        onInteractOutside={(e) => e.preventDefault()}
-                        onPointerDownOutside={(e) => e.preventDefault()}
-                        onFocusOutside={(e) => e.preventDefault()}
-                      >
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium">Select Date Range</span>
-                          </div>
-                          {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
-                            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                              <div className="flex-1 text-xs">
-                                <span className="text-muted-foreground">From: </span>
-                                <span className="font-medium">
-                                  {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
-                                </span>
-                              </div>
-                              <div className="flex-1 text-xs">
-                                <span className="text-muted-foreground">To: </span>
-                                <span className="font-medium">
-                                  {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => {
-                                  currentTabDateState.setDateRange(undefined)
-                                  currentTabDateState.setPreset(undefined)
-                                  setIsCustomRangeOpen(false)
-                                  setIsAwaitingEndDate(false)
-                                }}
-                                className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
-                              >
-                                Reset
-                              </button>
-                            </div>
-                          )}
-                          <div className="text-[11px] text-muted-foreground px-1">
-                            {isAwaitingEndDate
-                              ? "Click a date to select end date"
-                              : "Click a date to select start date"}
-                          </div>
-                          <Calendar
-                            mode="range"
-                            selected={{
-                              from: currentTabDateState.dateRange?.from,
-                              to: currentTabDateState.dateRange?.to,
-                            }}
-                            onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
-                            numberOfMonths={2}
-                          />
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                </div>
-              )}
-
-              {/* Clear + Filter Dropdowns - right-aligned (ml-auto pushes to right on xl when date range is hidden) */}
+            <div className="px-4 lg:px-6 pt-0 pb-4 flex items-center justify-end gap-4 animate-in slide-in-from-top-2 duration-200">
+              {/* Filter Dropdowns */}
               <div className="flex items-center gap-2">
                 {/* Clear Filters - show first, only when filters are active */}
                 {currentTabFilters.hasFilters && (
@@ -1426,13 +1351,13 @@ export function DataTable({
                 {currentTab === "additional-services" && (
                   <>
                     <Select value={additionalServicesTypeFilter} onValueChange={setAdditionalServicesTypeFilter}>
-                      <SelectTrigger className="h-[30px] w-[140px] text-sm">
-                        <SelectValue placeholder="Service Type" />
+                      <SelectTrigger className="h-[30px] w-[180px] text-sm">
+                        <SelectValue placeholder="Fee Type" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All types</SelectItem>
-                        {ADDITIONAL_SERVICES_TYPE_OPTIONS.map((type) => (
-                          <SelectItem key={type} value={type}>{type}</SelectItem>
+                        {additionalServicesFeeTypes.map((type) => (
+                          <SelectItem key={type} value={type}>{getFeeTypeDisplayName(type)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1442,9 +1367,8 @@ export function DataTable({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All statuses</SelectItem>
-                        {ADDITIONAL_SERVICES_STATUS_OPTIONS.map((status) => (
-                          <SelectItem key={status} value={status}>{status}</SelectItem>
-                        ))}
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="invoiced">Invoiced</SelectItem>
                       </SelectContent>
                     </Select>
                   </>
@@ -1453,25 +1377,25 @@ export function DataTable({
                 {/* RETURNS TAB FILTERS */}
                 {currentTab === "returns" && (
                   <>
-                    <Select value={returnsStatusFilter} onValueChange={setReturnsStatusFilter}>
-                      <SelectTrigger className="h-[30px] w-[130px] text-sm">
-                        <SelectValue placeholder="Status" />
+                    <Select value={returnStatusFilter} onValueChange={setReturnStatusFilter}>
+                      <SelectTrigger className="h-[30px] w-[150px] text-sm">
+                        <SelectValue placeholder="Return Status" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All statuses</SelectItem>
-                        {RETURNS_STATUS_OPTIONS.map((status) => (
+                        {returnStatuses.map((status) => (
                           <SelectItem key={status} value={status}>{status}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select value={returnsReasonFilter} onValueChange={setReturnsReasonFilter}>
+                    <Select value={returnTypeFilter} onValueChange={setReturnTypeFilter}>
                       <SelectTrigger className="h-[30px] w-[150px] text-sm">
-                        <SelectValue placeholder="Reason" />
+                        <SelectValue placeholder="Return Type" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All reasons</SelectItem>
-                        {RETURNS_REASON_OPTIONS.map((reason) => (
-                          <SelectItem key={reason} value={reason}>{reason}</SelectItem>
+                        <SelectItem value="all">All types</SelectItem>
+                        {returnTypes.map((type) => (
+                          <SelectItem key={type} value={type}>{type}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1480,14 +1404,14 @@ export function DataTable({
 
                 {/* RECEIVING TAB FILTERS */}
                 {currentTab === "receiving" && (
-                  <Select value={receivingFeeTypeFilter} onValueChange={setReceivingFeeTypeFilter}>
+                  <Select value={receivingStatusFilter} onValueChange={setReceivingStatusFilter}>
                     <SelectTrigger className="h-[30px] w-[160px] text-sm">
-                      <SelectValue placeholder="Fee Type" />
+                      <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All fee types</SelectItem>
-                      {RECEIVING_FEE_TYPE_OPTIONS.map((type) => (
-                        <SelectItem key={type} value={type}>{type}</SelectItem>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      {receivingStatuses.map((status) => (
+                        <SelectItem key={status} value={status}>{status}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1495,45 +1419,45 @@ export function DataTable({
 
                 {/* STORAGE TAB FILTERS */}
                 {currentTab === "storage" && (
-                  <Select value={storageLocationFilter} onValueChange={setStorageLocationFilter}>
-                    <SelectTrigger className="h-[30px] w-[140px] text-sm">
-                      <SelectValue placeholder="Location" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All locations</SelectItem>
-                      {STORAGE_LOCATION_OPTIONS.map((loc) => (
-                        <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {/* CREDITS TAB FILTERS */}
-                {currentTab === "credits" && (
                   <>
-                    <Select value={creditsStatusFilter} onValueChange={setCreditsStatusFilter}>
-                      <SelectTrigger className="h-[30px] w-[120px] text-sm">
-                        <SelectValue placeholder="Status" />
+                    <Select value={storageFcFilter} onValueChange={setStorageFcFilter}>
+                      <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                        <SelectValue placeholder="FC" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        {CREDITS_STATUS_OPTIONS.map((status) => (
-                          <SelectItem key={status} value={status}>{status}</SelectItem>
+                        <SelectItem value="all">All FCs</SelectItem>
+                        {storageFcs.map((fc) => (
+                          <SelectItem key={fc} value={fc}>{fc}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select value={creditsReasonFilter} onValueChange={setCreditsReasonFilter}>
-                      <SelectTrigger className="h-[30px] w-[140px] text-sm">
-                        <SelectValue placeholder="Reason" />
+                    <Select value={storageLocationTypeFilter} onValueChange={setStorageLocationTypeFilter}>
+                      <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                        <SelectValue placeholder="Location Type" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All reasons</SelectItem>
-                        {CREDITS_REASON_OPTIONS.map((reason) => (
-                          <SelectItem key={reason} value={reason}>{reason}</SelectItem>
+                        <SelectItem value="all">All types</SelectItem>
+                        {storageLocationTypes.map((type) => (
+                          <SelectItem key={type} value={type}>{type}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </>
+                )}
+
+                {/* CREDITS TAB FILTERS */}
+                {currentTab === "credits" && (
+                  <Select value={creditsReasonFilter} onValueChange={setCreditsReasonFilter}>
+                    <SelectTrigger className="h-[30px] w-[180px] text-sm">
+                      <SelectValue placeholder="Reason" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All reasons</SelectItem>
+                      {creditReasons.map((reason) => (
+                        <SelectItem key={reason} value={reason}>{reason}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
             </div>
@@ -1557,7 +1481,10 @@ export function DataTable({
             searchQuery={searchQuery}
             onChannelsChange={setAvailableChannels}
             onLoadingChange={setIsUnfulfilledLoading}
-            userColumnVisibility={unfulfilledColumnVisibility}
+            userColumnVisibility={unfulfilledPrefs.columnVisibility}
+            // Page size persistence
+            initialPageSize={unfulfilledPrefs.pageSize}
+            onPageSizeChange={unfulfilledPrefs.setPageSize}
             // Pre-fetched data for instant initial render
             initialData={unfulfilledData}
             initialTotalCount={unfulfilledTotalCount}
@@ -1574,7 +1501,7 @@ export function DataTable({
         {clientId && (
           <ShipmentsTable
             clientId={clientId}
-            userColumnVisibility={shipmentsColumnVisibility}
+            userColumnVisibility={shipmentsPrefs.columnVisibility}
             statusFilter={debouncedShipmentsFilters.statusFilter}
             ageFilter={debouncedShipmentsFilters.ageFilter}
             typeFilter={debouncedShipmentsFilters.typeFilter}
@@ -1585,6 +1512,9 @@ export function DataTable({
             onChannelsChange={setShipmentsChannels}
             onCarriersChange={setShipmentsCarriers}
             onLoadingChange={setIsShipmentsLoading}
+            // Page size persistence
+            initialPageSize={shipmentsPrefs.pageSize}
+            onPageSizeChange={shipmentsPrefs.setPageSize}
             // Pre-fetched data for instant initial render
             initialData={prefetchedShipmentsData}
             initialTotalCount={prefetchedShipmentsTotalCount}
@@ -1601,7 +1531,12 @@ export function DataTable({
         <AdditionalServicesTable
           clientId={clientId}
           dateRange={additionalServicesDateRange}
-          userColumnVisibility={columnVisibility}
+          statusFilter={additionalServicesStatusFilterArray}
+          feeTypeFilter={additionalServicesTypeFilter}
+          searchQuery={searchQuery}
+          userColumnVisibility={additionalServicesPrefs.columnVisibility}
+          initialPageSize={additionalServicesPrefs.pageSize}
+          onPageSizeChange={additionalServicesPrefs.setPageSize}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1614,7 +1549,12 @@ export function DataTable({
         <ReturnsTable
           clientId={clientId}
           dateRange={returnsDateRange}
-          userColumnVisibility={columnVisibility}
+          returnStatusFilter={returnStatusFilter}
+          returnTypeFilter={returnTypeFilter}
+          searchQuery={searchQuery}
+          userColumnVisibility={returnsPrefs.columnVisibility}
+          initialPageSize={returnsPrefs.pageSize}
+          onPageSizeChange={returnsPrefs.setPageSize}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1627,7 +1567,11 @@ export function DataTable({
         <ReceivingTable
           clientId={clientId}
           dateRange={receivingDateRange}
-          userColumnVisibility={columnVisibility}
+          statusFilter={receivingStatusFilter}
+          searchQuery={searchQuery}
+          userColumnVisibility={receivingPrefs.columnVisibility}
+          initialPageSize={receivingPrefs.pageSize}
+          onPageSizeChange={receivingPrefs.setPageSize}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1639,7 +1583,12 @@ export function DataTable({
       >
         <StorageTable
           clientId={clientId}
-          userColumnVisibility={columnVisibility}
+          fcFilter={storageFcFilter}
+          locationTypeFilter={storageLocationTypeFilter}
+          searchQuery={searchQuery}
+          userColumnVisibility={storagePrefs.columnVisibility}
+          initialPageSize={storagePrefs.pageSize}
+          onPageSizeChange={storagePrefs.setPageSize}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1652,7 +1601,11 @@ export function DataTable({
         <CreditsTable
           clientId={clientId}
           dateRange={creditsDateRange}
-          userColumnVisibility={columnVisibility}
+          creditReasonFilter={creditsReasonFilter}
+          searchQuery={searchQuery}
+          userColumnVisibility={creditsPrefs.columnVisibility}
+          initialPageSize={creditsPrefs.pageSize}
+          onPageSizeChange={creditsPrefs.setPageSize}
         />
       </TabsContent>
     </Tabs>
