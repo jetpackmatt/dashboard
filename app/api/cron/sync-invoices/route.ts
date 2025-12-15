@@ -37,7 +37,7 @@ import {
  * 4. Approves (which marks transactions)
  */
 export const runtime = 'nodejs'
-export const maxDuration = 120 // 2 minutes - just sync, no generation
+export const maxDuration = 300 // 5 minutes - SFTP breakdown can be slow
 
 export async function GET(request: Request) {
   try {
