@@ -304,21 +304,22 @@ export async function updateTransactionsWithBreakdown(
       continue
     }
 
-    // Queue update promise
-    const updatePromise = supabase
-      .from('transactions')
-      .update({
-        base_cost: row.base_cost,
-        surcharge: row.surcharge,
-        insurance_cost: row.insurance_cost
-      })
-      .eq('id', tx.id)
-      .then(({ error }) => {
-        if (error) {
-          return { success: false, shipmentId: row.shipment_id, error: error.message }
-        }
-        return { success: true, shipmentId: row.shipment_id }
-      })
+    // Queue update promise (wrap in Promise.resolve to ensure proper Promise type)
+    const updatePromise = Promise.resolve(
+      supabase
+        .from('transactions')
+        .update({
+          base_cost: row.base_cost,
+          surcharge: row.surcharge,
+          insurance_cost: row.insurance_cost
+        })
+        .eq('id', tx.id)
+    ).then(({ error }) => {
+      if (error) {
+        return { success: false, shipmentId: row.shipment_id, error: error.message }
+      }
+      return { success: true, shipmentId: row.shipment_id }
+    })
 
     updatePromises.push(updatePromise)
 
