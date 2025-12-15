@@ -23,10 +23,6 @@
     {
       "path": "/api/cron/sync-older-nightly",
       "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron/generate-invoices",
-      "schedule": "55 13 * * 1"
     }
   ]
 }
