@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { ShipBobClient, type ShipBobInvoice } from '@/lib/shipbob/client'
+import { ShipBobClient, type ShipBobInvoice, type ShipBobTransaction } from '@/lib/shipbob/client'
 import {
   fetchShippingBreakdown,
   updateTransactionsWithBreakdown,
@@ -157,11 +157,129 @@ export async function GET(request: Request) {
 
       // Step 1.5: Link transactions to invoices via /invoices/{id}/transactions API
       // This updates transactions.invoice_id_sb for all transactions in each invoice
+      // AND inserts any missing transactions with proper client attribution
       // Skip Payment invoices as they don't have transactions
       const invoicesToLink = allInvoices.filter(inv => inv.invoice_type !== 'Payment')
 
       console.log(`Linking transactions to ${invoicesToLink.length} invoices...`)
       transactionLinkStats.invoicesProcessed = invoicesToLink.length
+
+      // Build lookup tables for client attribution (same logic as syncAllTransactions)
+      console.log('  Building lookup tables for client attribution...')
+
+      // Shipment -> client lookup
+      const { data: shipments } = await adminClient
+        .from('shipments')
+        .select('shipment_id, client_id')
+      const shipmentLookup: Record<string, string> = {}
+      for (const s of shipments || []) {
+        shipmentLookup[s.shipment_id] = s.client_id
+      }
+
+      // Return -> client lookup
+      const { data: returns } = await adminClient
+        .from('returns')
+        .select('shipbob_return_id, client_id')
+      const returnLookup: Record<string, string> = {}
+      for (const r of returns || []) {
+        if (r.shipbob_return_id) {
+          returnLookup[String(r.shipbob_return_id)] = r.client_id
+        }
+      }
+
+      // WRO -> client lookup
+      const { data: wros } = await adminClient
+        .from('receiving_orders')
+        .select('shipbob_receiving_id, client_id, merchant_id')
+      const wroLookup: Record<string, { client_id: string; merchant_id: string | null }> = {}
+      for (const w of wros || []) {
+        if (w.shipbob_receiving_id) {
+          wroLookup[String(w.shipbob_receiving_id)] = {
+            client_id: w.client_id,
+            merchant_id: w.merchant_id,
+          }
+        }
+      }
+
+      // Inventory -> client lookup (for FC/storage transactions)
+      const { data: products } = await adminClient
+        .from('products')
+        .select('variants, client_id')
+      const inventoryLookup: Record<string, string> = {}
+      for (const p of products || []) {
+        if (p.variants && Array.isArray(p.variants)) {
+          for (const v of p.variants as Array<{ inventory?: { inventory_id?: number } }>) {
+            if (v.inventory?.inventory_id) {
+              inventoryLookup[String(v.inventory.inventory_id)] = p.client_id
+            }
+          }
+        }
+      }
+
+      // Client info lookup for merchant_id
+      const { data: clients } = await adminClient
+        .from('clients')
+        .select('id, merchant_id')
+      const clientInfoLookup: Record<string, { merchant_id: string | null }> = {}
+      for (const c of clients || []) {
+        clientInfoLookup[c.id] = { merchant_id: c.merchant_id }
+      }
+
+      console.log(`  Lookups: ${Object.keys(shipmentLookup).length} shipments, ${Object.keys(returnLookup).length} returns, ${Object.keys(wroLookup).length} WROs, ${Object.keys(inventoryLookup).length} inventory`)
+
+      // Helper function to attribute client_id based on reference_type
+      const attributeClient = (tx: ShipBobTransaction): { client_id: string | null; merchant_id: string | null } => {
+        let clientId: string | null = null
+
+        if (tx.reference_type === 'Shipment') {
+          clientId = shipmentLookup[tx.reference_id] || null
+        } else if (tx.reference_type === 'FC') {
+          // Parse InventoryId from reference_id: {FC_ID}-{InventoryId}-{LocationType}
+          const parts = tx.reference_id?.split('-') || []
+          let invId: string | null = null
+          if (parts.length >= 2) {
+            invId = parts[1]
+          }
+          if (!invId && tx.additional_details?.InventoryId) {
+            invId = String(tx.additional_details.InventoryId)
+          }
+          if (invId) {
+            clientId = inventoryLookup[invId] || null
+          }
+        } else if (tx.reference_type === 'Return') {
+          clientId = returnLookup[tx.reference_id] || null
+        } else if (tx.reference_type === 'WRO' || tx.reference_type === 'URO') {
+          const info = wroLookup[tx.reference_id]
+          if (info) {
+            clientId = info.client_id
+          }
+        } else if (tx.reference_type === 'Default') {
+          // Credits have reference_type='Default' but reference_id is often a shipment_id
+          // Try shipment lookup first, then return, then WRO
+          if (tx.transaction_fee === 'Credit') {
+            clientId = shipmentLookup[tx.reference_id] || null
+            if (!clientId) {
+              clientId = returnLookup[tx.reference_id] || null
+            }
+            if (!clientId) {
+              const wroInfo = wroLookup[tx.reference_id]
+              if (wroInfo) {
+                clientId = wroInfo.client_id
+              }
+            }
+          }
+        }
+
+        // Get merchant_id from client
+        let merchantId: string | null = null
+        if (clientId) {
+          merchantId = clientInfoLookup[clientId]?.merchant_id || null
+        }
+
+        return { client_id: clientId, merchant_id: merchantId }
+      }
+
+      let totalInserted = 0
 
       for (const invoice of invoicesToLink) {
         try {
@@ -175,13 +293,25 @@ export async function GET(request: Request) {
           // Get transaction IDs from this invoice
           const transactionIds = invoiceTransactions.map(tx => tx.transaction_id)
 
-          // Batch update in chunks of 500 (Supabase .in() has limits)
+          // Check which transactions already exist in DB
+          const { data: existingTx } = await adminClient
+            .from('transactions')
+            .select('transaction_id')
+            .in('transaction_id', transactionIds.slice(0, 1000)) // Supabase limit
+
+          const existingIds = new Set((existingTx || []).map((t: { transaction_id: string }) => t.transaction_id))
+
+          // Split into existing (UPDATE) and missing (INSERT)
+          const toUpdate = invoiceTransactions.filter(tx => existingIds.has(tx.transaction_id))
+          const toInsert = invoiceTransactions.filter(tx => !existingIds.has(tx.transaction_id))
+
+          // Batch update existing transactions
           const BATCH_SIZE = 500
           let totalLinked = 0
           let totalErrors = 0
 
-          for (let i = 0; i < transactionIds.length; i += BATCH_SIZE) {
-            const batch = transactionIds.slice(i, i + BATCH_SIZE)
+          for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
+            const batch = toUpdate.slice(i, i + BATCH_SIZE).map(tx => tx.transaction_id)
 
             const { data: updated, error: updateError } = await adminClient
               .from('transactions')
@@ -201,12 +331,53 @@ export async function GET(request: Request) {
             }
           }
 
-          const notFoundCount = transactionIds.length - totalLinked
-          transactionLinkStats.linked += totalLinked
-          transactionLinkStats.notFound += notFoundCount
+          // Insert missing transactions with client attribution
+          let insertedCount = 0
+          if (toInsert.length > 0) {
+            const now = new Date().toISOString()
+            const records = toInsert.map(tx => {
+              const { client_id, merchant_id } = attributeClient(tx)
+              return {
+                transaction_id: tx.transaction_id,
+                client_id,
+                merchant_id,
+                reference_id: tx.reference_id,
+                reference_type: tx.reference_type,
+                transaction_type: tx.transaction_type || null,
+                fee_type: tx.transaction_fee,
+                cost: tx.amount,
+                charge_date: tx.charge_date,
+                invoice_date_sb: tx.invoice_date || invoice.invoice_date,
+                invoiced_status_sb: true,
+                invoice_id_sb: invoice.invoice_id,
+                fulfillment_center: tx.fulfillment_center || null,
+                additional_details: tx.additional_details || null,
+                tracking_id: tx.additional_details?.TrackingId || null,
+                updated_at: now,
+              }
+            })
 
-          if (totalLinked > 0 || notFoundCount > 0 || totalErrors > 0) {
-            console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${totalLinked} linked, ${notFoundCount} not in DB${totalErrors > 0 ? `, ${totalErrors} batch errors` : ''}`)
+            // Insert in batches
+            for (let i = 0; i < records.length; i += BATCH_SIZE) {
+              const batch = records.slice(i, i + BATCH_SIZE)
+              const { error: insertError, count } = await adminClient
+                .from('transactions')
+                .upsert(batch, { onConflict: 'transaction_id', count: 'exact' })
+
+              if (insertError) {
+                console.error(`  Error inserting batch ${Math.floor(i / BATCH_SIZE) + 1} for invoice ${invoice.invoice_id}:`, insertError)
+              } else {
+                insertedCount += count || batch.length
+              }
+            }
+            totalInserted += insertedCount
+          }
+
+          transactionLinkStats.linked += totalLinked
+          transactionLinkStats.notFound += toInsert.length // Now "notFound" means "inserted"
+
+          if (totalLinked > 0 || insertedCount > 0 || totalErrors > 0) {
+            console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${totalLinked} updated, ${insertedCount} inserted${totalErrors > 0 ? `, ${totalErrors} batch errors` : ''}`)
           }
         } catch (err: unknown) {
           // Log detailed error info for debugging
@@ -219,7 +390,67 @@ export async function GET(request: Request) {
         }
       }
 
-      console.log(`Transaction linking complete: ${transactionLinkStats.linked} linked, ${transactionLinkStats.notFound} not found in DB`)
+      console.log(`Transaction linking complete: ${transactionLinkStats.linked} updated, ${totalInserted} inserted (were missing from DB)`)
+
+      // Invoice-sibling attribution: For transactions with NULL client_id,
+      // check if all siblings on the same invoice have the same client_id.
+      // This handles courtesy credits (reference_id=0) that can't be attributed directly.
+      const invoiceIdsProcessed = invoicesToLink.map(inv => inv.invoice_id)
+      if (invoiceIdsProcessed.length > 0) {
+        const { data: orphanTx } = await adminClient
+          .from('transactions')
+          .select('transaction_id, invoice_id_sb')
+          .in('invoice_id_sb', invoiceIdsProcessed)
+          .is('client_id', null)
+
+        if (orphanTx && orphanTx.length > 0) {
+          console.log(`Found ${orphanTx.length} transactions with NULL client_id - attempting sibling attribution...`)
+
+          // Group orphans by invoice
+          const orphansByInvoice = new Map<number, string[]>()
+          for (const tx of orphanTx) {
+            const invId = tx.invoice_id_sb
+            if (!orphansByInvoice.has(invId)) {
+              orphansByInvoice.set(invId, [])
+            }
+            orphansByInvoice.get(invId)!.push(tx.transaction_id)
+          }
+
+          let siblingAttributed = 0
+          for (const [invoiceId, txIds] of orphansByInvoice) {
+            // Find all client_ids on this invoice (excluding NULL)
+            const { data: siblings } = await adminClient
+              .from('transactions')
+              .select('client_id')
+              .eq('invoice_id_sb', invoiceId)
+              .not('client_id', 'is', null)
+
+            if (siblings && siblings.length > 0) {
+              // Check if all siblings have the same client_id
+              const clientIds = [...new Set(siblings.map((s: { client_id: string | null }) => s.client_id))]
+              if (clientIds.length === 1) {
+                const siblingClientId = clientIds[0]
+                // Update orphans with sibling's client_id
+                const { error: updateErr, count } = await adminClient
+                  .from('transactions')
+                  .update({ client_id: siblingClientId })
+                  .in('transaction_id', txIds)
+
+                if (!updateErr) {
+                  siblingAttributed += txIds.length
+                  console.log(`  Invoice ${invoiceId}: attributed ${txIds.length} orphan(s) to client ${siblingClientId}`)
+                }
+              } else {
+                console.log(`  Invoice ${invoiceId}: multiple clients (${clientIds.length}), skipping ${txIds.length} orphan(s)`)
+              }
+            }
+          }
+
+          if (siblingAttributed > 0) {
+            console.log(`Sibling attribution complete: ${siblingAttributed} transactions updated`)
+          }
+        }
+      }
 
     } catch (err) {
       console.error('Error fetching invoices from ShipBob:', err)
