@@ -4,6 +4,22 @@
 
 ---
 
+## CRITICAL: ShipBob Invoices Are Multi-Client
+
+**ShipBob invoices (`invoice_id_sb`) contain ALL clients' transactions together.**
+
+This is NOT intuitive and has caused bugs. Key facts:
+- When syncing transactions, they arrive with an `invoice_id_sb` but NO `client_id`
+- The invoice ID does NOT tell you which client the transaction belongs to
+- Multiple different clients have transactions on the same ShipBob invoice
+- Attribution MUST be done via lookup tables (shipments, orders, returns) - NOT via invoice grouping
+
+**NEVER assume transactions on the same invoice belong to the same client.**
+
+See [CLAUDE.billing.md](CLAUDE.billing.md) for full explanation of invoice structure.
+
+---
+
 ## Cron Jobs
 
 | Endpoint | Schedule | What It Does |
@@ -11,7 +27,7 @@
 | `/api/cron/sync` | Every 1 min | Syncs orders/shipments using **child tokens** + `LastUpdateStartDate` (catches updates) |
 | `/api/cron/sync-timelines` | Every 1 min | Updates timeline events for undelivered shipments (1000/run, 14-day window) |
 | `/api/cron/sync-transactions` | Every 1 min | Syncs ALL transaction types using **parent token** (3-min lookback) |
-| `/api/cron/sync-reconcile` | Every hour | Soft-delete detection (20-day lookback, uses `StartDate`) |
+| `/api/cron/sync-reconcile` | Every hour | Orders/shipments (20-day lookback) + transactions (3-day lookback) + soft-delete detection |
 | `/api/cron/sync-invoices` | Daily 1:36 AM UTC | Syncs ShipBob invoice metadata |
 
 ---
@@ -57,12 +73,12 @@
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                   EVERY 5 MINUTES (sync-transactions)               │
+│                   EVERY 1 MINUTE (sync-transactions)                │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Using parent token:                                                │
 │                                                                     │
 │  1. POST /2025-07/transactions:query                                │
-│     - from_date: 10 minutes ago                                     │
+│     - from_date: 3 minutes ago                                      │
 │     - to_date: now                                                  │
 │     - page_size: 1000 (uses cursor pagination)                      │
 │                                                                     │
@@ -72,7 +88,15 @@
 │     - Return: reference_id → returns.return_id → client_id          │
 │     - Default/Payment: route to system clients                      │
 │                                                                     │
-│  3. Batch upsert transactions (500 at a time)                       │
+│  3. Build upsert records:                                           │
+│     ⚠️ CRITICAL: Only include client_id/merchant_id if NOT NULL!    │
+│     If attribution fails, OMIT these fields to preserve existing    │
+│     values. Including null will WIPE existing attribution.          │
+│                                                                     │
+│  4. Batch upsert transactions (500 at a time)                       │
+│                                                                     │
+│  5. Database-join fix: Query unattributed Shipment transactions,    │
+│     join to shipments table, UPDATE client_id where found           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -111,8 +135,12 @@ The biggest challenge in transaction sync is the **attribution chicken-and-egg p
 **Solutions implemented:**
 1. **Direct lookup**: Works when data already exists in lookup tables
 2. **Order reference parsing**: Parse "Order 123456" from Comment → lookup in orders table
-3. **Invoice sibling attribution**: If ANY transaction on same invoice has client_id, use that for all
+3. **Database-join fix**: Post-sync pass queries unattributed Shipment transactions, joins to shipments table to get client_id
 4. **Proactive sync**: Sync returns/orders for ALL clients (not just based on transactions)
+
+**CRITICAL WARNING - Invoice-Based Attribution is WRONG:**
+ShipBob invoices (`invoice_id_sb`) contain transactions from ALL clients together in a single invoice.
+NEVER assume that transactions on the same invoice belong to the same client - this is FALSE.
 
 ### Attribution Priority Order
 
@@ -126,7 +154,7 @@ When syncing transactions with parent token, `client_id` is determined in this o
 | 3b | **Return** | (fallback) Parse "Order XXXXX" from Comment → `orders.shipbob_order_id` → `client_id` |
 | 4 | **WRO/URO** | `reference_id` → `receiving_orders.shipbob_receiving_id` → `client_id` |
 | 5 | **Default** | Route by `transaction_fee`: Payment → ShipBob Payments, CC Fee → Jetpack Costs |
-| 6 | **Invoice Sibling** | If `invoice_id_sb` exists, find any sibling transaction with `client_id` |
+| 6 | **Database-Join Fix** | Post-sync: query unattributed Shipment txs, join to `shipments` table |
 | 7 | **TicketNumber** | Parse client name from Comment (fuzzy matching) |
 
 ### Why NOT to Iterate Through Clients
@@ -217,6 +245,37 @@ ShipBob sends daily SFTP files with additional billing breakdown:
 ---
 
 ## Known Issues & Gaps
+
+### CRITICAL: Upsert Overwrites Attribution (Fixed Dec 2025)
+
+**Bug discovered Dec 18, 2025:** The `syncAllTransactions()` function was building upsert records with `client_id: null` when attribution failed. Supabase upsert with `ignoreDuplicates: false` overwrites ALL columns, so this was **wiping existing attribution** every time the hourly reconcile cron ran.
+
+**Symptoms:**
+- Attribution drops from 100% to ~96% after each hourly cron
+- Same transactions keep losing `client_id` repeatedly
+- Fix scripts work but changes get overwritten
+
+**Root cause:** `lib/shipbob/sync.ts` line ~1775 was returning:
+```typescript
+return {
+  transaction_id: tx.transaction_id,
+  client_id: clientId,  // ← This was null when attribution failed
+  merchant_id: merchantId,  // ← Also null
+  // ...
+}
+```
+
+**Fix:** Only include `client_id`/`merchant_id` in the record when they're NOT null:
+```typescript
+const baseRecord = { transaction_id: tx.transaction_id, ... }
+if (clientId) {
+  baseRecord.client_id = clientId
+  baseRecord.merchant_id = merchantId
+}
+return baseRecord
+```
+
+**Key insight:** Omitting a field from upsert = "don't touch." Including `null` = "set to null."
 
 ### transactions.tracking_id ~99.9% Populated
 **Status:** Now well-populated. Sync extracts from `additional_details.TrackingId` when present, and backfill script ran to copy from linked shipments.

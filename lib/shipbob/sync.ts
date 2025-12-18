@@ -1772,10 +1772,12 @@ export async function syncAllTransactions(
         merchantId = clientInfo?.merchant_id || null
       }
 
-      return {
+      // Build the base record (without client_id/merchant_id)
+      // IMPORTANT: Only include client_id/merchant_id if they're NOT null.
+      // This prevents the upsert from overwriting existing attributed values with null
+      // when re-syncing transactions that we can't attribute (e.g., due to incomplete lookups).
+      const baseRecord: Record<string, unknown> = {
         transaction_id: tx.transaction_id,
-        client_id: clientId,
-        merchant_id: merchantId,
         reference_id: tx.reference_id,
         reference_type: tx.reference_type,
         transaction_type: tx.transaction_type || null,
@@ -1791,6 +1793,15 @@ export async function syncAllTransactions(
         tracking_id: (tx.additional_details as Record<string, unknown>)?.TrackingId as string || null,
         updated_at: now,
       }
+
+      // Only include client_id and merchant_id if we successfully attributed
+      // This prevents overwriting existing values with null on re-sync
+      if (clientId) {
+        baseRecord.client_id = clientId
+        baseRecord.merchant_id = merchantId
+      }
+
+      return baseRecord
     })
 
     // Batch upsert
@@ -1804,94 +1815,98 @@ export async function syncAllTransactions(
     )
 
     // ==========================================
-    // SECOND PASS: Invoice-based attribution
+    // SECOND PASS: Database-join attribution fix
     // ==========================================
-    // For transactions that couldn't be attributed via direct lookups,
-    // check if other transactions on the same invoice HAVE a client_id.
-    // If so, use that client_id (all transactions on same invoice belong to same client).
-    // This is scalable because it's purely database-driven, no API calls needed.
+    // For Shipment transactions that couldn't be attributed via in-memory lookup,
+    // query the database to find matching shipments and copy their client_id.
+    // This handles race conditions where the clientLookup was incomplete.
+    // Uses direct database join which is always accurate.
 
-    const unattributedWithInvoice = txRecords.filter(
-      (tx) => tx.client_id === null && tx.invoice_id_sb !== null
-    )
+    console.log('[TransactionSync] Running database-join attribution fix for unattributed Shipment transactions...')
 
-    if (unattributedWithInvoice.length > 0) {
-      console.log(`[TransactionSync] Invoice attribution: ${unattributedWithInvoice.length} unattributed with invoice_id`)
+    // Find unattributed Shipment transactions that have matching shipments with client_id
+    const FIX_BATCH_SIZE = 500
+    let fixLastId: string | null = null
+    let totalFixed = 0
 
-      // Group by invoice_id_sb
-      const byInvoice: Record<number, typeof unattributedWithInvoice> = {}
-      for (const tx of unattributedWithInvoice) {
-        const invoiceId = tx.invoice_id_sb as number
-        if (!byInvoice[invoiceId]) byInvoice[invoiceId] = []
-        byInvoice[invoiceId].push(tx)
+    while (true) {
+      // Get batch of unattributed Shipment transactions
+      let query = supabase
+        .from('transactions')
+        .select('id, transaction_id, reference_id')
+        .eq('reference_type', 'Shipment')
+        .is('client_id', null)
+        .order('id', { ascending: true })
+        .limit(FIX_BATCH_SIZE)
+
+      if (fixLastId) {
+        query = query.gt('id', fixLastId)
       }
 
-      const invoiceIds = Object.keys(byInvoice).map(Number)
-      console.log(`[TransactionSync] Checking ${invoiceIds.length} invoices for attributed siblings...`)
+      const { data: unattributedTxs, error: fetchError } = await query
 
-      // Query for attributed transactions on these invoices
-      // We do this in batches to avoid query size limits
-      const INVOICE_BATCH_SIZE = 100
-      const invoiceAttribution: Record<number, { client_id: string; merchant_id: string | null }> = {}
+      if (fetchError) {
+        result.errors.push(`Attribution fix fetch error: ${fetchError.message}`)
+        break
+      }
 
-      for (let i = 0; i < invoiceIds.length; i += INVOICE_BATCH_SIZE) {
-        const batchIds = invoiceIds.slice(i, i + INVOICE_BATCH_SIZE)
+      if (!unattributedTxs || unattributedTxs.length === 0) {
+        break
+      }
 
-        const { data: attributedSiblings } = await supabase
-          .from('transactions')
-          .select('invoice_id_sb, client_id, merchant_id')
-          .in('invoice_id_sb', batchIds)
-          .not('client_id', 'is', null)
+      // Get shipment info for these reference_ids
+      const referenceIds = unattributedTxs.map((t: { id: string; transaction_id: string; reference_id: string }) => t.reference_id)
+      const { data: shipments, error: shipError } = await supabase
+        .from('shipments')
+        .select('shipment_id, client_id')
+        .in('shipment_id', referenceIds)
+        .not('client_id', 'is', null)
 
-        // Build lookup: invoice_id -> { client_id, merchant_id }
-        for (const sibling of attributedSiblings || []) {
-          if (sibling.invoice_id_sb && sibling.client_id && !invoiceAttribution[sibling.invoice_id_sb]) {
-            invoiceAttribution[sibling.invoice_id_sb] = {
-              client_id: sibling.client_id,
-              merchant_id: sibling.merchant_id,
-            }
-          }
+      if (shipError) {
+        result.errors.push(`Attribution fix shipment fetch error: ${shipError.message}`)
+        break
+      }
+
+      // Build lookup: shipment_id -> client_id
+      const shipmentClientMap: Record<string, string> = {}
+      for (const s of shipments || []) {
+        if (s.client_id) {
+          shipmentClientMap[s.shipment_id] = s.client_id
         }
       }
 
-      // Update unattributed transactions using invoice lookup
-      const updates: { transaction_id: string; client_id: string; merchant_id: string | null }[] = []
-      for (const [invoiceIdStr, txs] of Object.entries(byInvoice)) {
-        const invoiceId = Number(invoiceIdStr)
-        const attr = invoiceAttribution[invoiceId]
-        if (attr) {
-          for (const tx of txs) {
-            updates.push({
-              transaction_id: tx.transaction_id,
-              client_id: attr.client_id,
-              merchant_id: attr.merchant_id,
-            })
-          }
-        }
-      }
+      // Update each transaction that has a matching shipment
+      for (const tx of unattributedTxs) {
+        const clientId = shipmentClientMap[tx.reference_id]
+        if (clientId) {
+          // Look up merchant_id for this client
+          const merchantId = clientInfoLookup[clientId]?.merchant_id || null
 
-      if (updates.length > 0) {
-        console.log(`[TransactionSync] Invoice attribution: Updating ${updates.length} transactions...`)
-
-        // Batch update
-        for (const upd of updates) {
-          const { error } = await supabase
+          const { error: updateError } = await supabase
             .from('transactions')
-            .update({ client_id: upd.client_id, merchant_id: upd.merchant_id })
-            .eq('transaction_id', upd.transaction_id)
+            .update({
+              client_id: clientId,
+              merchant_id: merchantId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', tx.id)
 
-          if (error) {
-            result.errors.push(`Invoice attribution update failed: ${error.message}`)
+          if (updateError) {
+            result.errors.push(`Attribution fix update failed: ${updateError.message}`)
           } else {
+            totalFixed++
             result.attributed++
             result.unattributed--
           }
         }
-
-        console.log(`[TransactionSync] Invoice attribution: ${updates.length} transactions attributed via invoice siblings`)
-      } else {
-        console.log('[TransactionSync] Invoice attribution: No invoice siblings found for attribution')
+        fixLastId = tx.id
       }
+
+      if (unattributedTxs.length < FIX_BATCH_SIZE) break
+    }
+
+    if (totalFixed > 0) {
+      console.log(`[TransactionSync] Attribution fix: Fixed ${totalFixed} transactions via database join`)
     }
 
     console.log(
