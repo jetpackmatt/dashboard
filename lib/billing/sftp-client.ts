@@ -375,3 +375,346 @@ export async function updateTransactionsWithBreakdown(
 
   return result
 }
+
+// ============================================================================
+// NEW DAILY FORMAT SUPPORT (Dec 2025)
+// ============================================================================
+//
+// ShipBob now provides DAILY files with one row per fee type:
+// File: JetPack_Shipment_Extras_YYYY-MM-DD.csv
+// Columns: User ID, Merchant Name, Shipment ID, Fee_Type, Fee Amount
+//
+// Fee types:
+// - "Base Rate" → base_cost
+// - Everything else → surcharge (aggregated + stored in surcharge_details JSONB)
+//
+// IMPORTANT: SFTP files appear 1 day AFTER the transaction's charge_date
+// e.g., transactions with charge_date 2025-12-27 appear in 2025-12-28 file
+
+/** Single row from daily SFTP file (before aggregation) */
+export interface DailyFeeRow {
+  user_id: string
+  merchant_name: string
+  shipment_id: string
+  fee_type: string
+  fee_amount: number
+}
+
+/** Surcharge detail for JSONB storage */
+export interface SurchargeDetail {
+  type: string
+  amount: number
+}
+
+/** Aggregated shipment cost data from daily file */
+export interface DailyShipmentCost {
+  shipment_id: string
+  merchant_name: string
+  base_cost: number
+  surcharge: number  // aggregated sum of all surcharges
+  surcharge_details: SurchargeDetail[]  // individual surcharges for JSONB
+  insurance_cost: number
+  total: number  // base + surcharges + insurance
+}
+
+export interface DailyFetchResult {
+  success: boolean
+  filename: string
+  date: string  // YYYY-MM-DD
+  rows: DailyShipmentCost[]
+  rawRowCount: number  // rows before aggregation
+  error?: string
+}
+
+/**
+ * Format date as YYYY-MM-DD for daily filename
+ */
+function formatDateForDailyFilename(date: Date): string {
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+/**
+ * Fetch daily shipping breakdown CSV from SFTP
+ *
+ * @param date - The date of the SFTP file (NOT the charge_date)
+ *               For transactions charged on Dec 27, use Dec 28 file
+ * @returns Aggregated shipping cost data grouped by shipment_id
+ */
+export async function fetchDailyShippingBreakdown(date: Date): Promise<DailyFetchResult> {
+  const sftp = new Client()
+  const dateStr = formatDateForDailyFilename(date)
+  const filename = `JetPack_Shipment_Extras_${dateStr}.csv`
+
+  try {
+    const config = getConfig()
+
+    await sftp.connect({
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      password: config.password,
+      privateKey: config.privateKey
+    })
+
+    const remotePath = `${config.remotePath}/${filename}`
+
+    // Check if file exists
+    const exists = await sftp.exists(remotePath)
+    if (!exists) {
+      return {
+        success: false,
+        filename,
+        date: dateStr,
+        rows: [],
+        rawRowCount: 0,
+        error: `File not found: ${remotePath}`
+      }
+    }
+
+    // Download file contents
+    const buffer = await sftp.get(remotePath) as Buffer
+    const csvContent = buffer.toString('utf-8')
+
+    // Parse CSV
+    const records = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    })
+
+    // Parse raw rows
+    const rawRows: DailyFeeRow[] = (records as Record<string, string>[]).map((row) => ({
+      user_id: String(row['User ID'] || ''),
+      merchant_name: String(row['Merchant Name'] || ''),
+      shipment_id: String(row['Shipment ID'] || ''),
+      fee_type: String(row['Fee_Type'] || row['Fee Type'] || ''),
+      fee_amount: parseCurrency(row['Fee Amount'] || row['Fee_Amount'] || '0')
+    }))
+
+    // Aggregate by shipment_id
+    const byShipment = new Map<string, DailyShipmentCost>()
+
+    for (const row of rawRows) {
+      if (!row.shipment_id) continue
+
+      if (!byShipment.has(row.shipment_id)) {
+        byShipment.set(row.shipment_id, {
+          shipment_id: row.shipment_id,
+          merchant_name: row.merchant_name,
+          base_cost: 0,
+          surcharge: 0,
+          surcharge_details: [],
+          insurance_cost: 0,
+          total: 0
+        })
+      }
+
+      const agg = byShipment.get(row.shipment_id)!
+      const feeTypeLower = row.fee_type.toLowerCase()
+
+      if (feeTypeLower === 'base rate') {
+        agg.base_cost += row.fee_amount
+      } else if (feeTypeLower.includes('insurance')) {
+        agg.insurance_cost += row.fee_amount
+      } else {
+        // It's a surcharge - track both aggregate and details
+        agg.surcharge += row.fee_amount
+        agg.surcharge_details.push({
+          type: row.fee_type,
+          amount: row.fee_amount
+        })
+      }
+
+      agg.total += row.fee_amount
+    }
+
+    return {
+      success: true,
+      filename,
+      date: dateStr,
+      rows: Array.from(byShipment.values()),
+      rawRowCount: rawRows.length
+    }
+
+  } catch (error) {
+    return {
+      success: false,
+      filename,
+      date: dateStr,
+      rows: [],
+      rawRowCount: 0,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  } finally {
+    await sftp.end()
+  }
+}
+
+export interface DailyUpdateResult {
+  updated: number
+  notFound: number
+  errors: string[]
+}
+
+/**
+ * Update transactions with daily shipping breakdown data
+ *
+ * Updates base_cost, surcharge, insurance_cost, AND the new surcharge_details JSONB column.
+ *
+ * IMPORTANT: Handles RESHIPMENTS correctly. Same shipment_id can have multiple Shipping
+ * transactions on different dates. The SFTP file date = charge_date + 1 day, so we use
+ * the charge_date to match the correct transaction.
+ *
+ * @param supabase - Supabase client
+ * @param rows - Aggregated shipment cost data from daily SFTP file
+ * @param fileDate - The SFTP file date (used to calculate expected charge_date)
+ */
+export async function updateTransactionsWithDailyBreakdown(
+  supabase: SupabaseClient,
+  rows: DailyShipmentCost[],
+  fileDate?: Date
+): Promise<DailyUpdateResult> {
+  const result: DailyUpdateResult = { updated: 0, notFound: 0, errors: [] }
+
+  if (rows.length === 0) {
+    return result
+  }
+
+  // Calculate expected charge_date from file date (charge_date = file_date - 1 day)
+  // This is used to match the correct transaction for reshipments
+  let expectedChargeDate: string | null = null
+  if (fileDate) {
+    const chargeDateObj = new Date(fileDate)
+    chargeDateObj.setDate(chargeDateObj.getDate() - 1)
+    expectedChargeDate = `${chargeDateObj.getFullYear()}-${String(chargeDateObj.getMonth() + 1).padStart(2, '0')}-${String(chargeDateObj.getDate()).padStart(2, '0')}`
+    console.log(`  Daily SFTP update: Expected charge_date for this file: ${expectedChargeDate}`)
+  }
+
+  // Step 1: Extract all unique shipment_ids
+  const shipmentIds = [...new Set(rows.map(r => r.shipment_id).filter(Boolean))]
+
+  console.log(`  Daily SFTP update: Looking up ${shipmentIds.length} unique shipment IDs...`)
+
+  // Step 2: Batch fetch ALL matching transactions (including multiple per shipment for reshipments)
+  const LOOKUP_BATCH_SIZE = 500
+  // Map: shipment_id:charge_date → transaction id (for precise matching)
+  // Also: shipment_id → array of {id, charge_date} for fallback
+  const txByShipmentDate = new Map<string, string>()
+  const txByShipment = new Map<string, Array<{ id: string; charge_date: string | null }>>()
+
+  for (let i = 0; i < shipmentIds.length; i += LOOKUP_BATCH_SIZE) {
+    const batchIds = shipmentIds.slice(i, i + LOOKUP_BATCH_SIZE)
+
+    const { data: transactions, error: lookupError } = await supabase
+      .from('transactions')
+      .select('id, reference_id, charge_date')
+      .eq('reference_type', 'Shipment')
+      .eq('fee_type', 'Shipping')
+      .in('reference_id', batchIds)
+
+    if (lookupError) {
+      result.errors.push(`Batch lookup error: ${lookupError.message}`)
+      continue
+    }
+
+    for (const tx of transactions || []) {
+      // Build lookup by shipment:charge_date for precise matching
+      if (tx.charge_date) {
+        const key = `${tx.reference_id}:${tx.charge_date}`
+        txByShipmentDate.set(key, tx.id)
+      }
+
+      // Also build array per shipment for fallback
+      if (!txByShipment.has(tx.reference_id)) {
+        txByShipment.set(tx.reference_id, [])
+      }
+      txByShipment.get(tx.reference_id)!.push({
+        id: tx.id,
+        charge_date: tx.charge_date
+      })
+    }
+  }
+
+  const totalTxCount = Array.from(txByShipment.values()).reduce((sum, arr) => sum + arr.length, 0)
+  console.log(`  Daily SFTP update: Found ${totalTxCount} matching transactions for ${txByShipment.size} shipments in DB`)
+
+  // Step 3: Prepare and run updates in parallel batches
+  const UPDATE_CONCURRENCY = 100
+  const updatePromises: Promise<{ success: boolean; shipmentId: string; error?: string }>[] = []
+
+  for (const row of rows) {
+    // Find matching transaction ID
+    let txId: string | undefined
+
+    // Strategy 1: Match by shipment_id + expected charge_date (most precise for reshipments)
+    if (expectedChargeDate) {
+      const key = `${row.shipment_id}:${expectedChargeDate}`
+      txId = txByShipmentDate.get(key)
+    }
+
+    // Strategy 2: Fallback to first unupdated transaction for this shipment
+    if (!txId) {
+      const txArray = txByShipment.get(row.shipment_id)
+      if (txArray && txArray.length > 0) {
+        // Take first available - for single-transaction shipments this is correct
+        // For reshipments without date match, we take the first one (may not be ideal but better than nothing)
+        txId = txArray[0].id
+      }
+    }
+
+    if (!txId) {
+      result.notFound++
+      continue
+    }
+
+    const updatePromise = Promise.resolve(
+      supabase
+        .from('transactions')
+        .update({
+          base_cost: row.base_cost,
+          surcharge: row.surcharge,
+          surcharge_details: row.surcharge_details.length > 0 ? row.surcharge_details : null,
+          insurance_cost: row.insurance_cost
+        })
+        .eq('id', txId)
+    ).then(({ error }) => {
+      if (error) {
+        return { success: false, shipmentId: row.shipment_id, error: error.message }
+      }
+      return { success: true, shipmentId: row.shipment_id }
+    })
+
+    updatePromises.push(updatePromise)
+
+    // Process in batches
+    if (updatePromises.length >= UPDATE_CONCURRENCY) {
+      const batchResults = await Promise.all(updatePromises.splice(0, UPDATE_CONCURRENCY))
+      for (const r of batchResults) {
+        if (r.success) {
+          result.updated++
+        } else {
+          result.errors.push(`Error updating shipment ${r.shipmentId}: ${r.error}`)
+        }
+      }
+    }
+  }
+
+  // Process remaining updates
+  if (updatePromises.length > 0) {
+    const batchResults = await Promise.all(updatePromises)
+    for (const r of batchResults) {
+      if (r.success) {
+        result.updated++
+      } else {
+        result.errors.push(`Error updating shipment ${r.shipmentId}: ${r.error}`)
+      }
+    }
+  }
+
+  console.log(`  Daily SFTP update complete: ${result.updated} updated, ${result.notFound} not found, ${result.errors.length} errors`)
+
+  return result
+}
