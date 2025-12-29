@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/sync-invoices",
-      "schedule": "0 18 * * *"
+      "schedule": "52 14 * * *"
     },
     {
       "path": "/api/cron/sync-older-nightly",
@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/sync-sftp-costs",
-      "schedule": "42 14 * * *"
+      "schedule": "0 10 * * *"
     }
   ]
 }
