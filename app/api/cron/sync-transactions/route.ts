@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAllTransactions } from '@/lib/shipbob/sync'
 
+// Allow up to 5 minutes for tracking backfill which processes ALL missing transactions
+export const maxDuration = 300
+
 /**
  * Cron endpoint for ALL transactions sync
  *

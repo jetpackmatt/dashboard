@@ -284,7 +284,67 @@ export async function GET(request: Request) {
       for (const invoice of invoicesToLink) {
         try {
           // Use /invoices/{id}/transactions endpoint with pagination
-          const invoiceTransactions = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
+          let invoiceTransactions = await shipbob.billing.getTransactionsByInvoice(invoice.invoice_id)
+
+          // WORKAROUND: ShipBob's /invoices/{id}/transactions returns 0 for WarehouseStorage invoices
+          // For these invoice types, query transactions by matching invoice_id from our DB directly
+          // The transactions already have invoice_id set in the API (verified), just not returned via this endpoint
+          if (invoiceTransactions.length === 0 &&
+              (invoice.invoice_type === 'WarehouseStorage' || invoice.invoice_type === 'WarehouseInboundFee')) {
+            console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): API returned 0, using DB fallback...`)
+
+            // Get the invoice period from our invoices_sb table
+            const { data: invoiceSb } = await adminClient
+              .from('invoices_sb')
+              .select('period_start, period_end')
+              .eq('shipbob_invoice_id', String(invoice.invoice_id))
+              .single()
+
+            if (invoiceSb?.period_start && invoiceSb?.period_end) {
+              const periodStart = invoiceSb.period_start.split('T')[0]
+              const periodEnd = invoiceSb.period_end.split('T')[0]
+
+              // Reference type mapping: WarehouseStorage → FC, WarehouseInboundFee → WRO
+              const refType = invoice.invoice_type === 'WarehouseStorage' ? 'FC' : 'WRO'
+
+              // Find transactions in our DB that match this period and type
+              const { data: matchingTx } = await adminClient
+                .from('transactions')
+                .select('transaction_id')
+                .eq('reference_type', refType)
+                .is('invoice_id_sb', null)
+                .gte('charge_date', periodStart)
+                .lte('charge_date', periodEnd)
+
+              if (matchingTx && matchingTx.length > 0) {
+                // Update these transactions with the invoice_id_sb
+                const BATCH_SIZE = 500
+                let dbFallbackLinked = 0
+
+                for (let i = 0; i < matchingTx.length; i += BATCH_SIZE) {
+                  const batch = matchingTx.slice(i, i + BATCH_SIZE).map((t: { transaction_id: string }) => t.transaction_id)
+
+                  const { data: updated, error: updateError } = await adminClient
+                    .from('transactions')
+                    .update({
+                      invoice_id_sb: invoice.invoice_id,
+                      invoice_date_sb: invoice.invoice_date,
+                      invoiced_status_sb: true
+                    })
+                    .in('transaction_id', batch)
+                    .select('id')
+
+                  if (!updateError && updated) {
+                    dbFallbackLinked += updated.length
+                  }
+                }
+
+                transactionLinkStats.linked += dbFallbackLinked
+                console.log(`    DB fallback: linked ${dbFallbackLinked} ${refType} transactions to invoice ${invoice.invoice_id}`)
+              }
+            }
+            continue
+          }
 
           if (invoiceTransactions.length === 0) {
             continue
@@ -331,16 +391,33 @@ export async function GET(request: Request) {
             }
           }
 
+          // Update taxes for transactions that have them (GST/HST for Canadian FCs)
+          // This is a separate pass because we need individual updates per transaction
+          const txWithTaxes = toUpdate.filter(tx => tx.taxes && tx.taxes.length > 0)
+          if (txWithTaxes.length > 0) {
+            let taxesUpdated = 0
+            for (const tx of txWithTaxes) {
+              const { error: taxError } = await adminClient
+                .from('transactions')
+                .update({ taxes: tx.taxes })
+                .eq('transaction_id', tx.transaction_id)
+              if (!taxError) taxesUpdated++
+            }
+            if (taxesUpdated > 0) {
+              console.log(`    Updated taxes for ${taxesUpdated} Canadian transactions`)
+            }
+          }
+
           // Insert missing transactions with client attribution
           let insertedCount = 0
           if (toInsert.length > 0) {
             const now = new Date().toISOString()
             const records = toInsert.map(tx => {
               const { client_id, merchant_id } = attributeClient(tx)
-              return {
+              // Build base record WITHOUT client_id/merchant_id
+              // IMPORTANT: Only include these if NOT null to prevent overwriting existing attribution
+              const record: Record<string, unknown> = {
                 transaction_id: tx.transaction_id,
-                client_id,
-                merchant_id,
                 reference_id: tx.reference_id,
                 reference_type: tx.reference_type,
                 transaction_type: tx.transaction_type || null,
@@ -353,8 +430,15 @@ export async function GET(request: Request) {
                 fulfillment_center: tx.fulfillment_center || null,
                 additional_details: tx.additional_details || null,
                 tracking_id: tx.additional_details?.TrackingId || null,
+                taxes: tx.taxes && tx.taxes.length > 0 ? tx.taxes : null,
                 updated_at: now,
               }
+              // Only include client_id/merchant_id if attribution succeeded
+              if (client_id) {
+                record.client_id = client_id
+                record.merchant_id = merchant_id
+              }
+              return record
             })
 
             // Insert in batches
@@ -378,6 +462,103 @@ export async function GET(request: Request) {
 
           if (totalLinked > 0 || insertedCount > 0 || totalErrors > 0) {
             console.log(`  Invoice ${invoice.invoice_id} (${invoice.invoice_type}): ${totalLinked} updated, ${insertedCount} inserted${totalErrors > 0 ? `, ${totalErrors} batch errors` : ''}`)
+          }
+
+          // DB FALLBACK for ALL invoice types: Link transactions that exist in our DB
+          // but were NOT returned by ShipBob's /invoices/{id}/transactions API.
+          // This handles the case where transactions were synced by sync-transactions
+          // before the invoice existed, and ShipBob's API doesn't return them.
+          // Get the invoice period from our invoices_sb table
+          const { data: invoiceSb } = await adminClient
+            .from('invoices_sb')
+            .select('period_start, period_end')
+            .eq('shipbob_invoice_id', String(invoice.invoice_id))
+            .single()
+
+          if (invoiceSb?.period_start && invoiceSb?.period_end) {
+            const periodStart = invoiceSb.period_start.split('T')[0]
+            const periodEnd = invoiceSb.period_end.split('T')[0]
+
+            // Build query based on invoice type:
+            // - Shipping: reference_type='Shipment', fee_type='Shipping'
+            // - AdditionalFee: reference_type='Shipment', fee_type NOT IN ('Shipping', 'Credit')
+            // - WarehouseStorage: reference_type='FC'
+            // - WarehouseInboundFee: reference_type IN ('WRO', 'URO')
+            // - ReturnsFee: reference_type='Return'
+            // - Credits: fee_type='Credit' OR reference_type='Default'
+            let query = adminClient
+              .from('transactions')
+              .select('transaction_id')
+              .is('invoice_id_sb', null)
+              .is('dispute_status', null)
+              .gte('charge_date', periodStart)
+              .lte('charge_date', periodEnd + 'T23:59:59Z')
+
+            // Apply invoice-type-specific filters
+            switch (invoice.invoice_type) {
+              case 'Shipping':
+                query = query.eq('reference_type', 'Shipment').eq('fee_type', 'Shipping')
+                break
+              case 'AdditionalFee':
+                // Additional Services includes:
+                // 1. Shipment fees that aren't Shipping or Credit (Per Pick Fee, B2B fees, etc.)
+                // 2. Inventory Placement Program Fee (has reference_type='WRO' but isn't a receiving fee)
+                query = query.or(
+                  'and(reference_type.eq.Shipment,fee_type.neq.Shipping,fee_type.neq.Credit),' +
+                  'and(reference_type.eq.WRO,fee_type.ilike.%Inventory Placement%)'
+                )
+                break
+              case 'WarehouseStorage':
+                query = query.eq('reference_type', 'FC')
+                break
+              case 'WarehouseInboundFee':
+                // Only match actual receiving fees, not service fees like Inventory Placement Program Fee
+                // which belong on AdditionalFee invoice despite having reference_type='WRO'
+                query = query.in('reference_type', ['WRO', 'URO'])
+                  .not('fee_type', 'ilike', '%Inventory Placement%')
+                break
+              case 'ReturnsFee':
+                query = query.eq('reference_type', 'Return')
+                break
+              case 'Credits':
+                // Credits can have various reference_types but fee_type='Credit'
+                query = query.eq('fee_type', 'Credit')
+                break
+              default:
+                // Unknown invoice type - skip fallback
+                query = null
+            }
+
+            if (query) {
+              const { data: unlinkedTx } = await query
+
+              if (unlinkedTx && unlinkedTx.length > 0) {
+                // Update these transactions with the invoice_id_sb
+                let dbFallbackLinked = 0
+                for (let i = 0; i < unlinkedTx.length; i += BATCH_SIZE) {
+                  const batch = unlinkedTx.slice(i, i + BATCH_SIZE).map((t: { transaction_id: string }) => t.transaction_id)
+
+                  const { data: updated, error: updateError } = await adminClient
+                    .from('transactions')
+                    .update({
+                      invoice_id_sb: invoice.invoice_id,
+                      invoice_date_sb: invoice.invoice_date,
+                      invoiced_status_sb: true
+                    })
+                    .in('transaction_id', batch)
+                    .select('id')
+
+                  if (!updateError && updated) {
+                    dbFallbackLinked += updated.length
+                  }
+                }
+
+                if (dbFallbackLinked > 0) {
+                  transactionLinkStats.linked += dbFallbackLinked
+                  console.log(`    DB fallback: linked ${dbFallbackLinked} additional ${invoice.invoice_type} transactions to invoice ${invoice.invoice_id}`)
+                }
+              }
+            }
           }
         } catch (err: unknown) {
           // Log detailed error info for debugging

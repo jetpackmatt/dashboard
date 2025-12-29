@@ -11,6 +11,8 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { ShipBobClient, ShipBobProduct } from './client'
+import { ensureFCsExist } from '@/lib/fulfillment-centers'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
@@ -1023,6 +1025,7 @@ export async function syncClient(
         invoice_id?: number
         fulfillment_center?: string
         additional_details?: Record<string, unknown>
+        taxes?: Array<{ tax_type?: string; tax_rate?: number; tax_amount?: number }>
       }
 
       const apiTransactions: ShipBobTransaction[] = []
@@ -1052,7 +1055,12 @@ export async function syncClient(
         reference_type: tx.reference_type,
         transaction_type: tx.transaction_type || null,
         fee_type: tx.transaction_fee,
-        cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
+        // For WRO Receiving Fee, API 'amount' includes taxes - subtract to get pre-tax cost
+        // For other fee types (Shipping, Per Pick, Storage), API 'amount' is already pre-tax
+        // Taxes are stored separately in the 'taxes' column for all transactions
+        cost: (tx.reference_type === 'WRO' && tx.transaction_fee?.includes('Receiving'))
+          ? tx.amount - (tx.taxes || []).reduce((sum, t) => sum + (t.tax_amount || 0), 0)
+          : tx.amount,
         charge_date: tx.charge_date,
         invoice_date_sb: tx.invoice_date || null,
         invoiced_status_sb: tx.invoiced_status || false,
@@ -1061,6 +1069,8 @@ export async function syncClient(
         additional_details: tx.additional_details || null,
         // Extract tracking_id from additional_details.TrackingId
         tracking_id: (tx.additional_details as Record<string, unknown>)?.TrackingId as string || null,
+        // Capture taxes (GST/HST for Canadian FCs)
+        taxes: tx.taxes && tx.taxes.length > 0 ? tx.taxes : null,
         created_at: new Date().toISOString(),
       }))
 
@@ -1384,22 +1394,17 @@ export async function syncAllTransactions(
   const supabase = createAdminClient()
 
   try {
-    // Get system clients (ShipBob Payments and Jetpack Costs)
-    console.log('[TransactionSync] Looking up system clients...')
-    const { data: shipbobPaymentsClient } = await supabase
+    // Get the "Jetpack" system client for parent-level transactions
+    // This client holds: ACH payments, CC processing fees, disputed charges, credits
+    console.log('[TransactionSync] Looking up Jetpack system client...')
+    const { data: jetpackClient } = await supabase
       .from('clients')
       .select('id')
-      .eq('company_name', 'ShipBob Payments')
-      .single()
-    const { data: jetpackCostsClient } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('company_name', 'Jetpack Costs')
+      .eq('company_name', 'Jetpack')
       .single()
 
-    const shipbobPaymentsId = shipbobPaymentsClient?.id || null
-    const jetpackCostsId = jetpackCostsClient?.id || null
-    console.log(`[TransactionSync] System clients: ShipBob Payments=${shipbobPaymentsId}, Jetpack Costs=${jetpackCostsId}`)
+    const jetpackClientId = jetpackClient?.id || null
+    console.log(`[TransactionSync] Jetpack system client: ${jetpackClientId}`)
 
     // Build client_id -> client_info lookup for merchant_id population
     console.log('[TransactionSync] Building client info lookup...')
@@ -1619,6 +1624,7 @@ export async function syncAllTransactions(
       invoice_id?: number
       fulfillment_center?: string
       additional_details?: Record<string, unknown>
+      taxes?: Array<{ tax_type?: string; tax_rate?: number; tax_amount?: number }>
     }
 
     const transactions: ShipBobTransaction[] = []
@@ -1720,12 +1726,12 @@ export async function syncAllTransactions(
       // Strategy 4: Default - route by transaction_fee
       else if (tx.reference_type === 'Default') {
         const fee = tx.transaction_fee
-        if (fee === 'Payment' && shipbobPaymentsId) {
-          // ACH payments go to ShipBob Payments
-          clientId = shipbobPaymentsId
-        } else if (fee === 'Credit Card Processing Fee' && jetpackCostsId) {
+        if (fee === 'Payment' && jetpackClientId) {
+          // ACH payments go to Jetpack system client
+          clientId = jetpackClientId
+        } else if (fee === 'Credit Card Processing Fee' && jetpackClientId) {
           // CC processing fee is a parent-level cost to Jetpack
-          clientId = jetpackCostsId
+          clientId = jetpackClientId
         } else if (fee === 'Credit') {
           // Credits - try shipment lookup first, then return, then WRO
           clientId = clientLookup[tx.reference_id] || null
@@ -1782,7 +1788,12 @@ export async function syncAllTransactions(
         reference_type: tx.reference_type,
         transaction_type: tx.transaction_type || null,
         fee_type: tx.transaction_fee,
-        cost: tx.amount, // API returns 'amount', we store as 'cost' (our cost for the transaction)
+        // For WRO Receiving Fee, API 'amount' includes taxes - subtract to get pre-tax cost
+        // For other fee types (Shipping, Per Pick, Storage), API 'amount' is already pre-tax
+        // Taxes are stored separately in the 'taxes' column for all transactions
+        cost: (tx.reference_type === 'WRO' && tx.transaction_fee?.includes('Receiving'))
+          ? tx.amount - (tx.taxes || []).reduce((sum, t) => sum + (t.tax_amount || 0), 0)
+          : tx.amount,
         charge_date: tx.charge_date,
         invoice_date_sb: tx.invoice_date || null,
         invoiced_status_sb: tx.invoiced_status || false,
@@ -1791,6 +1802,8 @@ export async function syncAllTransactions(
         additional_details: tx.additional_details || null,
         // Extract tracking_id from additional_details.TrackingId
         tracking_id: (tx.additional_details as Record<string, unknown>)?.TrackingId as string || null,
+        // Capture taxes (GST/HST for Canadian FCs)
+        taxes: tx.taxes && tx.taxes.length > 0 ? tx.taxes : null,
         updated_at: now,
       }
 
@@ -1803,6 +1816,14 @@ export async function syncAllTransactions(
 
       return baseRecord
     })
+
+    // Auto-register any new fulfillment centers
+    const fcNames = txRecords
+      .map(r => r.fulfillment_center as string | null)
+      .filter((fc): fc is string => !!fc)
+    if (fcNames.length > 0) {
+      await ensureFCsExist(supabase, fcNames)
+    }
 
     // Batch upsert
     console.log('[TransactionSync] Upserting transactions...')
@@ -1907,6 +1928,91 @@ export async function syncAllTransactions(
 
     if (totalFixed > 0) {
       console.log(`[TransactionSync] Attribution fix: Fixed ${totalFixed} transactions via database join`)
+    }
+
+    // ==========================================
+    // THIRD PASS: Backfill tracking_id from shipments
+    // ==========================================
+    // For Shipment transactions without tracking_id (e.g., Per Pick Fee),
+    // look up the tracking_id from the shipments table.
+    // The API only provides TrackingId in additional_details for Shipping fee type,
+    // but other Shipment-linked fees (Per Pick Fee, B2B fees, etc.) need lookup.
+
+    console.log('[TransactionSync] Backfilling tracking_id for Shipment transactions without it...')
+
+    let trackingFixLastId: string | null = null
+    let totalTrackingFixed = 0
+
+    while (true) {
+      // Get batch of Shipment transactions without tracking_id
+      let trackingQuery = supabase
+        .from('transactions')
+        .select('id, reference_id')
+        .eq('reference_type', 'Shipment')
+        .is('tracking_id', null)
+        .order('id', { ascending: true })
+        .limit(FIX_BATCH_SIZE)
+
+      if (trackingFixLastId) {
+        trackingQuery = trackingQuery.gt('id', trackingFixLastId)
+      }
+
+      const { data: noTrackingTxs, error: trackingFetchError } = await trackingQuery
+
+      if (trackingFetchError) {
+        result.errors.push(`Tracking backfill fetch error: ${trackingFetchError.message}`)
+        break
+      }
+
+      if (!noTrackingTxs || noTrackingTxs.length === 0) {
+        break
+      }
+
+      // Get tracking_id from shipments for these reference_ids
+      const shipmentIds = [...new Set(noTrackingTxs.map((t: { id: string; reference_id: string }) => t.reference_id))]
+      const { data: shipmentsWithTracking, error: trackingShipError } = await supabase
+        .from('shipments')
+        .select('shipment_id, tracking_id')
+        .in('shipment_id', shipmentIds)
+        .not('tracking_id', 'is', null)
+
+      if (trackingShipError) {
+        result.errors.push(`Tracking backfill shipment fetch error: ${trackingShipError.message}`)
+        break
+      }
+
+      // Build lookup: shipment_id -> tracking_id
+      const trackingLookup: Record<string, string> = {}
+      for (const s of shipmentsWithTracking || []) {
+        if (s.tracking_id) {
+          trackingLookup[s.shipment_id] = s.tracking_id
+        }
+      }
+
+      // Update each transaction that has a matching shipment with tracking
+      for (const tx of noTrackingTxs) {
+        const trackingId = trackingLookup[tx.reference_id]
+        if (trackingId) {
+          const { error: updateError } = await supabase
+            .from('transactions')
+            .update({
+              tracking_id: trackingId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', tx.id)
+
+          if (!updateError) {
+            totalTrackingFixed++
+          }
+        }
+        trackingFixLastId = tx.id
+      }
+
+      if (noTrackingTxs.length < FIX_BATCH_SIZE) break
+    }
+
+    if (totalTrackingFixed > 0) {
+      console.log(`[TransactionSync] Tracking backfill: Fixed ${totalTrackingFixed} transactions from shipments table`)
     }
 
     console.log(
@@ -2881,6 +2987,292 @@ export async function syncFeeTypes(): Promise<FeeTypesSyncResult> {
     return result
   } catch (e) {
     result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    return result
+  }
+}
+
+// ============================================================================
+// Products Sync
+// ============================================================================
+
+export interface ProductsSyncResult {
+  success: boolean
+  duration: number
+  clientsProcessed: number
+  productsUpserted: number
+  storageTransactionsAttributed: number
+  errors: string[]
+  clients: Array<{
+    clientName: string
+    productsFound: number
+    productsUpserted: number
+    errors: string[]
+  }>
+}
+
+/**
+ * Sync all products from ShipBob for all clients
+ * Uses child tokens (per-client API access)
+ *
+ * This sync is important for:
+ * 1. Attribution: Map inventory_id → client_id for storage transactions
+ * 2. XLS Export: Lookup SKU from inventory_id for billing sheets
+ *
+ * After syncing products, also re-attributes any unattributed storage transactions.
+ */
+export async function syncProducts(): Promise<ProductsSyncResult> {
+  const startTime = Date.now()
+  const result: ProductsSyncResult = {
+    success: false,
+    duration: 0,
+    clientsProcessed: 0,
+    productsUpserted: 0,
+    storageTransactionsAttributed: 0,
+    errors: [],
+    clients: [],
+  }
+
+  console.log('[ProductsSync] Starting products sync...')
+
+  try {
+    const supabase = createAdminClient()
+
+    // Get all active clients with their tokens
+    const { data: clients, error: clientsError } = await supabase
+      .from('clients')
+      .select('id, company_name, merchant_id, client_api_credentials(api_token, provider)')
+      .eq('is_active', true)
+
+    if (clientsError) {
+      result.errors.push(`Failed to fetch clients: ${clientsError.message}`)
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    if (!clients || clients.length === 0) {
+      console.log('[ProductsSync] No active clients found')
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    console.log(`[ProductsSync] Processing ${clients.length} clients...`)
+
+    // Process each client
+    for (const client of clients) {
+      const creds = client.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find(c => c.provider === 'shipbob')?.api_token
+
+      if (!token) {
+        console.log(`[ProductsSync] Skipping ${client.company_name}: no ShipBob token`)
+        continue
+      }
+
+      const clientResult = {
+        clientName: client.company_name,
+        productsFound: 0,
+        productsUpserted: 0,
+        errors: [] as string[],
+      }
+
+      try {
+        // Create client with this token
+        const shipbob = new ShipBobClient(token)
+
+        // Fetch all products for this client
+        const products = await shipbob.products.getAllProducts()
+        clientResult.productsFound = products.length
+
+        if (products.length === 0) {
+          console.log(`[ProductsSync] ${client.company_name}: No products found`)
+          result.clients.push(clientResult)
+          result.clientsProcessed++
+          continue
+        }
+
+        console.log(`[ProductsSync] ${client.company_name}: Found ${products.length} products`)
+
+        // Build upsert records
+        const now = new Date().toISOString()
+        const records = products.map((p: ShipBobProduct) => ({
+          client_id: client.id,
+          merchant_id: client.merchant_id || null,
+          shipbob_product_id: p.id,
+          name: p.name || '',
+          type: p.type || null,
+          taxonomy: p.taxonomy?.name || null,
+          variants: p.variants || null,
+          created_on: p.created_date || null,
+          updated_on: null, // API doesn't always have this at product level
+          synced_at: now,
+        }))
+
+        // Upsert in batches of 100
+        // Note: unique constraint is on (client_id, shipbob_product_id)
+        const batchSize = 100
+        for (let i = 0; i < records.length; i += batchSize) {
+          const batch = records.slice(i, i + batchSize)
+          const { error: upsertError } = await supabase
+            .from('products')
+            .upsert(batch, { onConflict: 'client_id,shipbob_product_id' })
+
+          if (upsertError) {
+            clientResult.errors.push(`Upsert batch ${i / batchSize + 1}: ${upsertError.message}`)
+          } else {
+            clientResult.productsUpserted += batch.length
+          }
+        }
+
+        result.productsUpserted += clientResult.productsUpserted
+        console.log(`[ProductsSync] ${client.company_name}: Upserted ${clientResult.productsUpserted} products`)
+
+      } catch (e) {
+        clientResult.errors.push(e instanceof Error ? e.message : 'Unknown error')
+        result.errors.push(`${client.company_name}: ${e instanceof Error ? e.message : 'Unknown'}`)
+      }
+
+      result.clients.push(clientResult)
+      result.clientsProcessed++
+
+      // Small delay between clients to avoid rate limits
+      await new Promise(r => setTimeout(r, 100))
+    }
+
+    // After syncing products, re-attribute unattributed storage transactions
+    const attributionResult = await attributeStorageTransactions()
+    result.storageTransactionsAttributed = attributionResult.attributed
+
+    if (attributionResult.errors.length > 0) {
+      result.errors.push(...attributionResult.errors)
+    }
+
+    result.success = result.errors.length === 0
+    result.duration = Date.now() - startTime
+    console.log(`[ProductsSync] Complete: ${result.productsUpserted} products, ${result.storageTransactionsAttributed} storage txns attributed`)
+
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+/**
+ * Re-attribute storage transactions that don't have a client_id
+ * Uses the products table to map inventory_id → client_id
+ */
+async function attributeStorageTransactions(): Promise<{ attributed: number; errors: string[] }> {
+  const result = { attributed: 0, errors: [] as string[] }
+
+  try {
+    const supabase = createAdminClient()
+
+    // Build inventory_id → client_id lookup from products.variants
+    console.log('[ProductsSync] Building inventory lookup from products...')
+
+    const { data: products, error: productsError } = await supabase
+      .from('products')
+      .select('client_id, variants')
+      .not('variants', 'is', null)
+
+    if (productsError) {
+      result.errors.push(`Failed to fetch products: ${productsError.message}`)
+      return result
+    }
+
+    // Build lookup map
+    const inventoryLookup: Record<string, string> = {}
+    for (const p of products || []) {
+      if (p.client_id && Array.isArray(p.variants)) {
+        for (const variant of p.variants) {
+          const invId = variant?.inventory?.inventory_id
+          if (invId) {
+            inventoryLookup[String(invId)] = p.client_id
+          }
+        }
+      }
+    }
+
+    const inventoryCount = Object.keys(inventoryLookup).length
+    console.log(`[ProductsSync] Built lookup with ${inventoryCount} inventory IDs`)
+
+    if (inventoryCount === 0) {
+      console.log('[ProductsSync] No inventory mappings found, skipping attribution')
+      return result
+    }
+
+    // Find unattributed storage transactions (FC reference_type with no client_id)
+    const { data: unattributed, error: fetchError } = await supabase
+      .from('transactions')
+      .select('transaction_id, reference_id, additional_details')
+      .eq('reference_type', 'FC')
+      .is('client_id', null)
+      .limit(1000)
+
+    if (fetchError) {
+      result.errors.push(`Failed to fetch unattributed: ${fetchError.message}`)
+      return result
+    }
+
+    if (!unattributed || unattributed.length === 0) {
+      console.log('[ProductsSync] No unattributed storage transactions found')
+      return result
+    }
+
+    console.log(`[ProductsSync] Found ${unattributed.length} unattributed storage transactions`)
+
+    // Attribute each transaction
+    const updates: Array<{ transaction_id: string; client_id: string }> = []
+    for (const tx of unattributed) {
+      // Extract inventory_id from reference_id (format: FC-InventoryId-LocationType) or additional_details
+      let inventoryId: string | null = null
+
+      if (tx.reference_id) {
+        const parts = tx.reference_id.split('-')
+        if (parts.length >= 2) {
+          inventoryId = parts[1]
+        }
+      }
+
+      // Fallback to additional_details.InventoryId
+      if (!inventoryId && tx.additional_details?.InventoryId) {
+        inventoryId = String(tx.additional_details.InventoryId)
+      }
+
+      if (inventoryId && inventoryLookup[inventoryId]) {
+        updates.push({
+          transaction_id: tx.transaction_id,
+          client_id: inventoryLookup[inventoryId],
+        })
+      }
+    }
+
+    console.log(`[ProductsSync] Matched ${updates.length} transactions to clients`)
+
+    // Update in batches
+    const batchSize = 100
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize)
+
+      for (const update of batch) {
+        const { error: updateError } = await supabase
+          .from('transactions')
+          .update({ client_id: update.client_id })
+          .eq('transaction_id', update.transaction_id)
+
+        if (updateError) {
+          result.errors.push(`Update ${update.transaction_id}: ${updateError.message}`)
+        } else {
+          result.attributed++
+        }
+      }
+    }
+
+    console.log(`[ProductsSync] Attributed ${result.attributed} storage transactions`)
+    return result
+  } catch (e) {
+    result.errors.push(`Attribution error: ${e instanceof Error ? e.message : 'Unknown'}`)
     return result
   }
 }
