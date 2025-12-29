@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/sync-sftp-costs",
-      "schedule": "30 14 * * *"
+      "schedule": "42 14 * * *"
     }
   ]
 }
