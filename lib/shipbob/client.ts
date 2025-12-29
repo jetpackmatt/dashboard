@@ -38,9 +38,10 @@ export interface ShipBobTransaction {
   reference_type: string // "Shipment", "Order", etc.
   transaction_type: string // "Charge", "Refund", "Credit"
   fulfillment_center: string // "Ontario 6 (CA)", etc.
-  taxes: Array<{
+  taxes?: Array<{
     tax_type?: string
-    amount?: number
+    tax_rate?: number
+    tax_amount?: number
   }>
   additional_details: {
     TrackingId?: string
@@ -82,6 +83,53 @@ export interface ShipBobOrderShipment {
     width_in?: number
     height_in?: number
   }
+}
+
+// ============================================================================
+// Types for 1.0 Products API
+// ============================================================================
+
+export interface ShipBobProductVariant {
+  id: number
+  sku: string
+  upc?: string
+  gtin?: string
+  name: string
+  status: string
+  weight?: {
+    unit: string
+    weight: number
+  }
+  dimension?: {
+    unit: string
+    width: number
+    height: number
+    length: number
+  }
+  inventory?: {
+    on_hand_qty: number
+    inventory_id: number
+  }
+  created_on?: string
+  updated_on?: string
+  // There are many more fields but these are the critical ones for attribution and XLS export
+  [key: string]: unknown
+}
+
+export interface ShipBobProduct {
+  id: number
+  reference_id?: string
+  name: string
+  sku?: string
+  type?: string
+  taxonomy?: {
+    name?: string
+    node_id?: string
+    type?: string
+  }
+  bundle_root_information?: unknown
+  created_date?: string
+  variants?: ShipBobProductVariant[]
 }
 
 // ============================================================================
@@ -320,6 +368,73 @@ export class ShipBobClient {
 
       const query = searchParams.toString()
       return this.request<ShipBobOrder[]>(`/order${query ? `?${query}` : ''}`)
+    },
+  }
+
+  /**
+   * Products API (2025-07 version - includes variants!)
+   * Get products with variants (includes inventory_id and SKU)
+   *
+   * NOTE: The 1.0 API does NOT include variants - must use 2025-07 API
+   */
+  products = {
+    /**
+     * Get products (paginated) with variants
+     * Returns products with full variant details including inventory_id
+     * Uses 2025-07 API which includes variants
+     */
+    getProducts: async (params?: {
+      page?: number
+      limit?: number
+      search?: string
+    }): Promise<ShipBobProduct[]> => {
+      const searchParams = new URLSearchParams()
+      if (params?.page) searchParams.set('Page', params.page.toString())
+      if (params?.limit) searchParams.set('Limit', (params.limit || 250).toString())
+      if (params?.search) searchParams.set('Search', params.search)
+
+      const query = searchParams.toString()
+      // Use 2025-07 API - this includes variants!
+      const response = await this.request<{ items?: ShipBobProduct[] } | ShipBobProduct[]>(
+        `/product${query ? `?${query}` : ''}`,
+        {},
+        '2025-07'
+      )
+
+      // Handle both array and paginated response formats
+      return Array.isArray(response) ? response : (response.items || [])
+    },
+
+    /**
+     * Get all products with automatic pagination
+     * Fetches all pages until no more results
+     */
+    getAllProducts: async (): Promise<ShipBobProduct[]> => {
+      const allProducts: ShipBobProduct[] = []
+      const pageSize = 250
+      let page = 1
+
+      while (true) {
+        const products = await this.products.getProducts({ page, limit: pageSize })
+
+        if (!products || products.length === 0) break
+
+        allProducts.push(...products)
+
+        // If we got fewer than pageSize, we're done
+        if (products.length < pageSize) break
+
+        page++
+      }
+
+      return allProducts
+    },
+
+    /**
+     * Get a single product by ID
+     */
+    getProduct: async (productId: number): Promise<ShipBobProduct> => {
+      return this.request<ShipBobProduct>(`/product/${productId}`, {}, '2025-07')
     },
   }
 
