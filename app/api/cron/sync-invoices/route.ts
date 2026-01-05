@@ -642,13 +642,28 @@ export async function GET(request: Request) {
       // This handles courtesy credits (reference_id=0) that can't be attributed directly.
       const invoiceIdsProcessed = invoicesToLink.map(inv => inv.invoice_id)
       if (invoiceIdsProcessed.length > 0) {
-        const { data: orphanTx } = await adminClient
-          .from('transactions')
-          .select('transaction_id, invoice_id_sb')
-          .in('invoice_id_sb', invoiceIdsProcessed)
-          .is('client_id', null)
+        // Paginate orphan query - can be more than 1000 unattributed transactions
+        const orphanTx: Array<{ transaction_id: string; invoice_id_sb: number }> = []
+        let lastOrphanId: string | null = null
+        while (true) {
+          let query = adminClient
+            .from('transactions')
+            .select('transaction_id, invoice_id_sb')
+            .in('invoice_id_sb', invoiceIdsProcessed)
+            .is('client_id', null)
+            .order('transaction_id', { ascending: true })
+            .limit(PAGE_SIZE)
+          if (lastOrphanId) {
+            query = query.gt('transaction_id', lastOrphanId)
+          }
+          const { data: orphanPage } = await query
+          if (!orphanPage || orphanPage.length === 0) break
+          orphanTx.push(...orphanPage)
+          lastOrphanId = orphanPage[orphanPage.length - 1].transaction_id
+          if (orphanPage.length < PAGE_SIZE) break
+        }
 
-        if (orphanTx && orphanTx.length > 0) {
+        if (orphanTx.length > 0) {
           console.log(`Found ${orphanTx.length} transactions with NULL client_id - attempting sibling attribution...`)
 
           // Group orphans by invoice
@@ -663,31 +678,49 @@ export async function GET(request: Request) {
 
           let siblingAttributed = 0
           for (const [invoiceId, txIds] of orphansByInvoice) {
-            // Find all client_ids on this invoice (excluding NULL)
-            const { data: siblings } = await adminClient
-              .from('transactions')
-              .select('client_id')
-              .eq('invoice_id_sb', invoiceId)
-              .not('client_id', 'is', null)
+            // Find all distinct client_ids on this invoice (excluding NULL)
+            // Paginate in case invoice has >1000 transactions
+            const clientIdSet = new Set<string>()
+            let lastSiblingTxId: string | null = null
+            while (true) {
+              let query = adminClient
+                .from('transactions')
+                .select('transaction_id, client_id')
+                .eq('invoice_id_sb', invoiceId)
+                .not('client_id', 'is', null)
+                .order('transaction_id', { ascending: true })
+                .limit(PAGE_SIZE)
+              if (lastSiblingTxId) {
+                query = query.gt('transaction_id', lastSiblingTxId)
+              }
+              const { data: siblingPage } = await query
+              if (!siblingPage || siblingPage.length === 0) break
+              for (const s of siblingPage) {
+                if (s.client_id) clientIdSet.add(s.client_id)
+              }
+              lastSiblingTxId = siblingPage[siblingPage.length - 1].transaction_id
+              if (siblingPage.length < PAGE_SIZE) break
+              // Early exit if we already found multiple clients
+              if (clientIdSet.size > 1) break
+            }
 
-            if (siblings && siblings.length > 0) {
-              // Check if all siblings have the same client_id
-              const clientIds = [...new Set(siblings.map((s: { client_id: string | null }) => s.client_id))]
-              if (clientIds.length === 1) {
-                const siblingClientId = clientIds[0]
-                // Update orphans with sibling's client_id
-                const { error: updateErr, count } = await adminClient
+            if (clientIdSet.size === 1) {
+              const siblingClientId = [...clientIdSet][0]
+              // Update orphans with sibling's client_id (batch if >500)
+              for (let i = 0; i < txIds.length; i += 500) {
+                const batch = txIds.slice(i, i + 500)
+                const { error: updateErr } = await adminClient
                   .from('transactions')
                   .update({ client_id: siblingClientId })
-                  .in('transaction_id', txIds)
+                  .in('transaction_id', batch)
 
                 if (!updateErr) {
-                  siblingAttributed += txIds.length
-                  console.log(`  Invoice ${invoiceId}: attributed ${txIds.length} orphan(s) to client ${siblingClientId}`)
+                  siblingAttributed += batch.length
                 }
-              } else {
-                console.log(`  Invoice ${invoiceId}: multiple clients (${clientIds.length}), skipping ${txIds.length} orphan(s)`)
               }
+              console.log(`  Invoice ${invoiceId}: attributed ${txIds.length} orphan(s) to client ${siblingClientId}`)
+            } else if (clientIdSet.size > 1) {
+              console.log(`  Invoice ${invoiceId}: multiple clients (${clientIdSet.size}), skipping ${txIds.length} orphan(s)`)
             }
           }
 
