@@ -493,9 +493,15 @@ export async function GET(request: Request) {
                 invoice_id_sb: invoice.invoice_id,
                 fulfillment_center: tx.fulfillment_center || null,
                 additional_details: tx.additional_details || null,
-                tracking_id: tx.additional_details?.TrackingId || null,
-                taxes: tx.taxes && tx.taxes.length > 0 ? tx.taxes : null,
                 updated_at: now,
+              }
+              // Only include tracking_id if we have it (don't overwrite existing with null)
+              if (tx.additional_details?.TrackingId) {
+                record.tracking_id = tx.additional_details.TrackingId
+              }
+              // Only include taxes if present
+              if (tx.taxes && tx.taxes.length > 0) {
+                record.taxes = tx.taxes
               }
               // Only include client_id/merchant_id if attribution succeeded
               if (client_id) {
