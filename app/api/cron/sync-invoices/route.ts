@@ -165,63 +165,121 @@ export async function GET(request: Request) {
       transactionLinkStats.invoicesProcessed = invoicesToLink.length
 
       // Build lookup tables for client attribution (same logic as syncAllTransactions)
-      console.log('  Building lookup tables for client attribution...')
+      // CRITICAL: Must use cursor-based pagination - Supabase returns MAX 1000 rows per query!
+      console.log('  Building lookup tables for client attribution (with pagination)...')
 
-      // Shipment -> client lookup
-      const { data: shipments } = await adminClient
-        .from('shipments')
-        .select('shipment_id, client_id')
+      // Helper for paginated fetches (Supabase max 1000 rows per query)
+      const PAGE_SIZE = 1000
+
+      // Shipment -> client lookup (paginated)
       const shipmentLookup: Record<string, string> = {}
-      for (const s of shipments || []) {
-        shipmentLookup[s.shipment_id] = s.client_id
-      }
-
-      // Return -> client lookup
-      const { data: returns } = await adminClient
-        .from('returns')
-        .select('shipbob_return_id, client_id')
-      const returnLookup: Record<string, string> = {}
-      for (const r of returns || []) {
-        if (r.shipbob_return_id) {
-          returnLookup[String(r.shipbob_return_id)] = r.client_id
+      let lastShipmentId: string | null = null
+      while (true) {
+        let query = adminClient
+          .from('shipments')
+          .select('shipment_id, client_id')
+          .order('shipment_id', { ascending: true })
+          .limit(PAGE_SIZE)
+        if (lastShipmentId) {
+          query = query.gt('shipment_id', lastShipmentId)
         }
-      }
-
-      // WRO -> client lookup
-      const { data: wros } = await adminClient
-        .from('receiving_orders')
-        .select('shipbob_receiving_id, client_id, merchant_id')
-      const wroLookup: Record<string, { client_id: string; merchant_id: string | null }> = {}
-      for (const w of wros || []) {
-        if (w.shipbob_receiving_id) {
-          wroLookup[String(w.shipbob_receiving_id)] = {
-            client_id: w.client_id,
-            merchant_id: w.merchant_id,
+        const { data: shipmentPage } = await query
+        if (!shipmentPage || shipmentPage.length === 0) break
+        for (const s of shipmentPage) {
+          if (s.client_id) {
+            shipmentLookup[s.shipment_id] = s.client_id
           }
         }
+        lastShipmentId = shipmentPage[shipmentPage.length - 1].shipment_id
+        if (shipmentPage.length < PAGE_SIZE) break
       }
 
-      // Inventory -> client lookup (for FC/storage transactions)
-      const { data: products } = await adminClient
-        .from('products')
-        .select('variants, client_id')
-      const inventoryLookup: Record<string, string> = {}
-      for (const p of products || []) {
-        if (p.variants && Array.isArray(p.variants)) {
-          for (const v of p.variants as Array<{ inventory?: { inventory_id?: number } }>) {
-            if (v.inventory?.inventory_id) {
-              inventoryLookup[String(v.inventory.inventory_id)] = p.client_id
+      // Return -> client lookup (paginated)
+      const returnLookup: Record<string, string> = {}
+      let lastReturnId: number | null = null
+      while (true) {
+        let query = adminClient
+          .from('returns')
+          .select('shipbob_return_id, client_id')
+          .order('shipbob_return_id', { ascending: true })
+          .limit(PAGE_SIZE)
+        if (lastReturnId !== null) {
+          query = query.gt('shipbob_return_id', lastReturnId)
+        }
+        const { data: returnPage } = await query
+        if (!returnPage || returnPage.length === 0) break
+        for (const r of returnPage) {
+          if (r.shipbob_return_id && r.client_id) {
+            returnLookup[String(r.shipbob_return_id)] = r.client_id
+          }
+        }
+        if (returnPage.length > 0) {
+          lastReturnId = returnPage[returnPage.length - 1].shipbob_return_id
+        }
+        if (returnPage.length < PAGE_SIZE) break
+      }
+
+      // WRO -> client lookup (paginated)
+      const wroLookup: Record<string, { client_id: string; merchant_id: string | null }> = {}
+      let lastWroId: string | null = null
+      while (true) {
+        let query = adminClient
+          .from('receiving_orders')
+          .select('shipbob_receiving_id, client_id, merchant_id')
+          .order('shipbob_receiving_id', { ascending: true })
+          .limit(PAGE_SIZE)
+        if (lastWroId) {
+          query = query.gt('shipbob_receiving_id', lastWroId)
+        }
+        const { data: wroPage } = await query
+        if (!wroPage || wroPage.length === 0) break
+        for (const w of wroPage) {
+          if (w.shipbob_receiving_id && w.client_id) {
+            wroLookup[String(w.shipbob_receiving_id)] = {
+              client_id: w.client_id,
+              merchant_id: w.merchant_id,
             }
           }
         }
+        if (wroPage.length > 0) {
+          lastWroId = wroPage[wroPage.length - 1].shipbob_receiving_id
+        }
+        if (wroPage.length < PAGE_SIZE) break
       }
 
-      // Client info lookup for merchant_id
-      const { data: clients } = await adminClient
+      // Inventory -> client lookup (for FC/storage transactions) - paginated
+      const inventoryLookup: Record<string, string> = {}
+      let lastProductId: string | null = null
+      while (true) {
+        let query = adminClient
+          .from('products')
+          .select('id, variants, client_id')
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE)
+        if (lastProductId) {
+          query = query.gt('id', lastProductId)
+        }
+        const { data: productPage } = await query
+        if (!productPage || productPage.length === 0) break
+        for (const p of productPage) {
+          if (p.variants && Array.isArray(p.variants) && p.client_id) {
+            for (const v of p.variants as Array<{ inventory?: { inventory_id?: number } }>) {
+              if (v.inventory?.inventory_id) {
+                inventoryLookup[String(v.inventory.inventory_id)] = p.client_id
+              }
+            }
+          }
+        }
+        lastProductId = productPage[productPage.length - 1].id
+        if (productPage.length < PAGE_SIZE) break
+      }
+
+      // Client info lookup for merchant_id (small table, no pagination needed but safe to paginate)
+      const { data: clientsData } = await adminClient
         .from('clients')
         .select('id, merchant_id')
       const clientInfoLookup: Record<string, { merchant_id: string | null }> = {}
-      for (const c of clients || []) {
+      for (const c of clientsData || []) {
         clientInfoLookup[c.id] = { merchant_id: c.merchant_id }
       }
 
@@ -353,13 +411,19 @@ export async function GET(request: Request) {
           // Get transaction IDs from this invoice
           const transactionIds = invoiceTransactions.map(tx => tx.transaction_id)
 
-          // Check which transactions already exist in DB
-          const { data: existingTx } = await adminClient
-            .from('transactions')
-            .select('transaction_id')
-            .in('transaction_id', transactionIds.slice(0, 1000)) // Supabase limit
-
-          const existingIds = new Set((existingTx || []).map((t: { transaction_id: string }) => t.transaction_id))
+          // Check which transactions already exist in DB (paginate to handle >1000 transactions)
+          const existingIds = new Set<string>()
+          const TX_CHECK_BATCH = 500 // Use smaller batches for .in() queries
+          for (let i = 0; i < transactionIds.length; i += TX_CHECK_BATCH) {
+            const batch = transactionIds.slice(i, i + TX_CHECK_BATCH)
+            const { data: existingTx } = await adminClient
+              .from('transactions')
+              .select('transaction_id')
+              .in('transaction_id', batch)
+            for (const t of existingTx || []) {
+              existingIds.add(t.transaction_id)
+            }
+          }
 
           // Split into existing (UPDATE) and missing (INSERT)
           const toUpdate = invoiceTransactions.filter(tx => existingIds.has(tx.transaction_id))
