@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     // Get clients to process
     let clientsQuery = adminClient
       .from('clients')
-      .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address')
+      .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address, payment_method')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
 
@@ -185,8 +185,8 @@ export async function POST(request: NextRequest) {
         // Apply markups using the markup engine
         lineItems = await applyMarkupsToLineItems(client.id, lineItems)
 
-        // Generate summary
-        const summary = generateSummary(lineItems)
+        // Generate summary (initial - may be recalculated if CC fee applies)
+        let summary = generateSummary(lineItems)
 
         // Calculate billing period: prior Monday through Sunday
         const periodEnd = new Date(invoiceDate)
@@ -238,6 +238,36 @@ export async function POST(request: NextRequest) {
           const month = String(d.getMonth() + 1).padStart(2, '0')
           const day = String(d.getDate()).padStart(2, '0')
           return `${year}-${month}-${day}`
+        }
+
+        // Add CC processing fee if client uses credit card payment
+        const isCreditCardPayment = client.payment_method === 'credit_card'
+        if (isCreditCardPayment) {
+          const ccFeeRate = 0.03 // 3%
+          const ccFeeAmount = Math.round(summary.totalAmount * ccFeeRate * 100) / 100
+
+          // Create CC fee line item
+          const ccFeeLineItem = {
+            id: `cc-fee-${client.id}-${Date.now()}`,
+            billingTable: 'cc_processing_fee',
+            billingRecordId: `cc-fee-${client.id}`,
+            baseAmount: ccFeeAmount,
+            markupApplied: 0, // No markup on the fee itself
+            billedAmount: ccFeeAmount,
+            markupRuleId: null,
+            markupPercentage: 0,
+            lineCategory: 'Additional Services' as const,
+            description: 'Credit Card Processing Fee (3%)',
+            feeType: 'Credit Card Processing Fee (3%)',
+            transactionDate: formatLocalDate(invoiceDate),
+          }
+
+          lineItems.push(ccFeeLineItem)
+
+          // Recalculate summary with CC fee included
+          summary = generateSummary(lineItems)
+
+          console.log(`  Added CC processing fee: $${ccFeeAmount.toFixed(2)}`)
         }
 
         // Generate invoice number

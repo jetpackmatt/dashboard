@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAll, syncReturns, syncReceivingOrders } from '@/lib/shipbob/sync'
 
+// Allow up to 2 minutes for per-minute sync (multiple clients + receiving orders)
+export const maxDuration = 120
+
 /**
  * Cron endpoint for scheduled data sync
  *

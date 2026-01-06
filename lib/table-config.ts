@@ -7,6 +7,7 @@ export interface ColumnConfig {
   width: number        // Base width percentage (before redistribution)
   priority: number     // 1 = highest (always visible), higher = hides first
   defaultVisible?: boolean  // Whether column is visible by default (default: true)
+  align?: 'left' | 'center' | 'right'  // Text alignment (default: left)
 }
 
 export interface TableConfig {
@@ -33,11 +34,11 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
     { id: 'shipmentId',   header: 'Shipment ID', width: 11, priority: 11 },
     { id: 'status',       header: 'Status',      width: 12, priority: 2 },
     { id: 'customerName', header: 'Customer',    width: 11, priority: 4 },
-    { id: 'channelName',  header: 'Channel',     width: 6,  priority: 10 },
-    { id: 'storeOrderId', header: 'Store ID',    width: 8,  priority: 9 },
-    { id: 'itemCount',    header: 'Picks',       width: 6,  priority: 6 },
-    { id: 'orderType',    header: 'Type',        width: 6,  priority: 8 },
-    { id: 'age',          header: 'Age',         width: 4,  priority: 5 },
+    { id: 'channelName',  header: 'Channel',     width: 6,  priority: 10, align: 'center' },
+    { id: 'storeOrderId', header: 'Store ID',    width: 8,  priority: 9, align: 'center' },
+    { id: 'itemCount',    header: 'Picks',       width: 6,  priority: 6, align: 'center' },
+    { id: 'orderType',    header: 'Type',        width: 6,  priority: 8, align: 'center' },
+    { id: 'age',          header: 'Age',         width: 4,  priority: 5, align: 'center' },
     { id: 'orderDate',    header: 'Order Imported',  width: 15, priority: 3 },
     { id: 'slaDate',      header: 'SLA Date',    width: 12, priority: 7 },
     // Optional columns (not visible by default) - priority 12+
@@ -65,12 +66,12 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'shipmentId',   header: 'Shipment ID',   width: 11, priority: 12 },
     { id: 'status',       header: 'Status',        width: 12, priority: 2 },
     { id: 'customerName', header: 'Customer',      width: 11, priority: 5 },
-    { id: 'charge',       header: 'Charge',        width: 7,  priority: 4 },
-    { id: 'qty',          header: 'Items',         width: 5,  priority: 8 },
+    { id: 'charge',       header: 'Charge',        width: 7,  priority: 4, align: 'center' },
+    { id: 'qty',          header: 'Items',         width: 5,  priority: 8, align: 'center' },
     { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9 },
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
-    { id: 'transitTime',  header: 'Transit',       width: 6,  priority: 7 },
-    { id: 'age',          header: 'Age',           width: 5,  priority: 11 },
+    { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center' },
+    { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center' },
     { id: 'labelCreated', header: 'Label Created', width: 15, priority: 10 },
     // Optional columns (not visible by default) - priority 13+
     { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
@@ -100,10 +101,10 @@ export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
     { id: 'transactionDate', header: 'Transaction Date', width: 15, priority: 1 },
     { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 2 },
     { id: 'feeType',         header: 'Fee Type',         width: 16, priority: 3 },
-    { id: 'charge',          header: 'Charge',           width: 13, priority: 5 },
-    { id: 'status',          header: 'Status',           width: 14, priority: 4 },
-    { id: 'invoiceNumber',   header: 'Invoice #',        width: 14, priority: 6 },
-    { id: 'invoiceDate',     header: 'Invoice Date',     width: 14, priority: 7 },
+    { id: 'charge',          header: 'Charge',           width: 13, priority: 5, align: 'center' },
+    { id: 'status',          header: 'Status',           width: 14, priority: 4, align: 'center' },
+    { id: 'invoiceNumber',   header: 'Invoice #',        width: 14, priority: 6, align: 'center' },
+    { id: 'invoiceDate',     header: 'Invoice Date',     width: 14, priority: 7, align: 'center' },
   ],
   breakpoints: {
     xl: 7,

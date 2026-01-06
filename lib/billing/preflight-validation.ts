@@ -17,13 +17,19 @@ export interface ValidationResult {
 }
 
 export interface ValidationSummary {
-  // Transaction counts
+  // Transaction counts and ShipBob costs
   shippingTransactions: number
+  shippingCost: number
   additionalServiceTransactions: number
+  additionalServiceCost: number
   storageTransactions: number
+  storageCost: number
   returnsTransactions: number
+  returnsCost: number
   receivingTransactions: number
+  receivingCost: number
   creditsTransactions: number
+  creditsCost: number
 
   // Shipments sheet field completion
   shipments: {
@@ -97,6 +103,7 @@ export interface ValidationIssue {
   count: number
   percentage: number
   sampleIds?: string[]
+  details?: Record<string, unknown>[]  // For debugging - additional context about the issue
 }
 
 export interface ValidationWarning {
@@ -124,7 +131,9 @@ const STRICT_MODE = true
 export async function runPreflightValidation(
   supabase: SupabaseClient,
   clientId: string,
-  invoiceIds: number[]
+  invoiceIds: number[],
+  periodStart?: string | null,
+  periodEnd?: string | null
 ): Promise<ValidationResult> {
   const issues: ValidationIssue[] = []
   const warnings: ValidationWarning[] = []
@@ -137,11 +146,12 @@ export async function runPreflightValidation(
   while (hasMoreShipping) {
     const { data: shippingBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, base_cost, surcharge, tracking_id')
+      .select('id, reference_id, base_cost, surcharge, tracking_id, cost, taxes')
       .eq('client_id', clientId)
       .eq('fee_type', 'Shipping')
       .eq('reference_type', 'Shipment')
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null) // Exclude disputed/invalid transactions
       .range(shippingOffset, shippingOffset + PAGE_SIZE - 1)
 
     if (shippingBatch && shippingBatch.length > 0) {
@@ -188,17 +198,17 @@ export async function runPreflightValidation(
   }
 
   // ===== 3. Get shipment_items for Products Sold / Quantity =====
-  // Note: Each shipment can have multiple items, so we use smaller batches
-  // and a higher limit to avoid Supabase's default 1000 row limit
+  // IMPORTANT: Supabase caps at 1000 rows regardless of .limit() value!
+  // Use batch size of 50 shipments to stay safely under 1000 items (50 × 18 max = 900)
   let shipmentItemsData: Record<string, unknown>[] = []
   if (shipmentIds.length > 0) {
-    for (let i = 0; i < shipmentIds.length; i += 200) {
+    for (let i = 0; i < shipmentIds.length; i += 50) {
       const { data } = await supabase
         .from('shipment_items')
         .select('shipment_id, name, quantity')
         .eq('client_id', clientId)
-        .in('shipment_id', shipmentIds.slice(i, i + 200))
-        .limit(2000) // Override default 1000 limit - avg ~3 items/shipment
+        .in('shipment_id', shipmentIds.slice(i, i + 50))
+        .limit(1000) // Supabase hard caps at 1000
 
       if (data) shipmentItemsData.push(...data)
     }
@@ -295,23 +305,89 @@ export async function runPreflightValidation(
   const orderDataMap = new Map(ordersData.map(o => [String(o.id), o]))
 
   // ===== 5. Get ADDITIONAL SERVICES transactions (with pagination) =====
+  // Includes: Per Pick Fee, B2B fees (reference_type='Shipment')
+  // Also includes: Inventory Placement Program Fee (reference_type='WRO' but not a receiving fee)
+  // Also includes: VAS - Paid Requests (reference_type='TicketNumber')
   const additionalServicesTransactions: Record<string, unknown>[] = []
+  const addlIds = new Set<string>()
   let addlOffset = 0
   let hasMoreAddl = true
 
+  // First query: reference_type='Shipment' (Per Pick Fee, B2B fees, etc.)
   while (hasMoreAddl) {
     const { data: addlBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, fee_type, charge_date')
+      .select('id, reference_id, fee_type, charge_date, cost')
       .eq('client_id', clientId)
       .eq('reference_type', 'Shipment')
       .neq('fee_type', 'Shipping')
       .neq('fee_type', 'Credit')
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
       .range(addlOffset, addlOffset + PAGE_SIZE - 1)
 
     if (addlBatch && addlBatch.length > 0) {
-      additionalServicesTransactions.push(...addlBatch)
+      for (const tx of addlBatch) {
+        if (!addlIds.has(tx.id as string)) {
+          addlIds.add(tx.id as string)
+          additionalServicesTransactions.push(tx)
+        }
+      }
+      addlOffset += addlBatch.length
+      hasMoreAddl = addlBatch.length === PAGE_SIZE
+    } else {
+      hasMoreAddl = false
+    }
+  }
+
+  // Second query: Inventory Placement Program Fee (reference_type='WRO' but not a receiving fee)
+  addlOffset = 0
+  hasMoreAddl = true
+  while (hasMoreAddl) {
+    const { data: addlBatch } = await supabase
+      .from('transactions')
+      .select('id, reference_id, fee_type, charge_date, cost')
+      .eq('client_id', clientId)
+      .eq('reference_type', 'WRO')
+      .ilike('fee_type', '%Inventory Placement%')
+      .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
+      .range(addlOffset, addlOffset + PAGE_SIZE - 1)
+
+    if (addlBatch && addlBatch.length > 0) {
+      for (const tx of addlBatch) {
+        if (!addlIds.has(tx.id as string)) {
+          addlIds.add(tx.id as string)
+          additionalServicesTransactions.push(tx)
+        }
+      }
+      addlOffset += addlBatch.length
+      hasMoreAddl = addlBatch.length === PAGE_SIZE
+    } else {
+      hasMoreAddl = false
+    }
+  }
+
+  // Third query: VAS fees (reference_type='TicketNumber') and other misc addl fees
+  addlOffset = 0
+  hasMoreAddl = true
+  while (hasMoreAddl) {
+    const { data: addlBatch } = await supabase
+      .from('transactions')
+      .select('id, reference_id, fee_type, charge_date, cost')
+      .eq('client_id', clientId)
+      .eq('reference_type', 'TicketNumber')
+      .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
+      .range(addlOffset, addlOffset + PAGE_SIZE - 1)
+
+    if (addlBatch && addlBatch.length > 0) {
+      for (const tx of addlBatch) {
+        if (!addlIds.has(tx.id as string)) {
+          addlIds.add(tx.id as string)
+          additionalServicesTransactions.push(tx)
+        }
+      }
       addlOffset += addlBatch.length
       hasMoreAddl = addlBatch.length === PAGE_SIZE
     } else {
@@ -320,25 +396,66 @@ export async function runPreflightValidation(
   }
 
   // ===== 6. Get STORAGE transactions (with pagination) =====
+  // NOTE: Storage transactions may have NULL invoice_id_sb when invoices just closed.
+  // We query both by invoice_id AND by date range, then deduplicate.
   const storageTransactions: Record<string, unknown>[] = []
+  const storageIds = new Set<string>()
   let storageOffset = 0
   let hasMoreStorage = true
 
+  // First, query by invoice_id_sb (for transactions already linked)
   while (hasMoreStorage) {
     const { data: storageBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, fulfillment_center, additional_details')
+      .select('id, reference_id, fulfillment_center, additional_details, cost')
       .eq('client_id', clientId)
       .eq('reference_type', 'FC')
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
       .range(storageOffset, storageOffset + PAGE_SIZE - 1)
 
     if (storageBatch && storageBatch.length > 0) {
-      storageTransactions.push(...storageBatch)
+      for (const tx of storageBatch) {
+        if (!storageIds.has(tx.id as string)) {
+          storageIds.add(tx.id as string)
+          storageTransactions.push(tx)
+        }
+      }
       storageOffset += storageBatch.length
       hasMoreStorage = storageBatch.length === PAGE_SIZE
     } else {
       hasMoreStorage = false
+    }
+  }
+
+  // Also query by date range for transactions with NULL invoice_id_sb (recently closed invoices)
+  if (periodStart && periodEnd) {
+    storageOffset = 0
+    hasMoreStorage = true
+    while (hasMoreStorage) {
+      const { data: storageBatch } = await supabase
+        .from('transactions')
+        .select('id, reference_id, fulfillment_center, additional_details, cost')
+        .eq('client_id', clientId)
+        .eq('reference_type', 'FC')
+        .is('invoice_id_sb', null)
+        .gte('charge_date', periodStart)
+        .lte('charge_date', periodEnd)
+        .is('dispute_status', null)
+        .range(storageOffset, storageOffset + PAGE_SIZE - 1)
+
+      if (storageBatch && storageBatch.length > 0) {
+        for (const tx of storageBatch) {
+          if (!storageIds.has(tx.id as string)) {
+            storageIds.add(tx.id as string)
+            storageTransactions.push(tx)
+          }
+        }
+        storageOffset += storageBatch.length
+        hasMoreStorage = storageBatch.length === PAGE_SIZE
+      } else {
+        hasMoreStorage = false
+      }
     }
   }
 
@@ -350,10 +467,11 @@ export async function runPreflightValidation(
   while (hasMoreReturns) {
     const { data: returnsBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, tracking_id, fulfillment_center')
+      .select('id, reference_id, tracking_id, fulfillment_center, cost')
       .eq('client_id', clientId)
       .eq('reference_type', 'Return')
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
       .range(returnsOffset, returnsOffset + PAGE_SIZE - 1)
 
     if (returnsBatch && returnsBatch.length > 0) {
@@ -393,11 +511,12 @@ export async function runPreflightValidation(
   while (hasMoreReceiving) {
     const { data: receivingBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, fee_type, transaction_type, charge_date')
+      .select('id, reference_id, fee_type, transaction_type, charge_date, cost')
       .eq('client_id', clientId)
       .eq('reference_type', 'WRO')
       .like('fee_type', 'WRO%')  // Only actual WRO fees (WRO Receiving Fee, etc.)
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
       .range(receivingOffset, receivingOffset + PAGE_SIZE - 1)
 
     if (receivingBatch && receivingBatch.length > 0) {
@@ -417,10 +536,11 @@ export async function runPreflightValidation(
   while (hasMoreCredits) {
     const { data: creditsBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, charge_date, additional_details')
+      .select('id, reference_id, charge_date, additional_details, cost')
       .eq('client_id', clientId)
       .eq('fee_type', 'Credit')
       .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
       .range(creditsOffset, creditsOffset + PAGE_SIZE - 1)
 
     if (creditsBatch && creditsBatch.length > 0) {
@@ -435,13 +555,50 @@ export async function runPreflightValidation(
   // ===== BUILD SUMMARY =====
   const shipmentsDataMap = new Map(shipmentsData.map(s => [String(s.shipment_id), s]))
 
+  // Calculate total ShipBob costs (before markup)
+  // Note: Supabase returns numeric as string, so we parse it
+  const parseNum = (val: unknown): number => {
+    if (val === null || val === undefined) return 0
+    const num = typeof val === 'number' ? val : parseFloat(String(val))
+    return isNaN(num) ? 0 : num
+  }
+
+  // For shipping: use base_cost + surcharge (SFTP) if available, else cost
+  // Helper to sum taxes from JSONB array: [{tax_type, tax_rate, tax_amount}, ...]
+  const sumTaxes = (taxes: unknown): number => {
+    if (!taxes || !Array.isArray(taxes)) return 0
+    return taxes.reduce((sum, t) => sum + (parseFloat(t?.tax_amount) || 0), 0)
+  }
+
+  const sumShippingCost = (txs: Record<string, unknown>[]) =>
+    txs.reduce((sum, tx) => {
+      const baseCost = parseNum(tx.base_cost)
+      const surcharge = parseNum(tx.surcharge)
+      const taxes = sumTaxes(tx.taxes)
+      if (baseCost !== 0 || surcharge !== 0) {
+        return sum + baseCost + surcharge + taxes
+      }
+      // Fallback to cost column (which already includes taxes from API)
+      return sum + parseNum(tx.cost)
+    }, 0)
+
+  // For everything else: use cost column
+  const sumCost = (txs: Record<string, unknown>[]) =>
+    txs.reduce((sum, tx) => sum + parseNum(tx.cost), 0)
+
   const summary: ValidationSummary = {
     shippingTransactions: shippingTransactions.length,
+    shippingCost: sumShippingCost(shippingTransactions),
     additionalServiceTransactions: additionalServicesTransactions.length,
+    additionalServiceCost: sumCost(additionalServicesTransactions),
     storageTransactions: storageTransactions.length,
+    storageCost: sumCost(storageTransactions),
     returnsTransactions: returnsTransactions.length,
+    returnsCost: sumCost(returnsTransactions),
     receivingTransactions: receivingTransactions.length,
+    receivingCost: sumCost(receivingTransactions),
     creditsTransactions: creditsTransactions.length,
+    creditsCost: sumCost(creditsTransactions),
 
     shipments: {
       total: shipmentsData.length,
@@ -630,6 +787,36 @@ export async function runPreflightValidation(
   checkField('ORDERS', 'zip_code', s.total, s.withZipCode, 'shipments')
   checkField('ORDERS', 'store_order_id', s.total, s.withStoreOrderId, 'shipments')
 
+  // ORPHANED TRACKING ID CHECK
+  // Detects shipping transactions whose tracking_id doesn't match the shipment's current tracking_id
+  // This can happen when a label is voided/replaced - the transaction exists but the tracking is no longer valid
+  const orphanedTrackingTx = shippingTransactions.filter(tx => {
+    const shipmentId = String(tx.reference_id)
+    const shipment = shipmentsDataMap.get(shipmentId)
+    if (!shipment) return false // Skip if we can't find the shipment
+    const txTracking = tx.tracking_id as string | null
+    const shipmentTracking = shipment.tracking_id as string | null
+    // Flag if tracking IDs don't match (and both exist)
+    return txTracking && shipmentTracking && txTracking !== shipmentTracking
+  })
+
+  if (orphanedTrackingTx.length > 0) {
+    // This is a critical issue - likely a voided/duplicate charge
+    issues.push({
+      category: 'ORPHANED_TRACKING',
+      severity: 'critical',
+      message: `${orphanedTrackingTx.length} shipping transaction(s) have tracking IDs that don't match the shipment's current tracking (possible voided labels still being billed)`,
+      count: orphanedTrackingTx.length,
+      percentage: Math.round((orphanedTrackingTx.length / shippingTransactions.length) * 100),
+      // Include details for debugging
+      details: orphanedTrackingTx.slice(0, 5).map(tx => ({
+        shipment_id: tx.reference_id,
+        tx_tracking: tx.tracking_id,
+        shipment_tracking: shipmentsDataMap.get(String(tx.reference_id))?.tracking_id,
+      })),
+    })
+  }
+
   // RETURNS SHEET VALIDATIONS
   const r = summary.returns
   if (r.total > 0) {
@@ -676,6 +863,24 @@ export async function runPreflightValidation(
     checkField('CREDITS', 'transaction_date', cr.total, cr.withTransactionDate, 'credits')
     checkField('CREDITS', 'credit_reason', cr.total, cr.withCreditReason, 'credits')
   }
+
+  // ===== DATA QUALITY CHECKS =====
+  // These catch systemic issues that may not show up in field completeness checks
+
+  // NOTE: Unattributed transaction check is now done ONCE at aggregate level in preflight API
+  // (moved out of per-client validation to avoid showing same global issue for all clients)
+
+  // 1. Check for duplicate transactions (same transaction_id appearing twice)
+  await checkDuplicateTransactions(supabase, clientId, invoiceIds, issues, warnings)
+
+  // 3. Check for Canadian FC transactions missing tax data
+  await checkMissingCanadianTaxes(supabase, clientId, invoiceIds, issues, warnings)
+
+  // 4. Check for unexpected fee amounts (e.g., Per Pick Fee not a multiple of expected rate)
+  await checkUnexpectedFeeAmounts(supabase, clientId, invoiceIds, issues, warnings)
+
+  // 5. Invoice ID validation is inherent - we query transactions WHERE invoice_id_sb IN (invoiceIds)
+  // so all transactions we bill already have valid invoice IDs from the selected period
 
   // Determine if validation passed
   // Critical issues block invoice generation
@@ -784,4 +989,337 @@ function formatPct(count: number, total: number): string {
   if (total === 0) return '0/0 (0%)'
   const pct = Math.round((count / total) * 100)
   return `${count}/${total} (${pct}%)`
+}
+
+// ===== DATA QUALITY CHECK HELPER FUNCTIONS =====
+
+/**
+ * Unattributed transaction details for UI display
+ */
+export interface UnattributedTransaction {
+  transaction_id: string
+  reference_id: string | null
+  reference_type: string | null
+  fee_type: string | null
+  cost: number | null
+  charge_date: string | null
+  additional_details: Record<string, unknown> | null
+}
+
+/**
+ * Get all unattributed transactions for the given invoice IDs
+ * Returns full details for UI display and action
+ */
+export async function getUnattributedTransactions(
+  supabase: SupabaseClient,
+  invoiceIds: number[]
+): Promise<UnattributedTransaction[]> {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('transaction_id, reference_id, reference_type, fee_type, cost, charge_date, additional_details')
+    .is('client_id', null)
+    .is('dispute_status', null) // Exclude already disputed
+    .in('invoice_id_sb', invoiceIds)
+    .order('cost', { ascending: false }) // Highest cost first
+    .limit(100)
+
+  if (error) {
+    console.error('Error fetching unattributed transactions:', error)
+    return []
+  }
+
+  return (data || []) as UnattributedTransaction[]
+}
+
+/**
+ * Check for transactions that are missing client_id attribution (GLOBAL check)
+ * ALL transaction types should be attributed to a client
+ * This runs ONCE at the aggregate level, not per-client
+ */
+export async function checkUnattributedTransactions(
+  supabase: SupabaseClient,
+  invoiceIds: number[]
+): Promise<ValidationIssue | null> {
+  // Query for ALL transactions with NULL client_id (any reference_type)
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('transaction_id, reference_id, reference_type, fee_type')
+    .is('client_id', null)
+    .is('dispute_status', null) // Exclude already disputed
+    .in('invoice_id_sb', invoiceIds)
+    .limit(200) // Sample for issue reporting
+
+  if (error) {
+    console.error('Error checking unattributed transactions:', error)
+    return null
+  }
+
+  if (data && data.length > 0) {
+    // Group by reference_type for better reporting
+    const byType: Record<string, { count: number; samples: string[] }> = {}
+    for (const tx of data) {
+      const refType = tx.reference_type || 'Unknown'
+      if (!byType[refType]) {
+        byType[refType] = { count: 0, samples: [] }
+      }
+      byType[refType].count++
+      if (byType[refType].samples.length < 3) {
+        byType[refType].samples.push(tx.reference_id as string)
+      }
+    }
+
+    // Build detailed message
+    const typeBreakdown = Object.entries(byType)
+      .map(([type, info]) => `${type}: ${info.count}`)
+      .join(', ')
+
+    // This is a critical issue - all transactions should have attribution
+    return {
+      category: 'DATA_QUALITY',
+      severity: 'critical',
+      message: `${data.length}+ transactions missing client_id attribution (${typeBreakdown})`,
+      count: data.length,
+      percentage: 0, // Can't calculate without total
+      sampleIds: data.slice(0, 5).map(tx => `${tx.reference_type}:${tx.reference_id}`),
+    }
+  }
+  return null
+}
+
+/**
+ * Check for duplicate transactions (same transaction_id appearing multiple times)
+ * This can cause double-billing if not caught
+ */
+async function checkDuplicateTransactions(
+  supabase: SupabaseClient,
+  clientId: string,
+  invoiceIds: number[],
+  issues: ValidationIssue[],
+  warnings: ValidationWarning[]
+): Promise<void> {
+  // Query all transaction_ids for this client's invoices
+  const { data: transactions, error } = await supabase
+    .from('transactions')
+    .select('transaction_id')
+    .eq('client_id', clientId)
+    .in('invoice_id_sb', invoiceIds)
+
+  if (error) {
+    warnings.push({
+      category: 'DATA_QUALITY',
+      message: `Duplicate transaction check failed: ${error.message}`,
+      count: 0,
+      percentage: 0,
+    })
+    return
+  }
+
+  // Find duplicates by counting occurrences
+  const idCounts = new Map<string, number>()
+  for (const tx of transactions || []) {
+    const count = idCounts.get(tx.transaction_id) || 0
+    idCounts.set(tx.transaction_id, count + 1)
+  }
+
+  const duplicates = Array.from(idCounts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id)
+
+  if (duplicates.length > 0) {
+    issues.push({
+      category: 'DATA_QUALITY',
+      severity: 'critical',
+      message: `${duplicates.length} duplicate transactions detected`,
+      count: duplicates.length,
+      percentage: 0,
+      sampleIds: duplicates.slice(0, 5),
+    })
+  }
+}
+
+/**
+ * Check for Canadian FC transactions missing tax data
+ * Brampton (Ontario) FC transactions should have 13% GST
+ */
+async function checkMissingCanadianTaxes(
+  supabase: SupabaseClient,
+  clientId: string,
+  invoiceIds: number[],
+  issues: ValidationIssue[],
+  warnings: ValidationWarning[]
+): Promise<void> {
+  // Query for Canadian FC transactions without taxes
+  // Brampton (Ontario province) transactions should have taxes calculated
+  // NOTE: "Ontario 6 (CA)" is in California, NOT Canada! CA = California state abbreviation
+  // Only match Brampton for now - it's our only Canadian FC
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('transaction_id, reference_id, fee_type, fulfillment_center, taxes, cost')
+    .eq('client_id', clientId)
+    .in('invoice_id_sb', invoiceIds)
+    .ilike('fulfillment_center', '%brampton%')
+    .is('dispute_status', null)
+
+  if (error) {
+    console.error('Error checking Canadian taxes:', error)
+    return
+  }
+
+  if (!data) return
+
+  // Check which Canadian FC transactions are missing taxes
+  // Note: Invoice generator now calculates these at generation time for Storage
+  // But Per Pick Fee still has API inconsistencies
+  const missingTaxes = data.filter(tx => {
+    // Skip if already has taxes
+    if (tx.taxes && Array.isArray(tx.taxes) && tx.taxes.length > 0) return false
+
+    // For Per Pick Fee, the API is inconsistent - sometimes taxes are embedded in cost
+    // This is a known issue (Issue #5 from Dec 23)
+    if (tx.fee_type === 'Per Pick Fee') {
+      // Check if cost is a multiple of $0.25 (correct) or $0.28/$0.57 etc (GST embedded)
+      const cost = Math.abs(parseFloat(String(tx.cost)))
+      const isCleanMultiple = Math.abs(cost % 0.25) < 0.01 || Math.abs(cost % 0.26) < 0.01
+      if (!isCleanMultiple) {
+        return true // GST likely embedded in cost - flag for review
+      }
+    }
+
+    return false
+  })
+
+  if (missingTaxes.length > 0) {
+    // Per Pick Fee tax inconsistency is a warning, not critical
+    // Storage taxes are now calculated at invoice generation time
+    warnings.push({
+      category: 'TAX_DATA',
+      message: `${missingTaxes.length} Canadian Per Pick Fee transactions may have GST embedded in cost`,
+      count: missingTaxes.length,
+      percentage: Math.round((missingTaxes.length / data.length) * 100),
+    })
+  }
+}
+
+/**
+ * Check for unexpected fee amounts that don't match expected rates
+ * e.g., Per Pick Fee should be multiples of $0.26 (USA) or $0.25 (Canada)
+ */
+async function checkUnexpectedFeeAmounts(
+  supabase: SupabaseClient,
+  clientId: string,
+  invoiceIds: number[],
+  issues: ValidationIssue[],
+  warnings: ValidationWarning[]
+): Promise<void> {
+  // Query Per Pick Fee transactions
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('transaction_id, reference_id, cost, fulfillment_center')
+    .eq('client_id', clientId)
+    .eq('fee_type', 'Per Pick Fee')
+    .in('invoice_id_sb', invoiceIds)
+    .is('dispute_status', null)
+
+  if (error) {
+    console.error('Error checking fee amounts:', error)
+    return
+  }
+
+  if (!data || data.length === 0) return
+
+  // Expected rates:
+  // USA: $0.26 per pick
+  // Canada (Brampton): $0.25 per pick (but may have GST issues)
+  const unexpectedAmounts: Array<{ id: string; cost: number; fc: string }> = []
+
+  for (const tx of data) {
+    const cost = Math.abs(parseFloat(String(tx.cost)))
+    const fc = tx.fulfillment_center || ''
+    // Note: "Ontario 6 (CA)" is in California (CA = California, not Canada!)
+    // Only Brampton is Canadian. Canadian FCs would have country indicator like (ON) or specific Canadian names
+    const isCanadian = /brampton/i.test(fc)
+
+    // Check if it's a valid multiple
+    const usaRate = 0.26
+    const canadaRate = 0.25
+
+    let isValid = false
+
+    if (isCanadian) {
+      // Canada: should be multiple of $0.25 (no tax) OR (N × $0.25 × 1.13) rounded (with HST)
+      // HST amounts: $0.28 (1 pick), $0.57 (2 picks), $0.85 (3 picks), etc.
+      // Check if it's a clean multiple of base rate (handle floating point precision)
+      const remainder = cost % canadaRate
+      const cleanMultiple = Math.abs(remainder) < 0.01 || Math.abs(remainder - canadaRate) < 0.01
+      // Check if dividing by 1.13 gives a clean multiple of base rate (HST case)
+      // Use 0.02 tolerance to account for different rounding methods (ShipBob may round differently)
+      const impliedPicks = Math.round(cost / (canadaRate * 1.13))
+      const expectedHstCost = Math.round(impliedPicks * canadaRate * 1.13 * 100) / 100
+      const hstMultiple = impliedPicks > 0 && Math.abs(cost - expectedHstCost) < 0.02
+      isValid = cleanMultiple || hstMultiple
+    } else {
+      // USA: should be multiple of $0.26
+      // Handle floating point: remainder could be ~0 or ~usaRate due to precision
+      const remainder = cost % usaRate
+      isValid = Math.abs(remainder) < 0.01 || Math.abs(remainder - usaRate) < 0.01
+    }
+
+    if (!isValid && cost > 0.01) {
+      unexpectedAmounts.push({
+        id: tx.reference_id as string,
+        cost,
+        fc,
+      })
+    }
+  }
+
+  if (unexpectedAmounts.length > 0) {
+    // Warn about unexpected amounts - could indicate data issues or rate changes
+    warnings.push({
+      category: 'FEE_AMOUNTS',
+      message: `${unexpectedAmounts.length} Per Pick Fees with unexpected amounts (not multiples of expected rates)`,
+      count: unexpectedAmounts.length,
+      percentage: Math.round((unexpectedAmounts.length / data.length) * 100),
+    })
+  }
+}
+
+/**
+ * Check that all transactions being billed have invoice_id_sb matching this week's invoices
+ * This ensures we're only billing transactions that appear on the selected ShipBob invoices
+ */
+async function checkTransactionsHaveValidInvoiceIds(
+  supabase: SupabaseClient,
+  clientId: string,
+  invoiceIds: number[],
+  issues: ValidationIssue[],
+  warnings: ValidationWarning[]
+): Promise<void> {
+  // This check is inherently satisfied by how we query transactions -
+  // we only fetch transactions WHERE invoice_id_sb IN (invoiceIds)
+  // So all transactions we're billing already have valid invoice IDs.
+  //
+  // The real check would be: are there transactions for this client that
+  // have NULL invoice_id_sb? Those would be orphaned/unattributed.
+  const { data: nullInvoiceTransactions, error } = await supabase
+    .from('transactions')
+    .select('transaction_id, fee_type')
+    .eq('client_id', clientId)
+    .is('invoice_id_sb', null)
+    .is('dispute_status', null)
+    .limit(10)
+
+  if (error) {
+    console.error('Error checking for null invoice transactions:', error)
+    return
+  }
+
+  if (nullInvoiceTransactions && nullInvoiceTransactions.length > 0) {
+    warnings.push({
+      category: 'DATA_QUALITY',
+      message: `${nullInvoiceTransactions.length}+ transactions have no invoice_id_sb (not linked to any ShipBob invoice)`,
+      count: nullInvoiceTransactions.length,
+      percentage: 0,
+    })
+  }
 }

@@ -14,8 +14,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-// Default client ID (Henson Shaving) for non-admin users
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 const DEFAULT_PAGE_SIZE = 50
 
 // Transaction categories for the header dropdown (Unfulfilled first, but Shipments is default)
@@ -86,11 +84,22 @@ export default function TransactionsPage() {
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>([])
 
   // Determine which client to fetch data for
-  // For admins: null = "All Brands", specific ID = single brand
-  // For non-admins: always use DEFAULT_CLIENT_ID
+  // For admins: 'all' = all brands, specific ID = single brand
+  // For non-admins: null = let API determine from user's assigned clients
   const effectiveClientId = isAdmin
     ? (selectedClientId || 'all')  // null means "All Brands" for admins
-    : DEFAULT_CLIENT_ID
+    : null  // Let API verify user's access and use their assigned client
+
+  // Helper to build URL with optional clientId
+  const buildUrl = (base: string, params: Record<string, string | number | null>) => {
+    const searchParams = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== null && value !== undefined) {
+        searchParams.set(key, String(value))
+      }
+    }
+    return `${base}?${searchParams.toString()}`
+  }
 
   // Fetch unfulfilled data - called on initial load
   const fetchUnfulfilledData = React.useCallback(async (size: number) => {
@@ -98,7 +107,7 @@ export default function TransactionsPage() {
 
     try {
       const response = await fetch(
-        `/api/data/orders/unfulfilled?clientId=${effectiveClientId}&limit=${size}&offset=0`
+        buildUrl('/api/data/orders/unfulfilled', { clientId: effectiveClientId, limit: size, offset: 0 })
       )
 
       if (!response.ok) {
@@ -128,7 +137,7 @@ export default function TransactionsPage() {
     try {
       const { startDate, endDate } = get60DayRange()
       const response = await fetch(
-        `/api/data/shipments?clientId=${effectiveClientId}&limit=${size}&offset=0&startDate=${startDate}&endDate=${endDate}`
+        buildUrl('/api/data/shipments', { clientId: effectiveClientId, limit: size, offset: 0, startDate, endDate })
       )
 
       if (!response.ok) {

@@ -1,7 +1,5 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
-
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
 /**
  * GET /api/data/billing/storage/filter-options
@@ -10,11 +8,17 @@ const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
  * for the given client. Used to populate filter dropdowns dynamically.
  */
 export async function GET(request: NextRequest) {
-  const supabase = createAdminClient()
-
+  // CRITICAL SECURITY: Verify user has access to requested client
   const searchParams = request.nextUrl.searchParams
-  const clientIdParam = searchParams.get('clientId')
-  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
+  let clientId: string | null
+  try {
+    const access = await verifyClientAccess(searchParams.get('clientId'))
+    clientId = access.requestedClientId
+  } catch (error) {
+    return handleAccessError(error)
+  }
+
+  const supabase = createAdminClient()
 
   try {
     // Fetch storage transactions to extract unique FCs and location types

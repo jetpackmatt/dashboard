@@ -7,528 +7,501 @@ import {
   BuildingIcon,
   AlertCircleIcon,
   CheckCircle2Icon,
-  PencilIcon,
-  TrendingDownIcon,
-  CalendarIcon,
-  FileTextIcon,
-  BanknoteIcon,
-  ShieldCheckIcon,
-  InfoIcon,
+  CopyIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  CircleDotIcon,
+  LoaderIcon,
 } from "lucide-react"
 
 import { SiteHeader } from "@/components/site-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Separator } from "@/components/ui/separator"
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { useClient } from "@/components/client-context"
+import { Skeleton } from "@/components/ui/skeleton"
+import { StripeProvider } from "@/components/stripe-provider"
+import { StripeCardSetup } from "@/components/stripe-card-setup"
 
-import invoicesData from "../invoices-data.json"
+interface BillingAddress {
+  street?: string
+  city?: string
+  state?: string
+  zip?: string
+  country?: string
+}
 
-interface BillingDetails {
-  companyName: string
-  address: string
-  city: string
-  state: string
-  zip: string
-  country: string
-  email: string
-  taxId: string
+interface BillingData {
+  billingAddress: BillingAddress | null
+  billingEmail: string | null
+  companyName: string | null
+  paymentMethod: 'ach' | 'credit_card'
+  outstandingBalance: number
+  unpaidInvoiceCount: number
+}
+
+// Copy button component
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = React.useState(false)
+
+  const copy = () => {
+    navigator.clipboard.writeText(value)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      onClick={copy}
+      className="ml-2 p-1 rounded hover:bg-muted transition-colors"
+      title="Copy to clipboard"
+    >
+      {copied ? (
+        <CheckIcon className="h-3.5 w-3.5 text-emerald-500" />
+      ) : (
+        <CopyIcon className="h-3.5 w-3.5 text-muted-foreground" />
+      )}
+    </button>
+  )
 }
 
 export default function BillingPage() {
   const router = useRouter()
+  const { selectedClientId, clients, effectiveIsAdmin, isLoading: clientLoading } = useClient()
 
-  // Payment method state
-  const [ccBillingEnabled, setCcBillingEnabled] = React.useState(false)
-  const [showStripeSetup, setShowStripeSetup] = React.useState(false)
-  const [stripeSetupComplete, setStripeSetupComplete] = React.useState(false)
+  // For non-admin users, use their first (and likely only) client if no selection
+  const clientId = selectedClientId || (clients.length > 0 ? clients[0].id : null)
 
-  // Billing details state
-  const [isEditingDetails, setIsEditingDetails] = React.useState(false)
-  const [billingDetails, setBillingDetails] = React.useState<BillingDetails>({
-    companyName: "Acme Corporation",
-    address: "123 Business Street",
-    city: "San Francisco",
-    state: "CA",
-    zip: "94105",
-    country: "United States",
-    email: "billing@acme.com",
-    taxId: "12-3456789",
-  })
-
-  // Calculate outstanding balance from unpaid invoices
-  const unpaidInvoices = invoicesData.filter(inv => inv.status === "Unpaid")
-  const outstandingBalance = unpaidInvoices.reduce((sum, inv) => sum + inv.amount, 0)
-  const recentInvoices = invoicesData.slice(0, 5)
-
-  const handleCcToggle = (enabled: boolean) => {
-    if (enabled && !stripeSetupComplete) {
-      setShowStripeSetup(true)
+  // Redirect admins - they shouldn't see this page
+  React.useEffect(() => {
+    if (!clientLoading && effectiveIsAdmin) {
+      router.replace("/dashboard")
     }
-    setCcBillingEnabled(enabled)
+  }, [effectiveIsAdmin, clientLoading, router])
+
+  // Billing data from API
+  const [billingData, setBillingData] = React.useState<BillingData | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  // Payment method state - synced from DB
+  const [showStripeSetup, setShowStripeSetup] = React.useState(false)
+  const [stripeClientSecret, setStripeClientSecret] = React.useState<string | null>(null)
+  const [isLoadingStripe, setIsLoadingStripe] = React.useState(false)
+
+  // Derive ccBillingEnabled from billingData
+  const ccBillingEnabled = billingData?.paymentMethod === 'credit_card'
+
+  // Fetch billing data
+  React.useEffect(() => {
+    if (!clientId || effectiveIsAdmin) return
+
+    const fetchBillingData = async () => {
+      setIsLoading(true)
+      try {
+        const response = await fetch(`/api/data/billing?clientId=${clientId}`)
+        if (response.ok) {
+          const data = await response.json()
+          setBillingData(data)
+        }
+      } catch (error) {
+        console.error("Error fetching billing data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchBillingData()
+  }, [clientId, effectiveIsAdmin])
+
+  // Show loading while checking admin status
+  if (clientLoading || effectiveIsAdmin) {
+    return (
+      <>
+        <SiteHeader sectionName="Billing" />
+        <div className="flex flex-1 flex-col items-center justify-center">
+          <LoaderIcon className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </>
+    )
   }
 
-  const handleStripeSetup = () => {
-    // Simulate Stripe setup
-    setTimeout(() => {
-      setStripeSetupComplete(true)
-      setShowStripeSetup(false)
-      setCcBillingEnabled(true)
-    }, 1000)
+  const outstandingBalance = billingData?.outstandingBalance || 0
+  const unpaidInvoiceCount = billingData?.unpaidInvoiceCount || 0
+  const billingAddress = billingData?.billingAddress
+  const billingEmail = billingData?.billingEmail
+  const companyName = billingData?.companyName
+
+  // Save payment method to database
+  const savePaymentMethod = async (method: 'ach' | 'credit_card', stripePaymentMethodId?: string) => {
+    if (!clientId) return
+
+    setIsSaving(true)
+    try {
+      const response = await fetch('/api/data/billing', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId,
+          paymentMethod: method,
+          ...(stripePaymentMethodId && { stripePaymentMethodId }),
+        }),
+      })
+
+      if (response.ok) {
+        setBillingData(prev => prev ? { ...prev, paymentMethod: method } : null)
+      }
+    } catch (error) {
+      console.error('Error saving payment method:', error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCcToggle = async (enabled: boolean) => {
+    if (enabled) {
+      // Fetch SetupIntent and show Stripe dialog
+      setIsLoadingStripe(true)
+      setShowStripeSetup(true)
+
+      try {
+        const response = await fetch('/api/stripe/setup-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setStripeClientSecret(data.clientSecret)
+        } else {
+          console.error('Failed to create SetupIntent')
+          setShowStripeSetup(false)
+        }
+      } catch (error) {
+        console.error('Error creating SetupIntent:', error)
+        setShowStripeSetup(false)
+      } finally {
+        setIsLoadingStripe(false)
+      }
+    } else {
+      // Switch back to ACH
+      savePaymentMethod('ach')
+    }
+  }
+
+  const handleStripeSuccess = async (paymentMethodId: string) => {
+    // Card saved successfully - update payment method and store payment method ID
+    await savePaymentMethod('credit_card', paymentMethodId)
+    setShowStripeSetup(false)
+    setStripeClientSecret(null)
+  }
+
+  const handleStripeCancel = () => {
+    setShowStripeSetup(false)
+    setStripeClientSecret(null)
   }
 
   const formatCurrency = (amount: number) => {
     return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric"
-    })
-  }
-
   return (
     <>
       <SiteHeader sectionName="Billing" />
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
-        <div className="@container/main flex flex-1 flex-col gap-2 w-full">
-          <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full px-4 lg:px-6">
-            {/* Description Text */}
-            <p className="text-sm text-muted-foreground">
-              Manage your payment methods, billing details, and view your account balance.
-            </p>
+        <div className="@container/main flex flex-1 flex-col w-full">
+          <div className="flex flex-col gap-6 py-6 w-full px-4 lg:px-6">
 
-            {/* Top Row - Outstanding Balance & Payment Method */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Outstanding Balance - Featured */}
-              <Card className="lg:col-span-1 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900/50 dark:to-background">
-                <CardHeader>
-                  <CardDescription>Outstanding Balance</CardDescription>
-                  <CardTitle className="text-4xl font-bold tabular-nums">
-                    {formatCurrency(outstandingBalance)}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {unpaidInvoices.length > 0 ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <AlertCircleIcon className="h-4 w-4" />
-                        <span>{unpaidInvoices.length} unpaid invoice(s)</span>
-                      </div>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => router.push("/dashboard/invoices")}
-                      >
-                        View Invoices
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                      <CheckCircle2Icon className="h-4 w-4" />
-                      <span>All invoices paid</span>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Payment Method Status */}
-              <Card className="lg:col-span-2 bg-gradient-to-br from-emerald-50/30 to-white dark:from-emerald-950/10 dark:to-background">
-                <CardHeader>
+            {/* Top Row - Balance & Payment Method */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Outstanding Balance Card */}
+              <div className="rounded-xl border bg-card p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className={`h-2 w-2 rounded-full ${outstandingBalance > 0 ? 'bg-amber-500' : 'bg-emerald-500'} animate-pulse`} />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Outstanding Balance
+                  </span>
+                </div>
+                <div className="text-3xl font-bold tracking-tight tabular-nums mb-3">
+                  {formatCurrency(outstandingBalance)}
+                </div>
+                {isLoading ? (
+                  <Skeleton className="h-5 w-40" />
+                ) : unpaidInvoiceCount > 0 ? (
                   <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Payment Method</CardTitle>
-                      <CardDescription>
-                        Choose how you want to pay your invoices
-                      </CardDescription>
-                    </div>
-                    <Badge
-                      variant={ccBillingEnabled ? "default" : "outline"}
-                      className={ccBillingEnabled ? "font-medium" : "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"}
-                    >
-                      {ccBillingEnabled ? "Credit Card" : "ACH/Wire Transfer"}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between rounded-lg border p-4">
-                    <div className="flex items-center gap-4">
-                      <CreditCardIcon className="h-8 w-8 text-muted-foreground" />
-                      <div>
-                        <p className="font-medium">Credit Card (Automatic)</p>
-                        <p className="text-sm text-muted-foreground">
-                          {stripeSetupComplete
-                            ? "Visa ending in 4242 • Expires 12/25"
-                            : "Pay automatically with 3% processing fee"}
-                        </p>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={ccBillingEnabled}
-                      onCheckedChange={handleCcToggle}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between rounded-lg border p-4 bg-muted/50">
-                    <div className="flex items-center gap-4">
-                      <BuildingIcon className="h-8 w-8 text-muted-foreground" />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">ACH/Wire Transfer</p>
-                          <Badge variant="secondary" className="text-xs">
-                            <TrendingDownIcon className="h-3 w-3 mr-1" />
-                            No Fees
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">
-                          Recommended - Transfer funds directly to Jetpack
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {ccBillingEnabled && (
-                    <Alert>
-                      <InfoIcon className="h-4 w-4" />
-                      <AlertTitle>Credit Card Processing Fee</AlertTitle>
-                      <AlertDescription>
-                        A 3% processing fee will be added to all invoices. We recommend using ACH/Wire transfer to avoid this fee.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Payment Terms Notice */}
-            <Alert>
-              <CalendarIcon className="h-4 w-4" />
-              <AlertTitle>Payment Terms</AlertTitle>
-              <AlertDescription>
-                Payment is due promptly upon receipt of invoice. Credit card payments are charged automatically at invoice issue.
-                ACH/Wire transfers must be sent upon receipt of the invoice.
-              </AlertDescription>
-            </Alert>
-
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Billing Details */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Billing Details</CardTitle>
-                      <CardDescription>
-                        Your company information for invoicing
-                      </CardDescription>
-                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {unpaidInvoiceCount} invoice{unpaidInvoiceCount > 1 ? 's' : ''} awaiting payment
+                    </p>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      onClick={() => setIsEditingDetails(!isEditingDetails)}
+                      onClick={() => router.push("/dashboard/invoices")}
+                      className="group"
                     >
-                      <PencilIcon className="h-4 w-4" />
+                      View
+                      <ChevronRightIcon className="ml-1 h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                     </Button>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  {isEditingDetails ? (
-                    <div className="space-y-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="companyName">Company Name</Label>
-                        <Input
-                          id="companyName"
-                          value={billingDetails.companyName}
-                          onChange={(e) => setBillingDetails({...billingDetails, companyName: e.target.value})}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="address">Address</Label>
-                        <Input
-                          id="address"
-                          value={billingDetails.address}
-                          onChange={(e) => setBillingDetails({...billingDetails, address: e.target.value})}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor="city">City</Label>
-                          <Input
-                            id="city"
-                            value={billingDetails.city}
-                            onChange={(e) => setBillingDetails({...billingDetails, city: e.target.value})}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="state">State</Label>
-                          <Input
-                            id="state"
-                            value={billingDetails.state}
-                            onChange={(e) => setBillingDetails({...billingDetails, state: e.target.value})}
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor="zip">ZIP Code</Label>
-                          <Input
-                            id="zip"
-                            value={billingDetails.zip}
-                            onChange={(e) => setBillingDetails({...billingDetails, zip: e.target.value})}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor="country">Country</Label>
-                          <Input
-                            id="country"
-                            value={billingDetails.country}
-                            onChange={(e) => setBillingDetails({...billingDetails, country: e.target.value})}
-                          />
-                        </div>
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="email">Billing Email</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          value={billingDetails.email}
-                          onChange={(e) => setBillingDetails({...billingDetails, email: e.target.value})}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="taxId">Tax ID / VAT Number</Label>
-                        <Input
-                          id="taxId"
-                          value={billingDetails.taxId}
-                          onChange={(e) => setBillingDetails({...billingDetails, taxId: e.target.value})}
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <Button onClick={() => setIsEditingDetails(false)}>
-                          Save Changes
-                        </Button>
-                        <Button variant="outline" onClick={() => setIsEditingDetails(false)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Company</p>
-                        <p className="text-base">{billingDetails.companyName}</p>
-                      </div>
-                      <Separator />
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Address</p>
-                        <p className="text-base">{billingDetails.address}</p>
-                        <p className="text-base">
-                          {billingDetails.city}, {billingDetails.state} {billingDetails.zip}
-                        </p>
-                        <p className="text-base">{billingDetails.country}</p>
-                      </div>
-                      <Separator />
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Billing Email</p>
-                        <p className="text-base">{billingDetails.email}</p>
-                      </div>
-                      <Separator />
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">Tax ID</p>
-                        <p className="text-base">{billingDetails.taxId}</p>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                ) : (
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2Icon className="h-4 w-4" />
+                    All invoices paid
+                  </p>
+                )}
+              </div>
 
-              {/* Wire Transfer Instructions */}
-              <Card className="bg-gradient-to-br from-blue-50/50 to-white dark:from-blue-950/20 dark:to-background">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <BanknoteIcon className="h-5 w-5" />
-                    <CardTitle>Wire Transfer Instructions</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Use these details to send ACH or wire payments
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="rounded-lg border bg-muted/50 p-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Bank Name</p>
-                      <p className="text-base font-medium">Column National Association</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Bank Address</p>
-                      <p className="text-base">30 W. 26th Street, Sixth Floor</p>
-                      <p className="text-base">New York, NY 10010, USA</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Account Holder</p>
-                      <p className="text-base font-medium">Jetpack Ventures Inc.</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Account Type</p>
-                      <p className="text-base">Checking</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Account Number</p>
-                      <p className="text-base font-mono">489159369530363</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Routing Number (ACH)</p>
-                      <p className="text-base font-mono">084009519</p>
+              {/* Payment Method Card */}
+              <div className="rounded-xl border bg-card p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Payment Method
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={ccBillingEnabled
+                      ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800"
+                    }
+                  >
+                    <CircleDotIcon className="h-3 w-3 mr-1.5" />
+                    {ccBillingEnabled ? "Credit Card" : "ACH/Wire"}
+                  </Badge>
+                </div>
+
+                <div className="space-y-2">
+                  {/* ACH Option */}
+                  <div className={`relative rounded-lg border-2 transition-all ${
+                    !ccBillingEnabled
+                      ? 'border-emerald-500/50 bg-emerald-50/30 dark:bg-emerald-950/20'
+                      : 'border-transparent bg-muted/30 hover:bg-muted/50'
+                  }`}>
+                    <div className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-3">
+                        <BuildingIcon className={`h-5 w-5 ${!ccBillingEnabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`} />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">ACH / Wire</span>
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 border-0">
+                              No fees
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      {!ccBillingEnabled && (
+                        <CheckCircle2Icon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      )}
                     </div>
                   </div>
 
-                  <Alert>
-                    <ShieldCheckIcon className="h-4 w-4" />
-                    <AlertDescription className="text-sm">
-                      Always include your invoice number in the payment reference to ensure proper credit to your account.
-                    </AlertDescription>
-                  </Alert>
-                </CardContent>
-              </Card>
+                  {/* Credit Card Option */}
+                  <div className={`relative rounded-lg border-2 transition-all ${
+                    ccBillingEnabled
+                      ? 'border-blue-500/50 bg-blue-50/30 dark:bg-blue-950/20'
+                      : 'border-transparent bg-muted/30 hover:bg-muted/50'
+                  }`}>
+                    <div className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-3">
+                        <CreditCardIcon className={`h-5 w-5 ${ccBillingEnabled ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`} />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">Credit Card</span>
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300 border-0">
+                              3% fee
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={ccBillingEnabled}
+                        onCheckedChange={handleCcToggle}
+                        disabled={isSaving}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Recent Invoices Summary */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Recent Invoices</CardTitle>
-                    <CardDescription>
-                      Your latest invoices and payment history
-                    </CardDescription>
+            {/* Bottom Row - Wire Details & Billing Info */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Wire Transfer Details Card */}
+              <div className="rounded-xl border bg-card p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Wire Transfer Details
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Bank</p>
+                      <p className="text-sm font-medium mt-0.5">Column National Association</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Beneficiary</p>
+                      <p className="text-sm font-medium mt-0.5">Jetpack Ventures Inc.</p>
+                    </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => router.push("/dashboard/invoices")}
-                  >
-                    View All
-                  </Button>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Account #</p>
+                      <div className="flex items-center mt-0.5">
+                        <p className="text-sm font-medium tabular-nums">489159369530363</p>
+                        <CopyButton value="489159369530363" />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Routing #</p>
+                      <div className="flex items-center mt-0.5">
+                        <p className="text-sm font-medium tabular-nums">084009519</p>
+                        <CopyButton value="084009519" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-muted-foreground">Bank Address</p>
+                    <p className="text-sm mt-0.5">
+                      30 W. 26th Street, 6th Floor, New York, NY 10010
+                    </p>
+                  </div>
+
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
+                    <AlertCircleIcon className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-amber-800 dark:text-amber-200">
+                      Include invoice number in payment reference
+                    </p>
+                  </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto rounded-lg border">
-                  <Table>
-                    <TableHeader className="bg-muted">
-                      <TableRow>
-                        <TableHead>Invoice #</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-center">Download</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {recentInvoices.map((invoice) => (
-                        <TableRow key={invoice.invoiceNumber}>
-                          <TableCell className="font-mono text-sm">
-                            {invoice.invoiceNumber}
-                          </TableCell>
-                          <TableCell>{formatDate(invoice.issueDate)}</TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {formatCurrency(invoice.amount)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={invoice.status === "Paid"
-                                ? "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
-                                : "font-medium bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"}
-                            >
-                              {invoice.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <FileTextIcon className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+              </div>
+
+              {/* Billing Information Card */}
+              <div className="rounded-xl border bg-card p-6 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Billing Information
+                  </span>
+                  {/* Edit functionality disabled for now - requires API endpoint */}
                 </div>
-              </CardContent>
-            </Card>
+
+                {isLoading ? (
+                  <div className="space-y-4 flex-1">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Company</p>
+                        <Skeleton className="h-5 w-32 mt-0.5" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Email</p>
+                        <Skeleton className="h-5 w-40 mt-0.5" />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Address</p>
+                      <Skeleton className="h-16 w-full mt-0.5" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 flex-1">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Company</p>
+                        <p className="text-sm font-medium mt-0.5">{companyName || "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Email</p>
+                        <p className="text-sm mt-0.5">{billingEmail || "Not set"}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Address</p>
+                      {billingAddress ? (
+                        <p className="text-sm mt-0.5">
+                          {billingAddress.street && <>{billingAddress.street}<br /></>}
+                          {billingAddress.city && billingAddress.state && (
+                            <>{billingAddress.city}, {billingAddress.state} {billingAddress.zip}<br /></>
+                          )}
+                          {billingAddress.country}
+                        </p>
+                      ) : (
+                        <p className="text-sm mt-0.5 text-muted-foreground">Not set</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Stripe Setup Dialog */}
-      <Dialog open={showStripeSetup} onOpenChange={setShowStripeSetup}>
-        <DialogContent>
+      <Dialog open={showStripeSetup} onOpenChange={(open) => {
+        if (!open) handleStripeCancel()
+      }}>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Set Up Credit Card Payment</DialogTitle>
+            <DialogTitle>Set Up Credit Card</DialogTitle>
             <DialogDescription>
-              Connect your credit card to enable automatic payments. A 3% processing fee will be added to all invoices.
+              Enable automatic payments with a 3% processing fee.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <Alert>
-              <AlertCircleIcon className="h-4 w-4" />
-              <AlertTitle>Processing Fee Notice</AlertTitle>
-              <AlertDescription>
-                Credit card payments incur a 3% processing fee. Consider using ACH/Wire transfer for no fees.
-              </AlertDescription>
-            </Alert>
-            <div className="space-y-2">
-              <Label>Card Information</Label>
-              <div className="rounded-lg border bg-muted/50 p-6 text-center">
-                <CreditCardIcon className="h-12 w-12 mx-auto mb-2 text-muted-foreground" />
+            {/* Outstanding balance notice - CC only applies to future invoices */}
+            {outstandingBalance > 0 && (
+              <div className="rounded-lg border-2 border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircleIcon className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-blue-800 dark:text-blue-200">
+                      Outstanding Balance: {formatCurrency(outstandingBalance)}
+                    </p>
+                    <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                      This credit card can only be charged for future invoices. Outstanding balances on existing invoices will not be auto-paid. Please pay any unpaid invoices by wire/ACH, or reach out to us on Slack to arrange payment.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3% fee warning */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
+              <AlertCircleIcon className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5" />
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                A 3% processing fee applies to all credit card payments. ACH/Wire transfers have no fees.
+              </p>
+            </div>
+
+            {isLoadingStripe ? (
+              <div className="flex items-center justify-center py-8">
+                <LoaderIcon className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : stripeClientSecret ? (
+              <StripeProvider clientSecret={stripeClientSecret}>
+                <StripeCardSetup
+                  onSuccess={handleStripeSuccess}
+                  onCancel={handleStripeCancel}
+                />
+              </StripeProvider>
+            ) : (
+              <div className="rounded-xl border-2 border-dashed bg-muted/30 p-8 text-center">
+                <CreditCardIcon className="h-10 w-10 mx-auto mb-2 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">
-                  Stripe payment form will appear here
+                  Unable to load payment form
                 </p>
               </div>
-            </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setShowStripeSetup(false)
-              setCcBillingEnabled(false)
-            }}>
-              Cancel
-            </Button>
-            <Button onClick={handleStripeSetup}>
-              Set Up Payment Method
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

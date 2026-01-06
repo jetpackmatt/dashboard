@@ -1,18 +1,19 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 
-// Default client ID for development (Henson Shaving)
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
-
 export async function GET(request: NextRequest) {
+  // CRITICAL SECURITY: Verify user has access to requested client
+  const searchParams = request.nextUrl.searchParams
+  let clientId: string | null
+  try {
+    const access = await verifyClientAccess(searchParams.get('clientId'))
+    clientId = access.requestedClientId
+  } catch (error) {
+    return handleAccessError(error)
+  }
+
   // Use admin client to bypass RLS (API route is server-side only)
   const supabase = createAdminClient()
-
-  // Get query params
-  const searchParams = request.nextUrl.searchParams
-  const clientIdParam = searchParams.get('clientId')
-  // 'all' means return all brands (admin view), otherwise filter by clientId
-  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -592,6 +593,15 @@ export async function GET(request: NextRequest) {
         shipmentStatus = 'Refunded'
       }
 
+      // Compute age in days (from label creation to delivery or now)
+      let age: number | null = null
+      if (row.event_labeled) {
+        const startDate = new Date(row.event_labeled)
+        const endDate = row.event_delivered ? new Date(row.event_delivered) : new Date()
+        const msElapsed = endDate.getTime() - startDate.getTime()
+        age = parseFloat((msElapsed / (1000 * 60 * 60 * 24)).toFixed(1))
+      }
+
       return {
         id: row.id,
         shipmentId: row.shipment_id || '',
@@ -619,6 +629,10 @@ export async function GET(request: NextRequest) {
         orderDate: order?.purchase_date || null,
         destCountry: row.destination_country || '',
         shipOption: row.carrier_service || '',
+        // Computed field for export
+        age: age,
+        // Client identification (for admin badge)
+        clientId: row.client_id || null,
       }
     })
 

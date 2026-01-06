@@ -2,7 +2,7 @@
 
 **Read this when:** Working with database queries, migrations, or understanding table relationships.
 
-**Source:** Queried directly from Supabase (Dec 2025)
+**Source:** Queried directly from Supabase (Dec 17, 2025)
 
 ---
 
@@ -36,16 +36,21 @@
 | `short_code` | text | For invoice numbers (e.g., "HS") |
 | `is_active` | boolean | Default true |
 | `is_internal` | boolean | True for system clients |
-| `billing_email` | text | Invoice recipient |
+| `billing_email` | text | Legacy single email (deprecated) |
+| `billing_emails` | text[] | Array of invoice recipient emails |
+| `billing_phone` | text | Primary billing contact phone |
+| `billing_contact_name` | text | Primary billing contact name |
 | `billing_terms` | text | due_on_receipt, net_15, etc. |
 | `billing_address` | jsonb | Address for PDF |
 | `next_invoice_number` | integer | Auto-incrementing sequence |
 | `billing_period` | text | weekly, monthly |
 | `billing_currency` | text | USD |
+| `payment_method` | text | `ach` (default) or `credit_card` |
+| `stripe_customer_id` | text | Stripe customer ID (for CC payments) |
+| `stripe_payment_method_id` | text | Stripe saved card PM ID |
 
-**System Clients (`is_internal=true`):**
-- "ShipBob Payments" - ACH payment transactions
-- "Jetpack Costs" - Parent-level fees
+**System Client (`is_internal=true`):**
+- "Jetpack" - Parent-level transactions (ACH payments, CC processing fees, disputed charges)
 
 ---
 
@@ -135,6 +140,8 @@ Do NOT use for timeline sync optimization - use age-based polling instead.
 
 **This is the main billing table - ALL transaction types.**
 
+**⚠️ Reshipments:** A single `shipment_id` (reference_id) can have MULTIPLE Shipping transactions if the order was reshipped. Each shipping event generates a new transaction with a unique `transaction_id` but the same `reference_id`. Use `reference_id + charge_date` for precise matching.
+
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid | PK |
@@ -163,8 +170,18 @@ Do NOT use for timeline sync optimization - use age-based polling instead.
 | Column | Type | Notes |
 |--------|------|-------|
 | `base_cost` | numeric | Base shipping from SFTP |
-| `surcharge` | numeric | DAS, fuel, etc. from SFTP |
+| `surcharge` | numeric | Sum of all surcharges from SFTP |
+| `surcharge_details` | jsonb | Individual surcharge types (Dec 2025+) |
 | `insurance_cost` | numeric | Insurance from SFTP |
+
+**Surcharge Details Structure:**
+```json
+[
+  { "type": "Peak Surcharge", "amount": 0.15 },
+  { "type": "Fuel Surcharge", "amount": 0.10 }
+]
+```
+The `surcharge` column contains the aggregated sum for backwards compatibility. The `surcharge_details` JSONB column stores individual surcharge types for analytics.
 
 ### Markup/Billing Fields
 | Column | Type | Notes |
@@ -183,6 +200,34 @@ Do NOT use for timeline sync optimization - use age-based polling instead.
 | `invoiced_status_jp` | boolean | Billed to client |
 | `invoice_id_jp` | text | JPHS-0038-120825 format |
 | `invoice_date_jp` | timestamptz | When we billed |
+
+### Dispute Fields
+| Column | Type | Notes |
+|--------|------|-------|
+| `dispute_status` | text | null=normal, `disputed`=under review, `invalid`=bad charge, `credited`=matched |
+| `dispute_reason` | text | Free-text explanation |
+| `dispute_created_at` | timestamptz | When dispute was created |
+| `matched_credit_id` | text | transaction_id of credit that zeros out this charge |
+
+**Dispute Workflow:**
+1. Admin marks transaction as `invalid` with reason → moves to Jetpack system client
+2. ShipBob issues credit → credit transaction syncs in
+3. Admin matches credit to original charge → both set to `credited`
+4. Invoice generation excludes `invalid` transactions from client bills
+
+### Tax Fields (Canadian FCs)
+| Column | Type | Notes |
+|--------|------|-------|
+| `taxes` | jsonb | Array of tax objects from ShipBob API |
+
+**Tax Data Structure:**
+```json
+[
+  { "tax_type": "GST", "tax_rate": 13, "tax_amount": 0.65 }
+]
+```
+
+Canadian fulfillment centers (e.g., Brampton Ontario) charge GST/HST. The `taxes` array contains one or more tax entries. For invoice generation, these are aggregated by tax type (e.g., all HST amounts summed together).
 
 ---
 
@@ -249,13 +294,18 @@ Do NOT use for timeline sync optimization - use age-based polling instead.
 | `subtotal` | numeric | Sum of base costs |
 | `total_markup` | numeric | Sum of markups |
 | `total_amount` | numeric | subtotal + markup |
-| `status` | text | draft, approved, sent, paid |
+| `status` | text | draft, approved, sent |
+| `paid_status` | text | unpaid, paid, partial |
+| `paid_at` | timestamptz | When payment received |
+| `stripe_payment_intent_id` | text | Stripe PI ID (for CC payments) |
 | `pdf_path`, `xlsx_path` | text | Storage paths |
 | `generated_at` | timestamptz | |
 | `approved_by` | uuid | FK to auth.users |
 | `approved_at` | timestamptz | |
 | `shipbob_invoice_ids` | jsonb | Array of SB invoice IDs |
 | `line_items_json` | jsonb | Snapshot for regeneration |
+
+**Note:** `status` is the invoice workflow state (draft→approved→sent). `paid_status` tracks payment separately.
 
 ---
 

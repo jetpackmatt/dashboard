@@ -21,9 +21,20 @@ export function ClientSelector() {
     setSelectedClientId,
     isLoading,
     isAdmin,
+    isCareUser,
+    effectiveIsAdmin,
+    effectiveIsCareUser,
   } = useClient()
 
-  // Don't render if not admin or still loading
+  // When simulating client role (not admin or care), auto-select first client if "All Brands" is selected
+  // Care users CAN see "All Brands" just like admins
+  React.useEffect(() => {
+    if (!effectiveIsAdmin && !effectiveIsCareUser && selectedClientId === null && clients.length > 0) {
+      setSelectedClientId(clients[0].id)
+    }
+  }, [effectiveIsAdmin, effectiveIsCareUser, selectedClientId, clients, setSelectedClientId])
+
+  // Don't render if not admin (real or effective) or still loading
   if (isLoading) {
     return (
       <Button variant="ghost" size="sm" disabled className="gap-2">
@@ -33,7 +44,8 @@ export function ClientSelector() {
     )
   }
 
-  if (!isAdmin || clients.length === 0) {
+  // Need real admin or care user to have loaded clients
+  if ((!isAdmin && !isCareUser) || clients.length === 0) {
     return null
   }
 
@@ -62,19 +74,22 @@ export function ClientSelector() {
         <DropdownMenuLabel>Viewing Data For</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        {/* All Brands option */}
-        <DropdownMenuItem
-          onClick={() => setSelectedClientId(null)}
-          className="gap-2"
-        >
-          <Users className="h-4 w-4" />
-          <span className="flex-1">All Brands</span>
-          {selectedClientId === null && (
-            <Check className="h-4 w-4 text-primary" />
-          )}
-        </DropdownMenuItem>
-
-        <DropdownMenuSeparator />
+        {/* All Brands option - for admins and care users (not regular brand users) */}
+        {(effectiveIsAdmin || effectiveIsCareUser) && (
+          <>
+            <DropdownMenuItem
+              onClick={() => setSelectedClientId(null)}
+              className="gap-2"
+            >
+              <Users className="h-4 w-4" />
+              <span className="flex-1">All Brands</span>
+              {selectedClientId === null && (
+                <Check className="h-4 w-4 text-primary" />
+              )}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
 
         {/* Individual brands */}
         {clients.map((client) => (

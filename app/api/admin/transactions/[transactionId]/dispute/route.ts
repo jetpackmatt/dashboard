@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+
+/**
+ * POST /api/admin/transactions/[transactionId]/dispute
+ *
+ * Mark a transaction as disputed (move to disputes tab)
+ */
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ transactionId: string }> }
+) {
+  try {
+    // Verify admin access
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user || user.user_metadata?.role !== 'admin') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { transactionId } = await params
+
+    const adminClient = createAdminClient()
+
+    // Update the transaction to mark as disputed
+    const { error: updateError } = await adminClient
+      .from('transactions')
+      .update({
+        dispute_status: 'pending',
+        dispute_reason: 'Unattributed transaction - requires investigation',
+        dispute_created_at: new Date().toISOString(),
+      })
+      .eq('transaction_id', transactionId)
+
+    if (updateError) {
+      console.error('Error disputing transaction:', updateError)
+      return NextResponse.json({ error: 'Failed to dispute transaction' }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error in dispute transaction:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}

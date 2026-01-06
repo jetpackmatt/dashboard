@@ -10,10 +10,6 @@ import {
 } from '@/lib/billing/invoice-generator'
 import { generatePDFViaSubprocess } from '@/lib/billing/pdf-subprocess'
 import {
-  fetchShippingBreakdown,
-  updateTransactionsWithBreakdown,
-} from '@/lib/billing/sftp-client'
-import {
   runPreflightValidation,
   formatValidationResult,
   type ValidationResult,
@@ -28,12 +24,14 @@ import {
  * Source of truth: invoices_sb.jetpack_invoice_id IS NULL
  *
  * Flow:
- * 1. Fetch SFTP shipping breakdown (if available)
- * 2. Get all active clients
- * 3. Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
- * 4. For each client: collect transactions by invoice_id_sb AND client_id
- * 5. Generate Jetpack invoice (PDF + XLSX)
- * 6. After all clients processed: mark ShipBob invoices with Jetpack invoice number(s)
+ * 1. Get all active clients
+ * 2. Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
+ * 3. For each client: collect transactions by invoice_id_sb AND client_id
+ * 4. Generate Jetpack invoice (PDF + XLSX)
+ * 5. After all clients processed: mark ShipBob invoices with Jetpack invoice number(s)
+ *
+ * NOTE: SFTP shipping breakdown is now synced daily by /api/cron/sync-sftp-costs
+ * (runs at 5 AM EST daily, updating base_cost/surcharge/surcharge_details)
  *
  * Cron schedule: 0 12 * * 1 (every Monday at 12:00 UTC = 5am PT)
  */
@@ -65,38 +63,10 @@ export async function GET(request: Request) {
 
     console.log(`Invoice date: ${invoiceDate.toISOString().split('T')[0]}`)
 
-    // Step 1: Fetch shipping breakdown data from SFTP (if available)
-    console.log('Fetching shipping breakdown from SFTP...')
-    const sftpResult = await fetchShippingBreakdown(invoiceDate)
+    // NOTE: SFTP breakdown data is now synced daily by /api/cron/sync-sftp-costs
+    // No need to fetch here - transactions already have base_cost/surcharge populated
 
-    let breakdownStats = { fetched: 0, updated: 0, notFound: 0, errors: 0 }
-
-    if (sftpResult.success && sftpResult.rows.length > 0) {
-      console.log(`Found ${sftpResult.rows.length} breakdown rows in ${sftpResult.filename}`)
-
-      const updateResult = await updateTransactionsWithBreakdown(adminClient, sftpResult.rows)
-      breakdownStats = {
-        fetched: sftpResult.rows.length,
-        updated: updateResult.updated,
-        notFound: updateResult.notFound,
-        errors: updateResult.errors.length
-      }
-
-      console.log(`Updated ${updateResult.updated} transactions with breakdown data`)
-      if (updateResult.notFound > 0) {
-        console.log(`  ${updateResult.notFound} shipments not found in transactions`)
-      }
-      if (updateResult.errors.length > 0) {
-        console.log(`  ${updateResult.errors.length} errors:`, updateResult.errors.slice(0, 3))
-      }
-    } else if (!sftpResult.success) {
-      console.log(`SFTP fetch failed: ${sftpResult.error}`)
-      console.log('Continuing with invoice generation (breakdown data will be null)')
-    } else {
-      console.log('No breakdown data in SFTP file')
-    }
-
-    // Step 2: Get all active clients with billing info (exclude internal/system entries)
+    // Step 1: Get all active clients with billing info (exclude internal/system entries)
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
       .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address')
@@ -108,7 +78,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Failed to fetch clients' }, { status: 500 })
     }
 
-    // Step 3: Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
+    // Step 2: Get ALL unprocessed ShipBob invoices (PARENT TOKEN level - shared across clients)
     // Source of truth: invoices_sb.jetpack_invoice_id IS NULL
     // Exclude Payment type (not billable)
     const { data: unprocessedInvoices, error: invoicesError } = await adminClient
@@ -131,7 +101,6 @@ export async function GET(request: Request) {
         errors: 0,
         invoices: [],
         errorDetails: [],
-        shippingBreakdown: breakdownStats,
         message: 'No unprocessed ShipBob invoices'
       })
     }
@@ -156,7 +125,7 @@ export async function GET(request: Request) {
       }
 
       try {
-        // Step 4: Collect billing transactions by ShipBob invoice IDs AND client_id
+        // Step 3: Collect billing transactions by ShipBob invoice IDs AND client_id
         // ShipBob invoices are shared across clients, but transactions are per-client
         let lineItems = await collectBillingTransactionsByInvoiceIds(client.id, shipbobInvoiceIds)
 
@@ -167,7 +136,7 @@ export async function GET(request: Request) {
 
         console.log(`Processing ${lineItems.length} transactions for ${client.company_name}`)
 
-        // Step 4.5: Run pre-flight validation
+        // Step 3.5: Run pre-flight validation
         console.log(`Running pre-flight validation for ${client.company_name}...`)
         const validation = await runPreflightValidation(adminClient, client.id, shipbobInvoiceIds)
         validationResults.push({ client: client.company_name, validation })
@@ -194,10 +163,10 @@ export async function GET(request: Request) {
             .filter((id): id is number => id !== null && id !== undefined)
         )]
 
-        // Step 5: Apply markups using the markup engine
+        // Step 4: Apply markups using the markup engine
         lineItems = await applyMarkupsToLineItems(client.id, lineItems)
 
-        // Step 6: Generate summary
+        // Step 5: Generate summary
         const summary = generateSummary(lineItems)
 
         // Calculate billing period: prior Monday through Sunday (NOT from transaction dates)
@@ -256,7 +225,7 @@ export async function GET(request: Request) {
           return `${year}-${month}-${day}`
         }
 
-        // Step 7: Generate invoice number
+        // Step 6: Generate invoice number
         const invoiceNumber = `JP${client.short_code}-${String(client.next_invoice_number).padStart(4, '0')}-${formatDateForInvoice(invoiceDate)}`
 
         // Check if invoice already exists (duplicate prevention)
@@ -271,7 +240,7 @@ export async function GET(request: Request) {
           continue
         }
 
-        // Step 8: Create Jetpack invoice record
+        // Step 7: Create Jetpack invoice record
         // Store shipbob_invoice_ids and line_items_json for the approval workflow
         // - shipbob_invoice_ids: Used for regeneration
         // - line_items_json: Used at approval to mark transactions with EXACT same amounts as files
@@ -302,7 +271,7 @@ export async function GET(request: Request) {
           continue
         }
 
-        // Step 9: Generate files
+        // Step 8: Generate files
         const invoiceData = {
           invoice,
           client: {
@@ -327,14 +296,14 @@ export async function GET(request: Request) {
           clientAddress: client.billing_address || undefined,
         })
 
-        // Step 10: Store files in Supabase Storage
+        // Step 9: Store files in Supabase Storage
         await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
 
         // NOTE: Transactions are NOT marked as invoiced here anymore.
         // That happens when the invoice is APPROVED (not generated).
         // This allows clean regeneration and deletion of drafts.
 
-        // Step 11: Increment client's next invoice number
+        // Step 10: Increment client's next invoice number
         await adminClient
           .from('clients')
           .update({ next_invoice_number: client.next_invoice_number + 1 })
@@ -369,7 +338,6 @@ export async function GET(request: Request) {
       errors: errors.length,
       invoices: generatedInvoices,
       errorDetails: errors,
-      shippingBreakdown: breakdownStats,
       shipbobInvoicesAvailable: unprocessedInvoices.length,
       preflightValidation: validationResults.map(v => ({
         client: v.client,

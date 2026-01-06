@@ -81,6 +81,10 @@ export interface UnfulfilledOrder {
   totalShipments: number
   destCountry: string
   shipOption: string
+  // Computed field (for export - also used in cell renderer)
+  age?: number | null
+  // Client identification (for admin badge)
+  clientId?: string | null
 }
 
 // Calculate age in days from order date
@@ -243,9 +247,7 @@ function ChannelIcon({ channelName }: { channelName: string }) {
 // Cell renderers for unfulfilled orders table
 export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOrder>> = {
   orderId: (row) => (
-    <div className="font-medium text-foreground truncate">
-      {row.orderId}
-    </div>
+    <div className="font-medium text-foreground truncate">{row.orderId}</div>
   ),
 
   shipmentId: (row) => {
@@ -305,13 +307,15 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   ),
 
   channelName: (row) => (
-    row.channelName ? (
-      <ChannelIcon channelName={row.channelName} />
-    ) : <span>-</span>
+    <div className="flex justify-center">
+      {row.channelName ? (
+        <ChannelIcon channelName={row.channelName} />
+      ) : <span>-</span>}
+    </div>
   ),
 
   itemCount: (row) => (
-    <div className="text-center">{row.itemCount}</div>
+    <span>{row.itemCount}</span>
   ),
 
   orderType: (row) => (
@@ -417,6 +421,10 @@ export interface Shipment {
   fcName?: string
   shipOption?: string
   storeOrderId?: string
+  // Computed field (for export - also used in cell renderer)
+  age?: number | null
+  // Client identification (for admin badge)
+  clientId?: string | null
 }
 
 // Status colors for shipments - Complete ShipBob status hierarchy
@@ -553,9 +561,7 @@ function getShipmentStatusIcon(status: string) {
 // Cell renderers for shipments table
 export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   orderId: (row) => (
-    <div className="font-medium text-foreground truncate">
-      {row.orderId}
-    </div>
+    <div className="font-medium text-foreground truncate">{row.orderId}</div>
   ),
 
   shipmentId: (row) => {
@@ -622,7 +628,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     </Badge>
   ),
 
-  transitTime: (row) => {
+  transitTimeDays: (row) => {
     // Transit time = time from carrier pickup (event_intransit) to delivery
     // If delivered: use stored transit_time_days or calculate from dates
     // If in transit: calculate live from inTransitDate → now
@@ -770,9 +776,11 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   ),
 
   channelName: (row) => (
-    row.channelName ? (
-      <ChannelIcon channelName={row.channelName} />
-    ) : <span>-</span>
+    <div className="flex justify-center">
+      {row.channelName ? (
+        <ChannelIcon channelName={row.channelName} />
+      ) : <span>-</span>}
+    </div>
   ),
 
   destCountry: (row) => (
@@ -964,6 +972,7 @@ function InvoiceCell({ invoiceNumber }: InvoiceCellProps) {
 
 export interface AdditionalService {
   id: string
+  clientId?: string
   referenceId: string
   feeType: string
   charge: number
@@ -1008,6 +1017,7 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
 
 export interface Return {
   id: string
+  clientId?: string
   returnId: string
   originalShipmentId: string
   trackingNumber: string
@@ -1133,6 +1143,7 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
 
 export interface Receiving {
   id: string
+  clientId?: string
   wroId: string
   receivingStatus: string
   contents: string
@@ -1209,6 +1220,7 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
 
 export interface Storage {
   id: string
+  clientId?: string
   inventoryId: string
   chargeStartDate: string
   fcName: string
@@ -1263,6 +1275,7 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
 
 export interface Credit {
   id: string
+  clientId?: string
   referenceId: string
   transactionDate: string
   sbTicketReference: string

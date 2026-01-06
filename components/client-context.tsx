@@ -5,10 +5,13 @@ import * as React from 'react'
 export interface ClientInfo {
   id: string
   company_name: string
-  shipbob_user_id: string | null
+  merchant_id: string | null
   short_code: string | null
   has_token: boolean
 }
+
+// Dev role type for role simulator
+export type DevRole = 'admin' | 'care_admin' | 'care_team' | 'client'
 
 interface ClientContextType {
   clients: ClientInfo[]
@@ -16,7 +19,15 @@ interface ClientContextType {
   selectedClient: ClientInfo | null
   setSelectedClientId: (id: string | null) => void
   isLoading: boolean
-  isAdmin: boolean
+  isAdmin: boolean // Real admin status from API
+  isCareUser: boolean // Real care user status from API (care_admin or care_team)
+  isCareAdmin: boolean // Real care_admin status from API
+  // Dev role simulator (only works in development)
+  devRole: DevRole
+  setDevRole: (role: DevRole) => void
+  effectiveIsAdmin: boolean // Takes dev role into account in dev mode
+  effectiveIsCareUser: boolean // Takes dev role into account in dev mode
+  effectiveIsCareAdmin: boolean // Takes dev role into account in dev mode
   refreshClients: () => Promise<void>
 }
 
@@ -25,6 +36,8 @@ const ClientContext = React.createContext<ClientContextType | undefined>(
 )
 
 const STORAGE_KEY = 'jetpack_selected_client_id'
+const DEV_ROLE_KEY = 'jetpack_dev_role'
+const isDev = process.env.NODE_ENV === 'development'
 
 export function ClientProvider({ children }: { children: React.ReactNode }) {
   const [clients, setClients] = React.useState<ClientInfo[]>([])
@@ -33,6 +46,30 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   >(null)
   const [isLoading, setIsLoading] = React.useState(true)
   const [isAdmin, setIsAdmin] = React.useState(false)
+  const [isCareUser, setIsCareUser] = React.useState(false)
+  const [isCareAdmin, setIsCareAdmin] = React.useState(false)
+
+  // Dev role simulator state (only used in development)
+  const [devRole, setDevRoleState] = React.useState<DevRole>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(DEV_ROLE_KEY)
+      if (saved === 'admin' || saved === 'care_admin' || saved === 'care_team' || saved === 'client') return saved
+    }
+    return 'admin' // Default to admin in dev mode
+  })
+
+  // Persist dev role to localStorage
+  const setDevRole = React.useCallback((role: DevRole) => {
+    setDevRoleState(role)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(DEV_ROLE_KEY, role)
+    }
+  }, [])
+
+  // Effective role statuses - respect dev role in development mode
+  const effectiveIsAdmin = isDev ? devRole === 'admin' : isAdmin
+  const effectiveIsCareUser = isDev ? (devRole === 'care_admin' || devRole === 'care_team') : isCareUser
+  const effectiveIsCareAdmin = isDev ? devRole === 'care_admin' : isCareAdmin
 
   // Load from localStorage on mount
   React.useEffect(() => {
@@ -51,13 +88,17 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       if (response.status === 401) {
         // Not authenticated
         setIsAdmin(false)
+        setIsCareUser(false)
+        setIsCareAdmin(false)
         setClients([])
         return
       }
 
       if (response.status === 403) {
-        // Not admin
+        // Not admin or care user - regular brand user
         setIsAdmin(false)
+        setIsCareUser(false)
+        setIsCareAdmin(false)
         return
       }
 
@@ -67,10 +108,15 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
 
       const data = await response.json()
       setClients(data.clients || [])
-      setIsAdmin(true)
+      // Set role flags from API response
+      setIsAdmin(data.isAdmin || false)
+      setIsCareUser(data.isCareUser || false)
+      setIsCareAdmin(data.userRole === 'care_admin')
     } catch (error) {
       console.error('Error fetching clients:', error)
       setIsAdmin(false)
+      setIsCareUser(false)
+      setIsCareAdmin(false)
     } finally {
       setIsLoading(false)
     }
@@ -104,6 +150,13 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       setSelectedClientId,
       isLoading,
       isAdmin,
+      isCareUser,
+      isCareAdmin,
+      devRole,
+      setDevRole,
+      effectiveIsAdmin,
+      effectiveIsCareUser,
+      effectiveIsCareAdmin,
       refreshClients: fetchClients,
     }),
     [
@@ -113,6 +166,13 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       setSelectedClientId,
       isLoading,
       isAdmin,
+      isCareUser,
+      isCareAdmin,
+      devRole,
+      setDevRole,
+      effectiveIsAdmin,
+      effectiveIsCareUser,
+      effectiveIsCareAdmin,
       fetchClients,
     ]
   )

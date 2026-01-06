@@ -96,6 +96,7 @@ import {
 
 // Table preferences are now managed via useTablePreferences hook (localStorage)
 import { getCarrierDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
+import { ExportFormat, ExportScope } from "@/lib/export"
 
 // Normalize channel names for display (e.g., "Walmartv2" -> "Walmart", "Shopifyv3" -> "Shopify")
 function normalizeChannelName(name: string): string {
@@ -238,7 +239,7 @@ export function DataTable({
   shipmentsChannels: prefetchedShipmentsChannels = [],
   shipmentsCarriers: prefetchedShipmentsCarriers = [],
 }: {
-  clientId: string
+  clientId: string | null  // null = let API determine from user's assigned clients
   defaultPageSize?: number
   showExport?: boolean
   // Controlled tab state (optional - for header integration)
@@ -256,6 +257,18 @@ export function DataTable({
   shipmentsChannels?: string[]
   shipmentsCarriers?: string[]
 }) {
+  // Helper to build URL with optional clientId (omits null values)
+  const buildApiUrl = (base: string, params: Record<string, string | number | null | undefined>) => {
+    const searchParams = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== null && value !== undefined) {
+        searchParams.set(key, String(value))
+      }
+    }
+    const queryString = searchParams.toString()
+    return queryString ? `${base}?${queryString}` : base
+  }
+
   // ============================================================================
   // SHIPMENTS TAB - Table State and Configuration
   // ============================================================================
@@ -274,7 +287,11 @@ export function DataTable({
     pageSize: defaultPageSize,
   })
   const [exportSheetOpen, setExportSheetOpen] = React.useState(false)
-  const [exportFormat, setExportFormat] = React.useState<string>("csv")
+  const [exportFormat, setExportFormat] = React.useState<'csv' | 'xlsx'>('csv')
+  const [exportScope, setExportScope] = React.useState<'current' | 'all'>('current')
+  const [isExporting, setIsExporting] = React.useState(false)
+  // Export trigger ref - set by active table component
+  const exportTriggerRef = React.useRef<((options: { format: ExportFormat; scope: ExportScope }) => void) | null>(null)
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
   const [filtersExpanded, setFiltersExpanded] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
@@ -464,7 +481,7 @@ export function DataTable({
   React.useEffect(() => {
     async function loadFeeTypes() {
       try {
-        const response = await fetch(`/api/data/billing/additional-services/fee-types?clientId=${clientId}`)
+        const response = await fetch(buildApiUrl('/api/data/billing/additional-services/fee-types', { clientId }))
         if (response.ok) {
           const data = await response.json()
           setAdditionalServicesFeeTypes(data.feeTypes || [])
@@ -480,7 +497,7 @@ export function DataTable({
   React.useEffect(() => {
     async function loadCreditReasons() {
       try {
-        const response = await fetch(`/api/data/billing/credits/credit-reasons?clientId=${clientId}`)
+        const response = await fetch(buildApiUrl('/api/data/billing/credits/credit-reasons', { clientId }))
         if (response.ok) {
           const data = await response.json()
           setCreditReasons(data.creditReasons || [])
@@ -496,7 +513,7 @@ export function DataTable({
   React.useEffect(() => {
     async function loadReturnsFilterOptions() {
       try {
-        const response = await fetch(`/api/data/billing/returns/filter-options?clientId=${clientId}`)
+        const response = await fetch(buildApiUrl('/api/data/billing/returns/filter-options', { clientId }))
         if (response.ok) {
           const data = await response.json()
           setReturnStatuses(data.statuses || [])
@@ -513,7 +530,7 @@ export function DataTable({
   React.useEffect(() => {
     async function loadReceivingFilterOptions() {
       try {
-        const response = await fetch(`/api/data/billing/receiving/filter-options?clientId=${clientId}`)
+        const response = await fetch(buildApiUrl('/api/data/billing/receiving/filter-options', { clientId }))
         if (response.ok) {
           const data = await response.json()
           setReceivingStatuses(data.statuses || [])
@@ -529,7 +546,7 @@ export function DataTable({
   React.useEffect(() => {
     async function loadStorageFilterOptions() {
       try {
-        const response = await fetch(`/api/data/billing/storage/filter-options?clientId=${clientId}`)
+        const response = await fetch(buildApiUrl('/api/data/billing/storage/filter-options', { clientId }))
         if (response.ok) {
           const data = await response.json()
           setStorageFcs(data.fcs || [])
@@ -1172,17 +1189,15 @@ export function DataTable({
               </Button>
 
               {/* Export */}
-              {showExport && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setExportSheetOpen(true)}
-                  className="h-[30px] flex-shrink-0 text-muted-foreground"
-                >
-                  <DownloadIcon className="h-4 w-4" />
-                  <span className="ml-2 hidden lg:inline">Export</span>
-                </Button>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setExportSheetOpen(true)}
+                className="h-[30px] flex-shrink-0 text-muted-foreground"
+              >
+                <DownloadIcon className="h-4 w-4" />
+                <span className="ml-2 hidden lg:inline">Export</span>
+              </Button>
 
               {/* Columns - show for shipments and unfulfilled tabs */}
               {(currentTab === "shipments" || currentTab === "unfulfilled") && currentTableConfig && (() => {
@@ -1488,6 +1503,10 @@ export function DataTable({
             // Pre-fetched data for instant initial render
             initialData={unfulfilledData}
             initialTotalCount={unfulfilledTotalCount}
+            // Export handler registration
+            onExportTriggerReady={(trigger) => {
+              if (currentTab === 'unfulfilled') exportTriggerRef.current = trigger
+            }}
           />
         )}
       </TabsContent>
@@ -1518,6 +1537,10 @@ export function DataTable({
             // Pre-fetched data for instant initial render
             initialData={prefetchedShipmentsData}
             initialTotalCount={prefetchedShipmentsTotalCount}
+            // Export handler registration
+            onExportTriggerReady={(trigger) => {
+              if (currentTab === 'shipments') exportTriggerRef.current = trigger
+            }}
           />
         )}
       </TabsContent>
@@ -1537,6 +1560,9 @@ export function DataTable({
           userColumnVisibility={additionalServicesPrefs.columnVisibility}
           initialPageSize={additionalServicesPrefs.pageSize}
           onPageSizeChange={additionalServicesPrefs.setPageSize}
+          onExportTriggerReady={(trigger) => {
+            if (currentTab === 'additional-services') exportTriggerRef.current = trigger
+          }}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1555,6 +1581,9 @@ export function DataTable({
           userColumnVisibility={returnsPrefs.columnVisibility}
           initialPageSize={returnsPrefs.pageSize}
           onPageSizeChange={returnsPrefs.setPageSize}
+          onExportTriggerReady={(trigger) => {
+            if (currentTab === 'returns') exportTriggerRef.current = trigger
+          }}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1572,6 +1601,9 @@ export function DataTable({
           userColumnVisibility={receivingPrefs.columnVisibility}
           initialPageSize={receivingPrefs.pageSize}
           onPageSizeChange={receivingPrefs.setPageSize}
+          onExportTriggerReady={(trigger) => {
+            if (currentTab === 'receiving') exportTriggerRef.current = trigger
+          }}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1589,6 +1621,9 @@ export function DataTable({
           userColumnVisibility={storagePrefs.columnVisibility}
           initialPageSize={storagePrefs.pageSize}
           onPageSizeChange={storagePrefs.setPageSize}
+          onExportTriggerReady={(trigger) => {
+            if (currentTab === 'storage') exportTriggerRef.current = trigger
+          }}
         />
       </TabsContent>
       {/* ============================================================================ */}
@@ -1606,6 +1641,9 @@ export function DataTable({
           userColumnVisibility={creditsPrefs.columnVisibility}
           initialPageSize={creditsPrefs.pageSize}
           onPageSizeChange={creditsPrefs.setPageSize}
+          onExportTriggerReady={(trigger) => {
+            if (currentTab === 'credits') exportTriggerRef.current = trigger
+          }}
         />
       </TabsContent>
     </Tabs>
@@ -1616,35 +1654,108 @@ export function DataTable({
         <SheetHeader>
           <SheetTitle>Export Data</SheetTitle>
           <SheetDescription>
-            Choose your export format and options
+            Export {currentTab === 'unfulfilled' ? 'orders' : currentTab} data to a file
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-col gap-6 py-6">
-          <div className="flex flex-col gap-2">
-            <Label>Format</Label>
-            <Select value={exportFormat} onValueChange={setExportFormat}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select format" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="csv">CSV</SelectItem>
-                <SelectItem value="xlsx">Excel (XLSX)</SelectItem>
-                <SelectItem value="json">JSON</SelectItem>
-                <SelectItem value="pdf">PDF</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex flex-col gap-3">
+            <Label className="text-sm font-medium">File Format</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setExportFormat('csv')}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all",
+                  exportFormat === 'csv'
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/50"
+                )}
+              >
+                <span className="text-2xl">📄</span>
+                <span className="font-medium">CSV</span>
+                <span className="text-xs text-muted-foreground">Comma-separated</span>
+              </button>
+              <button
+                onClick={() => setExportFormat('xlsx')}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all",
+                  exportFormat === 'xlsx'
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/50"
+                )}
+              >
+                <span className="text-2xl">📊</span>
+                <span className="font-medium">Excel</span>
+                <span className="text-xs text-muted-foreground">XLSX format</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <Label className="text-sm font-medium">Export Scope</Label>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="exportScope"
+                  value="current"
+                  checked={exportScope === 'current'}
+                  onChange={() => setExportScope('current')}
+                  className="h-4 w-4"
+                />
+                <div className="flex flex-col">
+                  <span className="font-medium">Current Page</span>
+                  <span className="text-xs text-muted-foreground">
+                    Export only the visible rows on this page
+                  </span>
+                </div>
+              </label>
+              <label className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="exportScope"
+                  value="all"
+                  checked={exportScope === 'all'}
+                  onChange={() => setExportScope('all')}
+                  className="h-4 w-4"
+                />
+                <div className="flex flex-col">
+                  <span className="font-medium">All Pages</span>
+                  <span className="text-xs text-muted-foreground">
+                    Export all records matching current filters
+                  </span>
+                </div>
+              </label>
+            </div>
           </div>
         </div>
-        <SheetFooter>
+        <SheetFooter className="gap-2">
           <SheetClose asChild>
-            <Button variant="outline">Cancel</Button>
+            <Button variant="outline" disabled={isExporting}>Cancel</Button>
           </SheetClose>
-          <Button onClick={() => {
-            console.log(`Exporting as ${exportFormat}...`)
-            toast(`Exporting data as ${exportFormat.toUpperCase()}...`)
-            setExportSheetOpen(false)
-          }}>
-            Export
+          <Button
+            onClick={() => {
+              setIsExporting(true)
+              // Trigger export via the current table's ref
+              if (exportTriggerRef.current) {
+                exportTriggerRef.current({ format: exportFormat, scope: exportScope })
+              }
+              toast.success(`Exporting ${currentTab} data as ${exportFormat.toUpperCase()}...`)
+              setIsExporting(false)
+              setExportSheetOpen(false)
+            }}
+            disabled={isExporting}
+          >
+            {isExporting ? (
+              <>
+                <LoaderIcon className="mr-2 h-4 w-4 animate-spin" />
+                Exporting...
+              </>
+            ) : (
+              <>
+                <DownloadIcon className="mr-2 h-4 w-4" />
+                Export
+              </>
+            )}
           </Button>
         </SheetFooter>
       </SheetContent>

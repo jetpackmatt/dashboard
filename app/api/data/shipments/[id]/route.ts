@@ -1,4 +1,4 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Types for ShipBob Order API response
@@ -226,6 +226,28 @@ export async function GET(
   }
 
   try {
+    // First, fetch just the client_id to verify access
+    const { data: shipmentCheck, error: checkError } = await supabase
+      .from('shipments')
+      .select('client_id')
+      .eq('shipment_id', id)
+      .single()
+
+    if (checkError) {
+      if (checkError.code === 'PGRST116') {
+        return NextResponse.json({ error: 'Shipment not found' }, { status: 404 })
+      }
+      console.error('Error checking shipment:', checkError)
+      return NextResponse.json({ error: checkError.message }, { status: 500 })
+    }
+
+    // CRITICAL SECURITY: Verify user has access to this shipment's client
+    try {
+      await verifyClientAccess(shipmentCheck.client_id)
+    } catch (error) {
+      return handleAccessError(error)
+    }
+
     // Fetch the shipment with all details
     const { data: shipment, error: shipmentError } = await supabase
       .from('shipments')

@@ -153,7 +153,7 @@ When syncing transactions with parent token, `client_id` is determined in this o
 | 3a | **Return** | `reference_id` → `returns.return_id` → `client_id` |
 | 3b | **Return** | (fallback) Parse "Order XXXXX" from Comment → `orders.shipbob_order_id` → `client_id` |
 | 4 | **WRO/URO** | `reference_id` → `receiving_orders.shipbob_receiving_id` → `client_id` |
-| 5 | **Default** | Route by `transaction_fee`: Payment → ShipBob Payments, CC Fee → Jetpack Costs |
+| 5 | **Default** | Route by `transaction_fee`: Payment → Jetpack, CC Fee → Jetpack |
 | 6 | **Database-Join Fix** | Post-sync: query unattributed Shipment txs, join to `shipments` table |
 | 7 | **TicketNumber** | Parse client name from Comment (fuzzy matching) |
 
@@ -168,11 +168,10 @@ When syncing transactions with parent token, `client_id` is determined in this o
 
 **Correct approach:** Build complete lookup tables FIRST (sync all returns for all clients), THEN attribute.
 
-### System Clients
+### System Client
 
 In `clients` table with `is_internal=true`:
-- **ShipBob Payments**: Holds ACH payment transactions
-- **Jetpack Costs**: Holds parent-level fees (CC processing, etc.)
+- **Jetpack**: Holds parent-level transactions (ACH payments, CC processing fees, disputed charges, credits that net out bad charges)
 
 ---
 
@@ -277,13 +276,57 @@ return baseRecord
 
 **Key insight:** Omitting a field from upsert = "don't touch." Including `null` = "set to null."
 
-### transactions.tracking_id ~99.9% Populated
-**Status:** Now well-populated. Sync extracts from `additional_details.TrackingId` when present, and backfill script ran to copy from linked shipments.
+### transactions.tracking_id ✅ 100% Populated (Dec 2025)
+
+**Status:** Fully populated. Tracking IDs come from two sources:
+
+| Fee Type | Source | Notes |
+|----------|--------|-------|
+| **Shipping** | `additional_details.TrackingId` in API response | Direct from transaction data |
+| **Per Pick Fee, B2B fees** | Lookup from `shipments` table via `reference_id` | Requires shipment to be synced first |
+
+**How it works:**
+1. During normal sync, `additional_details.TrackingId` is extracted for Shipping transactions
+2. For other fee types (Per Pick Fee, etc.), tracking is NOT in the API response
+3. A **third pass** in `syncAllTransactions()` queries ALL transactions missing `tracking_id` and joins to `shipments` table to backfill
+
+**⚠️ Important:** The tracking backfill pass processes ALL missing transactions, not just the current sync window. With thousands of transactions, this can take 3-5 minutes. The `sync-transactions` cron has `maxDuration = 300` to accommodate this.
+
+**If tracking coverage drops below 100%:**
+1. Check if new fee types are appearing without tracking in API
+2. Verify the shipments table has the tracking data (shipment must be synced first)
+3. Run manual sync to trigger backfill: `curl -X POST .../api/cron/sync-transactions`
 
 ### transactions.base_cost/surcharge Only 50% Populated
 **Why:** These come from SFTP files, not API. Historical data wasn't backfilled.
 
 **Fix:** Process SFTP files for historical transactions or accept API total only.
+
+### Invoice Linking DB Fallback ✅ Fixed (Dec 2025)
+
+**Problem discovered Dec 22, 2025:** ShipBob's `/invoices/{id}/transactions` API doesn't return all transactions that should be on an invoice. Transactions synced by `sync-transactions` before the invoice exists have `invoice_id_sb = NULL`, and when `sync-invoices` runs, the API doesn't return them.
+
+**Symptoms:**
+- Preflight shows fewer transactions than expected
+- Shipping/AdditionalFee transactions stuck with `invoice_id_sb = NULL`
+- Transactions exist in DB but aren't linked to invoices
+
+**Root cause:** `sync-invoices` relied solely on ShipBob's `/invoices/{id}/transactions` API which may not return all transactions, especially for transactions synced before the invoice was created.
+
+**Fix:** Added DB fallback in `sync-invoices` for ALL invoice types:
+1. After processing what API returns, query DB for unlinked transactions
+2. Match by `charge_date` within invoice period and appropriate `reference_type`/`fee_type`
+3. Link matching transactions to the invoice
+
+**Invoice type to transaction type mapping:**
+| Invoice Type | reference_type | fee_type filter |
+|--------------|----------------|-----------------|
+| Shipping | Shipment | = 'Shipping' |
+| AdditionalFee | Shipment | NOT IN ('Shipping', 'Credit') |
+| WarehouseStorage | FC | (any) |
+| WarehouseInboundFee | WRO, URO | (any) |
+| ReturnsFee | Return | (any) |
+| Credits | (any) | = 'Credit' |
 
 ### shipments.event_* ✅ 100% Populated (Dec 2025)
 Timeline backfill completed for 72,855 historical shipments. The `sync-timelines` cron continues running for in-transit shipments.
@@ -291,6 +334,46 @@ Timeline backfill completed for 72,855 historical shipments. The `sync-timelines
 **Important terminology:**
 - `status = 'Completed'` = Shipped from warehouse (fulfilled) - NOT delivered to customer
 - `event_delivered IS NOT NULL` = Actually delivered to customer (carrier tracking event)
+
+---
+
+## Vercel Cron Timeouts (maxDuration)
+
+**Vercel Pro tier:** 300-second (5 minute) max timeout for serverless functions.
+
+Cron jobs that can run long MUST export `maxDuration`:
+```typescript
+export const maxDuration = 300  // 5 minutes
+```
+
+| Cron | maxDuration | Why |
+|------|-------------|-----|
+| `sync` | 120 | Multiple clients + receiving orders |
+| `sync-transactions` | 300 | Tracking backfill processes ALL missing transactions |
+| `sync-reconcile` | 300 | 20-day lookback with soft-delete detection |
+| `sync-backfill-items` | 300 | Backfill missing order_items/shipment_items |
+| `sync-older-nightly` | 300 | Full refresh of 14-45 day shipments |
+| `sync-sftp-costs` | 300 | SFTP fetch + 5000+ transaction updates |
+
+**Without maxDuration:** Functions timeout at Vercel's default (may be 60s or less), causing incomplete syncs.
+
+### CRITICAL: Missing order_items/shipment_items (Fixed Dec 2025)
+
+**Bug discovered Dec 29, 2025:** Orders were being synced without their products. Coverage dropped from 95% to 26%.
+
+**Root cause:** The sync functions (`sync` and `sync-reconcile`) did not have `maxDuration` set. Vercel's default timeout was killing the function AFTER orders were upserted (STEP 2) but BEFORE order_items were created (STEP 4). Orders appeared in the database but had no items.
+
+**Evidence:**
+- API returns products for ALL orders (verified)
+- Same order could have items when fetched directly, but DB had none
+- Pattern: some sync batches had 0% items, others had 100%
+
+**Fix (Dec 29, 2025):**
+1. Added `maxDuration = 120` to `/api/cron/sync/route.ts`
+2. Added `maxDuration = 300` to `/api/cron/sync-reconcile/route.ts`
+3. Created `/api/cron/sync-backfill-items/route.ts` - hourly safety net that finds and populates missing items
+
+**Manual backfill:** Run `node scripts/backfill-order-items.js` to fix existing orders.
 
 ---
 

@@ -5,9 +5,12 @@ import { format, startOfDay, endOfDay } from "date-fns"
 import { DateRange } from "react-day-picker"
 
 import { SHIPMENTS_TABLE_CONFIG } from "@/lib/table-config"
-import { TransactionsTable } from "./transactions-table"
+import { TransactionsTable, PrefixColumn } from "./transactions-table"
 import { Shipment, shipmentCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
+import { ClientBadge } from "./client-badge"
+import { useClient } from "@/components/client-context"
+import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 
 interface ShipmentsTableProps {
   clientId: string
@@ -34,6 +37,8 @@ interface ShipmentsTableProps {
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
+  // Export handler registration
+  onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
 }
 
 export function ShipmentsTable({
@@ -53,7 +58,12 @@ export function ShipmentsTable({
   initialTotalCount = 0,
   initialPageSize = 50,
   onPageSizeChange,
+  onExportTriggerReady,
 }: ShipmentsTableProps) {
+  // Check if admin viewing all clients (for client badge prefix column)
+  const { isAdmin, selectedClientId } = useClient()
+  const showClientBadge = isAdmin && !selectedClientId
+
   // Use initial data if provided, otherwise start empty
   const hasInitialData = initialData && initialData.length > 0
   const [data, setData] = React.useState<Shipment[]>(initialData || [])
@@ -243,6 +253,65 @@ export function ShipmentsTable({
     setDrawerOpen(true)
   }, [])
 
+  // Export handler - fetches all data when scope is 'all', uses current data for 'current'
+  const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
+    const { format: exportFormat, scope } = options
+
+    let dataToExport: Shipment[]
+
+    if (scope === 'current') {
+      // Export current page data
+      dataToExport = data
+    } else {
+      // Fetch all data with current filters
+      const params = new URLSearchParams({
+        clientId,
+        limit: '10000', // Large limit to get all records
+        offset: '0',
+      })
+
+      if (dateRange?.from) {
+        params.set('startDate', format(startOfDay(dateRange.from), 'yyyy-MM-dd'))
+        if (dateRange.to) {
+          params.set('endDate', format(endOfDay(dateRange.to), 'yyyy-MM-dd'))
+        }
+      }
+      if (statusFilter.length > 0) params.set('status', statusFilter.join(','))
+      if (typeFilter.length > 0) params.set('type', typeFilter.join(','))
+      if (channelFilter.length > 0) params.set('channel', channelFilter.join(','))
+      if (carrierFilter.length > 0) params.set('carrier', carrierFilter.join(','))
+      if (ageFilter.length > 0) params.set('age', ageFilter.join(','))
+      if (searchQuery) params.set('search', searchQuery)
+
+      const response = await fetch(`/api/data/shipments?${params.toString()}`)
+      const result = await response.json()
+      dataToExport = result.data || []
+    }
+
+    // Export the data
+    exportData(dataToExport as unknown as Record<string, unknown>[], {
+      format: exportFormat,
+      scope,
+      filename: 'shipments',
+      tableConfig: SHIPMENTS_TABLE_CONFIG,
+    })
+  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, ageFilter, searchQuery])
+
+  // Register export trigger with parent
+  React.useEffect(() => {
+    if (onExportTriggerReady) {
+      onExportTriggerReady(handleExport)
+    }
+  }, [onExportTriggerReady, handleExport])
+
+  // Client badge prefix column - only shown for admins viewing all clients
+  const clientBadgePrefixColumn: PrefixColumn<Shipment> | undefined = showClientBadge
+    ? {
+        width: "56px",
+        render: (row) => <ClientBadge clientId={row.clientId} />,
+      }
+    : undefined
+
   if (error) {
     return (
       <div className="px-4 lg:px-6">
@@ -272,6 +341,7 @@ export function ShipmentsTable({
         itemName="shipments"
         integratedHeader={true}
         onRowClick={handleRowClick}
+        prefixColumn={clientBadgePrefixColumn}
       />
       <ShipmentDetailsDrawer
         shipmentId={selectedShipmentId}

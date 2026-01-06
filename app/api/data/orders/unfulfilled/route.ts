@@ -1,8 +1,5 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
-
-// Default client ID for development (Henson Shaving)
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
 /**
  * GET /api/data/orders/unfulfilled
@@ -11,13 +8,17 @@ const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
  * Excludes: Cancelled shipments
  */
 export async function GET(request: NextRequest) {
-  const supabase = createAdminClient()
-
-  // Get query params
+  // CRITICAL SECURITY: Verify user has access to requested client
   const searchParams = request.nextUrl.searchParams
-  const clientIdParam = searchParams.get('clientId')
-  // 'all' means return all brands (admin view), otherwise filter by clientId
-  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
+  let clientId: string | null
+  try {
+    const access = await verifyClientAccess(searchParams.get('clientId'))
+    clientId = access.requestedClientId
+  } catch (error) {
+    return handleAccessError(error)
+  }
+
+  const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
   const statusFilter = searchParams.get('status') // comma-separated list of statuses
@@ -279,6 +280,16 @@ export async function GET(request: NextRequest) {
       const order = hasDateFilter ? (shipment.orders || {}) : (ordersMap[shipment.order_id] || {})
       const derivedStatus = deriveGranularStatus(shipment)
 
+      // Compute age in days (from order date to now)
+      const orderDateStr = order.order_import_date || shipment.created_at
+      let age: number | null = null
+      if (orderDateStr) {
+        const orderDate = new Date(orderDateStr)
+        const now = new Date()
+        const msElapsed = now.getTime() - orderDate.getTime()
+        age = parseFloat((msElapsed / (1000 * 60 * 60 * 24)).toFixed(1))
+      }
+
       return {
         id: shipment.id,
         orderId: shipment.shipbob_order_id || '',
@@ -286,7 +297,7 @@ export async function GET(request: NextRequest) {
         storeOrderId: order.store_order_id || '',
         customerName: shipment.recipient_name || order.customer_name || 'Unknown',
         status: derivedStatus,
-        orderDate: order.order_import_date || shipment.created_at,
+        orderDate: orderDateStr,
         slaDate: shipment.estimated_fulfillment_date,
         itemCount: itemCounts[shipment.shipment_id] || 1,
         orderType: order.order_type || 'DTC',
@@ -297,6 +308,10 @@ export async function GET(request: NextRequest) {
         totalShipments: order.total_shipments || 1,
         destCountry: order.country || '',
         shipOption: order.shipping_method || '',
+        // Computed field for export
+        age: age,
+        // Client identification (for admin badge)
+        clientId: shipment.client_id || null,
       }
     })
 

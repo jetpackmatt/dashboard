@@ -1,7 +1,5 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
-
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
 // Receiving transactions are WRO-specific fees (actual receiving/inbound fees)
 // We join with receiving_orders table to get status and contents
@@ -47,11 +45,17 @@ function getWroContents(wro: Record<string, unknown>): string {
 }
 
 export async function GET(request: NextRequest) {
-  const supabase = createAdminClient()
-
+  // CRITICAL SECURITY: Verify user has access to requested client
   const searchParams = request.nextUrl.searchParams
-  const clientIdParam = searchParams.get('clientId')
-  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
+  let clientId: string | null
+  try {
+    const access = await verifyClientAccess(searchParams.get('clientId'))
+    clientId = access.requestedClientId
+  } catch (error) {
+    return handleAccessError(error)
+  }
+
+  const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -167,6 +171,7 @@ export async function GET(request: NextRequest) {
 
       return {
         id: row.id,
+        clientId: row.client_id,
         wroId: refId,
         receivingStatus: String(receivingData.status || ''),
         contents: getWroContents(receivingData),
@@ -184,6 +189,7 @@ export async function GET(request: NextRequest) {
     // ==========================================
     const unbilledMapped = unbilledWros.map((wro: Record<string, unknown>) => ({
       id: `wro-${wro.shipbob_receiving_id}`,  // Prefix to avoid ID collision
+      clientId: wro.client_id,
       wroId: String(wro.shipbob_receiving_id),
       receivingStatus: String(wro.status || ''),
       contents: getWroContents(wro),

@@ -29,7 +29,8 @@ import {
 } from "@/components/ui/sidebar"
 import { useClient } from "@/components/client-context"
 
-const navItems = [
+// Base nav items visible to all users
+const baseNavItems = [
   {
     title: "Dashboard",
     url: "/dashboard",
@@ -51,14 +52,18 @@ const navItems = [
     icon: FileIcon,
   },
   {
+    title: "Jetpack Care",
+    url: "/dashboard/care",
+    icon: HelpCircleIcon,
+  },
+]
+
+// Client-only nav items (hidden from admins)
+const clientOnlyNavItems = [
+  {
     title: "Billing",
     url: "/dashboard/billing",
     icon: FileTextIcon,
-  },
-  {
-    title: "Care Central",
-    url: "/dashboard/care",
-    icon: HelpCircleIcon,
   },
 ]
 
@@ -90,7 +95,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
-  const { isAdmin } = useClient()
+  const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
 
   // Admin-only nav item
   const adminNavItem = {
@@ -99,8 +104,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     icon: ShieldIcon,
   }
 
-  // Combine nav items - add Admin if user is admin
-  const allNavItems = isAdmin ? [...navItems, adminNavItem] : navItems
+  // Build nav items based on user role
+  // - Admins: base items + Admin, but NOT Billing (nothing there for them)
+  // - Care users (care_admin, care_team): base items only (no Admin, no Billing)
+  // - Clients: base items + Billing (client-only items)
+  let allNavItems
+  if (effectiveIsAdmin) {
+    allNavItems = [...baseNavItems, adminNavItem]
+  } else if (effectiveIsCareUser) {
+    // Care users see base items only - no Admin panel, no Billing
+    allNavItems = [...baseNavItems]
+  } else {
+    // Regular clients
+    allNavItems = [...baseNavItems, ...clientOnlyNavItems]
+  }
 
   // Dynamically set isActive based on current pathname
   const navMainWithActive = allNavItems.map((item) => ({

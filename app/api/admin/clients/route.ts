@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getClientsWithTokenStatus, createNewClient } from '@/lib/supabase/admin'
+import { getClientsWithTokenStatus, createNewClient, hasAllClientsAccess, isAdminRole, isCareRole } from '@/lib/supabase/admin'
 
 /**
  * GET /api/admin/clients
- * Returns all clients with their token status (admin only)
+ * Returns all clients with their token status
+ * Allowed: admin, care_admin, care_team
  */
 export async function GET() {
   try {
-    // Verify user is authenticated and is admin
+    // Verify user is authenticated
     const supabase = await createClient()
     const {
       data: { user },
@@ -18,9 +19,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check admin role from user metadata
-    const isAdmin = user.user_metadata?.role === 'admin'
-    if (!isAdmin) {
+    // Check role from user metadata - allow admin and care users
+    const userRole = user.user_metadata?.role
+    const isAdmin = isAdminRole(userRole)
+    const isCareUser = isCareRole(userRole)
+
+    if (!hasAllClientsAccess(userRole)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -29,6 +33,9 @@ export async function GET() {
     return NextResponse.json({
       clients,
       count: clients.length,
+      isAdmin,
+      isCareUser,
+      userRole,
     })
   } catch (error) {
     console.error('Error fetching clients:', error)

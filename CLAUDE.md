@@ -88,14 +88,18 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 
 ## Current Cron Jobs (vercel.json)
 
-| Path | Schedule | Purpose |
-|------|----------|---------|
-| `/api/cron/sync` | Every 1 min | Orders & shipments (child tokens, LastUpdateStartDate) |
-| `/api/cron/sync-timelines` | Every 1 min | Timeline events (0-14d, per-client parallel, auto-scales) |
-| `/api/cron/sync-transactions` | Every 1 min | All billing transactions (parent token) |
-| `/api/cron/sync-reconcile` | Every hour | Orders/shipments (20d) + transactions (3d) + soft-delete |
-| `/api/cron/sync-invoices` | Daily 1:36 AM UTC | ShipBob invoice sync |
-| `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | Full refresh for older shipments (14-45 days) |
+| Path | Schedule | maxDuration | Purpose |
+|------|----------|-------------|---------|
+| `/api/cron/sync` | Every 1 min | - | Orders & shipments (child tokens, LastUpdateStartDate) |
+| `/api/cron/sync-timelines` | Every 1 min | - | Timeline events (0-14d, per-client parallel, auto-scales) |
+| `/api/cron/sync-transactions` | Every 1 min | 300s | All billing transactions + tracking backfill (parent token) |
+| `/api/cron/sync-reconcile` | Every hour | 300s | Orders/shipments (20d) + transactions (3d) + soft-delete |
+| `/api/cron/sync-invoices` | Daily 1 PM EST | - | ShipBob invoice sync |
+| `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | 300s | Full refresh for older shipments (14-45 days) |
+| `/api/cron/sync-products` | Daily 4:00 AM UTC | - | Products with variants (for inventory_id → client/SKU mapping) |
+| `/api/cron/sync-sftp-costs` | Daily 5 AM EST | 300s | SFTP shipping breakdown (base_cost, surcharge_details) |
+
+**Note:** `maxDuration = 300` (5 minutes) required for crons that process large datasets. Vercel Pro tier supports up to 300s. Without explicit `maxDuration`, functions may timeout prematurely.
 
 ---
 
@@ -165,6 +169,38 @@ const { data: txByClient } = await supabase
 | `client_id` | - | UUID foreign key |
 | User roles | `owner`, `editor`, `viewer` | NOT admin/editor/viewer |
 | Jetpack admin | `user_metadata.role === 'admin'` | Internal staff |
+
+---
+
+## Reshipments
+
+**What they are:** When an order needs to be shipped again (lost package, damaged, wrong item), ShipBob creates a new shipment with a new tracking number but the **same shipment_id**. This generates multiple Shipping transactions for the same shipment_id on different dates.
+
+**Example:** Shipment 330867617
+- Dec 22: First shipment, tracking `7517859134`, $3.95
+- Dec 26: Reshipment, tracking `1437163232`, $3.95
+
+**Database reality:**
+- `shipments` table: ONE row per shipment_id (latest data wins)
+- `transactions` table: MULTIPLE rows per shipment_id (one per shipping event)
+
+**Key implications:**
+
+| System | Handling |
+|--------|----------|
+| Transaction sync | Each shipping event creates a separate transaction with unique `transaction_id` |
+| SFTP cost sync | Matches by `shipment_id + charge_date` to update the correct transaction |
+| Invoice generation | Both transactions appear as separate line items (both are billable) |
+| Shipment lookups | Cannot assume 1:1 relationship between shipment_id and Shipping transaction |
+
+**Anti-pattern:** Never use `shipment_id` alone as a unique key for Shipping transactions. Always consider that multiple transactions can exist for the same shipment_id.
+
+**Correct pattern for SFTP matching:**
+```typescript
+// Build lookup by shipment_id:charge_date for precise matching
+const key = `${shipment_id}:${charge_date}`
+txByShipmentDate.set(key, transaction_id)
+```
 
 ---
 
@@ -318,12 +354,12 @@ function formatDateFixed(dateStr: string): string {
 
 ---
 
-## Data Quality Status (Dec 18, 2025)
+## Data Quality Status (Dec 29, 2025)
 
 | Table | Field | % Populated | Status |
 |-------|-------|-------------|--------|
 | transactions | client_id | 100% (Shipment type) | ✅ Fixed upsert-null-overwrite bug |
-| transactions | tracking_id | 99.99% | ✅ Backfilled from shipments table |
+| transactions | tracking_id | 100% | ✅ All fee types now have tracking (backfilled from shipments table)
 | transactions | base_cost, surcharge | ~60K updated | ✅ SFTP backfill complete |
 | shipments | event_* fields | 100% | ✅ Timeline backfill complete (72,855 shipments) |
 | shipments | transit_time | 100% | ✅ Transit time backfill complete (69,506 shipments) |
@@ -374,9 +410,10 @@ Claude manages the dev server. Follow these rules to avoid crashes:
 ### Dev Server Rules
 - **Only ONE dev server should run at a time** - check with `lsof -i :3000` before starting
 - **Run dev server in background** with `run_in_background: true` so it persists
+- **CRITICAL: Only kill port 3000** - User has other projects on other ports. NEVER use `pkill -f "next-server"` or `pkill -f "next dev"` as these will kill ALL Next.js processes across all projects
 - **If site becomes unreachable**, restart with:
   ```bash
-  pkill -f "next-server"; pkill -f "next dev"; sleep 1; npm run dev
+  lsof -ti :3000 | xargs kill 2>/dev/null; sleep 1; npm run dev
   ```
 - **Never spawn multiple dev servers** - they conflict and cause port issues
 

@@ -1,7 +1,5 @@
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
-
-const DEFAULT_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
 
 // Additional services are non-shipping transactions (fees that aren't the base shipping cost)
 // These include: Per Pick Fee, B2B fees, Warehousing Fee, etc.
@@ -31,11 +29,17 @@ const ADDITIONAL_SERVICE_FEES = [
 ]
 
 export async function GET(request: NextRequest) {
-  const supabase = createAdminClient()
-
+  // CRITICAL SECURITY: Verify user has access to requested client
   const searchParams = request.nextUrl.searchParams
-  const clientIdParam = searchParams.get('clientId')
-  const clientId = clientIdParam === 'all' ? null : (clientIdParam || DEFAULT_CLIENT_ID)
+  let clientId: string | null
+  try {
+    const access = await verifyClientAccess(searchParams.get('clientId'))
+    clientId = access.requestedClientId
+  } catch (error) {
+    return handleAccessError(error)
+  }
+
+  const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -107,6 +111,7 @@ export async function GET(request: NextRequest) {
     // Use Jetpack invoice fields (invoice_id_jp, invoice_date_jp) instead of ShipBob
     const mapped = (data || []).map((row: Record<string, unknown>) => ({
       id: row.id,
+      clientId: row.client_id,
       referenceId: row.reference_id || '',
       feeType: row.fee_type || '',
       charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,

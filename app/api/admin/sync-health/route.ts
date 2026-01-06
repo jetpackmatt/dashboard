@@ -33,6 +33,7 @@ export async function GET() {
       unattributedTransactions,
       transactionsWithBaseCost,
       totalShippingTransactions,
+      totalTransactions,
       recentSyncStats,
     ] = await Promise.all([
       // 1. Transactions with tracking_id (for shipment type)
@@ -63,26 +64,33 @@ export async function GET() {
         .eq('status', 'Completed')
         .is('deleted_at', null),
 
-      // 5. Unattributed transactions (no merchant_id linkage)
+      // 5. Unattributed transactions (no client_id) - ALL transactions must be attributed for invoicing
       adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .is('merchant_id', null),
+        .is('client_id', null),
 
-      // 6. Transactions with base_cost (SFTP data)
+      // 6. Shipping transactions with base_cost (SFTP data - only applies to fee_type='Shipping')
       adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .eq('reference_type', 'Shipment')
+        .eq('fee_type', 'Shipping')
         .not('base_cost', 'is', null),
 
-      // 7. Total shipping transactions for base_cost percentage
+      // 7. Total shipping transactions for base_cost percentage (fee_type='Shipping' only)
       adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .eq('reference_type', 'Shipment'),
+        .eq('reference_type', 'Shipment')
+        .eq('fee_type', 'Shipping'),
 
-      // 8. Recent sync stats (orders/shipments created in last 24h)
+      // 8. Total transactions (for attribution percentage)
+      adminClient
+        .from('transactions')
+        .select('*', { count: 'exact', head: true }),
+
+      // 9. Recent sync stats (orders/shipments created in last 24h)
       Promise.all([
         adminClient
           .from('orders')
@@ -113,6 +121,9 @@ export async function GET() {
     const baseCostPct = baseCostTotal > 0 ? Math.round((baseCostCount / baseCostTotal) * 1000) / 10 : 0
 
     const unattributedCount = unattributedTransactions.count || 0
+    const totalTxCount = totalTransactions.count || 0
+    const attributedCount = totalTxCount - unattributedCount
+    const attributedPct = totalTxCount > 0 ? Math.round((attributedCount / totalTxCount) * 1000) / 10 : 100
 
     const metrics: HealthMetric[] = [
       {
@@ -141,14 +152,11 @@ export async function GET() {
       },
       {
         label: 'Attributed Transactions',
-        description: 'Transactions linked to a merchant',
-        value: (trackingTotal || 0) - unattributedCount,
-        total: trackingTotal || 0,
-        percentage: trackingTotal ? Math.round(((trackingTotal - unattributedCount) / trackingTotal) * 1000) / 10 : 100,
-        status: (() => {
-          const pct = trackingTotal ? ((trackingTotal - unattributedCount) / trackingTotal) * 100 : 100
-          return pct >= 99.5 ? 'good' : pct >= 95 ? 'warning' : 'critical'
-        })(),
+        description: 'All transactions linked to a client (required for invoicing)',
+        value: attributedCount,
+        total: totalTxCount,
+        percentage: attributedPct,
+        status: attributedPct >= 99.5 ? 'good' : attributedPct >= 95 ? 'warning' : 'critical',
       },
     ]
 

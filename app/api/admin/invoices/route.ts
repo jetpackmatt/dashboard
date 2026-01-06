@@ -15,12 +15,12 @@ export async function GET() {
 
     const adminClient = createAdminClient()
 
-    // Fetch recent invoices with client info
+    // Fetch recent invoices with client info (including Stripe fields for CC payments)
     const { data: invoices, error } = await adminClient
       .from('invoices_jetpack')
       .select(`
         *,
-        client:clients(id, company_name, short_code)
+        client:clients(id, company_name, short_code, stripe_customer_id, stripe_payment_method_id)
       `)
       .order('invoice_date', { ascending: false })
       .order('created_at', { ascending: false })

@@ -394,15 +394,33 @@ const InvoicePDF: React.FC<InvoicePDFProps> = ({
           })}
         </View>
 
-        {/* Totals - all three rows have grey background on right side */}
+        {/* Totals - all rows have grey background on right side */}
         <View style={styles.totalsSection}>
+          {/* Subtotal (before tax) */}
           <View style={styles.totalRowContainer}>
             <View style={styles.totalRowLeft} />
             <View style={styles.totalRowRight}>
               <Text style={styles.totalLabel}>Subtotal</Text>
-              <Text style={styles.totalValue}>{formatCurrency(data.summary.totalAmount, currency)}</Text>
+              <Text style={styles.totalValue}>
+                {formatCurrency(data.summary.totalAmount - (data.summary.totalTax || 0), currency)}
+              </Text>
             </View>
           </View>
+
+          {/* Tax lines (GST, HST, etc.) - only show if taxes exist */}
+          {data.summary.taxBreakdown && Object.keys(data.summary.taxBreakdown).length > 0 && (
+            Object.entries(data.summary.taxBreakdown).map(([taxType, taxData]) => (
+              <View key={taxType} style={styles.totalRowContainer}>
+                <View style={styles.totalRowLeft} />
+                <View style={styles.totalRowRight}>
+                  <Text style={styles.totalLabel}>{taxType} ({taxData.rate}%)</Text>
+                  <Text style={styles.totalValue}>{formatCurrency(taxData.amount, currency)}</Text>
+                </View>
+              </View>
+            ))
+          )}
+
+          {/* Total (including tax) */}
           <View style={styles.totalRowContainer}>
             <View style={styles.totalRowLeft} />
             <View style={styles.totalRowRight}>
@@ -410,6 +428,8 @@ const InvoicePDF: React.FC<InvoicePDFProps> = ({
               <Text style={styles.totalValue}>{formatCurrency(data.summary.totalAmount, currency)}</Text>
             </View>
           </View>
+
+          {/* Amount Due */}
           <View style={styles.totalRowContainer}>
             <View style={styles.totalRowLeft} />
             <View style={styles.totalRowRight}>

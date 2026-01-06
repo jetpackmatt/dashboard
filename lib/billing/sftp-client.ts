@@ -600,17 +600,17 @@ export async function updateTransactionsWithDailyBreakdown(
 
   // Step 2: Batch fetch ALL matching transactions (including multiple per shipment for reshipments)
   const LOOKUP_BATCH_SIZE = 500
-  // Map: shipment_id:charge_date → transaction id (for precise matching)
-  // Also: shipment_id → array of {id, charge_date} for fallback
-  const txByShipmentDate = new Map<string, string>()
-  const txByShipment = new Map<string, Array<{ id: string; charge_date: string | null }>>()
+  // Map: shipment_id:charge_date:type → transaction id (for precise matching including refunds)
+  // Also: shipment_id → array of {id, charge_date, transaction_type} for fallback
+  const txByShipmentDateType = new Map<string, string>()
+  const txByShipment = new Map<string, Array<{ id: string; charge_date: string | null; transaction_type: string | null }>>()
 
   for (let i = 0; i < shipmentIds.length; i += LOOKUP_BATCH_SIZE) {
     const batchIds = shipmentIds.slice(i, i + LOOKUP_BATCH_SIZE)
 
     const { data: transactions, error: lookupError } = await supabase
       .from('transactions')
-      .select('id, reference_id, charge_date')
+      .select('id, reference_id, charge_date, transaction_type')
       .eq('reference_type', 'Shipment')
       .eq('fee_type', 'Shipping')
       .in('reference_id', batchIds)
@@ -621,10 +621,12 @@ export async function updateTransactionsWithDailyBreakdown(
     }
 
     for (const tx of transactions || []) {
-      // Build lookup by shipment:charge_date for precise matching
+      // Build lookup by shipment:charge_date:type for precise matching (handles charge+refund on same day)
+      const isRefund = tx.transaction_type === 'Refund'
+      const typeKey = isRefund ? 'refund' : 'charge'
       if (tx.charge_date) {
-        const key = `${tx.reference_id}:${tx.charge_date}`
-        txByShipmentDate.set(key, tx.id)
+        const key = `${tx.reference_id}:${tx.charge_date}:${typeKey}`
+        txByShipmentDateType.set(key, tx.id)
       }
 
       // Also build array per shipment for fallback
@@ -633,7 +635,8 @@ export async function updateTransactionsWithDailyBreakdown(
       }
       txByShipment.get(tx.reference_id)!.push({
         id: tx.id,
-        charge_date: tx.charge_date
+        charge_date: tx.charge_date,
+        transaction_type: tx.transaction_type
       })
     }
   }
@@ -649,19 +652,31 @@ export async function updateTransactionsWithDailyBreakdown(
     // Find matching transaction ID
     let txId: string | undefined
 
-    // Strategy 1: Match by shipment_id + expected charge_date (most precise for reshipments)
+    // Determine if this SFTP row is a refund (negative amounts) or charge (positive)
+    const isRefundRow = row.base_cost < 0 || row.total < 0
+    const rowTypeKey = isRefundRow ? 'refund' : 'charge'
+
+    // Strategy 1: Match by shipment_id + expected charge_date + type (most precise, handles charge+refund on same day)
     if (expectedChargeDate) {
-      const key = `${row.shipment_id}:${expectedChargeDate}`
-      txId = txByShipmentDate.get(key)
+      const key = `${row.shipment_id}:${expectedChargeDate}:${rowTypeKey}`
+      txId = txByShipmentDateType.get(key)
     }
 
-    // Strategy 2: Fallback to first unupdated transaction for this shipment
+    // Strategy 2: Fallback to matching transaction by type for this shipment
     if (!txId) {
       const txArray = txByShipment.get(row.shipment_id)
       if (txArray && txArray.length > 0) {
-        // Take first available - for single-transaction shipments this is correct
-        // For reshipments without date match, we take the first one (may not be ideal but better than nothing)
-        txId = txArray[0].id
+        // Try to find a transaction with matching type (charge vs refund)
+        const matchingType = txArray.find(t =>
+          (isRefundRow && t.transaction_type === 'Refund') ||
+          (!isRefundRow && t.transaction_type !== 'Refund')
+        )
+        if (matchingType) {
+          txId = matchingType.id
+        } else {
+          // Last resort: take first available
+          txId = txArray[0].id
+        }
       }
     }
 

@@ -41,6 +41,231 @@ export function createAdminClient(): any {
 }
 
 // ============================================================================
+// CRITICAL SECURITY: Client Access Verification
+// ============================================================================
+//
+// ⚠️  ABSOLUTELY CRUCIAL: Jetpack clients can NEVER see any other client's data.
+// ⚠️  Clients can NEVER see admin settings, markups, costs, or ShipBob invoices.
+// ⚠️  This is VITAL - failure could sink the business.
+//
+// ALL data routes MUST use verifyClientAccess() before returning any data.
+// NEVER use hardcoded client IDs or fallbacks.
+// NEVER trust clientId from query params without verification.
+// ============================================================================
+
+import { createClient as createServerClient } from '@/lib/supabase/server'
+
+// ============================================================================
+// User Role Types
+// ============================================================================
+//
+// Role hierarchy (stored in user_metadata.role):
+// - 'admin'      : Full access to Admin panel, can see/manage all clients
+// - 'care_admin' : Full access to Jetpack Care, can edit tickets, sees all clients
+// - 'care_team'  : View-only access to Jetpack Care, sees all clients
+// - undefined    : Regular client user (access controlled via user_clients table)
+//
+// ============================================================================
+
+export type UserRole = 'admin' | 'care_admin' | 'care_team' | undefined
+
+/**
+ * Check if a role is an admin role (full admin access)
+ */
+export function isAdminRole(role: string | undefined): boolean {
+  return role === 'admin'
+}
+
+/**
+ * Check if a role is a Care user (care_admin or care_team)
+ */
+export function isCareRole(role: string | undefined): boolean {
+  return role === 'care_admin' || role === 'care_team'
+}
+
+/**
+ * Check if a role is Care Admin (can edit in Jetpack Care)
+ */
+export function isCareAdminRole(role: string | undefined): boolean {
+  return role === 'care_admin'
+}
+
+/**
+ * Check if a role has access to all clients (admin or care roles)
+ */
+export function hasAllClientsAccess(role: string | undefined): boolean {
+  return role === 'admin' || role === 'care_admin' || role === 'care_team'
+}
+
+export interface ClientAccessResult {
+  isAdmin: boolean
+  isCareUser: boolean  // true for care_admin or care_team
+  userRole: UserRole
+  allowedClientIds: string[]  // Empty for admin/care users means "all clients"
+  requestedClientId: string | null  // null means "all" (admin/care users only)
+}
+
+/**
+ * CRITICAL SECURITY FUNCTION
+ *
+ * Verifies that the current user has access to the requested client(s).
+ * - Admin users (user_metadata.role === 'admin') can access all clients
+ * - Care users (care_admin, care_team) can access all clients (for ticket management)
+ * - Regular users can only access clients they're assigned to via user_clients
+ * - Returns 401 if not authenticated
+ * - Returns 403 if user doesn't have access to requested client
+ * - Returns 400 if clientId is missing and user is not admin/care
+ *
+ * @param requestedClientId - The clientId from query params. 'all' means all clients (admin/care only)
+ * @returns ClientAccessResult with verified access info
+ * @throws Error with status code in message (e.g., "401: Not authenticated")
+ */
+export async function verifyClientAccess(
+  requestedClientId: string | null | undefined
+): Promise<ClientAccessResult> {
+  // Get current user from session
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    throw new Error('401: Not authenticated')
+  }
+
+  const userRole = user.user_metadata?.role as UserRole
+  const isAdmin = isAdminRole(userRole)
+  const isCareUser = isCareRole(userRole)
+
+  // Admin and Care users can access all clients
+  if (isAdmin || isCareUser) {
+    // 'all' or null means all clients
+    if (!requestedClientId || requestedClientId === 'all') {
+      return {
+        isAdmin,
+        isCareUser,
+        userRole,
+        allowedClientIds: [], // Empty means "all" for admin/care users
+        requestedClientId: null,
+      }
+    }
+    // Admin/Care user requesting specific client
+    return {
+      isAdmin,
+      isCareUser,
+      userRole,
+      allowedClientIds: [requestedClientId],
+      requestedClientId,
+    }
+  }
+
+  // Regular users: get their allowed clients from user_clients table
+  const adminClient = createAdminClient()
+  const { data: userClients, error: ucError } = await adminClient
+    .from('user_clients')
+    .select('client_id')
+    .eq('user_id', user.id)
+
+  if (ucError) {
+    console.error('Failed to fetch user clients:', ucError)
+    throw new Error('500: Failed to verify client access')
+  }
+
+  const allowedClientIds = (userClients || []).map((uc: { client_id: string }) => uc.client_id)
+
+  // Regular user with no client assignments = no access to anything
+  if (allowedClientIds.length === 0) {
+    throw new Error('403: No client access configured for this user')
+  }
+
+  // Regular user requesting 'all' = forbidden
+  if (requestedClientId === 'all') {
+    throw new Error('403: Only administrators can view all clients')
+  }
+
+  // Regular user with no clientId specified
+  if (!requestedClientId) {
+    // If user has exactly one client, use that
+    if (allowedClientIds.length === 1) {
+      return {
+        isAdmin: false,
+        isCareUser: false,
+        userRole: undefined,
+        allowedClientIds,
+        requestedClientId: allowedClientIds[0],
+      }
+    }
+    // Multiple clients but none specified - require explicit selection
+    throw new Error('400: clientId parameter is required')
+  }
+
+  // Regular user requesting specific client - verify access
+  if (!allowedClientIds.includes(requestedClientId)) {
+    throw new Error('403: Access denied to this client')
+  }
+
+  return {
+    isAdmin: false,
+    isCareUser: false,
+    userRole: undefined,
+    allowedClientIds,
+    requestedClientId,
+  }
+}
+
+/**
+ * Helper to parse error from verifyClientAccess and return appropriate response
+ */
+export function handleAccessError(error: unknown): Response {
+  const message = error instanceof Error ? error.message : 'Unknown error'
+  const match = message.match(/^(\d{3}): (.+)$/)
+
+  if (match) {
+    const status = parseInt(match[1])
+    const errorMessage = match[2]
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Unknown error format
+  console.error('Unexpected access error:', error)
+  return new Response(JSON.stringify({ error: 'Internal server error' }), {
+    status: 500,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+/**
+ * Get the user's default client ID (for users with single client assignment)
+ * Returns null if user has multiple clients or no assignments
+ */
+export async function getUserDefaultClientId(): Promise<string | null> {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return null
+  }
+
+  // Admins don't have a default - they must select
+  if (user.user_metadata?.role === 'admin') {
+    return null
+  }
+
+  const adminClient = createAdminClient()
+  const { data: userClients } = await adminClient
+    .from('user_clients')
+    .select('client_id')
+    .eq('user_id', user.id)
+
+  if (userClients?.length === 1) {
+    return userClients[0].client_id
+  }
+
+  return null
+}
+
+// ============================================================================
 // Client Token Management
 // ============================================================================
 
@@ -56,9 +281,13 @@ export interface Client {
   id: string
   company_name: string
   merchant_id: string | null
+  short_code: string | null
   is_active: boolean
   created_at: string
   billing_address?: BillingAddress | null
+  billing_emails?: string[] | null
+  billing_phone?: string | null
+  billing_contact_name?: string | null
 }
 
 export interface ClientCredential {
@@ -370,11 +599,160 @@ export async function inviteUser(data: {
 }
 
 /**
+ * Create an admin or Care team user (admin, care_admin, or care_team role)
+ * - admin: Full platform access including Admin panel
+ * - care_admin: Care team lead, can manage tickets for all clients
+ * - care_team: Support staff, can view/update tickets for all clients
+ */
+export async function createCareUser(data: {
+  email: string
+  role: 'admin' | 'care_admin' | 'care_team'
+  fullName?: string
+}): Promise<{ user: { id: string; email: string } }> {
+  const supabase = createAdminClient()
+  const { email, role, fullName } = data
+
+  // Check if user already exists
+  const { data: existingUsers } = await supabase.auth.admin.listUsers()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const existingUser = existingUsers?.users?.find(
+    (u: any) => u.email?.toLowerCase() === email.toLowerCase()
+  )
+
+  if (existingUser) {
+    // User exists - update their role to Care role
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      existingUser.id,
+      {
+        user_metadata: {
+          ...existingUser.user_metadata,
+          full_name: fullName || existingUser.user_metadata?.full_name || '',
+          role,
+        },
+      }
+    )
+
+    if (updateError) {
+      console.error('Failed to update user role:', updateError)
+      throw new Error(updateError.message || 'Failed to update user role')
+    }
+
+    return {
+      user: { id: existingUser.id, email },
+    }
+  }
+
+  // Create new user with invite (sends email)
+  // Redirect admins to /dashboard, care users to /dashboard/care
+  const redirectPath = role === 'admin' ? '/dashboard' : '/dashboard/care'
+  const { data: newUser, error: createError } =
+    await supabase.auth.admin.inviteUserByEmail(email, {
+      data: {
+        full_name: fullName || '',
+        role,
+      },
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}${redirectPath}`,
+    })
+
+  if (createError) {
+    console.error('Failed to create care user:', createError)
+    throw new Error(createError.message || 'Failed to create care user')
+  }
+
+  return {
+    user: { id: newUser.user.id, email },
+  }
+}
+
+/**
+ * Get all Care team users (care_admin and care_team roles)
+ */
+export async function getCareUsers(): Promise<
+  Array<{
+    id: string
+    email: string
+    full_name?: string
+    role: 'care_admin' | 'care_team'
+    created_at: string
+  }>
+> {
+  const supabase = createAdminClient()
+
+  // Get all users from auth
+  const { data: authData, error: authError } =
+    await supabase.auth.admin.listUsers()
+
+  if (authError) {
+    console.error('Failed to fetch users:', authError)
+    throw new Error('Failed to fetch users')
+  }
+
+  // Filter to only Care users
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const careUsers = (authData.users || []).filter((user: any) => {
+    const role = user.user_metadata?.role
+    return role === 'care_admin' || role === 'care_team'
+  })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return careUsers.map((user: any) => ({
+    id: user.id,
+    email: user.email || '',
+    full_name: user.user_metadata?.full_name,
+    role: user.user_metadata?.role as 'care_admin' | 'care_team',
+    created_at: user.created_at,
+  }))
+}
+
+/**
+ * Update a Care user's role
+ */
+export async function updateCareUserRole(
+  userId: string,
+  newRole: 'care_admin' | 'care_team' | null
+): Promise<void> {
+  const supabase = createAdminClient()
+
+  // Get current user metadata
+  const { data: userData, error: fetchError } =
+    await supabase.auth.admin.getUserById(userId)
+
+  if (fetchError || !userData.user) {
+    console.error('Failed to fetch user:', fetchError)
+    throw new Error('User not found')
+  }
+
+  // Update with new role (null removes the role, making them a regular user)
+  const { error: updateError } = await supabase.auth.admin.updateUserById(
+    userId,
+    {
+      user_metadata: {
+        ...userData.user.user_metadata,
+        role: newRole,
+      },
+    }
+  )
+
+  if (updateError) {
+    console.error('Failed to update user role:', updateError)
+    throw new Error(updateError.message || 'Failed to update user role')
+  }
+}
+
+/**
  * Update a client's details
  */
 export async function updateClient(
   clientId: string,
-  data: { company_name?: string; merchant_id?: string | null; short_code?: string | null; billing_address?: BillingAddress | null }
+  data: {
+    company_name?: string
+    merchant_id?: string | null
+    short_code?: string | null
+    billing_address?: BillingAddress | null
+    billing_emails?: string[] | null
+    billing_phone?: string | null
+    billing_contact_name?: string | null
+  }
 ): Promise<Client> {
   const supabase = createAdminClient()
 
@@ -385,6 +763,9 @@ export async function updateClient(
       ...(data.merchant_id !== undefined && { merchant_id: data.merchant_id }),
       ...(data.short_code !== undefined && { short_code: data.short_code }),
       ...(data.billing_address !== undefined && { billing_address: data.billing_address }),
+      ...(data.billing_emails !== undefined && { billing_emails: data.billing_emails }),
+      ...(data.billing_phone !== undefined && { billing_phone: data.billing_phone }),
+      ...(data.billing_contact_name !== undefined && { billing_contact_name: data.billing_contact_name }),
     })
     .eq('id', clientId)
     .select()

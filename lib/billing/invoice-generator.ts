@@ -32,6 +32,13 @@ export interface DetailedBillingData {
   credits: DetailedCredit[]
 }
 
+// Tax info from ShipBob (GST/HST for Canadian FCs)
+export interface TaxInfo {
+  tax_type?: string   // e.g., "GST"
+  tax_rate?: number   // e.g., 13 (percentage)
+  tax_amount?: number // e.g., 0.65 (dollar amount)
+}
+
 export interface DetailedShipment {
   id: string
   order_id: string | null
@@ -65,6 +72,7 @@ export interface DetailedShipment {
   transit_time_days: number | null
   fc_name: string | null
   order_category: string | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface DetailedShipmentFee {
@@ -73,6 +81,7 @@ export interface DetailedShipmentFee {
   fee_type: string | null
   amount: number | null
   transaction_date: string | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface DetailedReturn {
@@ -86,6 +95,7 @@ export interface DetailedReturn {
   return_type: string | null
   return_creation_date: string | null
   fc_name: string | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface DetailedReceiving {
@@ -95,6 +105,7 @@ export interface DetailedReceiving {
   amount: number | null
   transaction_type: string | null
   transaction_date: string | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface DetailedStorage {
@@ -106,6 +117,7 @@ export interface DetailedStorage {
   location_type: string | null
   amount: number | null
   comment: string | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface DetailedCredit {
@@ -114,6 +126,7 @@ export interface DetailedCredit {
   transaction_date: string | null
   credit_reason: string | null
   credit_amount: number | null
+  taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
 export interface InvoiceLineItem {
@@ -139,6 +152,10 @@ export interface InvoiceLineItem {
   trackingNumber?: string
   feeType?: string
   transactionDate: string
+  // Tax fields (GST/HST for Canadian transactions)
+  taxRate?: number // e.g., 13 for 13%
+  taxAmount?: number // Tax amount in dollars
+  taxType?: string // e.g., "GST"
 }
 
 export interface InvoiceData {
@@ -155,13 +172,15 @@ export interface InvoiceData {
   summary: {
     subtotal: number
     totalMarkup: number
-    totalAmount: number
+    totalTax: number // Total tax (GST/HST) amount
+    taxBreakdown: Record<string, { rate: number; amount: number }> // e.g., { 'GST': { rate: 13, amount: 45.67 } }
+    totalAmount: number // subtotal + totalTax
     byCategory: Record<LineCategory, { count: number; subtotal: number; markup: number; total: number }>
   }
 }
 
 // Additional service fee types (non-shipping fees on shipments)
-const ADDITIONAL_SERVICE_FEES = [
+export const ADDITIONAL_SERVICE_FEES = [
   'Per Pick Fee',
   'B2B - Each Pick Fee',
   'B2B - Label Fee',
@@ -191,7 +210,7 @@ const ADDITIONAL_SERVICE_FEES = [
  * Used for Credits to get full timestamps (matches reference XLSX)
  */
 const ULID_ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
-function decodeUlidTimestamp(ulid: string): string | null {
+export function decodeUlidTimestamp(ulid: string): string | null {
   if (!ulid || ulid.length < 10) return null
   const timeStr = ulid.substring(0, 10).toUpperCase()
   let time = 0
@@ -201,6 +220,142 @@ function decodeUlidTimestamp(ulid: string): string | null {
     time = time * 32 + index
   }
   return new Date(time).toISOString()
+}
+
+/**
+ * Extract tax info from a transaction's taxes array
+ * Returns aggregated tax rate and amount (sums if multiple taxes)
+ */
+function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string; taxRate?: number; taxAmount?: number } {
+  if (!taxes || taxes.length === 0) return {}
+
+  // If single tax, return it directly
+  if (taxes.length === 1) {
+    const tax = taxes[0]
+    return {
+      taxType: tax.tax_type,
+      taxRate: tax.tax_rate,
+      taxAmount: tax.tax_amount,
+    }
+  }
+
+  // Multiple taxes - aggregate amounts, concatenate types
+  const taxTypes = taxes.map(t => t.tax_type).filter(Boolean).join('+')
+  const totalAmount = taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0)
+  // Use the first tax rate (they're usually the same for GST/HST)
+  const taxRate = taxes[0]?.tax_rate
+
+  return {
+    taxType: taxTypes || undefined,
+    taxRate,
+    taxAmount: totalAmount > 0 ? totalAmount : undefined,
+  }
+}
+
+// Cache for fulfillment center tax info (loaded from DB)
+let fcTaxCache: Map<string, { taxType: string; taxRate: number } | null> | null = null
+
+/**
+ * Load fulfillment center tax info from the database.
+ * Uses the fulfillment_centers table which is configured via admin panel.
+ */
+async function loadFCTaxCache(): Promise<Map<string, { taxType: string; taxRate: number } | null>> {
+  if (fcTaxCache) return fcTaxCache
+
+  const supabase = createAdminClient()
+  const { data: fcs } = await supabase
+    .from('fulfillment_centers')
+    .select('name, tax_rate, tax_type')
+
+  fcTaxCache = new Map()
+  for (const fc of fcs || []) {
+    if (fc.tax_rate && fc.tax_type) {
+      fcTaxCache.set(fc.name, {
+        taxType: fc.tax_type,
+        taxRate: Number(fc.tax_rate),
+      })
+    } else {
+      fcTaxCache.set(fc.name, null) // Explicitly no tax
+    }
+  }
+
+  return fcTaxCache
+}
+
+/**
+ * Clear the FC tax cache (useful for testing or when admin updates FC settings)
+ */
+export function clearFCTaxCache(): void {
+  fcTaxCache = null
+}
+
+/**
+ * Extract tax info for storage transactions, calculating taxes if needed.
+ * Storage transactions from taxable FCs don't have taxes from API/XLSX,
+ * so we calculate them based on fulfillment center settings in the database.
+ *
+ * IMPORTANT: Uses the fulfillment_centers table configured via admin panel.
+ * Only FCs with tax_rate and tax_type set will have taxes applied.
+ */
+async function extractStorageTaxInfoAsync(
+  taxes: TaxInfo[] | null | undefined,
+  fulfillmentCenter: string | null | undefined,
+  cost: number
+): Promise<{ taxType?: string; taxRate?: number; taxAmount?: number; taxes?: TaxInfo[] }> {
+  // If transaction already has taxes, use them
+  if (taxes && taxes.length > 0) {
+    return extractTaxInfo(taxes)
+  }
+
+  // Look up FC in the database to check if it has taxes configured
+  if (fulfillmentCenter) {
+    const cache = await loadFCTaxCache()
+    const fcTax = cache.get(fulfillmentCenter)
+
+    if (fcTax) {
+      const taxAmount = Math.round(cost * (fcTax.taxRate / 100) * 100) / 100
+      return {
+        taxType: fcTax.taxType,
+        taxRate: fcTax.taxRate,
+        taxAmount,
+        taxes: [{ tax_type: fcTax.taxType, tax_rate: fcTax.taxRate, tax_amount: taxAmount }],
+      }
+    }
+  }
+
+  return {}
+}
+
+/**
+ * Synchronous version that uses cached data (for use in sync code paths).
+ * Must call loadFCTaxCache() first to populate the cache.
+ */
+function extractStorageTaxInfo(
+  taxes: TaxInfo[] | null | undefined,
+  fulfillmentCenter: string | null | undefined,
+  cost: number
+): { taxType?: string; taxRate?: number; taxAmount?: number; taxes?: TaxInfo[] } {
+  // If transaction already has taxes, use them
+  if (taxes && taxes.length > 0) {
+    return extractTaxInfo(taxes)
+  }
+
+  // Look up FC in the cache (must be pre-loaded)
+  if (fulfillmentCenter && fcTaxCache) {
+    const fcTax = fcTaxCache.get(fulfillmentCenter)
+
+    if (fcTax) {
+      const taxAmount = Math.round(cost * (fcTax.taxRate / 100) * 100) / 100
+      return {
+        taxType: fcTax.taxType,
+        taxRate: fcTax.taxRate,
+        taxAmount,
+        taxes: [{ tax_type: fcTax.taxType, tax_rate: fcTax.taxRate, tax_amount: taxAmount }],
+      }
+    }
+  }
+
+  return {}
 }
 
 /**
@@ -216,15 +371,20 @@ export async function collectBillingTransactions(
   const startStr = periodStart.toISOString().split('T')[0]
   const endStr = `${periodEnd.toISOString().split('T')[0]}T23:59:59.999Z`
 
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
+
   const items: InvoiceLineItem[] = []
 
   // Fetch all transactions for the client and period
+  // Exclude disputed/invalid transactions (dispute_status must be null)
   const { data: transactions } = await supabase
     .from('transactions')
     .select('*')
     .eq('client_id', clientId)
     .gte('charge_date', startStr)
     .lte('charge_date', endStr)
+    .is('dispute_status', null)
     .order('charge_date', { ascending: true })
 
   for (const tx of transactions || []) {
@@ -277,6 +437,7 @@ export async function collectBillingTransactions(
           trackingNumber: tx.tracking_id,
           feeType,
           transactionDate: tx.charge_date,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         // Additional service fees on shipments
@@ -301,6 +462,7 @@ export async function collectBillingTransactions(
           orderNumber: tx.reference_id,
           feeType: transactionFee,
           transactionDate: tx.charge_date,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -319,6 +481,7 @@ export async function collectBillingTransactions(
           orderNumber: tx.reference_id,
           feeType: transactionFee || 'Unknown',
           transactionDate: tx.charge_date,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       }
     } else if (referenceType === 'FC') {
@@ -340,6 +503,8 @@ export async function collectBillingTransactions(
         periodLabel: tx.charge_date ? formatStoragePeriod(new Date(tx.charge_date), new Date(tx.charge_date)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: tx.charge_date,
+        // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
+        ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, tx.fulfillment_center as string, baseAmount),
       })
     } else if (referenceType === 'Return') {
       // Returns
@@ -356,6 +521,7 @@ export async function collectBillingTransactions(
         description: tx.transaction_type || 'Return',
         feeType: tx.transaction_type,
         transactionDate: tx.charge_date,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -373,6 +539,7 @@ export async function collectBillingTransactions(
         description: `WRO ${tx.reference_id || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: tx.charge_date,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -389,6 +556,7 @@ export async function collectBillingTransactions(
         description: `WRO ${tx.reference_id || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: tx.charge_date,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS (Value Added Services) - linked to support tickets
@@ -413,6 +581,7 @@ export async function collectBillingTransactions(
         orderNumber: tx.reference_id,
         feeType: transactionFee,
         transactionDate: tx.charge_date,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else {
       // CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -431,6 +600,7 @@ export async function collectBillingTransactions(
         orderNumber: tx.reference_id,
         feeType: transactionFee || 'Unknown',
         transactionDate: tx.charge_date,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     }
   }
@@ -447,6 +617,10 @@ export async function collectBillingTransactionsByInvoiceIds(
   invoiceIds: number[]
 ): Promise<InvoiceLineItem[]> {
   const supabase = createAdminClient()
+
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
+
   const items: InvoiceLineItem[] = []
 
   // Fetch all transactions for the client by invoice_id_sb
@@ -509,6 +683,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         transactionDate: txChargeDate,
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -538,6 +713,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           trackingNumber: txTrackingId,
           feeType,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         const isB2B = transactionFee.startsWith('B2B')
@@ -562,6 +738,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -581,6 +758,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       }
     } else if (referenceType === 'FC') {
@@ -602,6 +780,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         periodLabel: txChargeDate ? formatStoragePeriod(new Date(txChargeDate), new Date(txChargeDate)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: txChargeDate,
+        // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
+        ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, txFulfillmentCenter, baseAmount),
       })
     } else if (referenceType === 'Return') {
       items.push({
@@ -618,6 +798,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: txTransactionType || 'Return',
         feeType: txTransactionType,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -635,6 +816,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -652,6 +834,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: `WRO ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -670,6 +853,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         orderNumber: txReferenceId,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else {
       /// CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -691,6 +875,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         orderNumber: txReferenceId,
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     }
   }
@@ -706,6 +891,10 @@ export async function collectUnprocessedBillingTransactions(
   clientId: string
 ): Promise<InvoiceLineItem[]> {
   const supabase = createAdminClient()
+
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
+
   const items: InvoiceLineItem[] = []
 
   // Fetch all unprocessed transactions for the client
@@ -718,6 +907,7 @@ export async function collectUnprocessedBillingTransactions(
       .select('*')
       .eq('client_id', clientId)
       .eq('invoiced_status_jp', false)
+      .is('dispute_status', null) // Exclude disputed/invalid transactions
       .order('charge_date', { ascending: true })
       .order('id', { ascending: true }) // Secondary sort for stable pagination
       .range(offset, offset + 999)
@@ -762,6 +952,7 @@ export async function collectUnprocessedBillingTransactions(
         transactionDate: txChargeDate,
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -791,6 +982,7 @@ export async function collectUnprocessedBillingTransactions(
           trackingNumber: txTrackingId,
           feeType,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         const isB2B = transactionFee.startsWith('B2B')
@@ -815,6 +1007,7 @@ export async function collectUnprocessedBillingTransactions(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -834,6 +1027,7 @@ export async function collectUnprocessedBillingTransactions(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
         })
       }
     } else if (referenceType === 'FC') {
@@ -855,6 +1049,8 @@ export async function collectUnprocessedBillingTransactions(
         periodLabel: txChargeDate ? formatStoragePeriod(new Date(txChargeDate), new Date(txChargeDate)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: txChargeDate,
+        // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
+        ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, txFulfillmentCenter, baseAmount),
       })
     } else if (referenceType === 'Return') {
       items.push({
@@ -871,6 +1067,7 @@ export async function collectUnprocessedBillingTransactions(
         description: txTransactionType || 'Return',
         feeType: txTransactionType,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -888,6 +1085,7 @@ export async function collectUnprocessedBillingTransactions(
         description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -905,6 +1103,7 @@ export async function collectUnprocessedBillingTransactions(
         description: `WRO ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -923,6 +1122,7 @@ export async function collectUnprocessedBillingTransactions(
         orderNumber: txReferenceId,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     } else {
       /// CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -944,6 +1144,7 @@ export async function collectUnprocessedBillingTransactions(
         orderNumber: txReferenceId,
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
+        ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
       })
     }
   }
@@ -1081,6 +1282,9 @@ export async function applyMarkupsToLineItems(
     const insuranceCost = item.insuranceCost || 0
     const isShipment = item.billingTable === 'billing_shipments'
 
+    // Get the shipOptionId for this item (stored in shipOptionMap by shipment_id/orderNumber)
+    const shipOptionId = item.orderNumber ? shipOptionMap.get(item.orderNumber) || null : null
+
     // Special handling for credits: check if this is a shipping fee credit
     if (item.lineCategory === 'Credits' && item.orderNumber) {
       const shipmentMarkup = shipmentMarkupMap.get(item.orderNumber)
@@ -1093,6 +1297,7 @@ export async function applyMarkupsToLineItems(
         const billedAmount = item.baseAmount + markupAmount
         return {
           ...item,
+          shipOptionId, // Store for verification
           markupApplied: Math.round(markupAmount * 100) / 100,
           billedAmount: Math.round(billedAmount * 100) / 100,
           markupRuleId: shipmentMarkup.markupRuleId,
@@ -1131,6 +1336,7 @@ export async function applyMarkupsToLineItems(
 
         return {
           ...item,
+          shipOptionId, // Store for verification
           baseCharge,
           totalCharge,
           insuranceCharge,
@@ -1143,6 +1349,7 @@ export async function applyMarkupsToLineItems(
         // For non-shipments: simple calculation
         return {
           ...item,
+          shipOptionId, // Store for verification (may be null for non-shipments)
           markupApplied: result.markupAmount,
           billedAmount: result.billedAmount,
           markupRuleId: result.ruleId,
@@ -1160,6 +1367,7 @@ export async function applyMarkupsToLineItems(
 
       return {
         ...item,
+        shipOptionId, // Store for verification
         baseCharge,
         totalCharge,
         insuranceCharge,
@@ -1169,146 +1377,14 @@ export async function applyMarkupsToLineItems(
 
     return {
       ...item,
+      shipOptionId, // Store for verification (may be null for non-shipments)
       billedAmount: item.baseAmount, // No markup if no rule found
     }
   })
 
-  // ROUNDING RECONCILIATION: Match Excel's "formula on totals" approach
-  // This ensures our totals match Excel while preserving per-line detail
-  //
-  // Two reconciliations needed:
-  // 1. Shipping items - formula: base*(1+markup%) + surcharge + insurance*(1+markup%)
-  // 2. Additional Services (Pick Fees + B2B + Additional Services combined) - formula: cost*(1+markup%)
-
-  // === SHIPPING RECONCILIATION ===
-  // Group by markup percentage (converted to integer for grouping)
-  const markupGroups = new Map<number, { items: typeof processedItems; indices: number[] }>()
-
-  for (let i = 0; i < processedItems.length; i++) {
-    const item = processedItems[i]
-    // Only reconcile shipping items (they have special formula with surcharge/insurance)
-    if (item.billingTable === 'billing_shipments' && item.markupPercentage && item.markupPercentage > 0) {
-      const markupPct = Math.round((item.markupPercentage || 0) * 10000) // Use high precision for grouping
-      if (!markupGroups.has(markupPct)) {
-        markupGroups.set(markupPct, { items: [], indices: [] })
-      }
-      markupGroups.get(markupPct)!.items.push(item)
-      markupGroups.get(markupPct)!.indices.push(i)
-    }
-  }
-
-  // For each markup group, reconcile rounding difference
-  for (const [markupPct, group] of markupGroups) {
-    if (group.items.length === 0) continue
-
-    const markupDecimal = markupPct / 10000
-
-    // Calculate aggregated totals (Excel approach)
-    let sumBase = 0
-    let sumSurcharge = 0
-    let sumInsurance = 0
-    let sumPerLineRounded = 0
-
-    for (const item of group.items) {
-      sumBase += item.baseAmount || 0
-      sumSurcharge += item.surcharge || 0
-      sumInsurance += item.insuranceCost || 0
-      sumPerLineRounded += item.billedAmount || 0
-    }
-
-    // Expected total using formula on aggregated values
-    const expectedTotal = sumBase * (1 + markupDecimal) + sumSurcharge + sumInsurance * (1 + markupDecimal)
-    const expectedTotalRounded = Math.round(expectedTotal * 100) / 100
-
-    // Difference to reconcile
-    const roundingDiff = expectedTotalRounded - sumPerLineRounded
-
-    // If there's a difference, distribute it proportionally across items
-    // (or apply to the largest item for simplicity and minimal per-item impact)
-    // Use 0.005 threshold to handle floating point precision (0.01 might be 0.00999...)
-    if (Math.abs(roundingDiff) >= 0.005) {
-      // Find the largest item in the group (by billedAmount) to absorb the rounding
-      let largestIdx = group.indices[0]
-      let largestAmount = Math.abs(processedItems[largestIdx].billedAmount || 0)
-
-      for (const idx of group.indices) {
-        const amount = Math.abs(processedItems[idx].billedAmount || 0)
-        if (amount > largestAmount) {
-          largestAmount = amount
-          largestIdx = idx
-        }
-      }
-
-      // Adjust the largest item's billedAmount
-      const item = processedItems[largestIdx]
-      item.billedAmount = Math.round((item.billedAmount + roundingDiff) * 100) / 100
-
-      // Also adjust markupApplied proportionally
-      if (item.markupApplied !== undefined) {
-        item.markupApplied = Math.round((item.markupApplied + roundingDiff) * 100) / 100
-      }
-    }
-  }
-
-  // === ADDITIONAL SERVICES RECONCILIATION ===
-  // The "Additional Services" category (not Pick Fees or B2B) uses formula-on-totals
-  // Group by markup percentage and reconcile
-  const additionalServicesMarkupGroups = new Map<number, { items: typeof processedItems; indices: number[] }>()
-
-  for (let i = 0; i < processedItems.length; i++) {
-    const item = processedItems[i]
-    // ONLY "Additional Services" category, not "Pick Fees" or "B2B Fees"
-    if (item.lineCategory === 'Additional Services' && item.markupPercentage && item.markupPercentage > 0) {
-      const markupPct = Math.round((item.markupPercentage || 0) * 10000)
-      if (!additionalServicesMarkupGroups.has(markupPct)) {
-        additionalServicesMarkupGroups.set(markupPct, { items: [], indices: [] })
-      }
-      additionalServicesMarkupGroups.get(markupPct)!.items.push(item)
-      additionalServicesMarkupGroups.get(markupPct)!.indices.push(i)
-    }
-  }
-
-  // Reconcile Additional Services by markup group
-  for (const [markupPct, group] of additionalServicesMarkupGroups) {
-    if (group.items.length === 0) continue
-
-    const markupDecimal = markupPct / 10000
-
-    let sumBaseAmount = 0
-    let sumPerLineRounded = 0
-
-    for (const item of group.items) {
-      sumBaseAmount += item.baseAmount || 0
-      sumPerLineRounded += item.billedAmount || 0
-    }
-
-    // Formula on totals: base * (1 + markup%)
-    const expectedTotal = sumBaseAmount * (1 + markupDecimal)
-    const expectedTotalRounded = Math.round(expectedTotal * 100) / 100
-    const roundingDiff = expectedTotalRounded - sumPerLineRounded
-
-    // Use 0.005 threshold to handle floating point precision (0.01 might be 0.00999...)
-    if (Math.abs(roundingDiff) >= 0.005) {
-      // Find largest item to absorb rounding
-      let largestIdx = group.indices[0]
-      let largestAmount = Math.abs(processedItems[largestIdx].billedAmount || 0)
-
-      for (const idx of group.indices) {
-        const amount = Math.abs(processedItems[idx].billedAmount || 0)
-        if (amount > largestAmount) {
-          largestAmount = amount
-          largestIdx = idx
-        }
-      }
-
-      const item = processedItems[largestIdx]
-      item.billedAmount = Math.round((item.billedAmount + roundingDiff) * 100) / 100
-
-      if (item.markupApplied !== undefined) {
-        item.markupApplied = Math.round((item.markupApplied + roundingDiff) * 100) / 100
-      }
-    }
-  }
+  // NOTE: Do NOT reconcile individual line items to match "formula on totals" approach.
+  // Each line item must be correct on its own: billedAmount = baseAmount + surcharge + markupApplied
+  // Small rounding differences in totals are acceptable and expected.
 
   return processedItems
 }
@@ -1333,11 +1409,23 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
   let totalMarkup = 0
   let totalAmount = 0
 
+  // Aggregate taxes by type (e.g., GST, HST)
+  const taxByType: Record<string, { rate: number; amount: number }> = {}
+
   for (const item of lineItems) {
     const surcharge = item.surcharge || 0
     subtotal += item.baseAmount + surcharge
     totalMarkup += item.markupApplied
     totalAmount += item.billedAmount // Sum actual billed amounts to match Excel
+
+    // Aggregate taxes
+    if (item.taxAmount && item.taxAmount > 0) {
+      const taxType = item.taxType || 'Tax'
+      if (!taxByType[taxType]) {
+        taxByType[taxType] = { rate: item.taxRate || 0, amount: 0 }
+      }
+      taxByType[taxType].amount += item.taxAmount
+    }
 
     const cat = byCategory[item.lineCategory]
     if (cat) {
@@ -1348,10 +1436,31 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
     }
   }
 
+  // Round the final values
+  const finalSubtotal = Math.round(subtotal * 100) / 100
+  const finalTotalAmount = Math.round(totalAmount * 100) / 100
+  // Derive markup from total and subtotal to ensure consistency (avoids rounding drift)
+  const derivedMarkup = Math.round((finalTotalAmount - finalSubtotal) * 100) / 100
+
+  // Calculate total tax and round breakdown amounts
+  let totalTax = 0
+  const taxBreakdown: Record<string, { rate: number; amount: number }> = {}
+  for (const [taxType, taxData] of Object.entries(taxByType)) {
+    const roundedAmount = Math.round(taxData.amount * 100) / 100
+    taxBreakdown[taxType] = { rate: taxData.rate, amount: roundedAmount }
+    totalTax += roundedAmount
+  }
+  totalTax = Math.round(totalTax * 100) / 100
+
+  // Total amount includes tax
+  const finalTotalWithTax = Math.round((finalTotalAmount + totalTax) * 100) / 100
+
   return {
-    subtotal: Math.round(subtotal * 100) / 100,
-    totalMarkup: Math.round(totalMarkup * 100) / 100,
-    totalAmount: Math.round(totalAmount * 100) / 100, // Use summed billedAmounts
+    subtotal: finalSubtotal,
+    totalMarkup: derivedMarkup,
+    totalTax,
+    taxBreakdown,
+    totalAmount: finalTotalWithTax,
     byCategory,
   }
 }
@@ -1393,7 +1502,11 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   // 1. SHIPMENTS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const shipmentsSheet = workbook.addWorksheet('Shipments')
-  shipmentsSheet.getRow(1).values = [
+
+  // Check if any shipment has taxes
+  const shipmentsHasTaxes = detailedData.shipments.some(s => s.taxes && s.taxes.length > 0)
+
+  const shipmentsBaseHeaders = [
     'User ID', 'Merchant Name', 'Customer Name', 'Store', 'Shipment ID', 'Transaction Type',
     'Transaction Date', 'Store Order ID', 'Tracking ID',
     'Base Fulfillment Charge', 'Surcharges', 'Total Fulfillment Charge', 'Insurance',
@@ -1402,6 +1515,9 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     'Length', 'Width', 'Height', 'Zip Code', 'City', 'State', 'Country',
     'Order Created', 'Label Generated', 'Delivered', 'Transit Days', 'FC Name'
   ]
+  shipmentsSheet.getRow(1).values = shipmentsHasTaxes
+    ? [...shipmentsBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : shipmentsBaseHeaders
   styleHeader(shipmentsSheet, 1)
 
   // Sort shipments by transaction_date descending (newest first)
@@ -1424,12 +1540,12 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     shipmentsTotal += billedAmt
 
-    shipmentsSheet.getRow(row).values = [
+    const baseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       s.customer_name || '',
       s.store_integration_name || '',
-      s.order_id || '',
+      s.shipment_id || '',            // Shipment ID (NOT order_id)
       s.transaction_type || '',
       s.transaction_date ? formatExcelDate(s.transaction_date) : '',
       s.store_order_id || '',
@@ -1460,20 +1576,35 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       s.transit_time_days || '',
       s.fc_name || ''
     ]
+
+    if (shipmentsHasTaxes) {
+      const taxType = s.taxes && s.taxes.length > 0 ? s.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const taxRate = s.taxes && s.taxes.length > 0 ? s.taxes[0].tax_rate : ''
+      const taxAmount = s.taxes && s.taxes.length > 0 ? s.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      shipmentsSheet.getRow(row).values = [...baseRowValues, taxType, taxRate, taxAmount]
+    } else {
+      shipmentsSheet.getRow(row).values = baseRowValues
+    }
     row++
   }
   const shipmentsTotalRow = addTotalRow(shipmentsSheet, row, 12, shipmentsTotal) // Total Fulfillment Charge is col 12
+  const shipmentsColCount = shipmentsHasTaxes ? 37 : 34
 
   // Set column widths individually (not using .columns array to avoid phantom rows)
-  for (let i = 1; i <= 35; i++) shipmentsSheet.getColumn(i).width = 15
+  for (let i = 1; i <= shipmentsColCount; i++) shipmentsSheet.getColumn(i).width = 15
   // Cell-level formatting is applied at the end of the function
 
   // 2. ADDITIONAL SERVICES SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const feesSheet = workbook.addWorksheet('Additional Services')
-  feesSheet.getRow(1).values = [
-    'User ID', 'Merchant Name', 'Reference ID', 'Fee Type', 'Total Charge', 'Transaction Date'
-  ]
+
+  // Check if any fee has taxes
+  const feesHasTaxes = detailedData.shipmentFees.some(f => f.taxes && f.taxes.length > 0)
+
+  const feesBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Fee Type', 'Total Charge', 'Transaction Date']
+  feesSheet.getRow(1).values = feesHasTaxes
+    ? [...feesBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : feesBaseHeaders
   styleHeader(feesSheet, 1)
 
   // Sort fees by transaction_date descending (newest first)
@@ -1491,7 +1622,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     feesTotal += billedAmt
 
-    feesSheet.getRow(row).values = [
+    const feesBaseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       f.order_id || f.id,
@@ -1499,20 +1630,37 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       billedAmt,
       f.transaction_date ? formatExcelDate(f.transaction_date) : ''
     ]
+
+    if (feesHasTaxes) {
+      const feeTaxType = f.taxes && f.taxes.length > 0 ? f.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const feeTaxRate = f.taxes && f.taxes.length > 0 ? f.taxes[0].tax_rate : ''
+      const feeTaxAmount = f.taxes && f.taxes.length > 0 ? f.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      feesSheet.getRow(row).values = [...feesBaseRowValues, feeTaxType, feeTaxRate, feeTaxAmount]
+    } else {
+      feesSheet.getRow(row).values = feesBaseRowValues
+    }
     row++
   }
   const feesTotalRow = addTotalRow(feesSheet, row, 5, feesTotal)
   // Set column widths individually
-  const feesWidths = [12, 20, 15, 25, 15, 20]
+  const feesWidths = feesHasTaxes ? [12, 20, 15, 25, 15, 20, 10, 12, 12] : [12, 20, 15, 25, 15, 20]
   for (let i = 0; i < feesWidths.length; i++) feesSheet.getColumn(i + 1).width = feesWidths[i]
+  const feesColCount = feesHasTaxes ? 9 : 6
 
   // 3. RETURNS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const returnsSheet = workbook.addWorksheet('Returns')
-  returnsSheet.getRow(1).values = [
+
+  // Check if any return has taxes
+  const returnsHasTaxes = detailedData.returns.some(r => r.taxes && r.taxes.length > 0)
+
+  const returnsBaseHeaders = [
     'User ID', 'Merchant Name', 'Return ID', 'Original Shipment ID', 'Tracking ID',
     'Total Charge', 'Transaction Type', 'Return Status', 'Return Type', 'Return Date', 'FC Name'
   ]
+  returnsSheet.getRow(1).values = returnsHasTaxes
+    ? [...returnsBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : returnsBaseHeaders
   styleHeader(returnsSheet, 1)
 
   // Sort returns by return_creation_date descending (newest first)
@@ -1530,7 +1678,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     returnsTotal += billedAmt
 
-    returnsSheet.getRow(row).values = [
+    const returnsBaseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       r.return_id || '',
@@ -1543,18 +1691,33 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       r.return_creation_date ? formatExcelDate(r.return_creation_date) : '',
       r.fc_name || ''
     ]
+
+    if (returnsHasTaxes) {
+      const returnTaxType = r.taxes && r.taxes.length > 0 ? r.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const returnTaxRate = r.taxes && r.taxes.length > 0 ? r.taxes[0].tax_rate : ''
+      const returnTaxAmount = r.taxes && r.taxes.length > 0 ? r.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      returnsSheet.getRow(row).values = [...returnsBaseRowValues, returnTaxType, returnTaxRate, returnTaxAmount]
+    } else {
+      returnsSheet.getRow(row).values = returnsBaseRowValues
+    }
     row++
   }
   const returnsTotalRow = addTotalRow(returnsSheet, row, 6, returnsTotal)
+  const returnsColCount = returnsHasTaxes ? 14 : 11
   // Set column widths individually
-  for (let i = 1; i <= 11; i++) returnsSheet.getColumn(i).width = 15
+  for (let i = 1; i <= returnsColCount; i++) returnsSheet.getColumn(i).width = 15
 
   // 4. RECEIVING SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const receivingSheet = workbook.addWorksheet('Receiving')
-  receivingSheet.getRow(1).values = [
-    'User ID', 'Merchant Name', 'WRO ID', 'Fee Type', 'Total Charge', 'Transaction Type', 'Transaction Date'
-  ]
+
+  // Check if any receiving has taxes
+  const receivingHasTaxes = detailedData.receiving.some(r => r.taxes && r.taxes.length > 0)
+
+  const receivingBaseHeaders = ['User ID', 'Merchant Name', 'WRO ID', 'Fee Type', 'Total Charge', 'Transaction Type', 'Transaction Date']
+  receivingSheet.getRow(1).values = receivingHasTaxes
+    ? [...receivingBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : receivingBaseHeaders
   styleHeader(receivingSheet, 1)
 
   // Sort receiving by transaction_date descending (newest first)
@@ -1572,7 +1735,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     receivingTotal += billedAmt
 
-    receivingSheet.getRow(row).values = [
+    const receivingBaseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       r.wro_id || '',
@@ -1581,20 +1744,34 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       r.transaction_type || '',
       r.transaction_date ? formatExcelDate(r.transaction_date) : ''
     ]
+
+    if (receivingHasTaxes) {
+      const recTaxType = r.taxes && r.taxes.length > 0 ? r.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const recTaxRate = r.taxes && r.taxes.length > 0 ? r.taxes[0].tax_rate : ''
+      const recTaxAmount = r.taxes && r.taxes.length > 0 ? r.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      receivingSheet.getRow(row).values = [...receivingBaseRowValues, recTaxType, recTaxRate, recTaxAmount]
+    } else {
+      receivingSheet.getRow(row).values = receivingBaseRowValues
+    }
     row++
   }
   const receivingTotalRow = addTotalRow(receivingSheet, row, 5, receivingTotal)
   // Set column widths individually
-  const receivingWidths = [12, 20, 15, 20, 15, 15, 20]
+  const receivingWidths = receivingHasTaxes ? [12, 20, 15, 20, 15, 15, 20, 10, 12, 12] : [12, 20, 15, 20, 15, 15, 20]
   for (let i = 0; i < receivingWidths.length; i++) receivingSheet.getColumn(i + 1).width = receivingWidths[i]
+  const receivingColCount = receivingHasTaxes ? 10 : 7
 
   // 5. STORAGE SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const storageSheet = workbook.addWorksheet('Storage')
-  storageSheet.getRow(1).values = [
-    'User ID', 'Merchant Name', 'Charge Date', 'FC Name', 'Inventory ID',
-    'Location Type', 'Total Charge', 'Comment'
-  ]
+
+  // Check if any storage has taxes
+  const storageHasTaxes = detailedData.storage.some(s => s.taxes && s.taxes.length > 0)
+
+  const storageBaseHeaders = ['User ID', 'Merchant Name', 'Charge Date', 'FC Name', 'Inventory ID', 'Location Type', 'Total Charge', 'Comment']
+  storageSheet.getRow(1).values = storageHasTaxes
+    ? [...storageBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : storageBaseHeaders
   styleHeader(storageSheet, 1)
 
   // Sort storage by charge_start_date descending (newest first)
@@ -1612,7 +1789,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     storageTotal += billedAmt
 
-    storageSheet.getRow(row).values = [
+    const storageBaseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       s.charge_start_date ? formatExcelDate(s.charge_start_date) : '',
@@ -1622,18 +1799,33 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       billedAmt,
       s.comment || ''
     ]
+
+    if (storageHasTaxes) {
+      const storageTaxType = s.taxes && s.taxes.length > 0 ? s.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const storageTaxRate = s.taxes && s.taxes.length > 0 ? s.taxes[0].tax_rate : ''
+      const storageTaxAmount = s.taxes && s.taxes.length > 0 ? s.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      storageSheet.getRow(row).values = [...storageBaseRowValues, storageTaxType, storageTaxRate, storageTaxAmount]
+    } else {
+      storageSheet.getRow(row).values = storageBaseRowValues
+    }
     row++
   }
   const storageTotalRow = addTotalRow(storageSheet, row, 7, storageTotal)
+  const storageColCount = storageHasTaxes ? 11 : 8
   // Set column widths individually
-  for (let i = 1; i <= 8; i++) storageSheet.getColumn(i).width = 15
+  for (let i = 1; i <= storageColCount; i++) storageSheet.getColumn(i).width = 15
 
   // 6. CREDITS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
   const creditsSheet = workbook.addWorksheet('Credits')
-  creditsSheet.getRow(1).values = [
-    'User ID', 'Merchant Name', 'Reference ID', 'Transaction Date', 'Credit Reason', 'Credit Amount'
-  ]
+
+  // Check if any credit has taxes
+  const creditsHasTaxes = detailedData.credits.some(c => c.taxes && c.taxes.length > 0)
+
+  const creditsBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Transaction Date', 'Credit Reason', 'Credit Amount']
+  creditsSheet.getRow(1).values = creditsHasTaxes
+    ? [...creditsBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
+    : creditsBaseHeaders
   styleHeader(creditsSheet, 1)
 
   // Sort credits by transaction_date descending (newest first)
@@ -1651,7 +1843,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
 
     creditsTotal += billedAmt
 
-    creditsSheet.getRow(row).values = [
+    const creditsBaseRowValues = [
       data.client.merchant_id || '',  // User ID
       data.client.company_name,
       c.reference_id || c.id,
@@ -1659,11 +1851,21 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       c.credit_reason || '',
       billedAmt
     ]
+
+    if (creditsHasTaxes) {
+      const creditTaxType = c.taxes && c.taxes.length > 0 ? c.taxes.map(t => t.tax_type).filter(Boolean).join('+') || '' : ''
+      const creditTaxRate = c.taxes && c.taxes.length > 0 ? c.taxes[0].tax_rate : ''
+      const creditTaxAmount = c.taxes && c.taxes.length > 0 ? c.taxes.reduce((sum, t) => sum + (t.tax_amount || 0), 0) : ''
+      creditsSheet.getRow(row).values = [...creditsBaseRowValues, creditTaxType, creditTaxRate, creditTaxAmount]
+    } else {
+      creditsSheet.getRow(row).values = creditsBaseRowValues
+    }
     row++
   }
   const creditsTotalRow = addTotalRow(creditsSheet, row, 6, creditsTotal)
-  const creditsWidths = [12, 20, 15, 20, 30, 15]
+  const creditsWidths = creditsHasTaxes ? [12, 20, 15, 20, 30, 15, 10, 12, 12] : [12, 20, 15, 20, 30, 15]
   for (let i = 0; i < creditsWidths.length; i++) creditsSheet.getColumn(i + 1).width = creditsWidths[i]
+  const creditsColCount = creditsHasTaxes ? 9 : 6
   // NOTE: Column-level numFmt removed to prevent phantom rows in Excel
 
   // Format cells row-by-row (not entire columns) to prevent phantom blank rows in Excel
@@ -1717,13 +1919,13 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     return letter
   }
 
-  // Set autoFilter for each sheet to define the data range
-  shipmentsSheet.autoFilter = `A1:${colToLetter(35)}${shipmentsTotalRow}`
-  feesSheet.autoFilter = `A1:${colToLetter(6)}${feesTotalRow}`
-  returnsSheet.autoFilter = `A1:${colToLetter(11)}${returnsTotalRow}`
-  receivingSheet.autoFilter = `A1:${colToLetter(7)}${receivingTotalRow}`
-  storageSheet.autoFilter = `A1:${colToLetter(8)}${storageTotalRow}`
-  creditsSheet.autoFilter = `A1:${colToLetter(6)}${creditsTotalRow}`
+  // Set autoFilter for each sheet to define the data range (uses conditional column counts for tax columns)
+  shipmentsSheet.autoFilter = `A1:${colToLetter(shipmentsColCount)}${shipmentsTotalRow}`
+  feesSheet.autoFilter = `A1:${colToLetter(feesColCount)}${feesTotalRow}`
+  returnsSheet.autoFilter = `A1:${colToLetter(returnsColCount)}${returnsTotalRow}`
+  receivingSheet.autoFilter = `A1:${colToLetter(receivingColCount)}${receivingTotalRow}`
+  storageSheet.autoFilter = `A1:${colToLetter(storageColCount)}${storageTotalRow}`
+  creditsSheet.autoFilter = `A1:${colToLetter(creditsColCount)}${creditsTotalRow}`
 
   // Trim each worksheet by removing any rows beyond the total row
   // This is more aggressive than autoFilter and directly removes phantom rows
@@ -1810,11 +2012,13 @@ export async function storeInvoiceFiles(
   const pdfPath = pdfBuffer ? `${clientId}/${invoiceNumber}/${invoiceNumber}.pdf` : null
 
   // Upload XLS
+  // cacheControl: 'no-cache' prevents CDN caching so updates are immediately visible
   const { error: xlsError } = await supabase.storage
     .from('invoices')
     .upload(xlsPath, xlsBuffer, {
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       upsert: true,
+      cacheControl: 'no-cache, no-store, must-revalidate',
     })
 
   if (xlsError) {
@@ -1829,6 +2033,7 @@ export async function storeInvoiceFiles(
       .upload(pdfPath, pdfBuffer, {
         contentType: 'application/pdf',
         upsert: true,
+        cacheControl: 'no-cache, no-store, must-revalidate',
       })
 
     if (pdfError) {
@@ -1894,13 +2099,18 @@ export async function collectDetailedBillingData(
   const startStr = periodStart.toISOString().split('T')[0]
   const endStr = `${periodEnd.toISOString().split('T')[0]}T23:59:59.999Z`
 
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
+
   // Fetch all transactions for the client and period
+  // Exclude disputed/invalid transactions (dispute_status must be null)
   const { data: transactions } = await supabase
     .from('transactions')
     .select('*')
     .eq('client_id', clientId)
     .gte('charge_date', startStr)
     .lte('charge_date', endStr)
+    .is('dispute_status', null)
     .order('charge_date', { ascending: true })
 
   // Build returns data lookup from returns table for full timestamps
@@ -1945,6 +2155,7 @@ export async function collectDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -1970,6 +2181,7 @@ export async function collectDetailedBillingData(
           actual_weight_oz: Number(details.ActualWeightOz) || null,
           dim_weight_oz: Number(details.DimWeightOz) || null,
           billable_weight_oz: Number(details.BillableWeightOz) || null,
+          taxes: tx.taxes as TaxInfo[] | undefined,
           length: Number(details.Length) || null,
           width: Number(details.Width) || null,
           height: Number(details.Height) || null,
@@ -1992,6 +2204,7 @@ export async function collectDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -2001,6 +2214,7 @@ export async function collectDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
@@ -2008,6 +2222,9 @@ export async function collectDetailedBillingData(
       const refParts = String(tx.reference_id || '').split('-')
       const inventoryId = refParts[1] || ''
       const locationType = refParts[2] || String(details.LocationType || '')
+
+      // Calculate taxes for Canadian FCs if not already present
+      const storageTaxInfo = extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, tx.fulfillment_center as string, cost)
 
       storage.push({
         id: tx.id,
@@ -2018,6 +2235,7 @@ export async function collectDetailedBillingData(
         location_type: locationType,
         amount: cost,
         comment: String(details.Comment || ''),
+        taxes: storageTaxInfo.taxes || (tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'Return') {
       // Returns - look up return data for full timestamp
@@ -2040,6 +2258,7 @@ export async function collectDetailedBillingData(
         return_type: returnData?.return_type as string || String(details.ReturnType || ''),
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
@@ -2049,6 +2268,7 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO = Warehouse Receiving Order) - decode ULID for full timestamp
@@ -2060,6 +2280,7 @@ export async function collectDetailedBillingData(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -2069,9 +2290,10 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
-      /// CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
+      // CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
       // This ensures XLSX matches PDF - no orphaned fees
       shipmentFees.push({
         id: tx.id,
@@ -2079,6 +2301,7 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }
@@ -2102,6 +2325,9 @@ export async function collectDetailedBillingDataByInvoiceIds(
   invoiceIds: number[]
 ): Promise<DetailedBillingData> {
   const supabase = createAdminClient()
+
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
 
   // Fetch all transactions for the client by invoice_id_sb with pagination
   let allTransactions: Array<Record<string, unknown>> = []
@@ -2159,18 +2385,19 @@ export async function collectDetailedBillingDataByInvoiceIds(
   }
 
   // Fetch shipment_items to build products_sold and total_quantity
-  // Use smaller batches (200) and higher limit (2000) to avoid Supabase's 1000 row default
+  // IMPORTANT: Supabase caps at 1000 rows regardless of .limit() value!
+  // Use batch size of 50 shipments to stay safely under 1000 items (50 × 18 max = 900)
   const shipmentItemsMap = new Map<string, Array<{ name: string; quantity: number }>>()
   const shipmentsNeedingQtyFallback: string[] = [] // Track shipments with null quantity
 
-  for (let i = 0; i < shipmentIds.length; i += 200) {
-    const batch = shipmentIds.slice(i, i + 200)
+  for (let i = 0; i < shipmentIds.length; i += 50) {
+    const batch = shipmentIds.slice(i, i + 50)
     const { data: itemsData } = await supabase
       .from('shipment_items')
       .select('shipment_id, name, quantity')
       .eq('client_id', clientId)
       .in('shipment_id', batch)
-      .limit(2000)
+      .limit(1000)
 
     for (const item of itemsData || []) {
       const sid = String(item.shipment_id)
@@ -2311,6 +2538,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -2373,6 +2601,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
           transit_time_days: transitDays,
           fc_name: shipmentData?.fc_name as string || tx.fulfillment_center as string,
           order_category: orderData?.order_type as string || String(details.OrderCategory || ''),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         // Additional Services - decode ULID for full timestamp (matches reference XLSX)
@@ -2382,6 +2611,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -2391,12 +2621,16 @@ export async function collectDetailedBillingDataByInvoiceIds(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date as string,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
       const refParts = String(tx.reference_id || '').split('-')
       const inventoryId = refParts[1] || ''
       const locationType = refParts[2] || String(details.LocationType || '')
+
+      // Calculate taxes for Canadian FCs if not already present
+      const storageTaxInfo = extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, tx.fulfillment_center as string, cost)
 
       storage.push({
         id: tx.id as string,
@@ -2407,6 +2641,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         location_type: locationType,
         amount: cost,
         comment: String(details.Comment || ''),
+        taxes: storageTaxInfo.taxes || (tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'Return') {
       // Look up return data for full timestamp
@@ -2429,6 +2664,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         return_type: returnData?.return_type as string || String(details.ReturnType || ''),
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
@@ -2438,6 +2674,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp (matches reference XLSX)
@@ -2449,6 +2686,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type as string || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -2458,9 +2696,10 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
-      /// CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
+      // CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
       // This ensures XLSX matches PDF - no orphaned fees
       shipmentFees.push({
         id: tx.id as string,
@@ -2468,6 +2707,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }
@@ -2494,6 +2734,9 @@ export async function collectUnprocessedDetailedBillingData(
 ): Promise<DetailedBillingData> {
   const supabase = createAdminClient()
 
+  // Load FC tax cache before processing (used by extractStorageTaxInfo)
+  await loadFCTaxCache()
+
   // Fetch all unprocessed transactions for the client with pagination
   let allTransactions: Array<Record<string, unknown>> = []
   let offset = 0
@@ -2504,6 +2747,7 @@ export async function collectUnprocessedDetailedBillingData(
       .select('*')
       .eq('client_id', clientId)
       .eq('invoiced_status_jp', false)
+      .is('dispute_status', null) // Exclude disputed/invalid transactions
       .order('charge_date', { ascending: true })
       .order('id', { ascending: true }) // Secondary sort for stable pagination
       .range(offset, offset + 999)
@@ -2558,6 +2802,7 @@ export async function collectUnprocessedDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -2595,6 +2840,7 @@ export async function collectUnprocessedDetailedBillingData(
           transit_time_days: Number(details.TransitTimeDays) || null,
           fc_name: tx.fulfillment_center as string,
           order_category: String(details.OrderCategory || ''),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         // Additional Services - decode ULID for full timestamp (matches reference XLSX)
@@ -2604,6 +2850,7 @@ export async function collectUnprocessedDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -2613,12 +2860,16 @@ export async function collectUnprocessedDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date as string,
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
       const refParts = String(tx.reference_id || '').split('-')
       const inventoryId = refParts[1] || ''
       const locationType = refParts[2] || String(details.LocationType || '')
+
+      // Calculate taxes for Canadian FCs if not already present
+      const storageTaxInfo = extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, tx.fulfillment_center as string, cost)
 
       storage.push({
         id: tx.id as string,
@@ -2629,6 +2880,7 @@ export async function collectUnprocessedDetailedBillingData(
         location_type: locationType,
         amount: cost,
         comment: String(details.Comment || ''),
+        taxes: storageTaxInfo.taxes || (tx.taxes as TaxInfo[] | undefined),
       })
     } else if (referenceType === 'Return') {
       // Returns - look up return data for full timestamp
@@ -2651,6 +2903,7 @@ export async function collectUnprocessedDetailedBillingData(
         return_type: returnData?.return_type as string || String(details.ReturnType || ''),
         return_creation_date: returnTimestamp,
         fc_name: returnData?.fc_name as string || tx.fulfillment_center as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services (not Receiving)
@@ -2660,6 +2913,7 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp
@@ -2671,6 +2925,7 @@ export async function collectUnprocessedDetailedBillingData(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type as string || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -2680,9 +2935,10 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
-      /// CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
+      // CATCH-ALL: Any unknown transaction goes to Additional Services (shipmentFees)
       // This ensures XLSX matches PDF - no orphaned fees
       shipmentFees.push({
         id: tx.id as string,
@@ -2690,6 +2946,7 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date as string,
+        taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }

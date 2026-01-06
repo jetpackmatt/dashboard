@@ -49,7 +49,7 @@ export async function POST(
       .from('invoices_jetpack')
       .select(`
         *,
-        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id, billing_address)
+        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id, billing_address, payment_method)
       `)
       .eq('id', invoiceId)
       .single()
@@ -70,6 +70,7 @@ export async function POST(
 
     // Get ShipBob invoice IDs from the invoice record
     // These are stored at generation time and define exactly which SB invoices are included
+    // If new invoice types need to be added (e.g., Credits), update shipbob_invoice_ids first
     const shipbobInvoiceIds: number[] = invoice.shipbob_invoice_ids || []
 
     if (shipbobInvoiceIds.length === 0) {
@@ -106,8 +107,8 @@ export async function POST(
     // Step 3: Apply markups
     lineItems = await applyMarkupsToLineItems(client.id, lineItems)
 
-    // Step 4: Generate summary
-    const summary = generateSummary(lineItems)
+    // Step 4: Generate summary (initial - may be recalculated if CC fee applies)
+    let summary = generateSummary(lineItems)
 
     // Step 5: Calculate storage period (same logic as cron job)
     const parseDateAsLocal = (dateStr: string): Date => {
@@ -153,6 +154,36 @@ export async function POST(
       return `${year}-${month}-${day}`
     }
 
+    // Step 5.5: Add CC processing fee if client uses credit card payment
+    const isCreditCardPayment = client.payment_method === 'credit_card'
+    if (isCreditCardPayment) {
+      const ccFeeRate = 0.03 // 3%
+      const ccFeeAmount = Math.round(summary.totalAmount * ccFeeRate * 100) / 100
+
+      // Create CC fee line item
+      const ccFeeLineItem = {
+        id: `cc-fee-${client.id}-${Date.now()}`,
+        billingTable: 'cc_processing_fee',
+        billingRecordId: `cc-fee-${client.id}`,
+        baseAmount: ccFeeAmount,
+        markupApplied: 0, // No markup on the fee itself
+        billedAmount: ccFeeAmount,
+        markupRuleId: null,
+        markupPercentage: 0,
+        lineCategory: 'Additional Services' as const,
+        description: 'Credit Card Processing Fee (3%)',
+        feeType: 'Credit Card Processing Fee (3%)',
+        transactionDate: formatLocalDate(new Date(invoice.invoice_date)),
+      }
+
+      lineItems.push(ccFeeLineItem)
+
+      // Recalculate summary with CC fee included
+      summary = generateSummary(lineItems)
+
+      console.log(`  Added CC processing fee: $${ccFeeAmount.toFixed(2)}`)
+    }
+
     // Step 6: Generate new files
     const invoiceData = {
       invoice: {
@@ -183,6 +214,7 @@ export async function POST(
     })
 
     // Step 7: Store new files (upsert will overwrite existing)
+    const newVersion = (invoice.version || 1) + 1
     await storeInvoiceFiles(invoice.id, client.id, invoice.invoice_number, xlsBuffer, pdfBuffer)
 
     // Extract actual ShipBob IDs used (in case lineItems has a different set)
@@ -200,7 +232,7 @@ export async function POST(
         subtotal: summary.subtotal,
         total_markup: summary.totalMarkup,
         total_amount: summary.totalAmount,
-        version: (invoice.version || 1) + 1,
+        version: newVersion,
         generated_at: new Date().toISOString(),
         shipbob_invoice_ids: actualShipbobIds,
         line_items_json: lineItems,
@@ -215,7 +247,7 @@ export async function POST(
     // NOTE: Transactions are NOT marked here - that happens on approval
     // This allows clean regeneration without affecting transaction state
 
-    console.log(`Regenerated invoice ${invoice.invoice_number} (v${(invoice.version || 1) + 1})`)
+    console.log(`Regenerated invoice ${invoice.invoice_number} (v${newVersion})`)
     console.log(`  Transactions: ${lineItems.length}, ShipBob invoices: ${actualShipbobIds.length}`)
 
     return NextResponse.json({
@@ -223,7 +255,7 @@ export async function POST(
       invoice: {
         id: invoice.id,
         invoice_number: invoice.invoice_number,
-        version: (invoice.version || 1) + 1,
+        version: newVersion,
         subtotal: summary.subtotal,
         total_markup: summary.totalMarkup,
         total_amount: summary.totalAmount,

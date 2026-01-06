@@ -26,6 +26,12 @@ import { useResponsiveTable } from "@/hooks/use-responsive-table"
 // Cell renderer function type - receives the row data and column config
 export type CellRenderer<T> = (row: T, column: ColumnConfig) => React.ReactNode
 
+// Prefix column config - for special columns like client badge that sit outside normal column system
+export interface PrefixColumn<T> {
+  width: string        // Fixed width (e.g., "28px")
+  render: (row: T) => React.ReactNode
+}
+
 // Props for the TransactionsTable component
 export interface TransactionsTableProps<T> {
   // Configuration
@@ -63,6 +69,10 @@ export interface TransactionsTableProps<T> {
 
   // Row click handler - when provided, rows become clickable
   onRowClick?: (row: T) => void
+
+  // Optional prefix column (e.g., client badge) - sits before all data columns
+  // Not part of column config system (no column selector, responsive hiding, etc.)
+  prefixColumn?: PrefixColumn<T>
 }
 
 // ============================================
@@ -78,6 +88,7 @@ interface TableRowProps<T> {
   isPageLoading: boolean
   integratedHeader?: boolean
   onRowClick?: (row: T) => void
+  prefixColumn?: PrefixColumn<T>
 }
 
 // Generic memoized row component to prevent unnecessary re-renders
@@ -90,6 +101,7 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
   isPageLoading,
   integratedHeader = false,
   onRowClick,
+  prefixColumn,
 }: TableRowProps<T>) {
   const handleClick = React.useCallback(() => {
     if (onRowClick) {
@@ -103,11 +115,21 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
       onClick={handleClick}
       className={`h-12 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 ${isPageLoading ? 'opacity-50' : ''} ${onRowClick ? 'cursor-pointer' : ''}`}
     >
+      {/* Prefix column (e.g., client badge) - sits before all data columns */}
+      {prefixColumn && (
+        <td
+          style={{ width: prefixColumn.width }}
+          className={`align-middle ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
+        >
+          {prefixColumn.render(row)}
+        </td>
+      )}
       {visibleColumns.map((column, index) => {
         // Status and orderType columns contain Badges - don't apply text-ellipsis
         const isNonTruncatable = column.id === 'status' || column.id === 'orderType'
         // Determine padding based on position and integrated mode
-        const isFirst = index === 0
+        // When prefix column exists, first data column is no longer "first" for padding
+        const isFirst = index === 0 && !prefixColumn
         const isLast = index === visibleColumns.length - 1
         let paddingClass = 'px-2'
         if (integratedHeader) {
@@ -116,11 +138,13 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
         } else {
           if (isFirst) paddingClass = 'pl-[15px] pr-2'
         }
+        // Text alignment from column config
+        const alignClass = column.align === 'center' ? 'text-center' : column.align === 'right' ? 'text-right' : 'text-left'
         return (
           <td
             key={column.id}
             style={{ width: getColumnWidth(column.id) }}
-            className={`${paddingClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
+            className={`${paddingClass} ${alignClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
           >
             {cellRenderers[column.id]
               ? cellRenderers[column.id](row, column)
@@ -153,6 +177,7 @@ export function TransactionsTable<T>({
   itemName = "items",
   integratedHeader = false,
   onRowClick,
+  prefixColumn,
 }: TransactionsTableProps<T>) {
   // Get responsive column visibility
   const {
@@ -178,15 +203,25 @@ export function TransactionsTable<T>({
         <div className={integratedHeader ? '' : ''}>
           <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
             <colgroup>
+              {/* Prefix column (e.g., client badge) */}
+              {prefixColumn && <col style={{ width: prefixColumn.width }} />}
               {visibleColumns.map((column) => (
                 <col key={column.id} style={{ width: getColumnWidth(column.id) }} />
               ))}
             </colgroup>
             <thead className="sticky top-0 bg-[#fcfcfc] dark:bg-zinc-900 z-10">
               <tr className="h-11">
+                {/* Prefix column header (empty) */}
+                {prefixColumn && (
+                  <th
+                    style={{ width: prefixColumn.width }}
+                    className={`align-middle ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
+                  />
+                )}
                 {visibleColumns.map((column, index) => {
                   // Determine padding based on position and integrated mode
-                  const isFirst = index === 0
+                  // When prefix column exists, first data column is no longer "first" for padding
+                  const isFirst = index === 0 && !prefixColumn
                   const isLast = index === visibleColumns.length - 1
                   let paddingClass = 'px-2'
                   if (integratedHeader) {
@@ -195,11 +230,13 @@ export function TransactionsTable<T>({
                   } else {
                     if (isFirst) paddingClass = 'pl-[15px] pr-2'
                   }
+                  // Text alignment from column config
+                  const alignClass = column.align === 'center' ? 'text-center' : column.align === 'right' ? 'text-right' : 'text-left'
                   return (
                     <th
                       key={column.id}
                       style={{ width: getColumnWidth(column.id) }}
-                      className={`${paddingClass} text-left align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
+                      className={`${paddingClass} ${alignClass} align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
                     >
                       {column.header}
                     </th>
@@ -212,8 +249,15 @@ export function TransactionsTable<T>({
                 // Loading skeleton rows
                 Array.from({ length: 10 }).map((_, i) => (
                   <tr key={`loading-${i}`} className="h-12 dark:bg-[hsl(220,8%,8%)]">
+                    {/* Prefix column skeleton (empty - badge not shown during loading) */}
+                    {prefixColumn && (
+                      <td
+                        style={{ width: prefixColumn.width }}
+                        className={`${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
+                      />
+                    )}
                     {visibleColumns.map((column, colIndex) => {
-                      const isFirst = colIndex === 0
+                      const isFirst = colIndex === 0 && !prefixColumn
                       const isLast = colIndex === visibleColumns.length - 1
                       let paddingClass = 'px-2'
                       if (integratedHeader) {
@@ -246,12 +290,13 @@ export function TransactionsTable<T>({
                     isPageLoading={isPageLoading}
                     integratedHeader={integratedHeader}
                     onRowClick={onRowClick}
+                    prefixColumn={prefixColumn}
                   />
                 ))
               ) : (
                 <tr>
                   <td
-                    colSpan={visibleColumns.length}
+                    colSpan={visibleColumns.length + (prefixColumn ? 1 : 0)}
                     className="h-24 text-center"
                   >
                     {emptyMessage}

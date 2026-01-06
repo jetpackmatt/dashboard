@@ -3,7 +3,11 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   runPreflightValidation,
+  checkUnattributedTransactions,
+  getUnattributedTransactions,
   type ValidationResult,
+  type ValidationIssue,
+  type UnattributedTransaction,
 } from '@/lib/billing/preflight-validation'
 
 interface ClientValidation {
@@ -41,10 +45,10 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to fetch clients' }, { status: 500 })
     }
 
-    // Get unprocessed ShipBob invoices
+    // Get unprocessed ShipBob invoices with period dates
     const { data: unprocessedInvoices, error: invoicesError } = await adminClient
       .from('invoices_sb')
-      .select('id, shipbob_invoice_id')
+      .select('id, shipbob_invoice_id, period_start, period_end')
       .is('jetpack_invoice_id', null)
       .neq('invoice_type', 'Payment')
 
@@ -70,6 +74,10 @@ export async function GET() {
       .map((inv: { shipbob_invoice_id: string }) => parseInt(inv.shipbob_invoice_id, 10))
       .filter((id: number) => !isNaN(id))
 
+    // Extract the billing period from invoices (all should have same period)
+    const periodStart = unprocessedInvoices[0]?.period_start?.split('T')[0] || null
+    const periodEnd = unprocessedInvoices[0]?.period_end?.split('T')[0] || null
+
     // Run validation for each client
     const results: ClientValidation[] = []
     let passedCount = 0
@@ -77,7 +85,7 @@ export async function GET() {
     let failedCount = 0
 
     for (const client of clients) {
-      const validation = await runPreflightValidation(adminClient, client.id, shipbobInvoiceIds)
+      const validation = await runPreflightValidation(adminClient, client.id, shipbobInvoiceIds, periodStart, periodEnd)
 
       results.push({
         clientId: client.id,
@@ -104,9 +112,21 @@ export async function GET() {
            r.validation.summary.creditsTransactions > 0
     )
 
+    // Run GLOBAL unattributed transaction check (once, not per-client)
+    const globalIssues: ValidationIssue[] = []
+    const unattributedIssue = await checkUnattributedTransactions(adminClient, shipbobInvoiceIds)
+    if (unattributedIssue) {
+      globalIssues.push(unattributedIssue)
+    }
+
+    // Get full details of unattributed transactions for display
+    const unattributedTransactions = await getUnattributedTransactions(adminClient, shipbobInvoiceIds)
+
     return NextResponse.json({
       success: true,
       shipbobInvoiceCount: shipbobInvoiceIds.length,
+      globalIssues, // Global data quality issues (not per-client)
+      unattributedTransactions, // Full details of unattributed transactions for display
       clients: clientsWithTransactions.map(r => ({
         clientId: r.clientId,
         clientName: r.clientName,
@@ -120,6 +140,7 @@ export async function GET() {
         passed: clientsWithTransactions.filter(r => r.validation.passed && r.validation.warnings.length === 0).length,
         warnings: clientsWithTransactions.filter(r => r.validation.passed && r.validation.warnings.length > 0).length,
         failed: clientsWithTransactions.filter(r => !r.validation.passed).length,
+        hasGlobalIssues: globalIssues.length > 0,
       },
     })
   } catch (error) {

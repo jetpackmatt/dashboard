@@ -66,7 +66,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { company_name, merchant_id, short_code, billing_address } = body
+    const { company_name, merchant_id, short_code, billing_address, billing_emails, billing_phone, billing_contact_name } = body
 
     // Validate short_code format if provided
     const trimmedShortCode = short_code !== undefined
@@ -79,11 +79,19 @@ export async function PATCH(
       )
     }
 
+    // Validate billing_emails array if provided
+    const cleanedBillingEmails = billing_emails !== undefined
+      ? (Array.isArray(billing_emails) ? billing_emails.filter((e: string) => e && e.trim()) : null)
+      : undefined
+
     const client = await updateClient(clientId, {
       company_name: company_name?.trim(),
       merchant_id: merchant_id?.trim() || null,
       short_code: trimmedShortCode,
       billing_address: billing_address || null,
+      billing_emails: cleanedBillingEmails,
+      billing_phone: billing_phone !== undefined ? (billing_phone?.trim() || null) : undefined,
+      billing_contact_name: billing_contact_name !== undefined ? (billing_contact_name?.trim() || null) : undefined,
     })
 
     return NextResponse.json({ client })

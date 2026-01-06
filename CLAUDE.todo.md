@@ -1,99 +1,81 @@
-# Invoice Preflight Validation Fixes - Dec 13, 2025
-
-## Context
-Processing Dec 8, 2025 invoices (IDs: 8661966, 8661967, 8661968, 8661969) blocked by preflight validation errors.
+# Billing System TODO
 
 ---
 
-## Issue 1: Missing base_cost for Shipment 323745975
+## 🔴 REMAINING - Action Required
 
-**Status:** ✅ FIXED
+### [ ] Canadian FC Tax Handling Strategy (Before Monday Dec 30)
+**Priority**: Must resolve before next invoicing
 
-**Problem:** Shipment 323745975 (Henson) had no base_cost in transactions table.
+**Problem**: `fulfillment_centers` table identifies Canadian FCs (Brampton Ontario = CA, 13% HST), but ShipBob's API is inconsistent about tax reporting.
 
-**Root cause:** Duplicate transactions for the same shipment:
-- Transaction 1: `invoice_id_sb = NULL` (orphan from earlier sync)
-- Transaction 2: `invoice_id_sb = 8661966` (correct, on Dec 8 invoice)
+| Fee Type | Current Handling | Status |
+|----------|------------------|--------|
+| Storage | We calculate 13% HST at invoice generation | ✅ Working |
+| Per Pick Fee | Preflight warns but no auto-fix | ⚠️ Needs strategy |
+| Shipping/Returns/Other | Not handled | ❓ TBD |
 
-The SFTP sync uses `.maybeSingle()` which errors when multiple rows match.
+**Questions to answer**:
+1. Which Additional Services fee types need Canadian tax handling?
+2. For fees where GST is embedded in cost, do we back-calculate base cost?
+3. Should we populate `taxes` JSONB during sync for Canadian FC transactions?
+4. Does SFTP breakdown data include Canadian taxes separately?
 
-**Fixes applied:**
-1. ✅ Manually populated base_cost for the Dec 8 invoice transaction (`scripts/fix-shipment-323745975.js`)
-2. ✅ Updated `lib/billing/sftp-client.ts` to filter by `invoice_id_sb` to avoid duplicate match issues in future
-
----
-
-## Issue 2: Missing products_sold/quantity for 6 shipments
-
-**Status:** ✅ FIXED
-
-**Problem:** 6 shipments had item names but no quantity data:
-- Henson: 314986466 (hs-wholesale, B2B), 314477032 (sjconsulting), 317488641 (hs-wholesale, B2B), 325911412 (sjconsulting)
-- Methyl-Life: 325023757 (N/A channel), 324708598 (ShipBob Default)
-
-**Root cause:** ShipBob API doesn't return quantity for:
-1. B2B/wholesale orders (`order_type = 'B2B'`)
-2. Manual orders (ShipBob Default, N/A channels)
-3. Archived shipments (API returns 404)
-
-**Fix applied:**
-✅ Updated `lib/billing/preflight-validation.ts` - `withProductsSold` calculation now skips validation for:
-- B2B orders (`order_type = 'B2B'`)
-- Manual orders (`store_order_id IS NULL` + ShipBob Default/N/A/null channel)
-- Shipments with names but no quantities (ShipBob API limitation, e.g., sjconsulting channel)
-- Shipments with no items but has channel (likely archived, API returns 404)
+**Files**: `lib/fulfillment-centers.ts`, `lib/billing/invoice-generator.ts`, `lib/shipbob/sync.ts`
 
 ---
 
-## Issue 3: Relaxing validation for B2B/Manual orders
+### [ ] Optimize tracking_id Backfill (Low Priority)
+**Context**: Third pass in `syncAllTransactions()` backfills tracking_id from shipments table.
 
-**Status:** ✅ FIXED
+**Issue**: Currently queries ALL transactions with `tracking_id IS NULL`. Some transaction types never have tracking (certain B2B fees). We re-check them every sync unnecessarily.
 
-**Problem:** Methyl-Life shipment 325023757 had channel "N/A" and missing store_order_id.
-
-**Fix applied:**
-✅ Updated `lib/billing/preflight-validation.ts` - `withStoreOrderId` validation now skips:
-- B2B orders (`order_type = 'B2B'`)
-- Manual channels (`ShipBob Default`, `N/A`, null)
+**Fix idea**: Add exclusion filter for fee types that never have shipment tracking.
 
 ---
 
-## Follow-up: Shipment Item Quantity Sync Issue (Separate Task)
+## 📋 Reference: Tax Handling by Fee Type
 
-**Status:** ⚠️ NOT FIXED - Documented for future investigation
-
-**Discovery:** While investigating Issue 2, found that 86.6% of Henson's shipment_items have NULL quantity:
-- Total shipment_items: 160,674
-- With quantity: 21,608 (13.4%)
-- Without quantity: 139,066 (86.6%)
-- Unique shipments affected: 551 (mostly ShipBob Default / ImportReview status)
-
-**Root cause analysis:**
-The sync code at [lib/shipbob/sync.ts:803-819](lib/shipbob/sync.ts#L803-L819) tries to get quantity from:
-1. `inventory.quantity` (from shipment.products.inventory array)
-2. `order.products` lookup by product ID
-3. `shipment.product.quantity`
-
-The issue: The quantity lookup by product ID fails because:
-- For many channels (sjconsulting, ShipBob Default), the API returns empty `inventory` array
-- The `order.products` lookup by `product.id` fails when product IDs don't match between order and shipment
-
-**Investigation notes:**
-- ShipBob API returns 404 for archived shipments (can't re-sync historical data)
-- User confirmed quantities ARE visible in ShipBob platform - sync issue, not missing data
-- order_items table has 160,473 records but shipment_items quantity lookup doesn't match
-
-**Recommended fix (future):**
-1. Investigate if there's another API field containing shipped quantity
-2. Consider matching by SKU instead of product ID
-3. Or get quantity from `shipment.products.quantity` if ShipBob added this field
-
-**Workaround (current):**
-Preflight validation relaxed to accept shipments with names but no quantities.
+| Fee Type | API Amount | Taxes in API | Current Handling |
+|----------|------------|--------------|------------------|
+| WRO Receiving Fee | Includes tax | Yes | ✅ Sync subtracts taxes from cost |
+| Shipping | Pre-tax | Yes (Canadian) | ✅ Uses taxes column |
+| Per Pick Fee (USA) | $0.26/pick | No | ✅ No tax needed |
+| Per Pick Fee (Canada) | $0.25 or $0.28 | **Inconsistent** | ⚠️ Sometimes GST embedded |
+| Storage (FC) | Pre-tax | No | ✅ Invoice calculates 13% GST for Brampton |
+| Returns/Additional Services | Pre-tax | Yes (Canadian) | ✅ Uses taxes column |
+| Credits | Pre-tax | No | ✅ No tax |
 
 ---
+---
 
-## Completed (Previously)
+## ✅ COMPLETED
 
-- [x] Fixed receiving count (5→3) - excluded "Inventory Placement Program Fee" from WRO count
-- [x] Updated CLAUDE.md with client ID verification guidance
+### Dec 23, 2025
+
+| Issue | Summary | Fix |
+|-------|---------|-----|
+| Upsert null client_id bug | Hourly reconcile was wiping ~5K attributed transactions | Only include client_id in upsert when non-null |
+| Attribution race conditions | Verified architecture is sound with 3-pass system | No changes needed |
+| Supabase 1000-row limit | Preflight/invoice batches could exceed limit | Reduced batch size 200→50 shipments |
+| Storage tax calculation | Brampton storage had no automatic tax handling | Invoice generator now calculates 13% HST |
+| Per Pick Fee mystery | API inconsistently embeds GST in Canadian Per Pick | Documented; preflight warns |
+| sync-reconcile safety | Verified calls fixed syncAllTransactions | Safe |
+| Preflight validation | Added 5 data quality checks | Catches unattributed transactions, duplicates, tax issues |
+| WRO Receiving Fee taxes | Taxes weren't being extracted | Sync now subtracts taxes from cost |
+| Tax Type column | Missing from XLS export | Added to all 6 tabs |
+| Preflight UI | Cleanup and styling | Dynamic grid layout |
+
+### Dec 13, 2025
+
+| Issue | Summary | Fix |
+|-------|---------|-----|
+| Missing base_cost (shipment 323745975) | Duplicate transactions caused SFTP sync failure | Filter by invoice_id_sb, manual backfill |
+| Missing products_sold (6 shipments) | B2B/manual orders don't return quantity | Preflight skips validation for B2B/manual |
+| B2B/Manual validation | Too strict for orders without store_order_id | Relaxed validation rules |
+
+### Earlier
+
+- Fixed receiving count (5→3) - excluded "Inventory Placement Program Fee" from WRO count
+- Updated CLAUDE.md with client ID verification guidance
+- Fixed tracking_id coverage for Per Pick Fee transactions

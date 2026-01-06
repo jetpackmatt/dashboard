@@ -3,13 +3,16 @@
 import * as React from "react"
 
 import { STORAGE_TABLE_CONFIG } from "@/lib/table-config"
-import { TransactionsTable } from "./transactions-table"
+import { TransactionsTable, PrefixColumn } from "./transactions-table"
 import { Storage, storageCellRenderers } from "./cell-renderers"
+import { ClientBadge } from "./client-badge"
+import { useClient } from "@/components/client-context"
+import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 
 const DEFAULT_PAGE_SIZE = 50
 
 interface StorageTableProps {
-  clientId: string
+  clientId: string | null
   fcFilter?: string
   locationTypeFilter?: string
   searchQuery?: string
@@ -17,6 +20,8 @@ interface StorageTableProps {
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
+  // Export handler registration
+  onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
 }
 
 export function StorageTable({
@@ -27,7 +32,12 @@ export function StorageTable({
   userColumnVisibility = {},
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
+  onExportTriggerReady,
 }: StorageTableProps) {
+  // Check if admin viewing all clients (for client badge prefix column)
+  const { isAdmin, selectedClientId } = useClient()
+  const showClientBadge = isAdmin && !selectedClientId
+
   // Convert "all" to undefined for API
   const effectiveFcFilter = fcFilter === "all" ? undefined : fcFilter
   const effectiveLocationTypeFilter = locationTypeFilter === "all" ? undefined : locationTypeFilter
@@ -61,10 +71,10 @@ export function StorageTable({
 
     try {
       const params = new URLSearchParams({
-        clientId,
         limit: size.toString(),
         offset: (page * size).toString(),
       })
+      if (clientId) params.set('clientId', clientId)
 
       // Add FC filter
       if (effectiveFcFilter) {
@@ -113,6 +123,52 @@ export function StorageTable({
     fetchData(newPageIndex, newPageSize, false)
   }
 
+  // Export handler
+  const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
+    const { format: exportFormat, scope } = options
+
+    let dataToExport: Storage[]
+
+    if (scope === 'current') {
+      dataToExport = data
+    } else {
+      const params = new URLSearchParams({
+        limit: '10000',
+        offset: '0',
+      })
+      if (clientId) params.set('clientId', clientId)
+      if (effectiveFcFilter) params.set('fc', effectiveFcFilter)
+      if (effectiveLocationTypeFilter) params.set('locationType', effectiveLocationTypeFilter)
+      if (searchQuery) params.set('search', searchQuery)
+
+      const response = await fetch(`/api/data/billing/storage?${params.toString()}`)
+      const result = await response.json()
+      dataToExport = result.data || []
+    }
+
+    exportData(dataToExport as unknown as Record<string, unknown>[], {
+      format: exportFormat,
+      scope,
+      filename: 'storage',
+      tableConfig: STORAGE_TABLE_CONFIG,
+    })
+  }, [data, clientId, effectiveFcFilter, effectiveLocationTypeFilter, searchQuery])
+
+  // Register export trigger with parent
+  React.useEffect(() => {
+    if (onExportTriggerReady) {
+      onExportTriggerReady(handleExport)
+    }
+  }, [onExportTriggerReady, handleExport])
+
+  // Client badge prefix column - only shown for admins viewing all clients
+  const clientBadgePrefixColumn: PrefixColumn<Storage> | undefined = showClientBadge
+    ? {
+        width: "56px",
+        render: (row) => <ClientBadge clientId={row.clientId} />,
+      }
+    : undefined
+
   return (
     <TransactionsTable
       config={STORAGE_TABLE_CONFIG}
@@ -129,6 +185,7 @@ export function StorageTable({
       emptyMessage="No storage records found."
       itemName="items"
       integratedHeader={true}
+      prefixColumn={clientBadgePrefixColumn}
     />
   )
 }

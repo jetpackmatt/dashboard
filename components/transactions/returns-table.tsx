@@ -4,13 +4,16 @@ import * as React from "react"
 import { DateRange } from "react-day-picker"
 
 import { RETURNS_TABLE_CONFIG } from "@/lib/table-config"
-import { TransactionsTable } from "./transactions-table"
+import { TransactionsTable, PrefixColumn } from "./transactions-table"
 import { Return, returnsCellRenderers } from "./cell-renderers"
+import { ClientBadge } from "./client-badge"
+import { useClient } from "@/components/client-context"
+import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 
 const DEFAULT_PAGE_SIZE = 50
 
 interface ReturnsTableProps {
-  clientId: string
+  clientId: string | null
   returnStatusFilter?: string
   returnTypeFilter?: string
   dateRange?: DateRange
@@ -19,6 +22,8 @@ interface ReturnsTableProps {
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
+  // Export handler registration
+  onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
 }
 
 export function ReturnsTable({
@@ -30,7 +35,12 @@ export function ReturnsTable({
   userColumnVisibility = {},
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
+  onExportTriggerReady,
 }: ReturnsTableProps) {
+  // Check if admin viewing all clients (for client badge prefix column)
+  const { isAdmin, selectedClientId } = useClient()
+  const showClientBadge = isAdmin && !selectedClientId
+
   // Convert "all" to undefined for API
   const effectiveStatusFilter = returnStatusFilter === "all" ? undefined : returnStatusFilter
   const effectiveTypeFilter = returnTypeFilter === "all" ? undefined : returnTypeFilter
@@ -64,10 +74,10 @@ export function ReturnsTable({
 
     try {
       const params = new URLSearchParams({
-        clientId,
         limit: size.toString(),
         offset: (page * size).toString(),
       })
+      if (clientId) params.set('clientId', clientId)
 
       // Add date range filter
       if (dateRange?.from) {
@@ -124,6 +134,54 @@ export function ReturnsTable({
     fetchData(newPageIndex, newPageSize, false)
   }
 
+  // Export handler
+  const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
+    const { format: exportFormat, scope } = options
+
+    let dataToExport: Return[]
+
+    if (scope === 'current') {
+      dataToExport = data
+    } else {
+      const params = new URLSearchParams({
+        limit: '10000',
+        offset: '0',
+      })
+      if (clientId) params.set('clientId', clientId)
+      if (dateRange?.from) params.set('startDate', dateRange.from.toISOString().split('T')[0])
+      if (dateRange?.to) params.set('endDate', dateRange.to.toISOString().split('T')[0])
+      if (effectiveStatusFilter) params.set('returnStatus', effectiveStatusFilter)
+      if (effectiveTypeFilter) params.set('returnType', effectiveTypeFilter)
+      if (searchQuery) params.set('search', searchQuery)
+
+      const response = await fetch(`/api/data/billing/returns?${params.toString()}`)
+      const result = await response.json()
+      dataToExport = result.data || []
+    }
+
+    exportData(dataToExport as unknown as Record<string, unknown>[], {
+      format: exportFormat,
+      scope,
+      filename: 'returns',
+      tableConfig: RETURNS_TABLE_CONFIG,
+    })
+  }, [data, clientId, dateRange, effectiveStatusFilter, effectiveTypeFilter, searchQuery])
+
+  // Register export trigger with parent
+  React.useEffect(() => {
+    if (onExportTriggerReady) {
+      onExportTriggerReady(handleExport)
+    }
+  }, [onExportTriggerReady, handleExport])
+
+  // Client badge prefix column - only shown for admins viewing all clients
+  const clientBadgePrefixColumn: PrefixColumn<Return> | undefined = showClientBadge
+    ? {
+        width: "56px",
+        render: (row) => <ClientBadge clientId={row.clientId} />,
+      }
+    : undefined
+
   return (
     <TransactionsTable
       config={RETURNS_TABLE_CONFIG}
@@ -140,6 +198,7 @@ export function ReturnsTable({
       emptyMessage="No returns found."
       itemName="returns"
       integratedHeader={true}
+      prefixColumn={clientBadgePrefixColumn}
     />
   )
 }

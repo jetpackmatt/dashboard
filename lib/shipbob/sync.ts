@@ -1406,17 +1406,34 @@ export async function syncAllTransactions(
     const jetpackClientId = jetpackClient?.id || null
     console.log(`[TransactionSync] Jetpack system client: ${jetpackClientId}`)
 
-    // Build client_id -> client_info lookup for merchant_id population
+    // Build client_id -> client_info lookup for merchant_id population and name matching
     console.log('[TransactionSync] Building client info lookup...')
-    const clientInfoLookup: Record<string, { merchant_id: string | null }> = {}
+    const clientInfoLookup: Record<string, { merchant_id: string | null; company_name: string | null }> = {}
     const { data: clientsData } = await supabase
       .from('clients')
-      .select('id, merchant_id')
+      .select('id, merchant_id, company_name')
 
     for (const c of clientsData || []) {
-      clientInfoLookup[c.id] = { merchant_id: c.merchant_id || null }
+      clientInfoLookup[c.id] = { merchant_id: c.merchant_id || null, company_name: c.company_name || null }
     }
     console.log(`[TransactionSync] Client info lookup: ${Object.keys(clientInfoLookup).length} clients`)
+
+    // Build lowercase company_name -> client_id lookup for TicketNumber attribution
+    // Sort by name length descending so longer (more specific) names match first
+    const clientNameLookup: Array<[string, string]> = []
+    for (const c of clientsData || []) {
+      if (c.company_name) {
+        const name = c.company_name.toLowerCase()
+        // Skip generic names that would cause false matches
+        if (name === 'jetpack' || name === 'jetpack demo') continue
+        clientNameLookup.push([name, c.id])
+        // Also store without common suffixes
+        const simplified = name.replace(/\s+(shaving|health|life)$/i, '')
+        if (simplified !== name) clientNameLookup.push([simplified, c.id])
+      }
+    }
+    // Sort by length descending - longer names match first (more specific)
+    clientNameLookup.sort((a, b) => b[0].length - a[0].length)
 
     // Build shipment_id -> client_id lookup from database
     console.log('[TransactionSync] Building client lookup from shipments...')
@@ -1753,8 +1770,34 @@ export async function syncAllTransactions(
       // Strategy 5: TicketNumber - parse client name from additional_details.Comment
       else if (tx.reference_type === 'TicketNumber') {
         // Try to extract client name from comment
-        // Format often: "Client Name - description" or "adjustment for Client Name"
-        // For now, leave unattributed - can be enhanced later
+        // Example: "COPS-179733 Jetpack/Eli Health wants images..."
+        const comment = (tx.additional_details as { Comment?: string })?.Comment?.toLowerCase() || ''
+
+        if (comment) {
+          // Try each client name to see if it appears in the comment
+          // clientNameLookup is sorted by length descending, so longer (more specific) names match first
+          for (const [nameLower, cId] of clientNameLookup) {
+            if (comment.includes(nameLower)) {
+              clientId = cId
+              break
+            }
+          }
+
+          // If not found, try common patterns like "Jetpack/ClientName"
+          if (!clientId) {
+            // Look for patterns like "jetpack/eli health" or "jetpack/henson"
+            const slashMatch = comment.match(/jetpack\/(\w+(?:\s+\w+)?)/i)
+            if (slashMatch) {
+              const afterSlash = slashMatch[1].toLowerCase()
+              for (const [nameLower, cId] of clientNameLookup) {
+                if (nameLower.includes(afterSlash) || afterSlash.includes(nameLower.split(' ')[0])) {
+                  clientId = cId
+                  break
+                }
+              }
+            }
+          }
+        }
       }
 
       // Strategy 6: WRO/URO - lookup via receiving_orders table

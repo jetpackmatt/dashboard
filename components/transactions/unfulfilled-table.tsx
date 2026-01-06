@@ -5,9 +5,12 @@ import { differenceInHours, format, startOfDay, endOfDay } from "date-fns"
 import { DateRange } from "react-day-picker"
 
 import { UNFULFILLED_TABLE_CONFIG } from "@/lib/table-config"
-import { TransactionsTable } from "./transactions-table"
+import { TransactionsTable, PrefixColumn } from "./transactions-table"
 import { UnfulfilledOrder, unfulfilledCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
+import { ClientBadge } from "./client-badge"
+import { useClient } from "@/components/client-context"
+import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 
 // Calculate age in days from order date (used for filtering)
 function calculateAge(orderDate: string): number {
@@ -38,6 +41,8 @@ interface UnfulfilledTableProps {
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
+  // Export handler registration
+  onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
 }
 
 export function UnfulfilledTable({
@@ -56,7 +61,12 @@ export function UnfulfilledTable({
   initialTotalCount = 0,
   initialPageSize = 50,
   onPageSizeChange,
+  onExportTriggerReady,
 }: UnfulfilledTableProps) {
+  // Check if admin viewing all clients (for client badge prefix column)
+  const { isAdmin, selectedClientId } = useClient()
+  const showClientBadge = isAdmin && !selectedClientId
+
   // Use initial data if provided, otherwise start empty
   const hasInitialData = initialData && initialData.length > 0
   const [data, setData] = React.useState<UnfulfilledOrder[]>(initialData || [])
@@ -258,6 +268,58 @@ export function UnfulfilledTable({
     setDrawerOpen(true)
   }, [])
 
+  // Export handler - fetches all data when scope is 'all', uses current data for 'current'
+  const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
+    const { format: exportFormat, scope } = options
+
+    let dataToExport: UnfulfilledOrder[]
+
+    if (scope === 'current') {
+      dataToExport = data
+    } else {
+      const params = new URLSearchParams({
+        clientId,
+        limit: '10000',
+        offset: '0',
+      })
+
+      if (statusFilter.length > 0) params.set('status', statusFilter.join(','))
+      if (searchQuery) params.set('search', searchQuery)
+      if (dateRange?.from) {
+        params.set('startDate', format(startOfDay(dateRange.from), 'yyyy-MM-dd'))
+        if (dateRange.to) {
+          params.set('endDate', format(endOfDay(dateRange.to), 'yyyy-MM-dd'))
+        }
+      }
+
+      const response = await fetch(`/api/data/orders/unfulfilled?${params.toString()}`)
+      const result = await response.json()
+      dataToExport = result.data || []
+    }
+
+    exportData(dataToExport as unknown as Record<string, unknown>[], {
+      format: exportFormat,
+      scope,
+      filename: 'unfulfilled-orders',
+      tableConfig: UNFULFILLED_TABLE_CONFIG,
+    })
+  }, [data, clientId, statusFilter, dateRange, searchQuery])
+
+  // Register export trigger with parent
+  React.useEffect(() => {
+    if (onExportTriggerReady) {
+      onExportTriggerReady(handleExport)
+    }
+  }, [onExportTriggerReady, handleExport])
+
+  // Client badge prefix column - only shown for admins viewing all clients
+  const clientBadgePrefixColumn: PrefixColumn<UnfulfilledOrder> | undefined = showClientBadge
+    ? {
+        width: "56px",
+        render: (row) => <ClientBadge clientId={row.clientId} />,
+      }
+    : undefined
+
   if (error) {
     return (
       <div className="px-4 lg:px-6">
@@ -287,6 +349,7 @@ export function UnfulfilledTable({
         itemName="orders"
         integratedHeader={true}
         onRowClick={handleRowClick}
+        prefixColumn={clientBadgePrefixColumn}
       />
       <ShipmentDetailsDrawer
         shipmentId={selectedShipmentId}
