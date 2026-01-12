@@ -1393,7 +1393,7 @@ function getShippedStatusColors(status: string) {
  * Get carrier tracking URL for a given tracking ID
  * Supports all carriers in our database with verified tracking URLs
  */
-function getTrackingUrl(carrier: string, trackingId: string): string | null {
+export function getTrackingUrl(carrier: string, trackingId: string): string | null {
   if (!trackingId) return null
   const carrierLower = carrier?.toLowerCase() || ''
 
