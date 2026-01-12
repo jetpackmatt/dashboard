@@ -1737,8 +1737,8 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   >
                                     <span>{item.label}</span>
                                     <span className="text-muted-foreground tabular-nums">{item.count.toLocaleString()}</span>
-                                    <span className="tabular-nums font-semibold">
-                                      ${formatCurrency(Math.abs(item.value))}
+                                    <span className={cn("tabular-nums font-semibold", item.value < 0 && !item.isCredit && "text-red-600 dark:text-red-400")}>
+                                      {item.value < 0 && !item.isCredit ? '-' : ''}${formatCurrency(Math.abs(item.value))}
                                     </span>
                                   </div>
                                 ))}
@@ -1807,8 +1807,8 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                     >
                                       <span>{item.label}</span>
                                       <span className="text-muted-foreground tabular-nums">{item.count.toLocaleString()}</span>
-                                      <span className="tabular-nums font-semibold">
-                                        ${item.cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      <span className={cn("tabular-nums font-semibold", item.cost < 0 && !item.isCredit && "text-red-600 dark:text-red-400")}>
+                                        {item.cost < 0 && !item.isCredit ? '-' : ''}${Math.abs(item.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   ))}
@@ -1818,8 +1818,8 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">
                                     {totalTransactions.toLocaleString()} transactions
                                   </div>
-                                  <div className="text-xl font-bold tabular-nums tracking-tight">
-                                    ${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  <div className={cn("text-xl font-bold tabular-nums tracking-tight", totalCost < 0 && "text-red-600 dark:text-red-400")}>
+                                    {totalCost < 0 ? '-' : ''}${Math.abs(totalCost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </div>
                                 </div>
                               </div>
