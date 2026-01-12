@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAll, syncAllTransactions } from '@/lib/shipbob/sync'
+import { syncAll, syncAllTransactions, syncBillingAwareTimelines, syncMissingShipmentItems, reconcileTrackingIds } from '@/lib/shipbob/sync'
 
 // Allow up to 5 minutes for reconciliation (20-day lookback + transactions)
 export const maxDuration = 300
@@ -56,6 +56,30 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron Reconcile] Transactions completed in ${txDuration}ms`)
     console.log(`[Cron Reconcile] Transactions: ${txResult.transactionsFetched} fetched, ${txResult.transactionsUpserted} upserted`)
 
+    // STEP 3: Catch billable shipments missing timeline data (event_labeled)
+    // These are shipments that "aged out" of the 14-day timeline sync window but need timeline data for invoicing
+    console.log('[Cron Reconcile] Step 3: Syncing billing-aware timelines...')
+    const billingTimelineResult = await syncBillingAwareTimelines(50)
+    if (billingTimelineResult.updated > 0) {
+      console.log(`[Cron Reconcile] Billing timelines: ${billingTimelineResult.updated} updated`)
+    }
+
+    // STEP 4: Catch billable shipments missing shipment_items (products_sold)
+    // These are shipments where API returned empty products during initial sync
+    console.log('[Cron Reconcile] Step 4: Syncing missing shipment items...')
+    const missingItemsResult = await syncMissingShipmentItems(50)
+    if (missingItemsResult.itemsInserted > 0) {
+      console.log(`[Cron Reconcile] Missing items: ${missingItemsResult.itemsInserted} items inserted`)
+    }
+
+    // STEP 5: Reconcile tracking IDs between transactions and shipments
+    // Fixes placeholder tracking (SBAAA...) and reshipment tracking mismatches
+    console.log('[Cron Reconcile] Step 5: Reconciling tracking IDs...')
+    const trackingResult = await reconcileTrackingIds(500)
+    if (trackingResult.updated > 0) {
+      console.log(`[Cron Reconcile] Tracking IDs: ${trackingResult.updated} updated`)
+    }
+
     const duration = Date.now() - startTime
 
     // Build per-client summary
@@ -82,9 +106,12 @@ export async function GET(request: NextRequest) {
         clientsProcessed: results.clients.length,
         transactionsFetched: txResult.transactionsFetched,
         transactionsUpserted: txResult.transactionsUpserted,
+        billingTimelinesUpdated: billingTimelineResult.updated,
+        missingItemsInserted: missingItemsResult.itemsInserted,
+        trackingIdsReconciled: trackingResult.updated,
       },
       clients: clientSummary,
-      errors: [...results.errors, ...txResult.errors].slice(0, 20),
+      errors: [...results.errors, ...txResult.errors, ...billingTimelineResult.errors, ...missingItemsResult.errors, ...trackingResult.errors].slice(0, 20),
     })
   } catch (error) {
     console.error('[Cron Reconcile] Error:', error)

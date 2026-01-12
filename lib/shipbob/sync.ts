@@ -2347,6 +2347,362 @@ export async function syncAllUndeliveredTimelines(
   }
 }
 
+/**
+ * Sync timelines for billable shipments that are missing event_labeled
+ *
+ * This catches shipments that "aged out" of the regular timeline sync window
+ * (14 days) but still need timeline data because they have billing transactions.
+ *
+ * Use case: Orders that take > 14 days from creation to labeling
+ */
+export async function syncBillingAwareTimelines(
+  batchSize: number = 50
+): Promise<TimelineSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: TimelineSyncResult = {
+    success: false,
+    totalShipments: 0,
+    updated: 0,
+    skipped: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  try {
+    // Find shipments with Shipping transactions but missing event_labeled
+    // These are billable shipments that need timeline data for proper invoicing
+    const { data: missingTimelines, error: queryError } = await supabase
+      .from('shipments')
+      .select(`
+        id,
+        shipment_id,
+        client_id,
+        status
+      `)
+      .is('event_labeled', null)
+      .is('deleted_at', null)
+      .not('status', 'in', '("Cancelled","Processing","None","Pending")')
+      .in('shipment_id', supabase
+        .from('transactions')
+        .select('reference_id')
+        .eq('fee_type', 'Shipping')
+        .eq('reference_type', 'Shipment')
+      )
+      .limit(batchSize)
+
+    if (queryError) {
+      // Fallback to raw SQL if the subquery approach doesn't work
+      const { data: fallbackData, error: fallbackError } = await supabase.rpc('get_billable_shipments_missing_timeline', {
+        batch_limit: batchSize
+      }).catch(() => ({ data: null, error: { message: 'RPC not available' } }))
+
+      if (fallbackError || !fallbackData) {
+        // Use a simpler two-step approach
+        const { data: shippingTx } = await supabase
+          .from('transactions')
+          .select('reference_id')
+          .eq('fee_type', 'Shipping')
+          .eq('reference_type', 'Shipment')
+          .not('reference_id', 'is', null)
+          .limit(5000)
+
+        if (shippingTx && shippingTx.length > 0) {
+          const shipmentIds: string[] = [...new Set<string>(shippingTx.map((t: { reference_id: string }) => t.reference_id))]
+
+          const { data: ships } = await supabase
+            .from('shipments')
+            .select('id, shipment_id, client_id, status')
+            .in('shipment_id', shipmentIds)
+            .is('event_labeled', null)
+            .is('deleted_at', null)
+            .not('status', 'in', '("Cancelled","Processing","None","Pending")')
+            .limit(batchSize)
+
+          if (ships) {
+            result.totalShipments = ships.length
+            if (ships.length > 0) {
+              await processTimelineUpdates(supabase, ships, result)
+            }
+          }
+        }
+      } else if (fallbackData) {
+        result.totalShipments = fallbackData.length
+        if (fallbackData.length > 0) {
+          await processTimelineUpdates(supabase, fallbackData, result)
+        }
+      }
+    } else if (missingTimelines && missingTimelines.length > 0) {
+      result.totalShipments = missingTimelines.length
+      await processTimelineUpdates(supabase, missingTimelines, result)
+    }
+
+    console.log(`[BillingTimelines] Complete: ${result.updated} updated, ${result.skipped} skipped`)
+    result.success = true
+    result.duration = Date.now() - startTime
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
+// Helper function to process timeline updates for a set of shipments
+async function processTimelineUpdates(
+  supabase: ReturnType<typeof createAdminClient>,
+  shipments: Array<{ id: string; shipment_id: string; client_id: string; status: string }>,
+  result: TimelineSyncResult
+): Promise<void> {
+  // Get client tokens
+  const clientIds = [...new Set(shipments.map(s => s.client_id).filter(Boolean))]
+  const { data: clients } = await supabase
+    .from('clients')
+    .select('id, client_api_credentials(api_token, provider)')
+    .in('id', clientIds)
+
+  const clientTokens: Record<string, string> = {}
+  for (const c of clients || []) {
+    const creds = c.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+    const token = creds?.find(cred => cred.provider === 'shipbob')?.api_token
+    if (token) clientTokens[c.id] = token
+  }
+
+  // Process each shipment
+  for (const ship of shipments) {
+    const token = clientTokens[ship.client_id]
+    if (!token) {
+      result.skipped++
+      continue
+    }
+
+    const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
+
+    if (timelineResult === null) {
+      result.errors.push(`API error for shipment ${ship.shipment_id}`)
+    } else if (Object.keys(timelineResult.eventColumns).length > 0) {
+      const updateData: Record<string, unknown> = {
+        ...timelineResult.eventColumns,
+        timeline_checked_at: new Date().toISOString(),
+      }
+
+      if (timelineResult.eventLogs.length > 0) {
+        updateData.event_logs = timelineResult.eventLogs
+      }
+
+      // Calculate transit_time_days
+      const intransitDate = timelineResult.eventColumns.event_intransit as string | undefined
+      const deliveredDate = timelineResult.eventColumns.event_delivered as string | undefined
+      if (intransitDate && deliveredDate) {
+        const transitMs = new Date(deliveredDate).getTime() - new Date(intransitDate).getTime()
+        const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10
+        if (transitDays >= 0) updateData.transit_time_days = transitDays
+      }
+
+      // Also fetch shipment for status update if needed
+      const preLabelStatuses = ['None', 'Processing', 'Pending', 'OnHold', 'Exception', 'LabeledCreated']
+      if (preLabelStatuses.includes(ship.status)) {
+        try {
+          const shipRes = await fetch(`https://api.shipbob.com/1.0/shipment/${ship.shipment_id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (shipRes.ok) {
+            const shipData = await shipRes.json()
+            updateData.status = shipData.status
+            updateData.status_details = shipData.status_details || null
+            if (shipData.tracking) {
+              updateData.tracking_id = shipData.tracking.tracking_number || null
+              updateData.tracking_url = shipData.tracking.tracking_url || null
+              updateData.carrier = shipData.tracking.carrier || null
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      const { error } = await supabase
+        .from('shipments')
+        .update(updateData)
+        .eq('id', ship.id)
+
+      if (error) {
+        result.errors.push(`Update error for ${ship.shipment_id}: ${error.message}`)
+      } else {
+        result.updated++
+      }
+    } else {
+      result.skipped++
+    }
+
+    await new Promise(r => setTimeout(r, TIMELINE_DELAY_MS))
+  }
+}
+
+/**
+ * Sync missing shipment items for billable shipments
+ *
+ * Finds shipments with Shipping transactions but zero shipment_items,
+ * then fetches order data from API to populate items.
+ */
+export interface MissingItemsSyncResult {
+  success: boolean
+  shipmentsChecked: number
+  itemsInserted: number
+  errors: string[]
+  duration: number
+}
+
+export async function syncMissingShipmentItems(
+  batchSize: number = 50
+): Promise<MissingItemsSyncResult> {
+  const startTime = Date.now()
+  const supabase = createAdminClient()
+  const result: MissingItemsSyncResult = {
+    success: false,
+    shipmentsChecked: 0,
+    itemsInserted: 0,
+    errors: [],
+    duration: 0,
+  }
+
+  try {
+    // Find shipments with transactions but zero shipment_items
+    // Two-step: first get shipment IDs with transactions, then check for missing items
+    const { data: shippingTx } = await supabase
+      .from('transactions')
+      .select('reference_id, client_id')
+      .eq('fee_type', 'Shipping')
+      .eq('reference_type', 'Shipment')
+      .not('reference_id', 'is', null)
+      .not('client_id', 'is', null)
+      .limit(2000)
+
+    if (!shippingTx || shippingTx.length === 0) {
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    const shipmentIds: string[] = [...new Set<string>(shippingTx.map((t: { reference_id: string }) => t.reference_id))]
+
+    // Find which of these have zero items
+    const { data: itemCounts } = await supabase
+      .from('shipment_items')
+      .select('shipment_id')
+      .in('shipment_id', shipmentIds)
+
+    const shipmentsWithItems = new Set<string>((itemCounts || []).map((i: { shipment_id: string }) => i.shipment_id))
+    const shipmentsWithoutItems = shipmentIds.filter(id => !shipmentsWithItems.has(id))
+
+    if (shipmentsWithoutItems.length === 0) {
+      console.log('[MissingItems] All billable shipments have items')
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    console.log(`[MissingItems] Found ${shipmentsWithoutItems.length} shipments without items`)
+
+    // Get the shipments with their order IDs
+    const { data: shipments } = await supabase
+      .from('shipments')
+      .select('shipment_id, shipbob_order_id, client_id')
+      .in('shipment_id', shipmentsWithoutItems.slice(0, batchSize))
+      .not('shipbob_order_id', 'is', null)
+
+    if (!shipments || shipments.length === 0) {
+      result.success = true
+      result.duration = Date.now() - startTime
+      return result
+    }
+
+    result.shipmentsChecked = shipments.length
+
+    // Get client tokens
+    const clientIds = [...new Set<string>(shipments.map((s: { client_id: string }) => s.client_id).filter(Boolean))]
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, merchant_id, client_api_credentials(api_token, provider)')
+      .in('id', clientIds)
+
+    const clientTokens: Record<string, string> = {}
+    const clientMerchantIds: Record<string, string> = {}
+    for (const c of clients || []) {
+      const creds = c.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find(cred => cred.provider === 'shipbob')?.api_token
+      if (token) {
+        clientTokens[c.id] = token
+        clientMerchantIds[c.id] = c.merchant_id
+      }
+    }
+
+    // Fetch each order and insert items
+    for (const ship of shipments) {
+      const token = clientTokens[ship.client_id]
+      if (!token) continue
+
+      try {
+        const orderRes = await fetch(`https://api.shipbob.com/2.0/order/${ship.shipbob_order_id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!orderRes.ok) {
+          result.errors.push(`Failed to fetch order ${ship.shipbob_order_id}: ${orderRes.status}`)
+          continue
+        }
+
+        const order = await orderRes.json()
+        const products = order.products || []
+
+        // Also check shipment-level products
+        const shipmentProducts = order.shipments?.find(
+          (s: { id: number }) => s.id.toString() === ship.shipment_id
+        )?.products || []
+
+        const productsToUse = shipmentProducts.length > 0 ? shipmentProducts : products
+
+        if (productsToUse.length === 0) {
+          continue
+        }
+
+        // Insert shipment items
+        const itemRecords = productsToUse.map((p: { id?: number; sku?: string; reference_id?: string; name?: string; quantity?: number }) => ({
+          client_id: ship.client_id,
+          merchant_id: clientMerchantIds[ship.client_id],
+          shipment_id: ship.shipment_id,
+          shipbob_product_id: p.id || null,
+          sku: p.sku || null,
+          reference_id: p.reference_id || null,
+          name: p.name || null,
+          quantity: p.quantity || null,
+        }))
+
+        const { error } = await supabase
+          .from('shipment_items')
+          .insert(itemRecords)
+
+        if (error) {
+          result.errors.push(`Insert error for shipment ${ship.shipment_id}: ${error.message}`)
+        } else {
+          result.itemsInserted += itemRecords.length
+        }
+
+        await new Promise(r => setTimeout(r, 200)) // Rate limit
+      } catch (e) {
+        result.errors.push(`Error processing ${ship.shipment_id}: ${e instanceof Error ? e.message : 'Unknown'}`)
+      }
+    }
+
+    console.log(`[MissingItems] Complete: ${result.itemsInserted} items inserted`)
+    result.success = true
+    result.duration = Date.now() - startTime
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.duration = Date.now() - startTime
+    return result
+  }
+}
+
 // Legacy exports for backward compatibility
 export type { SyncResult as BillingSyncResult }
 export async function syncAllClients(daysBack: number = 30) {
@@ -3316,6 +3672,116 @@ async function attributeStorageTransactions(): Promise<{ attributed: number; err
     return result
   } catch (e) {
     result.errors.push(`Attribution error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    return result
+  }
+}
+
+/**
+ * Reconcile tracking IDs between transactions and shipments
+ *
+ * Problem: ShipBob creates transactions with placeholder tracking IDs (SBAAA...)
+ * before the actual carrier label is generated. The shipment's tracking_id gets
+ * updated when the real label is created, but the transaction doesn't.
+ *
+ * This function finds Shipping transactions where the tracking_id doesn't match
+ * the shipment's current tracking_id and updates them to match.
+ *
+ * Also handles reshipments where the shipment tracking changed after a reship.
+ */
+export interface TrackingReconcileResult {
+  success: boolean
+  checked: number
+  updated: number
+  errors: string[]
+}
+
+export async function reconcileTrackingIds(limit: number = 500): Promise<TrackingReconcileResult> {
+  const supabase = createAdminClient()
+  const result: TrackingReconcileResult = {
+    success: true,
+    checked: 0,
+    updated: 0,
+    errors: [],
+  }
+
+  try {
+    // Find Shipping transactions where tracking doesn't match shipment
+    // Focus on recent transactions (last 45 days) for billing relevance
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - 45)
+
+    const { data: mismatches, error } = await supabase
+      .from('transactions')
+      .select(`
+        transaction_id,
+        reference_id,
+        tracking_id
+      `)
+      .eq('fee_type', 'Shipping')
+      .eq('reference_type', 'Shipment')
+      .not('tracking_id', 'is', null)
+      .gte('charge_date', cutoffDate.toISOString())
+      .limit(limit)
+
+    if (error) {
+      result.errors.push(`Query error: ${error.message}`)
+      result.success = false
+      return result
+    }
+
+    if (!mismatches || mismatches.length === 0) {
+      return result
+    }
+
+    result.checked = mismatches.length
+
+    // Get shipment tracking for these transactions
+    const shipmentIds = [...new Set<string>(mismatches.map((t: { reference_id: string }) => t.reference_id).filter(Boolean))]
+    const { data: shipments, error: shipErr } = await supabase
+      .from('shipments')
+      .select('shipment_id, tracking_id')
+      .in('shipment_id', shipmentIds)
+
+    if (shipErr) {
+      result.errors.push(`Shipment query error: ${shipErr.message}`)
+      result.success = false
+      return result
+    }
+
+    // Build lookup map
+    const shipmentTrackingMap = new Map<string, string>()
+    for (const s of shipments || []) {
+      if (s.tracking_id) {
+        shipmentTrackingMap.set(String(s.shipment_id), s.tracking_id)
+      }
+    }
+
+    // Find mismatches and update
+    for (const tx of mismatches) {
+      const shipmentTracking = shipmentTrackingMap.get(tx.reference_id)
+      if (!shipmentTracking) continue // Shipment not found or no tracking
+
+      // Skip if already matching
+      if (tx.tracking_id === shipmentTracking) continue
+
+      // Update transaction tracking to match shipment
+      const { error: updateErr } = await supabase
+        .from('transactions')
+        .update({ tracking_id: shipmentTracking })
+        .eq('transaction_id', tx.transaction_id)
+
+      if (updateErr) {
+        result.errors.push(`Update ${tx.transaction_id}: ${updateErr.message}`)
+      } else {
+        result.updated++
+      }
+    }
+
+    console.log(`[TrackingReconcile] Checked ${result.checked}, updated ${result.updated} tracking IDs`)
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.success = false
     return result
   }
 }
