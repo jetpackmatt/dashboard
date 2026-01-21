@@ -300,11 +300,12 @@ export async function GET(
       .eq('shipment_id', id)
 
     // Fetch related transactions for this shipment (by tracking_id)
+    // Include breakdown fields for charges display: base_charge, surcharge, total_charge, insurance_charge, taxes
     let transactions: any[] = []
     if (shipment.tracking_id) {
       const { data: txData } = await supabase
         .from('transactions')
-        .select('id, transaction_id, cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp')
+        .select('id, transaction_id, cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp, base_charge, surcharge, total_charge, insurance_charge, markup_is_preview, taxes, taxes_charge')
         .eq('tracking_id', shipment.tracking_id)
         .order('charge_date', { ascending: false })
 
@@ -501,7 +502,7 @@ export async function GET(
         height: carton.height,
       })),
 
-      // Billing transactions
+      // Billing transactions (with breakdown fields)
       transactions: transactions.map((tx: any) => ({
         id: tx.id,
         transactionId: tx.transaction_id,
@@ -511,7 +512,75 @@ export async function GET(
         transactionType: tx.transaction_type,
         chargeDate: tx.charge_date,
         invoiceId: tx.invoice_id_jp,
+        baseCharge: tx.base_charge,
+        surcharge: tx.surcharge,
+        totalCharge: tx.total_charge,
+        insuranceCharge: tx.insurance_charge,
+        isPreview: tx.markup_is_preview === true,
       })),
+
+      // Charges breakdown for display (computed from transactions)
+      // Structure: baseFulfillmentFees, surcharges, totalFulfillmentCost, pickFees, insurance, subtotal, taxes, total
+      chargesBreakdown: (() => {
+        // Find the Shipping transaction (non-refund) for fulfillment costs
+        const shippingTx = transactions.find((tx: any) =>
+          tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund'
+        )
+
+        // Sum all Per Pick Fee transactions (non-refund)
+        const pickFeeTotal = transactions
+          .filter((tx: any) => tx.fee_type === 'Per Pick Fee' && tx.transaction_type !== 'Refund')
+          .reduce((sum: number, tx: any) => sum + (parseFloat(tx.billed_amount) || 0), 0)
+
+        // Get individual breakdown fields from shipping transaction
+        const baseCharge = shippingTx?.base_charge != null ? parseFloat(shippingTx.base_charge) : null
+        const surcharge = shippingTx?.surcharge != null ? parseFloat(shippingTx.surcharge) : null
+        const totalCharge = shippingTx?.total_charge != null ? parseFloat(shippingTx.total_charge) : null
+        const insuranceCharge = shippingTx?.insurance_charge != null ? parseFloat(shippingTx.insurance_charge) : null
+
+        // Calculate subtotal (sum of all non-null values)
+        let subtotal: number | null = null
+        const components = [totalCharge, pickFeeTotal > 0 ? pickFeeTotal : null, insuranceCharge]
+        const validComponents = components.filter((v): v is number => v !== null && v !== undefined)
+        if (validComponents.length > 0) {
+          subtotal = validComponents.reduce((sum, v) => sum + v, 0)
+        }
+
+        // Sum taxes from all transactions
+        // Use taxes_charge (marked-up taxes) if available, otherwise fall back to raw taxes
+        let taxesTotal = 0
+        for (const tx of transactions) {
+          if (tx.transaction_type === 'Refund') continue
+          // Prefer taxes_charge (marked-up amount) over raw taxes
+          const taxArray = tx.taxes_charge || tx.taxes
+          if (taxArray && Array.isArray(taxArray)) {
+            for (const taxEntry of taxArray) {
+              if (taxEntry.tax_amount) {
+                taxesTotal += parseFloat(taxEntry.tax_amount) || 0
+              }
+            }
+          }
+        }
+        const taxes = taxesTotal > 0 ? taxesTotal : null
+
+        // Total = subtotal + taxes (or just subtotal if no taxes)
+        const total = subtotal !== null ? subtotal + (taxes || 0) : null
+
+        // Check if markup is preview (not yet invoiced)
+        const isPreview = shippingTx?.markup_is_preview === true
+
+        return {
+          baseFulfillmentFees: baseCharge,
+          surcharges: surcharge,
+          totalFulfillmentCost: totalCharge,
+          pickFees: pickFeeTotal > 0 ? pickFeeTotal : null,
+          insurance: insuranceCharge,
+          subtotal,
+          taxes,
+          total,
+          isPreview,
+        }
+      })(),
 
       // Associated returns
       returns: (returns || []).map((ret: any) => ({

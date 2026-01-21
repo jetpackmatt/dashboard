@@ -156,6 +156,7 @@ export interface InvoiceLineItem {
   taxRate?: number // e.g., 13 for 13%
   taxAmount?: number // Tax amount in dollars
   taxType?: string // e.g., "GST"
+  taxes?: TaxInfo[] // Full taxes array for calculating taxes_charge
 }
 
 export interface InvoiceData {
@@ -226,7 +227,7 @@ export function decodeUlidTimestamp(ulid: string): string | null {
  * Extract tax info from a transaction's taxes array
  * Returns aggregated tax rate and amount (sums if multiple taxes)
  */
-function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string; taxRate?: number; taxAmount?: number } {
+function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string; taxRate?: number; taxAmount?: number; taxes?: TaxInfo[] } {
   if (!taxes || taxes.length === 0) return {}
 
   // If single tax, return it directly
@@ -236,6 +237,7 @@ function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string
       taxType: tax.tax_type,
       taxRate: tax.tax_rate,
       taxAmount: tax.tax_amount,
+      taxes,
     }
   }
 
@@ -249,6 +251,7 @@ function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string
     taxType: taxTypes || undefined,
     taxRate,
     taxAmount: totalAmount > 0 ? totalAmount : undefined,
+    taxes,
   }
 }
 
@@ -378,6 +381,7 @@ export async function collectBillingTransactions(
 
   // Fetch all transactions for the client and period
   // Exclude disputed/invalid transactions (dispute_status must be null)
+  // Exclude voided transactions (is_voided = true means duplicate/replaced label)
   const { data: transactions } = await supabase
     .from('transactions')
     .select('*')
@@ -385,6 +389,7 @@ export async function collectBillingTransactions(
     .gte('charge_date', startStr)
     .lte('charge_date', endStr)
     .is('dispute_status', null)
+    .or('is_voided.is.null,is_voided.eq.false')
     .order('charge_date', { ascending: true })
 
   for (const tx of transactions || []) {
@@ -438,6 +443,7 @@ export async function collectBillingTransactions(
           feeType,
           transactionDate: tx.charge_date,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         // Additional service fees on shipments
@@ -463,6 +469,7 @@ export async function collectBillingTransactions(
           feeType: transactionFee,
           transactionDate: tx.charge_date,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -482,6 +489,7 @@ export async function collectBillingTransactions(
           feeType: transactionFee || 'Unknown',
           transactionDate: tx.charge_date,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
@@ -522,6 +530,7 @@ export async function collectBillingTransactions(
         feeType: tx.transaction_type,
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -540,6 +549,7 @@ export async function collectBillingTransactions(
         feeType: transactionFee,
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -557,6 +567,7 @@ export async function collectBillingTransactions(
         feeType: transactionFee || 'Receiving',
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS (Value Added Services) - linked to support tickets
@@ -582,6 +593,7 @@ export async function collectBillingTransactions(
         feeType: transactionFee,
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
       // CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -601,6 +613,7 @@ export async function collectBillingTransactions(
         feeType: transactionFee || 'Unknown',
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }
@@ -636,6 +649,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
         .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
+        .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination
         .range(offset, offset + 999)
@@ -684,6 +698,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -714,6 +729,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           feeType,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         const isB2B = transactionFee.startsWith('B2B')
@@ -739,6 +755,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           feeType: transactionFee,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -759,6 +776,7 @@ export async function collectBillingTransactionsByInvoiceIds(
           feeType: transactionFee,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
@@ -799,6 +817,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: txTransactionType,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -817,6 +836,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: transactionFee,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -835,6 +855,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -854,6 +875,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: transactionFee,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
       /// CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -876,6 +898,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }
@@ -908,6 +931,7 @@ export async function collectUnprocessedBillingTransactions(
       .eq('client_id', clientId)
       .eq('invoiced_status_jp', false)
       .is('dispute_status', null) // Exclude disputed/invalid transactions
+      .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
       .order('charge_date', { ascending: true })
       .order('id', { ascending: true }) // Secondary sort for stable pagination
       .range(offset, offset + 999)
@@ -953,6 +977,7 @@ export async function collectUnprocessedBillingTransactions(
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -983,6 +1008,7 @@ export async function collectUnprocessedBillingTransactions(
           feeType,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else if (ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
         const isB2B = transactionFee.startsWith('B2B')
@@ -1008,6 +1034,7 @@ export async function collectUnprocessedBillingTransactions(
           feeType: transactionFee,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
         // Unknown fee type within Shipment reference - put in Additional Services
@@ -1028,6 +1055,7 @@ export async function collectUnprocessedBillingTransactions(
           feeType: transactionFee,
           transactionDate: txChargeDate,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
     } else if (referenceType === 'FC') {
@@ -1068,6 +1096,7 @@ export async function collectUnprocessedBillingTransactions(
         feeType: txTransactionType,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' && transactionFee === 'Inventory Placement Program Fee') {
       // Inventory Placement Program (IPP) fees - go to Additional Services as "MultiHub IQ Fee"
@@ -1086,6 +1115,7 @@ export async function collectUnprocessedBillingTransactions(
         feeType: transactionFee,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
@@ -1104,6 +1134,7 @@ export async function collectUnprocessedBillingTransactions(
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
       // VAS - Paid Requests and other ticket-based additional services
@@ -1123,6 +1154,7 @@ export async function collectUnprocessedBillingTransactions(
         feeType: transactionFee,
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
       /// CATCH-ALL: Any transaction that doesn't match known patterns goes to Additional Services
@@ -1145,6 +1177,7 @@ export async function collectUnprocessedBillingTransactions(
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
+          taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
   }
@@ -1242,6 +1275,7 @@ export async function applyMarkupsToLineItems(
         .eq('client_id', clientId)
         .eq('reference_type', 'Shipment')
         .eq('fee_type', 'Shipping')
+        .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
         .in('reference_id', batch)
 
       for (const tx of shipmentTxs || []) {
@@ -1418,8 +1452,8 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
     totalMarkup += item.markupApplied
     totalAmount += item.billedAmount // Sum actual billed amounts to match Excel
 
-    // Aggregate taxes
-    if (item.taxAmount && item.taxAmount > 0) {
+    // Aggregate taxes (include negative tax amounts for credits/refunds)
+    if (item.taxAmount && item.taxAmount !== 0) {
       const taxType = item.taxType || 'Tax'
       if (!taxByType[taxType]) {
         taxByType[taxType] = { rate: item.taxRate || 0, amount: 0 }
@@ -2104,6 +2138,7 @@ export async function collectDetailedBillingData(
 
   // Fetch all transactions for the client and period
   // Exclude disputed/invalid transactions (dispute_status must be null)
+  // Exclude voided transactions (is_voided = true means duplicate/replaced label)
   const { data: transactions } = await supabase
     .from('transactions')
     .select('*')
@@ -2111,6 +2146,7 @@ export async function collectDetailedBillingData(
     .gte('charge_date', startStr)
     .lte('charge_date', endStr)
     .is('dispute_status', null)
+    .or('is_voided.is.null,is_voided.eq.false')
     .order('charge_date', { ascending: true })
 
   // Build returns data lookup from returns table for full timestamps
@@ -2341,6 +2377,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
         .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
+        .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination
         .range(offset, offset + 999)
@@ -2748,6 +2785,7 @@ export async function collectUnprocessedDetailedBillingData(
       .eq('client_id', clientId)
       .eq('invoiced_status_jp', false)
       .is('dispute_status', null) // Exclude disputed/invalid transactions
+      .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
       .order('charge_date', { ascending: true })
       .order('id', { ascending: true }) // Secondary sort for stable pagination
       .range(offset, offset + 999)
@@ -3011,6 +3049,7 @@ export async function markTransactionsAsInvoiced(
         billed_amount: item.billedAmount,
         markup_percentage: item.markupPercentage,
         markup_rule_id: item.markupRuleId,
+        markup_is_preview: false,  // Invoice-approved values are authoritative (not preview)
         updated_at: new Date().toISOString(),
       }
 
@@ -3019,6 +3058,17 @@ export async function markTransactionsAsInvoiced(
         updateData.base_charge = item.baseCharge || null
         updateData.total_charge = item.totalCharge || null
         updateData.insurance_charge = item.insuranceCharge || null
+      }
+
+      // Calculate taxes_charge if item has taxes
+      // Formula: tax_amount = billed_amount * (tax_rate / 100)
+      if (item.taxes && item.taxes.length > 0) {
+        const taxesCharge = item.taxes.map((taxEntry) => ({
+          tax_type: taxEntry.tax_type,
+          tax_rate: taxEntry.tax_rate,
+          tax_amount: Math.round(item.billedAmount * ((taxEntry.tax_rate || 0) / 100) * 100) / 100,
+        }))
+        updateData.taxes_charge = taxesCharge
       }
 
       const { error } = await supabase

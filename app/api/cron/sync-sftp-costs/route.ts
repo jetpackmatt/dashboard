@@ -4,6 +4,7 @@ import {
   fetchDailyShippingBreakdown,
   updateTransactionsWithDailyBreakdown,
 } from '@/lib/billing/sftp-client'
+import { calculateShipmentPreviewMarkups } from '@/lib/billing/preview-markups'
 
 /**
  * GET /api/cron/sync-sftp-costs
@@ -92,6 +93,15 @@ export async function GET(request: Request) {
       }
     }
 
+    // Step 3: Calculate preview markups for shipments that now have base_cost
+    // This makes marked-up charges visible immediately after SFTP sync
+    console.log('Calculating preview markups for shipments...')
+    const markupResult = await calculateShipmentPreviewMarkups({ limit: 5000 })
+    console.log(`Preview markups: ${markupResult.updated} updated, ${markupResult.skipped} skipped`)
+    if (markupResult.errors.length > 0) {
+      console.log(`Preview markup errors: ${markupResult.errors.slice(0, 3).join(', ')}`)
+    }
+
     return NextResponse.json({
       success: true,
       filename: sftpResult.filename,
@@ -101,7 +111,12 @@ export async function GET(request: Request) {
       updated: updateResult.updated,
       notFound: updateResult.notFound,
       errors: updateResult.errors.length,
-      errorDetails: updateResult.errors.slice(0, 10)
+      errorDetails: updateResult.errors.slice(0, 10),
+      previewMarkups: {
+        updated: markupResult.updated,
+        skipped: markupResult.skipped,
+        errors: markupResult.errors.length,
+      }
     })
 
   } catch (error) {
