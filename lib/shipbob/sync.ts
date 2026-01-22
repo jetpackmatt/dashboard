@@ -153,6 +153,7 @@ interface TimelineResult {
 
 /**
  * Fetch timeline events for a shipment from ShipBob API
+ * Fetches BOTH /timeline (fulfillment events) and /logs (operational events)
  * Returns null on error, empty result on 404/empty, or timeline data with full logs
  */
 async function fetchShipmentTimeline(
@@ -160,40 +161,61 @@ async function fetchShipmentTimeline(
   token: string
 ): Promise<TimelineResult | null> {
   try {
-    const res = await fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/timeline`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    // Fetch both endpoints in parallel
+    const [timelineRes, logsRes] = await Promise.all([
+      fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/timeline`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/logs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    ])
 
-    if (res.status === 429) {
+    if (timelineRes.status === 429 || logsRes.status === 429) {
       // Rate limited - return null to skip this one
       console.log(`[Timeline] Rate limited on shipment ${shipmentId}`)
       return null
     }
 
-    if (res.status === 404) {
-      // Shipment not found in API (Processing/Exception status) - return empty
+    // Collect events from both endpoints
+    let allEvents: TimelineEvent[] = []
+
+    // Timeline events (fulfillment: picked, packed, shipped, delivered, etc.)
+    if (timelineRes.ok) {
+      const timeline: TimelineEvent[] = await timelineRes.json()
+      if (timeline && timeline.length > 0) {
+        allEvents = [...allEvents, ...timeline]
+      }
+    }
+
+    // Operational logs (SLA set, address changes, ship option resolved, etc.)
+    if (logsRes.ok) {
+      const logs: TimelineEvent[] = await logsRes.json()
+      if (logs && logs.length > 0) {
+        allEvents = [...allEvents, ...logs]
+      }
+    }
+
+    // If both returned 404 or empty, return empty result
+    if (allEvents.length === 0) {
       return { eventColumns: {}, eventLogs: [] }
     }
 
-    if (!res.ok) {
-      return null
-    }
+    // Sort all events by timestamp (newest first)
+    allEvents.sort((a, b) =>
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    )
 
-    const timeline: TimelineEvent[] = await res.json()
-    if (!timeline || timeline.length === 0) {
-      return { eventColumns: {}, eventLogs: [] }
-    }
-
-    // Map timeline events to database columns
+    // Map timeline events to database columns (only fulfillment events)
     const eventColumns: Record<string, string> = {}
-    for (const event of timeline) {
+    for (const event of allEvents) {
       const col = TIMELINE_EVENT_MAP[event.log_type_id]
       if (col && event.timestamp) {
         eventColumns[col] = event.timestamp
       }
     }
 
-    return { eventColumns, eventLogs: timeline }
+    return { eventColumns, eventLogs: allEvents }
   } catch (e) {
     console.error(`[Timeline] Error fetching shipment ${shipmentId}:`, e)
     return null
