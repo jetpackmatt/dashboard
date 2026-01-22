@@ -13,6 +13,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ShipBobClient, ShipBobProduct } from './client'
 import { ensureFCsExist } from '@/lib/fulfillment-centers'
+import { calculateNonShipmentPreviewMarkups } from '@/lib/billing/preview-markups'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
@@ -527,7 +528,16 @@ export async function syncClient(
           name?: string
           quantity?: number
           is_dangerous_goods?: boolean
+          // Order API returns 'inventory', Shipment API returns 'inventory_items'
           inventory?: Array<{
+            id?: number
+            lot?: string
+            expiration_date?: string
+            quantity?: number
+            quantity_committed?: number
+            serial_numbers?: string[]
+          }>
+          inventory_items?: Array<{
             id?: number
             lot?: string
             expiration_date?: string
@@ -804,7 +814,9 @@ export async function syncClient(
         if (!shipment.products || shipment.products.length === 0) continue
 
         for (const product of shipment.products) {
-          const inventories = product.inventory || [{}]
+          // ShipBob provides lot/expiration data in inventory_items (from Shipment API)
+          // Falls back to inventory (older API) or empty array if neither exists
+          const inventories = product.inventory_items || product.inventory || [{}]
           // Get quantity from order.products lookup (since shipment.products doesn't have it)
           // Priority: product ID match > SKU match
           const orderQuantityById = product.id ? orderProductQuantitiesById[product.id] : null
@@ -1306,35 +1318,57 @@ export async function syncAll(options: SyncOptions | number = 7): Promise<FullSy
       return result
     }
 
-    // Sync each client
-    for (const client of clients) {
-      const shipbobCred = (
-        client.client_api_credentials as Array<{ api_token: string; provider: string }>
-      )?.find((c) => c.provider === 'shipbob')
+    // Type for client with credentials
+    type ClientWithCreds = {
+      id: string
+      company_name: string
+      merchant_id: string | null
+      client_api_credentials: Array<{ api_token: string; provider: string }>
+    }
+
+    // Filter to clients with valid ShipBob credentials
+    const clientsWithCreds = (clients as ClientWithCreds[]).filter((client) => {
+      const shipbobCred = client.client_api_credentials?.find((c) => c.provider === 'shipbob')
 
       if (!shipbobCred?.api_token) {
         console.log(`[Sync] Skipping ${client.company_name}: no ShipBob token`)
-        continue
+        return false
       }
+      return true
+    })
 
-      const syncMode = opts.minutesBack ? `${opts.minutesBack}min` : `${opts.daysBack || 7}d`
-      console.log(`[Sync] Syncing ${client.company_name} (${syncMode})...`)
+    const syncMode = opts.minutesBack ? `${opts.minutesBack}min` : `${opts.daysBack || 7}d`
+    console.log(`[Sync] Syncing ${clientsWithCreds.length} clients in parallel (${syncMode})...`)
 
-      const clientResult = await syncClient(
-        client.id,
-        client.company_name,
-        shipbobCred.api_token,
-        client.merchant_id || '',
-        opts
-      )
+    // Sync all clients in parallel - each client has its own API token and rate limit bucket
+    const clientResults = await Promise.all(
+      clientsWithCreds.map(async (client) => {
+        // We already filtered to clients with valid ShipBob creds above, so this will always exist
+        const shipbobCred = client.client_api_credentials.find((c) => c.provider === 'shipbob')!
 
+        console.log(`[Sync] Starting ${client.company_name}...`)
+
+        const clientResult = await syncClient(
+          client.id,
+          client.company_name,
+          shipbobCred.api_token,
+          client.merchant_id || '',
+          opts
+        )
+
+        console.log(
+          `[Sync] ${client.company_name}: ${clientResult.ordersFound} orders, ${clientResult.shipmentsUpserted} shipments`
+        )
+
+        return { client, clientResult }
+      })
+    )
+
+    // Aggregate results
+    for (const { client, clientResult } of clientResults) {
       result.clients.push(clientResult)
       result.totalOrders += clientResult.ordersFound
       result.totalShipments += clientResult.shipmentsUpserted
-
-      console.log(
-        `[Sync] ${client.company_name}: ${clientResult.ordersFound} orders, ${clientResult.shipmentsUpserted} shipments`
-      )
 
       if (clientResult.errors.length > 0) {
         result.errors.push(...clientResult.errors.map((e) => `${client.company_name}: ${e}`))
@@ -2056,6 +2090,26 @@ export async function syncAllTransactions(
 
     if (totalTrackingFixed > 0) {
       console.log(`[TransactionSync] Tracking backfill: Fixed ${totalTrackingFixed} transactions from shipments table`)
+    }
+
+    // ==========================================
+    // FOURTH PASS: Calculate preview markups for non-shipments
+    // ==========================================
+    // Non-shipment fees (Per Pick, Storage, Returns, etc.) can have markup
+    // calculated immediately since their API cost is final (no SFTP breakdown needed).
+    // Shipment markups are handled separately by the SFTP sync cron.
+    console.log('[TransactionSync] Calculating preview markups for non-shipment transactions...')
+    try {
+      const markupResult = await calculateNonShipmentPreviewMarkups({ limit: 2000 })
+      if (markupResult.updated > 0 || markupResult.errors.length > 0) {
+        console.log(`[TransactionSync] Preview markups: ${markupResult.updated} updated, ${markupResult.skipped} skipped`)
+        if (markupResult.errors.length > 0) {
+          console.log(`[TransactionSync] Preview markup errors: ${markupResult.errors.slice(0, 3).join(', ')}`)
+        }
+      }
+    } catch (markupError) {
+      // Don't fail the sync if markup calculation fails - it's a preview feature
+      console.error('[TransactionSync] Preview markup calculation failed (non-fatal):', markupError)
     }
 
     console.log(
@@ -3778,6 +3832,177 @@ export async function reconcileTrackingIds(limit: number = 500): Promise<Trackin
     }
 
     console.log(`[TrackingReconcile] Checked ${result.checked}, updated ${result.updated} tracking IDs`)
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.success = false
+    return result
+  }
+}
+
+/**
+ * Reconcile voided/duplicate shipping transactions
+ *
+ * Problem: ShipBob sometimes creates duplicate Shipping transactions for the same shipment
+ * when a label is voided and recreated. Both transactions appear in the API with the same
+ * invoice_id_sb, but the actual invoice only includes the later one.
+ *
+ * This causes us to bill for 2 shipments when ShipBob only billed us for 1.
+ *
+ * Detection pattern: Multiple Shipping transactions for the same
+ * (reference_id, tracking_id, invoice_id_sb) with different charge_dates.
+ *
+ * Fix: Mark all but the latest (by charge_date) as is_voided = true
+ */
+export interface VoidedReconcileResult {
+  success: boolean
+  duplicateGroups: number
+  voided: number
+  errors: string[]
+}
+
+export async function reconcileVoidedShippingTransactions(): Promise<VoidedReconcileResult> {
+  const supabase = createAdminClient()
+  const result: VoidedReconcileResult = {
+    success: true,
+    duplicateGroups: 0,
+    voided: 0,
+    errors: [],
+  }
+
+  try {
+    // Find shipments with duplicate Shipping transactions
+    // (same reference_id + tracking_id + invoice_id_sb, multiple charge_dates)
+    const { data: duplicates, error } = await supabase.rpc('find_duplicate_shipping_transactions')
+
+    // If the RPC doesn't exist yet, fall back to raw query approach
+    if (error && error.message.includes('function') && error.message.includes('does not exist')) {
+      console.log('[VoidedReconcile] RPC not found, using direct query')
+      return await reconcileVoidedShippingTransactionsDirect()
+    }
+
+    if (error) {
+      result.errors.push(`Query error: ${error.message}`)
+      result.success = false
+      return result
+    }
+
+    if (!duplicates || duplicates.length === 0) {
+      console.log('[VoidedReconcile] No duplicate shipping transactions found')
+      return result
+    }
+
+    result.duplicateGroups = duplicates.length
+    console.log(`[VoidedReconcile] Found ${duplicates.length} duplicate groups`)
+
+    // Mark older transactions as voided
+    for (const dup of duplicates) {
+      const { error: updateErr } = await supabase
+        .from('transactions')
+        .update({ is_voided: true })
+        .eq('transaction_id', dup.transaction_id)
+
+      if (updateErr) {
+        result.errors.push(`Update ${dup.transaction_id}: ${updateErr.message}`)
+      } else {
+        result.voided++
+      }
+    }
+
+    console.log(`[VoidedReconcile] Marked ${result.voided} transactions as voided`)
+    return result
+  } catch (e) {
+    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
+    result.success = false
+    return result
+  }
+}
+
+/**
+ * Direct query fallback for voided transaction reconciliation
+ * Used when the RPC function hasn't been created yet
+ */
+async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconcileResult> {
+  const supabase = createAdminClient()
+  const result: VoidedReconcileResult = {
+    success: true,
+    duplicateGroups: 0,
+    voided: 0,
+    errors: [],
+  }
+
+  try {
+    // Step 1: Find all Shipping transactions that might be duplicates
+    // Group by (reference_id, tracking_id, invoice_id_sb) and find groups with count > 1
+    const { data: transactions, error } = await supabase
+      .from('transactions')
+      .select('transaction_id, reference_id, tracking_id, invoice_id_sb, charge_date')
+      .eq('fee_type', 'Shipping')
+      .eq('reference_type', 'Shipment')
+      .not('invoice_id_sb', 'is', null)
+      .not('tracking_id', 'is', null)
+      .or('is_voided.is.null,is_voided.eq.false')
+      .order('reference_id')
+      .order('charge_date', { ascending: false })
+
+    if (error) {
+      result.errors.push(`Query error: ${error.message}`)
+      result.success = false
+      return result
+    }
+
+    if (!transactions || transactions.length === 0) {
+      return result
+    }
+
+    // Group transactions by (reference_id, tracking_id, invoice_id_sb)
+    const groups = new Map<string, Array<{ transaction_id: string; charge_date: string }>>()
+    for (const tx of transactions) {
+      const key = `${tx.reference_id}:${tx.tracking_id}:${tx.invoice_id_sb}`
+      if (!groups.has(key)) {
+        groups.set(key, [])
+      }
+      groups.get(key)!.push({
+        transaction_id: tx.transaction_id,
+        charge_date: tx.charge_date,
+      })
+    }
+
+    // Find groups with duplicates
+    const duplicateGroups: Array<{ transaction_id: string }> = []
+    for (const [, txs] of groups) {
+      if (txs.length > 1) {
+        result.duplicateGroups++
+        // Sort by charge_date descending (newest first) and mark all but first as voided
+        txs.sort((a, b) => new Date(b.charge_date).getTime() - new Date(a.charge_date).getTime())
+        for (let i = 1; i < txs.length; i++) {
+          duplicateGroups.push({ transaction_id: txs[i].transaction_id })
+        }
+      }
+    }
+
+    if (duplicateGroups.length === 0) {
+      console.log('[VoidedReconcile] No duplicate shipping transactions found')
+      return result
+    }
+
+    console.log(`[VoidedReconcile] Found ${result.duplicateGroups} duplicate groups, ${duplicateGroups.length} to void`)
+
+    // Mark older transactions as voided
+    for (const dup of duplicateGroups) {
+      const { error: updateErr } = await supabase
+        .from('transactions')
+        .update({ is_voided: true })
+        .eq('transaction_id', dup.transaction_id)
+
+      if (updateErr) {
+        result.errors.push(`Update ${dup.transaction_id}: ${updateErr.message}`)
+      } else {
+        result.voided++
+      }
+    }
+
+    console.log(`[VoidedReconcile] Marked ${result.voided} transactions as voided`)
     return result
   } catch (e) {
     result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)

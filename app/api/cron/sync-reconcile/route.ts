@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAll, syncAllTransactions, syncBillingAwareTimelines, syncMissingShipmentItems, reconcileTrackingIds } from '@/lib/shipbob/sync'
+import { syncAll, syncAllTransactions, syncBillingAwareTimelines, syncMissingShipmentItems, reconcileTrackingIds, reconcileVoidedShippingTransactions } from '@/lib/shipbob/sync'
 
-// Allow up to 5 minutes for reconciliation (20-day lookback + transactions)
+// Allow up to 5 minutes for reconciliation (45-day lookback + transactions)
 export const maxDuration = 300
 
 /**
  * Hourly reconciliation sync
  *
  * Runs every hour to:
- * 1. Catch any orders/shipments missed by per-minute sync (20-day lookback)
+ * 1. Catch any orders/shipments missed by per-minute sync (45-day lookback)
  * 2. Catch any transactions missed by per-minute sync (3-day lookback)
  * 3. Run soft-delete reconciliation (detect deleted records in ShipBob)
  *
- * Uses 20-day lookback for orders (to catch cancelled/deleted) and
+ * Uses 45-day lookback for orders (to catch cancelled/deleted) and
  * 3-day lookback for transactions (to catch any missed by real-time sync).
  */
 export async function GET(request: NextRequest) {
@@ -31,11 +31,11 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // STEP 1: Sync orders/shipments (20-day lookback to catch cancelled/deleted)
+    // STEP 1: Sync orders/shipments (45-day lookback to catch cancelled/deleted)
     // Note: daysBack triggers reconciliation, minutesBack skips it
-    // Uses StartDate filter to fetch orders created in the last 20 days
+    // Uses StartDate filter to fetch orders created in the last 45 days
     console.log('[Cron Reconcile] Step 1: Syncing orders/shipments...')
-    const results = await syncAll({ daysBack: 20 })
+    const results = await syncAll({ daysBack: 45 })
 
     const ordersDuration = Date.now() - startTime
     console.log(`[Cron Reconcile] Orders/shipments completed in ${ordersDuration}ms`)
@@ -80,6 +80,15 @@ export async function GET(request: NextRequest) {
       console.log(`[Cron Reconcile] Tracking IDs: ${trackingResult.updated} updated`)
     }
 
+    // STEP 6: Reconcile voided/duplicate shipping transactions
+    // When ShipBob voids and recreates a label, we get 2 transactions for the same shipment
+    // Only the latest (by charge_date) is actually billed - mark older ones as is_voided
+    console.log('[Cron Reconcile] Step 6: Reconciling voided shipping transactions...')
+    const voidedResult = await reconcileVoidedShippingTransactions()
+    if (voidedResult.voided > 0) {
+      console.log(`[Cron Reconcile] Voided transactions: ${voidedResult.voided} marked (${voidedResult.duplicateGroups} duplicate groups)`)
+    }
+
     const duration = Date.now() - startTime
 
     // Build per-client summary
@@ -109,9 +118,11 @@ export async function GET(request: NextRequest) {
         billingTimelinesUpdated: billingTimelineResult.updated,
         missingItemsInserted: missingItemsResult.itemsInserted,
         trackingIdsReconciled: trackingResult.updated,
+        voidedTransactionsMarked: voidedResult.voided,
+        duplicateGroups: voidedResult.duplicateGroups,
       },
       clients: clientSummary,
-      errors: [...results.errors, ...txResult.errors, ...billingTimelineResult.errors, ...missingItemsResult.errors, ...trackingResult.errors].slice(0, 20),
+      errors: [...results.errors, ...txResult.errors, ...billingTimelineResult.errors, ...missingItemsResult.errors, ...trackingResult.errors, ...voidedResult.errors].slice(0, 20),
     })
   } catch (error) {
     console.error('[Cron Reconcile] Error:', error)
