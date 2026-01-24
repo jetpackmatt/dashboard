@@ -21,11 +21,13 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
   try {
-    // Fetch all credit transactions and extract unique reasons from additional_details
+    // Fetch credit transactions and extract unique reasons from additional_details
+    // Limit to 1000 rows - sufficient to capture all unique credit reasons
     let query = supabase
       .from('transactions')
       .select('additional_details')
       .eq('fee_type', 'Credit')
+      .limit(1000)
 
     if (clientId) {
       query = query.eq('client_id', clientId)

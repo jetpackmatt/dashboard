@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
         mapped = mapped.filter(item =>
           item.inventoryId.toLowerCase().includes(search) ||
           item.invoiceNumber.toLowerCase().includes(search) ||
-          item.charge.toString().includes(search)
+          (item.charge !== null && item.charge.toString().includes(search))
         )
       }
 
@@ -158,6 +158,7 @@ export async function GET(request: NextRequest) {
 }
 
 // Helper to map a storage transaction row to response format
+// CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
 function mapStorageRow(row: Record<string, unknown>) {
   const refParts = String(row.reference_id || '').split('-')
   const fcId = refParts[0] || ''
@@ -174,10 +175,15 @@ function mapStorageRow(row: Record<string, unknown>) {
     locationType: locationType || String(details.LocationType || ''),
     quantity: Number(details.Quantity || 1),
     ratePerMonth: 0, // Not available in transactions
-    charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,
+    // Return billed_amount if available, null otherwise (UI shows "-")
+    charge: row.billed_amount !== null && row.billed_amount !== undefined
+      ? parseFloat(String(row.billed_amount)) || 0
+      : null,
     invoiceNumber: String(row.invoice_id_jp || ''),
     invoiceDate: row.invoice_date_jp,
     status: row.invoiced_status_jp ? 'invoiced' : 'pending',
     comment: String(details.Comment || ''),
+    // Include preview flag for UI styling (optional indicator)
+    isPreview: row.markup_is_preview === true,
   }
 }

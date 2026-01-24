@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
@@ -28,6 +29,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { useClient } from "@/components/client-context"
+import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
 
 // Base nav items visible to all users
 const baseNavItems = [
@@ -73,29 +75,13 @@ const data = {
     email: "user@example.com",
     avatar: "/avatars/default.jpg",
   },
-  navSecondary: [
-    {
-      title: "Submit a Claim",
-      url: "#",
-      icon: ClipboardListIcon,
-    },
-    {
-      title: "Settings",
-      url: "/dashboard/settings",
-      icon: SettingsIcon,
-    },
-    {
-      title: "Help",
-      url: "#",
-      icon: HelpCircleIcon,
-    },
-  ],
   documents: [],
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
+  const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
 
   // Admin-only nav item
   const adminNavItem = {
@@ -125,46 +111,73 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     isActive: pathname === item.url || pathname.startsWith(item.url + '/'),
   }))
 
+  // Build navSecondary items with onClick handler for Submit a Claim
+  const navSecondaryItems = [
+    {
+      title: "Submit a Claim",
+      url: "#",
+      icon: ClipboardListIcon,
+      onClick: () => setClaimDialogOpen(true),
+    },
+    {
+      title: "Settings",
+      url: "/dashboard/settings",
+      icon: SettingsIcon,
+    },
+    {
+      title: "Help",
+      url: "#",
+      icon: HelpCircleIcon,
+    },
+  ]
+
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              className="data-[slot=sidebar-menu-button]:!p-1.5"
-            >
-              <a href="/dashboard" className="flex items-center gap-2">
-                {/* Render both logos, use CSS to show correct one based on theme class - no flash */}
-                <Image
-                  src="/logos/jetpack-dark.svg"
-                  alt="Jetpack"
-                  width={96}
-                  height={24}
-                  className="h-6 w-24 -ml-[3px] dark:hidden"
-                  priority
-                />
-                <Image
-                  src="/logos/jetpack-light.svg"
-                  alt="Jetpack"
-                  width={97}
-                  height={26}
-                  className="h-[26px] w-[97px] -ml-[3px] hidden dark:block"
-                  priority
-                />
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
-        <NavMain items={navMainWithActive} />
-        {data.documents.length > 0 && <NavDocuments items={data.documents} />}
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
-      </SidebarContent>
-      <SidebarFooter>
-        <NavUser user={data.user} />
-      </SidebarFooter>
-    </Sidebar>
+    <>
+      <Sidebar collapsible="offcanvas" {...props}>
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                className="data-[slot=sidebar-menu-button]:!p-1.5"
+              >
+                <a href="/dashboard" className="flex items-center gap-2">
+                  {/* Render both logos, use CSS to show correct one based on theme class - no flash */}
+                  <Image
+                    src="/logos/jetpack-dark.svg"
+                    alt="Jetpack"
+                    width={96}
+                    height={24}
+                    className="h-6 w-24 -ml-[3px] dark:hidden"
+                    priority
+                  />
+                  <Image
+                    src="/logos/jetpack-light.svg"
+                    alt="Jetpack"
+                    width={97}
+                    height={26}
+                    className="h-[26px] w-[97px] -ml-[3px] hidden dark:block"
+                    priority
+                  />
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          <NavMain items={navMainWithActive} />
+          {data.documents.length > 0 && <NavDocuments items={data.documents} />}
+          <NavSecondary items={navSecondaryItems} className="mt-auto" />
+        </SidebarContent>
+        <SidebarFooter>
+          <NavUser user={data.user} />
+        </SidebarFooter>
+      </Sidebar>
+
+      <ClaimSubmissionDialog
+        open={claimDialogOpen}
+        onOpenChange={setClaimDialogOpen}
+      />
+    </>
   )
 }

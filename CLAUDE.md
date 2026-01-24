@@ -93,7 +93,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/sync` | Every 1 min | - | Orders & shipments (child tokens, LastUpdateStartDate) |
 | `/api/cron/sync-timelines` | Every 1 min | - | Timeline events (0-14d, per-client parallel, auto-scales) |
 | `/api/cron/sync-transactions` | Every 1 min | 300s | All billing transactions + tracking backfill (parent token) |
-| `/api/cron/sync-reconcile` | Every hour | 300s | Orders/shipments (20d) + transactions (3d) + soft-delete |
+| `/api/cron/sync-reconcile` | Every hour | 300s | Orders/shipments (45d) + transactions (3d) + soft-delete |
 | `/api/cron/sync-invoices` | Daily 1 PM EST | - | ShipBob invoice sync |
 | `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | 300s | Full refresh for older shipments (14-45 days) |
 | `/api/cron/sync-products` | Daily 4:00 AM UTC | - | Products with variants (for inventory_id → client/SKU mapping) |
@@ -401,21 +401,66 @@ npm run lint         # ESLint
 
 Claude manages the dev server. Follow these rules to avoid crashes:
 
+### CRITICAL: Dropbox Sync Interaction
+
+This project is stored in Dropbox (`/Users/mattmcleod/Dropbox/gits/dashboard`). Dropbox sync can interfere with file system events and crash the Next.js dev server:
+
+**Problem:** When files are modified, Dropbox also syncs/updates them, causing multiple conflicting file events that crash the hot-reloader.
+
+**Commands That Crash the Server:**
+- `git checkout <file>` - Git writes file, Dropbox syncs it, Next.js crashes
+- `git stash pop` - Same issue
+- `git reset --hard` - Same issue
+- Any git command that modifies files in the working directory
+
+**Mitigation Applied (Jan 2025):**
+```bash
+# These directories are now ignored by Dropbox (reduces sync noise):
+xattr -w com.dropbox.ignored 1 /Users/mattmcleod/Dropbox/gits/dashboard/.next
+xattr -w com.dropbox.ignored 1 /Users/mattmcleod/Dropbox/gits/dashboard/node_modules
+```
+
+**Safe Approach:**
+1. **NEVER use `git checkout` to revert files** - Instead, use the Edit tool to manually restore changes
+2. **Make smaller, incremental edits** - Don't do large sweeping changes
+3. **Always verify the server after edits** - Check it's still running with `lsof -i :3000 | grep LISTEN`
+4. **If server crashes, restart it immediately** before proceeding
+5. **Run the ignore commands above** if `.next` or `node_modules` show as syncing in Dropbox
+
 ### File Editing Rules
 - **NEVER use `sed` for file modifications** - it rewrites files in-place, causing the dev server to see incomplete files and crash
 - **ALWAYS use the Edit tool** for all file changes - it's more atomic
 - **For large deletions (>50 lines)**, break into smaller incremental edits rather than one massive removal
 - **Avoid Write tool for existing files** when possible - prefer Edit for surgical changes
 
-### Dev Server Rules
-- **Only ONE dev server should run at a time** - check with `lsof -i :3000` before starting
-- **Run dev server in background** with `run_in_background: true` so it persists
-- **CRITICAL: Only kill port 3000** - User has other projects on other ports. NEVER use `pkill -f "next-server"` or `pkill -f "next dev"` as these will kill ALL Next.js processes across all projects
-- **If site becomes unreachable**, restart with:
-  ```bash
-  lsof -ti :3000 | xargs kill 2>/dev/null; sleep 1; npm run dev
-  ```
-- **Never spawn multiple dev servers** - they conflict and cause port issues
+### Dev Server Rules (CRITICAL - READ CAREFULLY)
+
+**Problem:** Background shell sessions persist across Claude conversations. Each time Claude runs `npm run dev` in background, a new shell session is created. These accumulate and can cause race conditions where old orphaned sessions interfere with the current server.
+
+**The Solution - DO NOT START DEV SERVER AUTOMATICALLY:**
+
+1. **ASSUME the dev server is already running** - The user likely has it running in a terminal
+2. **First, CHECK if port 3000 is listening**: `lsof -i :3000 | grep LISTEN`
+3. **If server IS running** - Do nothing, proceed with your task
+4. **If server is NOT running** - Ask the user: "The dev server isn't running. Would you like me to start it, or will you start it in your terminal?"
+5. **Only start the server if the user explicitly asks** - then use `npm run dev` with `run_in_background: true`
+
+**NEVER do this:**
+- Don't automatically restart the server after making edits
+- Don't use `lsof -ti :3000 | xargs kill -9 && npm run dev` as a one-liner (this creates a new background session every time)
+- Don't use `pkill -f "next-server"` or `pkill -f "next dev"` - this kills ALL Next.js processes including other projects on different ports
+
+**Protected ports (other projects):**
+- Port 3002: VenicePress project - NEVER touch
+
+**If site becomes unreachable and user asks to fix it:**
+```bash
+# Step 1: Kill only port 3000
+lsof -ti :3000 | xargs kill -9 2>/dev/null
+
+# Step 2: Start fresh (separate command)
+npm run dev
+```
 
 ### Build Verification
 - Use `npm run build` (one-shot) to verify changes compile correctly

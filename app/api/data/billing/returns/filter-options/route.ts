@@ -22,9 +22,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // Fetch distinct statuses and types from returns
+    // Limit to 1000 rows - sufficient to capture all unique values for low-cardinality columns
     let query = supabase
       .from('returns')
       .select('status, return_type')
+      .limit(1000)
 
     if (clientId) {
       query = query.eq('client_id', clientId)

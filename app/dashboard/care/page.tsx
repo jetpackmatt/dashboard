@@ -102,12 +102,16 @@ interface FileAttachment {
   uploadedAt: string
 }
 
+// Partner type for tickets
+type Partner = 'shipbob' | 'eshipper'
+
 // API response ticket interface
 interface Ticket {
   id: string
   ticketNumber: number
   clientId: string | null
   clientName: string
+  partner: Partner
   ticketType: string
   issueType: string | null
   status: string
@@ -162,6 +166,7 @@ interface StaticTicket {
   inventoryId?: string
   trackingId?: string
   workOrderId?: string
+  attachments?: { name: string; url: string; type: string; uploadedAt: string }[]
 }
 
 // Date range presets
@@ -222,7 +227,7 @@ const STATUS_OPTIONS: FilterOption[] = [
 
 const TYPE_OPTIONS: FilterOption[] = [
   { value: 'Claim', label: 'Claim' },
-  { value: 'Work Order', label: 'Work Order' },
+  { value: 'Work Order', label: 'Request' },
   { value: 'Technical', label: 'Technical' },
   { value: 'Inquiry', label: 'Inquiry' },
 ]
@@ -247,11 +252,11 @@ function getStatusColors(status: string) {
     case "Resolved":
       return "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
     case "Credit Approved":
-      return "font-medium bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+      return "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
     case "Credit Requested":
       return "font-medium bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
     case "Under Review":
-      return "font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+      return "font-medium bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
     case "Input Required":
       return "font-medium bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
     default:
@@ -276,11 +281,11 @@ function getStatusDotColor(status: string) {
     case "Resolved":
       return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Approved":
-      return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
+      return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Requested":
       return "bg-amber-400 border-amber-400 shadow-sm shadow-amber-400/30"
     case "Under Review":
-      return "bg-slate-400 border-slate-400 shadow-sm shadow-slate-400/30"
+      return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
     case "Input Required":
       return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
     default:
@@ -307,6 +312,7 @@ function staticToApiTicket(s: StaticTicket): Ticket {
     ticketNumber: s.id,
     clientId: null,
     clientName: 'Demo Client',
+    partner: 'shipbob', // Default to ShipBob for demo data
     ticketType: s.type,
     issueType: s.issue,
     status: s.status,
@@ -326,7 +332,7 @@ function staticToApiTicket(s: StaticTicket): Ticket {
     inventoryId: s.inventoryId || null,
     description: s.notes,
     internalNotes: null,
-    attachments: null,
+    attachments: s.attachments || null,
     // Demo events for static data
     events: [],
     latestNote: null,
@@ -479,6 +485,7 @@ export default function CarePage() {
   // Calculate actual rendered column count (for colSpan)
   const actualColumnCount =
     (columnVisibility.client && isAdmin && !selectedClientId ? 1 : 0) +
+    (isAdmin && !selectedClientId ? 1 : 0) + // Partner column
     (columnVisibility.dateCreated ? 1 : 0) +
     (columnVisibility.reference ? 1 : 0) +
     (columnVisibility.type ? 1 : 0) +
@@ -595,7 +602,39 @@ export default function CarePage() {
       }
 
       const data = await response.json()
-      setTickets(data.data || [])
+      // Inject demo attachments for testing file display
+      // All Claim types except Loss get one file, one Damage claim gets two files
+      let firstDamageSeen = false
+      const ticketsWithDemoFiles = (data.data || []).map((t: Ticket) => {
+        // Only add files to Claim tickets that are NOT Loss type
+        if (t.ticketType === 'Claim' && t.issueType !== 'Loss') {
+          // First Damage claim gets two files
+          if (t.issueType === 'Damage' && !firstDamageSeen) {
+            firstDamageSeen = true
+            return {
+              ...t,
+              attachments: [
+                { name: 'damage-photo.jpg', url: '#', type: 'jpg' },
+                { name: 'claim-form.pdf', url: '#', type: 'pdf' },
+              ]
+            }
+          }
+          // Other non-Loss claims get one file based on issue type
+          if (t.issueType === 'Damage') {
+            return { ...t, attachments: [{ name: 'damage-photo.jpg', url: '#', type: 'jpg' }] }
+          }
+          if (t.issueType === 'Pick Error') {
+            return { ...t, attachments: [{ name: 'wrong-item-photo.jpg', url: '#', type: 'jpg' }] }
+          }
+          if (t.issueType === 'Short Ship') {
+            return { ...t, attachments: [{ name: 'packing-slip.pdf', url: '#', type: 'pdf' }] }
+          }
+          // Default for any other claim issues
+          return { ...t, attachments: [{ name: 'evidence.jpg', url: '#', type: 'jpg' }] }
+        }
+        return t
+      })
+      setTickets(ticketsWithDemoFiles)
       setTotalCount(data.totalCount || 0)
       setUsingStaticData(false)
     } catch (err) {
@@ -660,6 +699,15 @@ export default function CarePage() {
       result += ` by ${firstName}`
     }
     return result
+  }
+
+  // Calculate ticket age in days (frozen at resolution time for resolved tickets)
+  const formatAge = (createdAt: string, resolvedAt: string | null) => {
+    const startDate = new Date(createdAt)
+    const endDate = resolvedAt ? new Date(resolvedAt) : new Date()
+    const diffMs = endDate.getTime() - startDate.getTime()
+    const days = diffMs / (1000 * 60 * 60 * 24)
+    return `${days.toFixed(1)}d`
   }
 
 
@@ -1176,7 +1224,7 @@ export default function CarePage() {
                       setColumnVisibility({ ...columnVisibility, lastUpdated: value })
                     }
                   >
-                    Last Updated
+                    Age
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={columnVisibility.latestNotes}
@@ -1255,14 +1303,18 @@ export default function CarePage() {
               <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
                   <colgroup>
                     {columnVisibility.client && isAdmin && !selectedClientId && (
-                      <col style={{ width: '60px' }} />
+                      <col style={{ width: '68px' }} />
+                    )}
+                    {/* Partner column - same width as client badge */}
+                    {isAdmin && !selectedClientId && (
+                      <col style={{ width: '36px' }} />
                     )}
                     {columnVisibility.dateCreated && <col style={{ width: '60px' }} />}
                     {columnVisibility.lastUpdated && <col style={{ width: '60px' }} />}
-                    {columnVisibility.reference && <col style={{ width: '120px' }} />}
+                    {columnVisibility.reference && <col style={{ width: '110px' }} />}
                     {columnVisibility.type && <col style={{ width: '95px' }} />}
                     {columnVisibility.issue && <col style={{ width: '95px' }} />}
-                    {columnVisibility.status && <col style={{ width: '135px' }} />}
+                    {columnVisibility.status && <col style={{ width: '138px' }} />}
                     {columnVisibility.latestNotes && <col style={{ width: 'auto' }} />}
                   </colgroup>
                   <thead className="sticky top-0 z-10 bg-[#fcfcfc] dark:bg-zinc-900">
@@ -1271,11 +1323,15 @@ export default function CarePage() {
                       {columnVisibility.client && isAdmin && !selectedClientId && (
                         <th className="text-left align-middle text-xs font-medium text-muted-foreground pl-4 lg:pl-6 pr-2"></th>
                       )}
+                      {/* Partner column - only visible for admins viewing all clients */}
+                      {isAdmin && !selectedClientId && (
+                        <th className="text-left align-middle text-xs font-medium text-muted-foreground"></th>
+                      )}
                       {columnVisibility.dateCreated && (
                         <th className={`text-left align-middle text-xs font-medium text-muted-foreground ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}>Created</th>
                       )}
                       {columnVisibility.lastUpdated && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Updated</th>
+                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Age</th>
                       )}
                       {columnVisibility.reference && (
                         <th className="text-left align-middle text-xs font-medium text-muted-foreground">Reference #</th>
@@ -1332,27 +1388,36 @@ export default function CarePage() {
                           >
                             {/* Client badge - only visible for admins viewing all clients */}
                             {columnVisibility.client && isAdmin && !selectedClientId && (
-                              <td className="align-middle pl-4 lg:pl-6 pr-4">
+                              <td className="align-middle pl-4 lg:pl-6 pr-8">
                                 <ClientBadge clientId={ticket.clientId} />
                               </td>
                             )}
+                            {/* Partner badge - only visible for admins viewing all clients */}
+                            {isAdmin && !selectedClientId && (
+                              <td className="align-middle">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <img
+                                      src={`/partner-logos/${ticket.partner || 'shipbob'}.png`}
+                                      alt={ticket.partner === 'eshipper' ? 'eShipper' : 'ShipBob'}
+                                      className="h-[15px] w-auto object-contain"
+                                      style={{ filter: 'brightness(0) saturate(100%) invert(32%) sepia(98%) saturate(1234%) hue-rotate(200deg) brightness(93%) contrast(96%)' }}
+                                    />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{ticket.partner === 'eshipper' ? 'eShipper' : 'ShipBob'}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </td>
+                            )}
                             {columnVisibility.dateCreated && (
-                              <td className={`align-middle font-medium whitespace-nowrap ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}>
+                              <td className={`align-middle text-sm text-muted-foreground whitespace-nowrap ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}>
                                 {formatDate(ticket.createdAt)}
                               </td>
                             )}
                             {columnVisibility.lastUpdated && (
                               <td className="align-middle text-sm text-muted-foreground whitespace-nowrap">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="cursor-default">
-                                      {formatDate(ticket.lastUpdated || ticket.updatedAt)}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="text-xs">
-                                    {formatTimeOnly(ticket.lastUpdated || ticket.updatedAt)}
-                                  </TooltipContent>
-                                </Tooltip>
+                                {formatAge(ticket.createdAt, ticket.resolvedAt)}
                               </td>
                             )}
                             {columnVisibility.reference && (
@@ -1375,24 +1440,14 @@ export default function CarePage() {
                             )}
                             {columnVisibility.type && (
                               <td className="align-middle">
-                                <Badge variant="outline" className={cn(
-                                  "whitespace-nowrap font-medium",
-                                  expandedRowId === ticket.id
-                                    ? "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/40 dark:text-blue-200 dark:border-blue-700"
-                                    : "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-                                )}>
-                                  {ticket.ticketType}
+                                <Badge variant="outline" className="whitespace-nowrap font-medium bg-slate-200/60 text-slate-700 border-slate-300/60 dark:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600/50">
+                                  {ticket.ticketType === 'Work Order' ? 'Request' : ticket.ticketType}
                                 </Badge>
                               </td>
                             )}
                             {columnVisibility.issue && (
                               <td className="align-middle">
-                                <Badge variant="outline" className={cn(
-                                  "whitespace-nowrap font-medium",
-                                  expandedRowId === ticket.id
-                                    ? "bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-900/40 dark:text-violet-200 dark:border-violet-700"
-                                    : "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
-                                )}>
+                                <Badge variant="outline" className="whitespace-nowrap font-medium bg-slate-200/60 text-slate-700 border-slate-300/60 dark:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600/50">
                                   {ticket.issueType || 'N/A'}
                                 </Badge>
                               </td>
@@ -1435,29 +1490,16 @@ export default function CarePage() {
                                   transition={{ duration: 0.2, ease: "easeOut" }}
                                 >
                                   <div className="pt-3 pb-5">
-                                    <div className="flex items-stretch">
-                                      {/* Left Section - Details (fixed width matching columns before Description) */}
-                                      {/* Columns: Client(60) + Created(60) + Updated(60) + Ref(120) + Type(103) + Issue(90) + Status(135) = 628px with client, 568px without */}
-                                      {/* Add pl-4 lg:pl-6 to match table row padding */}
+                                    <div className="flex items-start pl-4 lg:pl-6 pr-4">
+                                      {/* Left Column: Credit/Buttons only */}
                                       <div className={cn(
-                                        "flex flex-shrink-0 pl-4 lg:pl-6 items-stretch pr-3 relative z-10 overflow-hidden",
-                                        isAdmin && !selectedClientId ? "w-[617px]" : "w-[557px]"
+                                        "flex-shrink-0 pr-[18px]",
+                                        isAdmin && !selectedClientId ? "w-[142px]" : "w-[82px]"
                                       )}>
-                                        {/* Left column container - holds buttons/credit + details on top row, internal notes below */}
-                                        <div className="flex flex-col flex-1 min-w-0">
-                                          {/* Top row: Credit/Buttons + Details */}
-                                          <div className="flex items-stretch overflow-hidden">
-                                        {/* Credit & Buttons Column - spans Client + Created + Updated columns (admin) or Created + Updated (non-admin) */}
-                                        {/* Width: Client(60) + Created(60) + Updated(60) = 180px with client, Created(60) + Updated(60) = 120px without */}
-                                        {/* Gap to grey cards: 31px */}
-                                        <div className={cn(
-                                          "flex-shrink-0 space-y-3 pr-[31px]",
-                                          isAdmin && !selectedClientId ? "w-[155px]" : "w-[95px]"
-                                        )}>
                                           {/* Credit Card - contextual based on state */}
                                           {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
                                             <div className={cn(
-                                              "rounded-xl px-4 py-3 border",
+                                              "rounded-xl px-3 py-2 border",
                                               ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                 ? "bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-950/20 border-emerald-200/50 dark:border-emerald-800/50"
                                                 : ticket.status === 'Credit Requested'
@@ -1465,14 +1507,14 @@ export default function CarePage() {
                                                   : "bg-gradient-to-br from-slate-50 to-slate-100/50 dark:from-slate-800/50 dark:to-slate-900/30 border-slate-200/50 dark:border-slate-700/50"
                                             )}>
                                               <div className={cn(
-                                                "text-[10px] font-medium uppercase tracking-wider mb-1",
+                                                "text-[9px] font-medium uppercase tracking-wider mb-0.5 whitespace-nowrap",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-600 dark:text-emerald-400"
                                                   : ticket.status === 'Credit Requested'
                                                     ? "text-black dark:text-amber-300"
                                                     : "text-slate-500 dark:text-slate-400"
                                               )}>
-                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Requested' ? 'Credit Pending' : 'Credit'}
+                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
                                               </div>
                                               <div className={cn(
                                                 "text-lg font-bold",
@@ -1484,15 +1526,29 @@ export default function CarePage() {
                                               )}>
                                                 {ticket.creditAmount > 0 ? formatCurrency(ticket.creditAmount) : 'TBD'}
                                               </div>
-                                              {ticket.compensationRequest && (
-                                                <div className="text-[10px] text-muted-foreground mt-1 leading-tight">{ticket.compensationRequest}</div>
+                                              {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
+                                                <div className="text-[10px] text-muted-foreground mt-1 leading-tight">
+                                                  {(() => {
+                                                    // Find the event when the status was set
+                                                    const statusEvent = ticket.events?.find(e => e.status === ticket.status)
+                                                    if (statusEvent) {
+                                                      const date = new Date(statusEvent.createdAt)
+                                                      const month = date.getMonth() + 1
+                                                      const day = date.getDate()
+                                                      return ticket.status === 'Credit Approved'
+                                                        ? `Approved on ${month}/${day}`
+                                                        : `Requested on ${month}/${day}`
+                                                    }
+                                                    return null
+                                                  })()}
+                                                </div>
                                               )}
                                             </div>
                                           )}
 
                                           {/* Action Buttons */}
                                           {!usingStaticData && (
-                                            <div className="flex flex-col gap-1.5 w-full">
+                                            <div className="flex flex-col gap-[5px] w-full mt-2.5">
                                               <button
                                                 className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50 transition-colors"
                                                 onClick={(e) => openStatusDialog(ticket, e)}
@@ -1513,13 +1569,33 @@ export default function CarePage() {
                                               </button>
                                             </div>
                                           )}
+
+                                          {/* Files Card - below buttons */}
+                                          {ticket.attachments && ticket.attachments.length > 0 && (
+                                            <div className="mt-3 bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-3">
+                                              <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Files</div>
+                                              <div className="flex flex-col gap-1.5">
+                                                {ticket.attachments.map((file, idx) => (
+                                                  <a
+                                                    key={idx}
+                                                    href={file.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-2 px-2 py-1.5 text-[11px] font-medium bg-white dark:bg-slate-600/50 rounded border border-slate-200/60 dark:border-slate-500/40 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                                                  >
+                                                    {getFileIcon(file.type)}
+                                                    <span className="truncate">{file.name}</span>
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
                                         </div>
 
-                                        {/* Detail cards container - starts at Ref column */}
-                                        {/* Width: 360px (fixed), Height: auto with min-height */}
-                                        <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-4 w-[360px] flex-shrink-0 min-h-[220px]">
-                                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Details</div>
-
+                                      {/* Center column: Details Card + Internal Notes (stacked) */}
+                                      <div className="flex flex-col w-[477px] flex-shrink-0">
+                                        {/* Details Card - no min-height, flows naturally */}
+                                        <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-4">
                                           {/* Row 1: Ticket #, Carrier, Tracking # */}
                                           <div className="grid grid-cols-3 gap-x-6 mb-3">
                                             <div>
@@ -1554,148 +1630,113 @@ export default function CarePage() {
                                             </div>
                                           </div>
 
-                                          {/* Horizontal rule */}
-                                          <hr className="border-slate-200/50 dark:border-slate-600/50 my-3" />
-
-                                          {/* Row 2: Reshipment, Reshipment ID, What to Reship */}
-                                          <div className="grid grid-cols-3 gap-x-6 mb-3">
-                                            <div>
-                                              <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment</div>
-                                              <div className={cn(
-                                                "text-xs font-medium truncate",
-                                                ticket.reshipmentStatus === "Please reship for me" || ticket.reshipmentStatus === "Yes, by Jetpack" ? "text-blue-600 dark:text-blue-400" :
-                                                ticket.reshipmentStatus === "I've already reshipped" || ticket.reshipmentStatus === "Yes, by Client" ? "text-emerald-600 dark:text-emerald-400" :
-                                                "text-muted-foreground"
-                                              )}>
-                                                {ticket.reshipmentStatus === "Please reship for me" ? "Yes, by Jetpack" :
-                                                 ticket.reshipmentStatus === "I've already reshipped" ? "Yes, by Client" :
-                                                 ticket.reshipmentStatus === "Don't reship" ? "None" :
-                                                 ticket.reshipmentStatus || "None"}
+                                          {/* Claim-specific rows - varies by issue type */}
+                                          {ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' ? (
+                                            <>
+                                              <hr className="border-slate-200/50 dark:border-slate-600/50 my-3" />
+                                              <div className="grid grid-cols-3 gap-x-6">
+                                                <div>
+                                                  <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment</div>
+                                                  <div className="text-xs font-medium truncate">
+                                                    {ticket.reshipmentStatus === "Please reship for me" ? "Reship for me" :
+                                                     ticket.reshipmentStatus || "-"}
+                                                  </div>
+                                                </div>
+                                                <div>
+                                                  <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment ID</div>
+                                                  <div className="text-xs font-mono truncate">{ticket.reshipmentId || '-'}</div>
+                                                </div>
+                                                <div>
+                                                  <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">What to Reship</div>
+                                                  <div className="text-xs truncate">{ticket.whatToReship || '-'}</div>
+                                                </div>
                                               </div>
-                                            </div>
-                                            <div>
-                                              <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment ID</div>
-                                              <div className="text-xs font-mono truncate">{ticket.reshipmentId || '-'}</div>
-                                            </div>
-                                            <div>
-                                              <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">What to Reship</div>
-                                              <div className="text-xs truncate">{ticket.whatToReship || '-'}</div>
-                                            </div>
-                                          </div>
+                                              <hr className="border-slate-200/50 dark:border-slate-600/50 my-3" />
+                                              <div>
+                                                <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Compensation</div>
+                                                <div className="text-xs truncate">{ticket.compensationRequest || '-'}</div>
+                                              </div>
+                                            </>
+                                          ) : (
+                                            null
+                                          )}
+                                        </div>
 
-                                          {/* Row 3: Compensation + Supporting Documentation */}
-                                          <div className="grid grid-cols-3 gap-x-6">
-                                            {/* Compensation - first column */}
-                                            <div>
-                                              <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Compensation</div>
-                                              <div className="text-xs truncate">{ticket.compensationRequest || '-'}</div>
-                                            </div>
-
-                                            {/* Supporting Documentation - spanning 2 columns */}
-                                            <div className="col-span-2 bg-slate-50/80 dark:bg-slate-700/30 rounded-lg border border-slate-200/50 dark:border-slate-600/40 p-2.5">
-                                              <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1.5">Supporting Files</div>
-                                              {ticket.attachments && ticket.attachments.length > 0 ? (
-                                                <div className="flex flex-wrap gap-2">
-                                                  {ticket.attachments.map((file, idx) => (
-                                                    <a
-                                                      key={idx}
-                                                      href={file.url}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-white dark:bg-slate-600/50 rounded border border-slate-200/60 dark:border-slate-500/40 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                                                    >
-                                                      {getFileIcon(file.type)}
-                                                      <span className="truncate max-w-[80px]">{file.name}</span>
-                                                    </a>
+                                        {/* Internal Notes - directly under details card */}
+                                        {isAdmin && (
+                                          <div className="mt-3">
+                                            <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl p-3 border border-slate-200/30 dark:border-slate-600/30">
+                                              <div className="flex items-center justify-between mb-2">
+                                                <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Internal Notes</div>
+                                                <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
+                                                  setAddNoteOpenForTicket(open ? ticket.id : null)
+                                                  if (!open) setNewNoteText('')
+                                                }}>
+                                                  <PopoverTrigger asChild>
+                                                    <button className="flex items-center justify-center w-5 h-5 text-slate-500 dark:text-slate-400 bg-slate-100/50 dark:bg-slate-700/30 hover:bg-slate-200/60 dark:hover:bg-slate-600/40 rounded-md transition-colors border border-slate-300/40 dark:border-slate-500/40">
+                                                      <PlusIcon className="h-3 w-3" />
+                                                    </button>
+                                                  </PopoverTrigger>
+                                                  <PopoverContent className="w-72 p-3" align="end">
+                                                    <div className="space-y-2">
+                                                      <div className="text-xs font-medium text-muted-foreground">Add Internal Note</div>
+                                                      <Textarea
+                                                        placeholder="Type your note..."
+                                                        value={newNoteText}
+                                                        onChange={(e) => setNewNoteText(e.target.value)}
+                                                        className="min-h-[80px] text-sm resize-none"
+                                                        autoFocus
+                                                      />
+                                                      <div className="flex justify-end gap-2">
+                                                        <Button
+                                                          variant="ghost"
+                                                          size="sm"
+                                                          className="h-7 text-xs"
+                                                          onClick={() => {
+                                                            setAddNoteOpenForTicket(null)
+                                                            setNewNoteText('')
+                                                          }}
+                                                        >
+                                                          Cancel
+                                                        </Button>
+                                                        <Button
+                                                          size="sm"
+                                                          className="h-7 text-xs bg-amber-600 hover:bg-amber-700"
+                                                          onClick={() => handleAddInternalNote(ticket.id)}
+                                                          disabled={!newNoteText.trim() || isAddingNote}
+                                                        >
+                                                          {isAddingNote ? (
+                                                            <Loader2Icon className="h-3 w-3 animate-spin" />
+                                                          ) : (
+                                                            'Save'
+                                                          )}
+                                                        </Button>
+                                                      </div>
+                                                    </div>
+                                                  </PopoverContent>
+                                                </Popover>
+                                              </div>
+                                              {ticket.internalNotes && ticket.internalNotes.length > 0 && (
+                                                <div className="divide-y divide-amber-300/40 dark:divide-amber-700/40">
+                                                  {ticket.internalNotes.map((note, idx) => (
+                                                    <div key={idx} className="py-2 first:pt-0 last:pb-0">
+                                                      <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{note.note}</p>
+                                                      <div className="flex items-center gap-2 mt-1 text-[10px] text-amber-600/80 dark:text-amber-400/70">
+                                                        <span className="font-semibold">{note.createdBy}</span>
+                                                        <span>•</span>
+                                                        <span>{new Date(note.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                                                      </div>
+                                                    </div>
                                                   ))}
                                                 </div>
-                                              ) : (
-                                                <div className="text-[10px] text-muted-foreground/60 italic">No files attached</div>
                                               )}
                                             </div>
                                           </div>
-                                        </div>
-                                      </div>
-                                      {/* End of top row */}
-
-                                          {/* Internal Notes - Below buttons/details, inside left column */}
-                                          {isAdmin && (
-                                            <div className="mt-5">
-                                              <div className="bg-gradient-to-b from-amber-50/80 to-amber-100/30 dark:from-amber-900/20 dark:to-amber-950/10 rounded-xl p-3 border border-amber-200/40 dark:border-amber-800/40">
-                                                <div className="flex items-center justify-between mb-2">
-                                                  <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Internal Notes</div>
-                                                  <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
-                                                    setAddNoteOpenForTicket(open ? ticket.id : null)
-                                                    if (!open) setNewNoteText('')
-                                                  }}>
-                                                    <PopoverTrigger asChild>
-                                                      <button className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-100/50 dark:bg-amber-900/30 hover:bg-amber-200/60 dark:hover:bg-amber-800/40 rounded-md transition-colors border border-amber-300/40 dark:border-amber-700/40">
-                                                        <PlusIcon className="h-3 w-3" />
-                                                        Add Note
-                                                      </button>
-                                                    </PopoverTrigger>
-                                                    <PopoverContent className="w-72 p-3" align="end">
-                                                      <div className="space-y-2">
-                                                        <div className="text-xs font-medium text-muted-foreground">Add Internal Note</div>
-                                                        <Textarea
-                                                          placeholder="Type your note..."
-                                                          value={newNoteText}
-                                                          onChange={(e) => setNewNoteText(e.target.value)}
-                                                          className="min-h-[80px] text-sm resize-none"
-                                                          autoFocus
-                                                        />
-                                                        <div className="flex justify-end gap-2">
-                                                          <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="h-7 text-xs"
-                                                            onClick={() => {
-                                                              setAddNoteOpenForTicket(null)
-                                                              setNewNoteText('')
-                                                            }}
-                                                          >
-                                                            Cancel
-                                                          </Button>
-                                                          <Button
-                                                            size="sm"
-                                                            className="h-7 text-xs bg-amber-600 hover:bg-amber-700"
-                                                            onClick={() => handleAddInternalNote(ticket.id)}
-                                                            disabled={!newNoteText.trim() || isAddingNote}
-                                                          >
-                                                            {isAddingNote ? (
-                                                              <Loader2Icon className="h-3 w-3 animate-spin" />
-                                                            ) : (
-                                                              'Save'
-                                                            )}
-                                                          </Button>
-                                                        </div>
-                                                      </div>
-                                                    </PopoverContent>
-                                                  </Popover>
-                                                </div>
-                                                {ticket.internalNotes && ticket.internalNotes.length > 0 && (
-                                                  <div className="divide-y divide-amber-300/40 dark:divide-amber-700/40">
-                                                    {ticket.internalNotes.map((note, idx) => (
-                                                      <div key={idx} className="py-2 first:pt-0 last:pb-0">
-                                                        <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{note.note}</p>
-                                                        <div className="flex items-center gap-2 mt-1 text-[10px] text-amber-600/80 dark:text-amber-400/70">
-                                                          <span className="font-semibold">{note.createdBy}</span>
-                                                          <span>•</span>
-                                                          <span>{new Date(note.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                                                        </div>
-                                                      </div>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                        {/* End of left column container */}
+                                        )}
                                       </div>
 
                                       {/* Right section: Description and Activity card */}
-                                      <div className="flex-1 -mt-[46px] pl-[6px] pr-4 flex flex-col">
+                                      <div className="flex-1 ml-3 flex flex-col">
                                         {/* Combined Description & Activity card */}
                                         <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl p-4 border border-slate-200/30 dark:border-slate-600/30 flex-1">
                                               {/* Description section */}

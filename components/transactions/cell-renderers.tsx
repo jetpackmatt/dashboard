@@ -31,6 +31,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { CellRenderer } from "./transactions-table"
 
 // ============================================
@@ -39,7 +45,7 @@ import { CellRenderer } from "./transactions-table"
 // ============================================
 const FEE_TYPE_DISPLAY_NAMES: Record<string, string> = {
   'Inventory Placement Program Fee': 'MultiHub IQ Fee',
-  // Add more mappings as needed
+  'WRO Receiving Fee': 'Receiving Fee',
 }
 
 /**
@@ -49,16 +55,6 @@ const FEE_TYPE_DISPLAY_NAMES: Record<string, string> = {
 export function getFeeTypeDisplayName(feeType: string | null | undefined): string {
   if (!feeType) return ''
   return FEE_TYPE_DISPLAY_NAMES[feeType] || feeType
-}
-
-// ShipBob merchant portal deep link helper
-// Uses Text Fragments to scroll to and highlight the shipment row
-const SHIPBOB_ORDERS_BASE = "https://web.shipbob.com/app/merchant/#/order-shipment-management/orders"
-const SHIPBOB_PAGE_STATE = "eJyrViotTi3yTFGyMrYwMzY10FEqTk0sSs5QslIyNjI3sDAwMbZQ0lFKy8wpSS0qBoqqmjupGhlBFIWkVpQAOarGjhDRssSc0lSogJERXD9IxMgZSOYXpBYlluQXwZWkFoKY5i5ApFQLAF5fJMI="
-
-function getShipBobOrderUrl(shipmentId: string): string {
-  // Use Text Fragment to highlight the shipment ID in the table
-  return `${SHIPBOB_ORDERS_BASE}?page-state=${SHIPBOB_PAGE_STATE}:~:text=${shipmentId}`
 }
 
 // ============================================
@@ -259,18 +255,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     }
     return (
       <div className="flex items-center gap-1.5">
-        {row.shipmentId ? (
-          <a
-            href={getShipBobOrderUrl(row.shipmentId)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
-          >
-            {row.shipmentId}
-          </a>
-        ) : (
-          <span>-</span>
-        )}
+        <span className="text-sm truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -336,10 +321,9 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
 
   orderDate: (row) => {
     if (!row.orderDate) return <span>-</span>
-    const d = new Date(row.orderDate)
     return (
       <span className="whitespace-nowrap text-sm">
-        {format(d, "MMM d, yyyy, h:mm a")}
+        {formatTransactionDate(row.orderDate)}
       </span>
     )
   },
@@ -350,7 +334,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     const isOverdue = slaDate < new Date()
     return (
       <span className={`whitespace-nowrap text-sm ${isOverdue ? "text-red-500 font-medium" : ""}`}>
-        {format(slaDate, "MMM d, h:mm a")}
+        {formatTransactionDate(row.slaDate)}
       </span>
     )
   },
@@ -425,6 +409,8 @@ export interface Shipment {
   age?: number | null
   // Client identification (for admin badge)
   clientId?: string | null
+  // Voided status (duplicate shipping transaction that was recreated)
+  isVoided?: boolean
 }
 
 // Status colors for shipments - Complete ShipBob status hierarchy
@@ -573,18 +559,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        {row.shipmentId ? (
-          <a
-            href={getShipBobOrderUrl(row.shipmentId)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
-          >
-            {row.shipmentId}
-          </a>
-        ) : (
-          <span>-</span>
-        )}
+        <span className="text-sm truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -598,15 +573,21 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     )
   },
 
-  status: (row) => (
-    <Badge
-      variant="outline"
-      className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
-    >
-      {getShipmentStatusIcon(row.status)}
-      {row.status}
-    </Badge>
-  ),
+  status: (row) => {
+    // Show Voided badge for duplicate shipping transactions that were recreated
+    if (row.isVoided) {
+      return <VoidedBadge />
+    }
+    return (
+      <Badge
+        variant="outline"
+        className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
+      >
+        {getShipmentStatusIcon(row.status)}
+        {row.status}
+      </Badge>
+    )
+  },
 
   customerName: (row) => (
     <div className="truncate">
@@ -667,36 +648,18 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   importDate: (row) => {
     if (!row.importDate) return <span className="text-muted-foreground">-</span>
-    const date = new Date(row.importDate)
     return (
       <span className="whitespace-nowrap text-sm">
-        {date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}, {date.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })}
+        {formatTransactionDate(row.importDate)}
       </span>
     )
   },
 
   labelCreated: (row) => {
     if (!row.labelCreated) return <span className="text-muted-foreground">-</span>
-    const date = new Date(row.labelCreated)
     return (
       <span className="whitespace-nowrap text-sm">
-        {date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}, {date.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })}
+        {formatTransactionDate(row.labelCreated)}
       </span>
     )
   },
@@ -740,18 +703,10 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     const slaDate = row.slaDate
     const dateStr = deliveredDate || slaDate
     if (!dateStr) return <span>-</span>
-    const date = new Date(dateStr)
     const isDelivered = !!deliveredDate
     return (
       <span className={`whitespace-nowrap text-sm ${isDelivered ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
-        {date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        })}, {date.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })}
+        {formatTransactionDate(dateStr)}
       </span>
     )
   },
@@ -789,18 +744,9 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   orderDate: (row) => {
     if (!row.orderDate) return <span>-</span>
-    const date = new Date(row.orderDate)
     return (
       <span className="whitespace-nowrap text-sm">
-        {date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}, {date.toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })}
+        {formatTransactionDate(row.orderDate)}
       </span>
     )
   },
@@ -815,14 +761,9 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   deliveredDate: (row) => {
     if (!row.deliveredDate) return <span>-</span>
-    const date = new Date(row.deliveredDate)
     return (
       <span className="whitespace-nowrap text-sm text-emerald-600 dark:text-emerald-400">
-        {date.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}
+        {formatTransactionDate(row.deliveredDate)}
       </span>
     )
   },
@@ -859,18 +800,73 @@ function formatBillingStatus(status: string): string {
 }
 
 /**
- * Format a date string without timezone conversion.
- * Prevents dates from shifting a day due to UTC interpretation.
- * Input: '2025-01-15' or '2025-01-15T00:00:00.000Z'
- * Output: 'Jan 15, 2025'
+ * Format a date/time string for transaction tables.
+ * - Within last 12 months: "Oct 24, 2:30 PM" (no year)
+ * - Older than 12 months: "Oct 24, 2024 2:30 PM" (with year)
+ * - Date-only strings (no time): show date only without time
+ */
+function formatTransactionDate(dateStr: string): string {
+  if (!dateStr) return '-'
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const now = new Date()
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate())
+
+  // Check if this is a date-only string (no time component)
+  const hasTime = dateStr.includes('T') && !dateStr.endsWith('T00:00:00.000Z') && !dateStr.endsWith('T00:00:00Z')
+
+  // Parse the date
+  const date = new Date(dateStr)
+  const isWithinLast12Months = date >= twelveMonthsAgo
+
+  const monthName = months[date.getMonth()]
+  const day = date.getDate()
+  const year = date.getFullYear()
+
+  // Format time if present
+  let timeStr = ''
+  if (hasTime) {
+    const hours = date.getHours()
+    const minutes = date.getMinutes()
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    const hour12 = hours % 12 || 12
+    timeStr = minutes > 0 ? `, ${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}` : `, ${hour12} ${ampm}`
+  }
+
+  if (isWithinLast12Months) {
+    return `${monthName} ${day}${timeStr}`
+  } else {
+    return `${monthName} ${day}, ${year}${timeStr}`
+  }
+}
+
+/**
+ * Legacy format for date-only display (no time).
+ * Used for invoice dates and other date-only fields.
+ * - Within last 12 months: "Oct 24" (no year)
+ * - Older than 12 months: "Oct 24, 2024" (with year)
  */
 function formatDateFixed(dateStr: string): string {
   if (!dateStr) return '-'
-  // Extract just the YYYY-MM-DD part (handles both date-only and ISO strings)
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const now = new Date()
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate())
+
+  // Extract just the YYYY-MM-DD part to avoid timezone issues
   const datePart = dateStr.split('T')[0]
   const [year, month, day] = datePart.split('-')
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`
+  const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+
+  const isWithinLast12Months = dateObj >= twelveMonthsAgo
+  const monthName = months[parseInt(month) - 1]
+  const dayNum = parseInt(day)
+
+  if (isWithinLast12Months) {
+    return `${monthName} ${dayNum}`
+  } else {
+    return `${monthName} ${dayNum}, ${year}`
+  }
 }
 
 // ============================================
@@ -885,6 +881,22 @@ function PendingBadge() {
       className="px-1.5 font-medium whitespace-nowrap bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
     >
       Pending
+    </Badge>
+  )
+}
+
+// ============================================
+// VOIDED BADGE COMPONENT
+// Shows a "Voided" badge for duplicate shipping transactions that were recreated
+// ============================================
+
+function VoidedBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="px-1.5 font-medium whitespace-nowrap bg-gray-100/50 text-gray-600 border-gray-200/50 dark:bg-gray-900/20 dark:text-gray-400 dark:border-gray-800/30"
+    >
+      Voided
     </Badge>
   )
 }
@@ -993,7 +1005,7 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
     <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
   ),
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
+    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -1113,7 +1125,7 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
     <div className="truncate">{row.returnType || '-'}</div>
   ),
   returnCreationDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.returnCreationDate)}</span>
+    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.returnCreationDate)}</span>
   ),
   fcName: (row) => (
     <div className="truncate">{row.fcName || '-'}</div>
@@ -1171,14 +1183,21 @@ function getReceivingStatusColors(status: string) {
 }
 
 // Format PascalCase status strings (e.g., "InternalTransfer" -> "Internal Transfer")
+// Also handles specific shortening for display
 function formatReceivingStatus(status: string): string {
   if (!status) return ''
-  return status.replace(/([a-z])([A-Z])/g, '$1 $2')
+  // First convert PascalCase to spaced words
+  let formatted = status.replace(/([a-z])([A-Z])/g, '$1 $2')
+  // Shorten specific long statuses for better table display
+  if (formatted === 'Partially Arrived At Hub') {
+    formatted = 'Partially Arrived'
+  }
+  return formatted
 }
 
 export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
+    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
   ),
   wroId: (row) => (
     <div className="font-medium text-foreground truncate">{row.wroId || '-'}</div>
@@ -1190,9 +1209,26 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
       </Badge>
     ) : <span>-</span>
   ),
-  contents: (row) => (
-    <div className="truncate">{row.contents || '-'}</div>
-  ),
+  contents: (row) => {
+    const contents = row.contents || '-'
+    if (contents === '-') {
+      return <div className="text-muted-foreground">-</div>
+    }
+    return (
+      <TooltipProvider>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <div className="truncate cursor-help text-muted-foreground hover:text-foreground transition-colors">
+              {contents}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs bg-popover text-popover-foreground border shadow-md">
+            <p className="text-sm whitespace-pre-wrap">{contents}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  },
   feeType: (row) => (
     <div className="truncate">{getFeeTypeDisplayName(row.feeType) || '-'}</div>
   ),
@@ -1245,7 +1281,7 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
     <div className="truncate">{row.locationType || '-'}</div>
   ),
   chargeStartDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.chargeStartDate)}</span>
+    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.chargeStartDate)}</span>
   ),
   charge: (row) => (
     <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
@@ -1296,19 +1332,15 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        {row.referenceId ? (
-          <>
-            <span className="font-medium text-foreground truncate">{row.referenceId}</span>
-            <button
-              onClick={handleCopy}
-              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
-              title="Copy Reference ID"
-            >
-              <CopyIcon className="h-3.5 w-3.5" />
-            </button>
-          </>
-        ) : (
-          <span>-</span>
+        <span className="font-medium text-foreground">{row.referenceId || '-'}</span>
+        {row.referenceId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Reference ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
     )
@@ -1322,19 +1354,15 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        {row.sbTicketReference ? (
-          <>
-            <span className="truncate">{row.sbTicketReference}</span>
-            <button
-              onClick={handleCopy}
-              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
-              title="Copy Ticket #"
-            >
-              <CopyIcon className="h-3.5 w-3.5" />
-            </button>
-          </>
-        ) : (
-          <span>-</span>
+        <span>{row.sbTicketReference || '-'}</span>
+        {row.sbTicketReference && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Ticket #"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
     )
@@ -1348,7 +1376,7 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     </div>
   ),
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatDateFixed(row.transactionDate)}</span>
+    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
   ),
   status: (row) => (
     <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
@@ -1507,12 +1535,12 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
   },
   shippedDate: (row) => (
     row.shippedDate ? (
-      <span className="whitespace-nowrap text-sm">{format(new Date(row.shippedDate), "MMM d, yyyy")}</span>
+      <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.shippedDate)}</span>
     ) : <span>-</span>
   ),
   deliveredDate: (row) => (
     row.deliveredDate ? (
-      <span className="whitespace-nowrap text-sm text-emerald-600 dark:text-emerald-400">{format(new Date(row.deliveredDate), "MMM d, yyyy")}</span>
+      <span className="whitespace-nowrap text-sm text-emerald-600 dark:text-emerald-400">{formatTransactionDate(row.deliveredDate)}</span>
     ) : <span>-</span>
   ),
   itemCount: (row) => (

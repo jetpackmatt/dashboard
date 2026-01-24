@@ -135,16 +135,20 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
         if (integratedHeader) {
           if (isFirst) paddingClass = 'pl-4 lg:pl-6 pr-2'
           else if (isLast) paddingClass = 'pl-2 pr-4 lg:pr-6'
+          else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
         } else {
           if (isFirst) paddingClass = 'pl-[15px] pr-2'
+          else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
         }
         // Text alignment from column config
         const alignClass = column.align === 'center' ? 'text-center' : column.align === 'right' ? 'text-right' : 'text-left'
+        // Divider after this column
+        const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
         return (
           <td
             key={column.id}
             style={{ width: getColumnWidth(column.id) }}
-            className={`${paddingClass} ${alignClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
+            className={`${paddingClass} ${alignClass} ${dividerClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
           >
             {cellRenderers[column.id]
               ? cellRenderers[column.id](row, column)
@@ -227,16 +231,20 @@ export function TransactionsTable<T>({
                   if (integratedHeader) {
                     if (isFirst) paddingClass = 'pl-4 lg:pl-6 pr-2'
                     else if (isLast) paddingClass = 'pl-2 pr-4 lg:pr-6'
+                    else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
                   } else {
                     if (isFirst) paddingClass = 'pl-[15px] pr-2'
+                    else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
                   }
-                  // Text alignment from column config
-                  const alignClass = column.align === 'center' ? 'text-center' : column.align === 'right' ? 'text-right' : 'text-left'
+                  // Headers always left-aligned (except center), cell alignment handled separately
+                  const headerAlignClass = column.align === 'center' ? 'text-center' : 'text-left'
+                  // Divider after this column
+                  const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
                   return (
                     <th
                       key={column.id}
                       style={{ width: getColumnWidth(column.id) }}
-                      className={`${paddingClass} ${alignClass} align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
+                      className={`${paddingClass} ${headerAlignClass} ${dividerClass} align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap`}
                     >
                       {column.header}
                     </th>
@@ -263,14 +271,17 @@ export function TransactionsTable<T>({
                       if (integratedHeader) {
                         if (isFirst) paddingClass = 'pl-4 lg:pl-6 pr-2'
                         else if (isLast) paddingClass = 'pl-2 pr-4 lg:pr-6'
+                        else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
                       } else {
                         if (isFirst) paddingClass = 'pl-[15px] pr-2'
+                        else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
                       }
+                      const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
                       return (
                         <td
                           key={column.id}
                           style={{ width: getColumnWidth(column.id) }}
-                          className={paddingClass}
+                          className={`${paddingClass} ${dividerClass}`}
                         >
                           <div className="h-4 w-full animate-pulse bg-muted/40 rounded" />
                         </td>

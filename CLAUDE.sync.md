@@ -204,17 +204,56 @@ In `clients` table with `is_internal=true`:
 | (calculated) | `dim_weight_oz`, `billable_weight_oz` |
 
 ### Shipments Timeline Events (from Timeline API)
-| log_type_id | DB Column |
-|-------------|-----------|
-| 601 | `event_created` |
-| 602 | `event_picked` |
-| 603 | `event_packed` |
-| 604 | `event_labeled` |
-| 605 | `event_labelvalidated` |
-| 607 | `event_intransit` |
-| 608 | `event_outfordelivery` |
-| 609 | `event_delivered` |
-| 611 | `event_deliveryattemptfailed` |
+
+**Canonical events stored in event_* columns:**
+
+| log_type_id | DB Column | Display Name |
+|-------------|-----------|--------------|
+| 601 | `event_created` | Shipment Created |
+| 602 | `event_picked` | Picked |
+| 603 | `event_packed` | Packed |
+| 604 | `event_labeled` | Label Created |
+| 605 | `event_labelvalidated` | Label Validated |
+| 607 | `event_intransit` | In Transit |
+| 608 | `event_outfordelivery` | Out for Delivery |
+| 609 | `event_delivered` | Delivered |
+| 611 | `event_deliveryattemptfailed` | Delivery Attempt Failed |
+
+**Full event logs stored in `event_logs` JSONB column.**
+
+### Timeline Display Filtering (Jan 2026)
+
+The `event_logs` JSONB contains ALL ShipBob activity, including internal processing events that are noise to users. The shipment detail drawer (`/app/api/data/shipments/[id]/route.ts`) filters these for display.
+
+**Hidden events (internal ShipBob processing):**
+
+| log_type_id | Event Name | Why Hidden |
+|-------------|------------|------------|
+| 13 | OrderMovedToPending | Internal inventory allocation (happens on every order) |
+| 19 | OrderPlacedStoreIntegration | Redundant with Shipment Created |
+| 20 | OrderTrackingUploaded | Redundant with In Transit |
+| 21 | ShipOptionMappingResolved | Internal ship option mapping |
+| 35 | LabelGeneratedLog | Duplicate of 604 Label Created |
+| 70 | OrderLabelValidated | Duplicate of 605 Label Validated |
+| 78 | OrderDimensionSource | Internal dimensions |
+| 98 | OrderSLAUpdated | Internal SLA setting |
+| 106 | ShipmentSortedToCarrier | Too granular |
+| 107 | ShipmentPickedupByCarrier | Redundant with In Transit |
+| 135 | OrderInTransitToShipBobSortCenter | Internal sort center |
+| 612 | Shipped | Redundant with 607 In Transit |
+
+**Renamed events (for clarity):**
+
+| log_type_id | Original Text | Display As |
+|-------------|---------------|------------|
+| 132 | "Order Address Changed" | "Address Validated" (ShipBob auto-standardizes addresses) |
+| 603 | "Packaged" | "Packed" |
+| 613 | "Inventory was Allocated to the FC" | "Inventory Allocated" |
+
+**Why these events appear on almost every order:**
+- "Order moved from Exception to Pending" (13): ShipBob's workflow briefly puts orders in Exception while allocating inventory
+- "Order Address Changed" (132): ShipBob auto-validates/standardizes addresses (adds ZIP+4, abbreviates "Road" → "Rd")
+- "Resolved ship option mapping" (21): ShipBob maps store shipping methods to internal carriers
 
 ### Transactions Table (from Billing API)
 | API Field | DB Column |

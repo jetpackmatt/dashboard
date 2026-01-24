@@ -326,8 +326,11 @@ export async function GET(
       shipment.status,
       shipment.estimated_fulfillment_date_status,
       shipment.status_details,
-      shipment.event_labeled || shipment.event_intransit,
-      shipment.event_delivered
+      shipment.event_labeled,
+      shipment.event_delivered,
+      shipment.event_picked,
+      shipment.event_packed,
+      shipment.event_intransit
     )
 
     // Check if refunded
@@ -466,6 +469,12 @@ export async function GET(
       metrics: {
         transitTimeDays: shipment.transit_time_days,
         totalShipments: shipment.orders?.total_shipments || 1,
+        ...calculateFulfillMetrics(
+          shipment.orders?.order_import_date,
+          shipment.event_labeled,
+          shipment.fc_name,
+          shipment.event_logs
+        ),
       },
 
       // Timeline events (formatted for display)
@@ -477,11 +486,11 @@ export async function GET(
       // Related items
       items: (items || []).map((item: any) => ({
         id: item.id,
-        productId: item.product_id,
+        productId: item.shipbob_product_id,
         name: item.name,
         sku: item.sku,
         quantity: item.quantity,
-        lotNumber: item.lot_number,
+        lotNumber: item.lot,  // Column is 'lot' not 'lot_number'
         expirationDate: item.expiration_date,
       })),
 
@@ -645,6 +654,34 @@ function buildTimeline(shipment: any): Array<{
     event_deliveryattemptfailed: { name: 'Delivery Attempt Failed', icon: 'alert-circle' },
   }
 
+  // Events to hide from timeline (internal ShipBob processing noise)
+  // These happen on almost every order and aren't meaningful to users
+  // We keep the canonical events (601-609) and hide duplicates/internal events
+  const HIDDEN_LOG_TYPE_IDS = new Set([
+    // Internal processing (noise on every order)
+    19,  // OrderPlacedStoreIntegration - "Order placed" (redundant with 601 Shipment Created)
+    21,  // ShipOptionMappingResolved - "Resolved ship option mapping" (internal)
+    13,  // OrderMovedToPending - "Order moved from Exception to Pending" (internal inventory allocation)
+    78,  // OrderDimensionSource - "Order dimensions created" (internal)
+    98,  // OrderSLAUpdated - "Order's SLA set" (internal)
+    // Duplicate events (we have canonical versions)
+    20,  // OrderTrackingUploaded - "Tracking details uploaded" (redundant with In Transit)
+    35,  // LabelGeneratedLog - "Shipping label generated" (duplicate of 604 Label Created)
+    70,  // OrderLabelValidated - "Label validated" (duplicate of 605 Label Validated)
+    // Carrier/shipping events (too granular)
+    106, // ShipmentSortedToCarrier - "Order has been sorted for carrier and is now awaiting pickup"
+    107, // ShipmentPickedupByCarrier - "Order picked up by carrier" (redundant with In Transit)
+    135, // OrderInTransitToShipBobSortCenter - "Order in transit to ShipBob sort center"
+    612, // Shipped - "Order Shipped" (redundant with 607 In Transit)
+  ])
+
+  // Events to rename for clarity
+  const EVENT_NAME_OVERRIDES: Record<number, string> = {
+    132: 'Address Validated',  // AddressChangeDetail - ShipBob auto-validates/standardizes addresses
+    603: 'Packed',             // Packed - ShipBob shows "Packaged", we prefer "Packed"
+    613: 'Inventory Allocated', // Allocated - clearer than "Inventory was Allocated to the FC"
+  }
+
   // First, build timeline from event_logs JSONB
   // ShipBob API returns: { log_type_id, log_type_name, log_type_text, timestamp, metadata }
   // Note: metadata is typically null - ShipBob doesn't include descriptions for standard events
@@ -653,9 +690,18 @@ function buildTimeline(shipment: any): Array<{
       const ts = log.timestamp
       if (!ts) continue
 
-      // Use log_type_text for display (e.g., "Label Created"), fall back to mapped name or log_type_name
+      // Skip hidden events (internal ShipBob processing noise)
+      if (HIDDEN_LOG_TYPE_IDS.has(log.log_type_id)) {
+        continue
+      }
+
+      // Use override name if available, otherwise use log_type_text, mapped name, or log_type_name
       const logTypeConfig = LOG_TYPE_MAP[log.log_type_id]
-      const eventName = log.log_type_text || logTypeConfig?.name || log.log_type_name || `Event ${log.log_type_id}`
+      const eventName = EVENT_NAME_OVERRIDES[log.log_type_id]
+        || log.log_type_text
+        || logTypeConfig?.name
+        || log.log_type_name
+        || `Event ${log.log_type_id}`
       const eventIcon = logTypeConfig?.icon || 'circle'
 
       timeline.push({
@@ -667,16 +713,86 @@ function buildTimeline(shipment: any): Array<{
     }
   }
 
-  // If no event_logs, fall back to event_* columns (timestamps only, no descriptions)
-  if (timeline.length === 0) {
-    for (const [key, config] of Object.entries(eventColumnMap)) {
-      if (shipment[key]) {
+  // Always merge event_* columns to ensure tracking milestones are included
+  // even if they weren't in event_logs (e.g., In Transit, Out for Delivery, Delivered)
+  // These columns are populated by timeline sync and may have more recent data
+  //
+  // Build a set of keywords from existing events for smarter deduplication
+  // e.g., "Items Picked" and "Picked" should be considered duplicates
+  const existingEventKeywords = new Set<string>()
+  for (const e of timeline) {
+    const lower = e.event.toLowerCase()
+    existingEventKeywords.add(lower)
+    // Also add individual keywords for matching
+    if (lower.includes('picked')) existingEventKeywords.add('picked')
+    if (lower.includes('packed')) existingEventKeywords.add('packed')
+    if (lower.includes('label')) existingEventKeywords.add('labeled')
+    if (lower.includes('transit')) existingEventKeywords.add('in transit')
+    if (lower.includes('delivery') && !lower.includes('attempt')) existingEventKeywords.add('out for delivery')
+    if (lower.includes('delivered')) existingEventKeywords.add('delivered')
+    if (lower.includes('created') && lower.includes('order')) existingEventKeywords.add('order created')
+    if (lower.includes('validated')) existingEventKeywords.add('label validated')
+  }
+
+  for (const [key, config] of Object.entries(eventColumnMap)) {
+    if (shipment[key]) {
+      // Check if this event type (or a variant) is already in the timeline
+      const configLower = config.name.toLowerCase()
+      const isDuplicate = existingEventKeywords.has(configLower) ||
+        (configLower.includes('picked') && existingEventKeywords.has('picked')) ||
+        (configLower.includes('packed') && existingEventKeywords.has('packed')) ||
+        (configLower.includes('label') && configLower.includes('created') && existingEventKeywords.has('labeled')) ||
+        (configLower.includes('transit') && existingEventKeywords.has('in transit')) ||
+        (configLower.includes('delivery') && existingEventKeywords.has('out for delivery')) ||
+        (configLower.includes('delivered') && existingEventKeywords.has('delivered'))
+
+      if (!isDuplicate) {
         timeline.push({
           event: config.name,
           timestamp: shipment[key],
           description: '',
           icon: config.icon,
         })
+        existingEventKeywords.add(configLower)
+      }
+    }
+  }
+
+  // If status_details indicates a tracking status but we don't have the corresponding event,
+  // add a synthetic event. This handles cases where ShipBob's /timeline endpoint
+  // didn't return the event but the carrier status is known.
+  if (shipment.status_details && Array.isArray(shipment.status_details) && shipment.status_details.length > 0) {
+    const statusName = shipment.status_details[0]?.name
+
+    // Map status_details names to events we might need to synthesize
+    const statusToEvent: Record<string, { eventKey: string; name: string; icon: string }> = {
+      'InTransit': { eventKey: 'event_intransit', name: 'In Transit', icon: 'truck' },
+      'OutForDelivery': { eventKey: 'event_outfordelivery', name: 'Out for Delivery', icon: 'door-open' },
+      'Delivered': { eventKey: 'event_delivered', name: 'Delivered', icon: 'check-circle-2' },
+    }
+
+    const eventConfig = statusToEvent[statusName]
+    if (eventConfig && !shipment[eventConfig.eventKey]) {
+      // We have a status but no timestamp - check if this event is already in timeline
+      const eventLower = eventConfig.name.toLowerCase()
+      const hasEvent = existingEventKeywords.has(eventLower) ||
+        (eventLower.includes('transit') && existingEventKeywords.has('in transit')) ||
+        (eventLower.includes('delivery') && existingEventKeywords.has('out for delivery')) ||
+        (eventLower.includes('delivered') && existingEventKeywords.has('delivered'))
+
+      if (!hasEvent) {
+        // Use the timeline_checked_at as a rough timestamp, or fall back to labeled date
+        // This gives users visibility that the package reached this status
+        const syntheticTimestamp = shipment.timeline_checked_at || shipment.event_labeled
+        if (syntheticTimestamp) {
+          timeline.push({
+            event: eventConfig.name,
+            timestamp: syntheticTimestamp,
+            description: 'Status confirmed by carrier',
+            icon: eventConfig.icon,
+          })
+          existingEventKeywords.add(eventLower)
+        }
       }
     }
   }
@@ -693,13 +809,49 @@ function getShipmentStatus(
   efdStatus?: string,
   statusDetails?: any[],
   shippedDate?: string | null,
-  deliveredDate?: string | null
+  deliveredDate?: string | null,
+  eventPicked?: string | null,
+  eventPacked?: string | null,
+  eventInTransit?: string | null
 ): string {
   if (deliveredDate) {
     return 'Delivered'
   }
 
-  // Check status_details for hold reasons or tracking updates
+  // Check status_details FIRST for tracking updates (InTransit, OutForDelivery, etc.)
+  // These are more authoritative than event timestamps for carrier tracking status
+  if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
+    const statusName = statusDetails[0]?.name
+    if (statusName) {
+      // Tracking updates take priority
+      switch (statusName) {
+        case 'Delivered': return 'Delivered'
+        case 'OutForDelivery': return 'Out for Delivery'
+        case 'InTransit': return 'In Transit'
+        case 'DeliveryException': return 'Exception'
+        case 'DeliveryAttemptFailed': return 'Delivery Attempted'
+      }
+    }
+  }
+
+  // Also check event_intransit timestamp - if we have it, we're in transit
+  if (eventInTransit) {
+    return 'In Transit'
+  }
+
+  // Check event timestamps for fulfillment progress (most specific first)
+  // These are more reliable than the raw status field for in-progress shipments
+  if (shippedDate) {
+    return 'Awaiting Carrier'
+  }
+  if (eventPacked) {
+    return 'Packed'
+  }
+  if (eventPicked) {
+    return 'Picked'
+  }
+
+  // Check status_details for hold reasons (tracking statuses already handled above)
   if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
     const statusName = statusDetails[0]?.name
     const statusDescription = statusDetails[0]?.description
@@ -719,13 +871,8 @@ function getShipmentStatus(
         case 'LabelPurchaseFailed': return 'On Hold'
         case 'InternationalDocumentsFailed': return 'On Hold'
         case 'ShippingMethodUnavailable': return 'On Hold'
-        // Tracking updates
-        case 'Delivered': return 'Delivered'
-        case 'OutForDelivery': return 'Out for Delivery'
-        case 'InTransit': return 'In Transit'
+        // Fulfillment progress
         case 'AwaitingCarrierScan': return 'Awaiting Carrier'
-        case 'DeliveryException': return 'Exception'
-        case 'DeliveryAttemptFailed': return 'Delivery Attempted'
         case 'Picked': return 'Picked'
         case 'Packed': return 'Packed'
         case 'PickInProgress': return 'Pick In-Progress'
@@ -778,4 +925,145 @@ function getShipmentStatus(
   }
 
   return status || 'Pending'
+}
+
+/**
+ * Calculate fulfillment metrics: fulfill time and SLA compliance
+ *
+ * SLA Rule: If order imported before 2pm warehouse local time,
+ * it should ship before midnight that same day.
+ *
+ * Special case: If there's an "Inventory was Allocated to the FC" event in the timeline,
+ * we use that timestamp as the start time instead of order_import_date. This handles
+ * cases where inventory was out of stock and the order had to wait for replenishment.
+ */
+function calculateFulfillMetrics(
+  orderImportDate: string | null | undefined,
+  eventLabeled: string | null | undefined,
+  fcName: string | null | undefined,
+  eventLogs: Array<{ log_type_text?: string; timestamp?: string }> | null | undefined
+): { fulfillTimeDays: number | null; fulfillTimeHours: number | null; metSla: boolean | null } {
+  if (!eventLabeled) {
+    return { fulfillTimeDays: null, fulfillTimeHours: null, metSla: null }
+  }
+
+  // Check for "Inventory was Allocated to the FC" event in the timeline
+  // If found, use that as the start time instead of order import date
+  let startDate: Date | null = null
+
+  if (eventLogs && Array.isArray(eventLogs)) {
+    const inventoryAllocatedEvent = eventLogs.find(log =>
+      log.log_type_text?.toLowerCase().includes('inventory was allocated')
+    )
+    if (inventoryAllocatedEvent?.timestamp) {
+      startDate = new Date(inventoryAllocatedEvent.timestamp)
+    }
+  }
+
+  // Fall back to order import date if no inventory allocation event
+  if (!startDate && orderImportDate) {
+    startDate = new Date(orderImportDate)
+  }
+
+  // If we still don't have a start date, we can't calculate
+  if (!startDate) {
+    return { fulfillTimeDays: null, fulfillTimeHours: null, metSla: null }
+  }
+
+  const labeledDate = new Date(eventLabeled)
+
+  // Calculate fulfill time in days and hours
+  const fulfillTimeMs = labeledDate.getTime() - startDate.getTime()
+  const fulfillTimeDays = Math.round((fulfillTimeMs / (1000 * 60 * 60 * 24)) * 10) / 10
+  const fulfillTimeHours = Math.round((fulfillTimeMs / (1000 * 60 * 60)) * 10) / 10
+
+  // Get timezone for the fulfillment center
+  const fcTimezone = getFcTimezone(fcName)
+
+  // Check SLA: order imported before 2pm local time should ship by midnight
+  // Use Intl.DateTimeFormat to extract local time components without string-parsing issues
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: fcTimezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+
+  // Get start time components in FC local time
+  const startParts = formatter.formatToParts(startDate)
+  const startYear = parseInt(startParts.find(p => p.type === 'year')?.value || '2025')
+  const startMonth = parseInt(startParts.find(p => p.type === 'month')?.value || '1')
+  const startDay = parseInt(startParts.find(p => p.type === 'day')?.value || '1')
+  const startHour = parseInt(startParts.find(p => p.type === 'hour')?.value || '0')
+
+  // Get labeled time components in FC local time
+  const labeledParts = formatter.formatToParts(labeledDate)
+  const labeledYear = parseInt(labeledParts.find(p => p.type === 'year')?.value || '2025')
+  const labeledMonth = parseInt(labeledParts.find(p => p.type === 'month')?.value || '1')
+  const labeledDay = parseInt(labeledParts.find(p => p.type === 'day')?.value || '1')
+  const labeledHour = parseInt(labeledParts.find(p => p.type === 'hour')?.value || '0')
+  const labeledMinute = parseInt(labeledParts.find(p => p.type === 'minute')?.value || '0')
+
+  // Calculate SLA deadline: if before 2pm, same day midnight; if after 2pm, next day midnight
+  const slaCutoffHour = 14 // 2pm
+  let deadlineYear = startYear
+  let deadlineMonth = startMonth
+  let deadlineDay = startDay
+
+  if (startHour >= slaCutoffHour) {
+    // Started after 2pm - deadline is next day
+    // Create a date object to handle month/year rollover
+    const tempDate = new Date(startYear, startMonth - 1, startDay + 1)
+    deadlineYear = tempDate.getFullYear()
+    deadlineMonth = tempDate.getMonth() + 1
+    deadlineDay = tempDate.getDate()
+  }
+
+  // Compare: labeled must be on or before deadline day (at any time during that day)
+  // Convert to comparable integers: YYYYMMDD format
+  const labeledDateInt = labeledYear * 10000 + labeledMonth * 100 + labeledDay
+  const deadlineDateInt = deadlineYear * 10000 + deadlineMonth * 100 + deadlineDay
+
+  // Met SLA if labeled on deadline day or earlier
+  const metSla = labeledDateInt <= deadlineDateInt
+
+  return { fulfillTimeDays, fulfillTimeHours, metSla }
+}
+
+/**
+ * Map fulfillment center name to timezone
+ */
+function getFcTimezone(fcName: string | null | undefined): string {
+  if (!fcName) return 'America/Chicago' // Default to Central
+
+  const fcLower = fcName.toLowerCase()
+
+  // IMPORTANT: Check Canadian FCs FIRST because "Brampton (Ontario)" contains "ontario"
+  // which would otherwise match the California "Ontario" FC
+  // Canada - Eastern Time
+  if (fcLower.includes('brampton')) {
+    return 'America/Toronto'
+  }
+
+  // California FCs - Pacific Time
+  // Note: "Ontario" here refers to Ontario, California (not Ontario, Canada)
+  if (fcLower.includes('riverside') || fcLower.includes('ontario')) {
+    return 'America/Los_Angeles'
+  }
+
+  // Pennsylvania, New Jersey - Eastern Time
+  if (fcLower.includes('wind gap') || fcLower.includes('trenton')) {
+    return 'America/New_York'
+  }
+
+  // Wisconsin, Illinois - Central Time
+  if (fcLower.includes('twin lakes') || fcLower.includes('elwood')) {
+    return 'America/Chicago'
+  }
+
+  // Default to Central Time
+  return 'America/Chicago'
 }

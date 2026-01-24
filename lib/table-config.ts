@@ -8,6 +8,8 @@ export interface ColumnConfig {
   priority: number     // 1 = highest (always visible), higher = hides first
   defaultVisible?: boolean  // Whether column is visible by default (default: true)
   align?: 'left' | 'center' | 'right'  // Text alignment (default: left)
+  dividerAfter?: boolean  // Show vertical divider after this column
+  extraPaddingLeft?: boolean  // Add extra padding on the left (useful after dividers)
 }
 
 export interface TableConfig {
@@ -72,7 +74,7 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
     { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center' },
     { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center' },
-    { id: 'labelCreated', header: 'Label Created', width: 15, priority: 10 },
+    { id: 'labelCreated', header: 'Label Created', width: 13, priority: 10 },
     // Optional columns (not visible by default) - priority 13+
     { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
     { id: 'channelName',  header: 'Channel',       width: 5,  priority: 14, defaultVisible: false },
@@ -99,18 +101,17 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
 export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
   columns: [
     { id: 'transactionDate', header: 'Transaction Date', width: 15, priority: 1 },
-    { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 2 },
-    { id: 'feeType',         header: 'Fee Type',         width: 16, priority: 3 },
-    { id: 'charge',          header: 'Charge',           width: 13, priority: 5, align: 'center' },
-    { id: 'status',          header: 'Status',           width: 14, priority: 4, align: 'center' },
-    { id: 'invoiceNumber',   header: 'Invoice #',        width: 14, priority: 6, align: 'center' },
-    { id: 'invoiceDate',     header: 'Invoice Date',     width: 14, priority: 7, align: 'center' },
+    { id: 'invoiceNumber',   header: 'Invoice',          width: 14, priority: 2 },
+    { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 3 },
+    { id: 'feeType',         header: 'Fee Type',         width: 18, priority: 4 },
+    { id: 'charge',          header: 'Charge',           width: 13, priority: 5 },
+    { id: 'status',          header: 'Status',           width: 14, priority: 6 },
   ],
   breakpoints: {
-    xl: 7,
-    lg: 6,
-    md: 5,
-    sm: 4,
+    xl: 6,
+    lg: 5,
+    md: 4,
+    sm: 3,
     xs: 3,
   }
 }
@@ -122,19 +123,18 @@ export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
 export const RETURNS_TABLE_CONFIG: TableConfig = {
   columns: [
     { id: 'returnCreationDate', header: 'Created',           width: 10, priority: 1 },
-    { id: 'returnId',           header: 'Return ID',         width: 8, priority: 2 },
-    { id: 'returnStatus',       header: 'Return Status',     width: 10, priority: 3 },
-    { id: 'returnType',         header: 'Return Type',       width: 12, priority: 4 },
-    { id: 'charge',             header: 'Charge',            width: 7, priority: 5 },
-    { id: 'originalShipmentId', header: 'Original Shipment', width: 12, priority: 6 },
-    { id: 'trackingNumber',     header: 'Tracking #',        width: 12, priority: 7 },
-    { id: 'fcName',             header: 'FC',                width: 11, priority: 8, defaultVisible: false },
-    { id: 'invoiceNumber',      header: 'Invoice #',         width: 10, priority: 9 },
-    { id: 'invoiceDate',        header: 'Invoice Date',      width: 9, priority: 10 },
+    { id: 'invoiceNumber',      header: 'Invoice',           width: 14, priority: 2 },
+    { id: 'returnId',           header: 'Return ID',         width: 8, priority: 3 },
+    { id: 'returnStatus',       header: 'Return Status',     width: 10, priority: 4 },
+    { id: 'returnType',         header: 'Return Type',       width: 15, priority: 5 },
+    { id: 'charge',             header: 'Charge',            width: 7, priority: 6 },
+    { id: 'originalShipmentId', header: 'Original Shipment', width: 10, priority: 7 },
+    { id: 'trackingNumber',     header: 'Tracking #',        width: 18, priority: 8 },
+    { id: 'fcName',             header: 'FC',                width: 11, priority: 9, defaultVisible: false },
   ],
   breakpoints: {
-    xl: 10,
-    lg: 7,
+    xl: 8,
+    lg: 6,
     md: 5,
     sm: 4,
     xs: 3,
@@ -147,20 +147,19 @@ export const RETURNS_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const RECEIVING_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'transactionDate',  header: 'Transaction Date', width: 14, priority: 1 },
-    { id: 'wroId',            header: 'WRO ID',           width: 10, priority: 2 },
-    { id: 'receivingStatus',  header: 'Status',           width: 12, priority: 3 },
-    { id: 'contents',         header: 'Contents',         width: 14, priority: 4 },
-    { id: 'feeType',          header: 'Fee Type',         width: 16, priority: 5 },
-    { id: 'charge',           header: 'Charge',           width: 10, priority: 6 },
-    { id: 'invoiceNumber',    header: 'Invoice #',        width: 12, priority: 7 },
-    { id: 'invoiceDate',      header: 'Invoice Date',     width: 12, priority: 8 },
+    { id: 'transactionDate',  header: 'Transaction Date', width: 11, priority: 1 },
+    { id: 'invoiceNumber',    header: 'Invoice',          width: 14, priority: 2 },
+    { id: 'wroId',            header: 'WRO ID',           width: 8,  priority: 3 },
+    { id: 'charge',           header: 'Charge',           width: 9,  priority: 4 },
+    { id: 'receivingStatus',  header: 'Status',           width: 12, priority: 5 },
+    { id: 'feeType',          header: 'Fee Type',         width: 12, priority: 6 },
+    { id: 'contents',         header: 'Contents',         width: 31, priority: 7 },
   ],
   breakpoints: {
-    xl: 8,
-    lg: 6,
-    md: 5,
-    sm: 4,
+    xl: 7,
+    lg: 5,
+    md: 4,
+    sm: 3,
     xs: 3,
   }
 }
@@ -172,19 +171,18 @@ export const RECEIVING_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const STORAGE_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'inventoryId',     header: 'Inventory ID',   width: 12, priority: 1 },
-    { id: 'fcName',          header: 'FC Name',        width: 14, priority: 2 },
-    { id: 'locationType',    header: 'Location Type',  width: 10, priority: 3 },
-    { id: 'chargeStartDate', header: 'Charge Start',   width: 12, priority: 5 },
-    { id: 'charge',          header: 'Charge',         width: 10, priority: 4 },
-    { id: 'status',          header: 'Status',         width: 10, priority: 6 },
-    { id: 'invoiceNumber',   header: 'Invoice #',      width: 10, priority: 7 },
-    { id: 'invoiceDate',     header: 'Invoice Date',   width: 12, priority: 8 },
-    { id: 'comment',         header: 'Comment',        width: 10, priority: 9, defaultVisible: false },
+    { id: 'chargeStartDate', header: 'Charge Start',   width: 12, priority: 1 },
+    { id: 'invoiceNumber',   header: 'Invoice',        width: 16, priority: 2 },
+    { id: 'inventoryId',     header: 'Inventory ID',   width: 10, priority: 3 },
+    { id: 'fcName',          header: 'FC Name',        width: 14, priority: 4 },
+    { id: 'locationType',    header: 'Location Type',  width: 12, priority: 5 },
+    { id: 'charge',          header: 'Charge',         width: 10, priority: 6 },
+    { id: 'status',          header: 'Status',         width: 12, priority: 7 },
+    { id: 'comment',         header: 'Comment',        width: 12, priority: 8, defaultVisible: false },
   ],
   breakpoints: {
-    xl: 9,
-    lg: 7,
+    xl: 7,
+    lg: 6,
     md: 5,
     sm: 4,
     xs: 3,
@@ -197,20 +195,19 @@ export const STORAGE_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const CREDITS_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'referenceId',         header: 'Reference ID',     width: 12, priority: 1 },
-    { id: 'sbTicketReference',   header: 'ShipBob Ticket',   width: 12, priority: 2 },
-    { id: 'creditAmount',        header: 'Credit',           width: 10, priority: 3 },
-    { id: 'creditReason',        header: 'Credit Reason',    width: 18, priority: 4 },
-    { id: 'transactionDate',     header: 'Transaction Date', width: 14, priority: 5 },
-    { id: 'status',              header: 'Status',           width: 10, priority: 6 },
-    { id: 'creditInvoiceNumber', header: 'Credit Invoice #', width: 12, priority: 7 },
-    { id: 'invoiceDate',         header: 'Invoice Date',     width: 12, priority: 8 },
+    { id: 'transactionDate',     header: 'Transaction Date', width: 11, priority: 1 },
+    { id: 'creditInvoiceNumber', header: 'Invoice',          width: 14, priority: 2 },
+    { id: 'status',              header: 'Status',           width: 12, priority: 3 },
+    { id: 'referenceId',         header: 'Reference ID',     width: 12, priority: 4 },
+    { id: 'sbTicketReference',   header: 'ShipBob Ticket',   width: 12, priority: 5 },
+    { id: 'creditAmount',        header: 'Credit',           width: 8, priority: 6 },
+    { id: 'creditReason',        header: 'Credit Reason',    width: 23, priority: 7 },
   ],
   breakpoints: {
-    xl: 8,
-    lg: 6,
-    md: 5,
-    sm: 4,
+    xl: 7,
+    lg: 5,
+    md: 4,
+    sm: 3,
     xs: 3,
   }
 }

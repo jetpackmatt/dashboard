@@ -3,11 +3,12 @@
     "id": 1,
     "dateCreated": "2025-11-19",
     "type": "Claim",
-    "status": "Under Review",
+    "status": "Credit Requested",
     "manager": "Nora",
     "issue": "Loss",
     "shipDate": "2025-11-18",
-    "orderId": "1847362",
+    "orderId": "SB-1847362",
+    "shipId": "335612416",
     "carrier": "FedEx",
     "tracking": "773892456821",
     "credit": 245.50,
@@ -26,7 +27,8 @@
     "manager": "Nora",
     "issue": "Damage",
     "shipDate": "2025-11-15",
-    "orderId": "1842915",
+    "orderId": "SB-1842915",
+    "shipId": "335612030",
     "carrier": "UPS",
     "tracking": "1Z9X8A7W6543210987",
     "credit": 128.75,
@@ -34,7 +36,10 @@
     "notes": "Update required for SKU mapping on new product line launch.",
     "reshipment": "I've already reshipped",
     "reshipmentId": 1843156,
-    "compensationRequest": "Free replacement"
+    "compensationRequest": "Free replacement",
+    "attachments": [
+      {"name": "damage-photo.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-16"}
+    ]
   },
   {
     "id": 3,
@@ -44,7 +49,7 @@
     "manager": "Nora",
     "issue": "Other",
     "shipDate": "2025-11-20",
-    "orderId": "1849203",
+    "orderId": "SB-1849203",
     "carrier": "Purolator",
     "tracking": "PUR329847561234",
     "credit": 0.00,
@@ -61,7 +66,8 @@
     "manager": "Kirty",
     "issue": "Pick Error",
     "shipDate": "2025-11-12",
-    "orderId": "1838764",
+    "orderId": "SB-1838764",
+    "shipId": "335605547",
     "carrier": "Canada Post",
     "tracking": "CA123456789012345",
     "credit": 89.25,
@@ -70,7 +76,10 @@
     "reshipment": "I've already reshipped",
     "whatToReship": "Correct SKU-001 product",
     "reshipmentId": 1839102,
-    "compensationRequest": "Refund to payment method"
+    "compensationRequest": "Refund to payment method",
+    "attachments": [
+      {"name": "wrong-sku-photo.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-13"}
+    ]
   },
   {
     "id": 5,
@@ -80,7 +89,8 @@
     "manager": "Nora",
     "issue": "Short Ship",
     "shipDate": "2025-11-16",
-    "orderId": "1844521",
+    "orderId": "SB-1844521",
+    "shipId": "335604539",
     "carrier": "FedEx",
     "tracking": "773892456822",
     "credit": 156.00,
@@ -89,7 +99,11 @@
     "reshipment": "Please reship for me",
     "whatToReship": "3x Missing units of Probiotics 50B CFU",
     "reshipmentId": 1844789,
-    "compensationRequest": "Credit to account"
+    "compensationRequest": "Credit to account",
+    "attachments": [
+      {"name": "packing-slip.pdf", "url": "#", "type": "pdf", "uploadedAt": "2025-11-17"},
+      {"name": "box-contents.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-17"}
+    ]
   },
   {
     "id": 6,
@@ -99,13 +113,13 @@
     "manager": "Nora",
     "issue": "Other",
     "shipDate": "2025-11-19",
-    "orderId": "1847892",
+    "orderId": "SB-1847892",
+    "shipId": "335604097",
     "carrier": "Amazon FBM",
     "tracking": "TBA394857261",
     "credit": 0.00,
     "currency": "USD",
     "notes": "Methyl Life is being penalized on Amazon for non-compliant shipping.",
-    "shipId": "SHP-847892",
     "trackingId": "TBA394857261"
   },
   {
@@ -116,13 +130,13 @@
     "manager": "Matt",
     "issue": "Other",
     "shipDate": "2025-11-20",
-    "orderId": "1849567",
+    "orderId": "SB-1849567",
+    "shipId": "335603692",
     "carrier": "DHL",
     "tracking": "9845032178",
     "credit": 0.00,
     "currency": "USD",
     "notes": "Quotes from the most reliable and quickest couriers? \nThe Mexico one especially the staff member will only be there for a while.\n\nThe Address in South Africa is 7 Villa Baroque Complex, 91 East road, Brentwood Park AH, Kempton Park, 1505. \nAddress in mexico: Av. Isaac Newton 178, Polanco, 11560 Ciudad de México, CDMX",
-    "shipId": "SHP-849567",
     "trackingId": "9845032178"
   },
   {
@@ -133,7 +147,8 @@
     "manager": "Nora",
     "issue": "Damage",
     "shipDate": "2025-11-10",
-    "orderId": "1835629",
+    "orderId": "SB-1835629",
+    "shipId": "335602771",
     "carrier": "UPS",
     "tracking": "1Z9X8A7W6543210988",
     "credit": 312.50,
@@ -142,7 +157,10 @@
     "reshipment": "I've already reshipped",
     "whatToReship": "Complete order - expedited shipment",
     "reshipmentId": 1836045,
-    "compensationRequest": "Free replacement"
+    "compensationRequest": "Free replacement",
+    "attachments": [
+      {"name": "damaged-box.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-11"}
+    ]
   },
   {
     "id": 9,
@@ -152,7 +170,8 @@
     "manager": "Dave",
     "issue": "Loss",
     "shipDate": "2025-11-14",
-    "orderId": "1841023",
+    "orderId": "SB-1841023",
+    "shipId": "335601717",
     "carrier": "FedEx",
     "tracking": "773892456823",
     "credit": 425.00,
@@ -165,11 +184,12 @@
     "id": 10,
     "dateCreated": "2025-11-18",
     "type": "Claim",
-    "status": "Under Review",
+    "status": "Credit Requested",
     "manager": "Nora",
     "issue": "Pick Error",
     "shipDate": "2025-11-17",
-    "orderId": "1845783",
+    "orderId": "SB-1845783",
+    "shipId": "335601169",
     "carrier": "Canada Post",
     "tracking": "CA123456789012346",
     "credit": 0.00,
@@ -177,7 +197,10 @@
     "notes": "Need to schedule inventory reconciliation for warehouse sections B4-B7 by end of week.",
     "reshipment": "Please reship for me",
     "whatToReship": "1x Blue variant (sent Red by mistake)",
-    "compensationRequest": "Free replacement"
+    "compensationRequest": "Free replacement",
+    "attachments": [
+      {"name": "red-vs-blue-comparison.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-18"}
+    ]
   },
   {
     "id": 11,
@@ -187,7 +210,8 @@
     "manager": "Nora",
     "issue": "Short Ship",
     "shipDate": "2025-11-09",
-    "orderId": "1834512",
+    "orderId": "SB-1834512",
+    "shipId": "335600676",
     "carrier": "UPS",
     "tracking": "1Z9X8A7W6543210989",
     "credit": 67.80,
@@ -196,7 +220,10 @@
     "reshipment": "I've already reshipped",
     "whatToReship": "2x Missing Magnesium Glycinate capsules",
     "reshipmentId": 1834891,
-    "compensationRequest": "Credit to account"
+    "compensationRequest": "Credit to account",
+    "attachments": [
+      {"name": "shipment-contents.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-10"}
+    ]
   },
   {
     "id": 12,
@@ -206,7 +233,8 @@
     "manager": "Kirty",
     "issue": "Damage",
     "shipDate": "2025-11-19",
-    "orderId": "1848126",
+    "orderId": "SB-1848126",
+    "shipId": "335599845",
     "carrier": "Purolator",
     "tracking": "PUR329847561235",
     "credit": 189.99,
@@ -215,6 +243,9 @@
     "reshipment": "Please reship for me",
     "whatToReship": "1x CoQ10 supplement bottle (undamaged)",
     "reshipmentId": 1848445,
-    "compensationRequest": "Free replacement"
+    "compensationRequest": "Free replacement",
+    "attachments": [
+      {"name": "crushed-bottle.jpg", "url": "#", "type": "jpg", "uploadedAt": "2025-11-20"}
+    ]
   }
 ]

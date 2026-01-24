@@ -26,7 +26,6 @@ import {
   TruckIcon,
   XIcon,
 } from "lucide-react"
-import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { toast } from "sonner"
 
@@ -42,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Calendar } from "@/components/ui/calendar"
+import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -171,7 +171,9 @@ function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date
       const yearStart = new Date(today.getFullYear(), 0, 1)
       return { from: yearStart, to: today }
     case 'all':
-      return null
+      // Return range from system start date (Jan 1, 2020) to today
+      const systemStartDate = new Date(2020, 0, 1) // Jan 1, 2020
+      return { from: systemStartDate, to: today }
     case 'custom':
       return null
     default:
@@ -238,6 +240,15 @@ export function DataTable({
   shipmentsLoading: prefetchedShipmentsLoading = false,
   shipmentsChannels: prefetchedShipmentsChannels = [],
   shipmentsCarriers: prefetchedShipmentsCarriers = [],
+  // Pre-fetched Additional Services data for instant tab switching
+  additionalServicesData: prefetchedAdditionalServicesData,
+  additionalServicesTotalCount: prefetchedAdditionalServicesTotalCount = 0,
+  additionalServicesLoading: prefetchedAdditionalServicesLoading = false,
+  additionalServicesFeeTypes: prefetchedAdditionalServicesFeeTypes = [],
+  // Pre-fetched Returns data for instant tab switching
+  returnsData: prefetchedReturnsData,
+  returnsTotalCount: prefetchedReturnsTotalCount = 0,
+  returnsLoading: prefetchedReturnsLoading = false,
 }: {
   clientId: string | null  // null = let API determine from user's assigned clients
   defaultPageSize?: number
@@ -256,6 +267,15 @@ export function DataTable({
   shipmentsLoading?: boolean
   shipmentsChannels?: string[]
   shipmentsCarriers?: string[]
+  // Pre-fetched Additional Services data for instant tab switching
+  additionalServicesData?: any[]
+  additionalServicesTotalCount?: number
+  additionalServicesLoading?: boolean
+  additionalServicesFeeTypes?: string[]
+  // Pre-fetched Returns data for instant tab switching
+  returnsData?: any[]
+  returnsTotalCount?: number
+  returnsLoading?: boolean
 }) {
   // Helper to build URL with optional clientId (omits null values)
   const buildApiUrl = (base: string, params: Record<string, string | number | null | undefined>) => {
@@ -382,7 +402,10 @@ export function DataTable({
   const [unfulfilledAgeFilter, setUnfulfilledAgeFilter] = React.useState<string[]>([])
   const [unfulfilledTypeFilter, setUnfulfilledTypeFilter] = React.useState<string[]>([])
   const [unfulfilledChannelFilter, setUnfulfilledChannelFilter] = React.useState<string[]>([])
-  const [unfulfilledDateRange, setUnfulfilledDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [unfulfilledDateRange, setUnfulfilledDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('all')
+    return range ? { from: range.from, to: range.to } : undefined
+  })
   const [availableChannels, setAvailableChannels] = React.useState<string[]>(unfulfilledChannels)
   const [isUnfulfilledLoading, setIsUnfulfilledLoading] = React.useState(unfulfilledLoading)
 
@@ -466,7 +489,10 @@ export function DataTable({
   // Additional Services tab filter state
   const [additionalServicesTypeFilter, setAdditionalServicesTypeFilter] = React.useState<string>("all")
   const [additionalServicesStatusFilter, setAdditionalServicesStatusFilter] = React.useState<string>("all")
-  const [additionalServicesDateRange, setAdditionalServicesDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [additionalServicesDateRange, setAdditionalServicesDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('all')
+    return range ? { from: range.from, to: range.to } : undefined
+  })
   const [additionalServicesDatePreset, setAdditionalServicesDatePreset] = React.useState<DateRangePreset | undefined>('all')
   const [additionalServicesFeeTypes, setAdditionalServicesFeeTypes] = React.useState<string[]>([])
 
@@ -477,8 +503,13 @@ export function DataTable({
     [additionalServicesStatusFilter]
   )
 
-  // Load dynamic fee types for Additional Services
+  // Use prefetched fee types when available, otherwise load dynamically
   React.useEffect(() => {
+    if (prefetchedAdditionalServicesFeeTypes && prefetchedAdditionalServicesFeeTypes.length > 0) {
+      setAdditionalServicesFeeTypes(prefetchedAdditionalServicesFeeTypes)
+      return
+    }
+    // Fallback: load fee types dynamically if not prefetched
     async function loadFeeTypes() {
       try {
         const response = await fetch(buildApiUrl('/api/data/billing/additional-services/fee-types', { clientId }))
@@ -491,7 +522,7 @@ export function DataTable({
       }
     }
     loadFeeTypes()
-  }, [clientId])
+  }, [clientId, prefetchedAdditionalServicesFeeTypes])
 
   // Load dynamic credit reasons for Credits tab
   React.useEffect(() => {
@@ -562,14 +593,20 @@ export function DataTable({
   // Returns tab filter state
   const [returnStatusFilter, setReturnStatusFilter] = React.useState<string>("all")
   const [returnTypeFilter, setReturnTypeFilter] = React.useState<string>("all")
-  const [returnsDateRange, setReturnsDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [returnsDateRange, setReturnsDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('all')
+    return range ? { from: range.from, to: range.to } : undefined
+  })
   const [returnsDatePreset, setReturnsDatePreset] = React.useState<DateRangePreset | undefined>('all')
   const [returnStatuses, setReturnStatuses] = React.useState<string[]>([])
   const [returnTypes, setReturnTypes] = React.useState<string[]>([])
 
   // Receiving tab filter state
   const [receivingStatusFilter, setReceivingStatusFilter] = React.useState<string>("all")
-  const [receivingDateRange, setReceivingDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [receivingDateRange, setReceivingDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('all')
+    return range ? { from: range.from, to: range.to } : undefined
+  })
   const [receivingDatePreset, setReceivingDatePreset] = React.useState<DateRangePreset | undefined>('all')
   const [receivingStatuses, setReceivingStatuses] = React.useState<string[]>([])
 
@@ -581,69 +618,15 @@ export function DataTable({
 
   // Credits tab filter state
   const [creditsReasonFilter, setCreditsReasonFilter] = React.useState<string>("all")
-  const [creditsDateRange, setCreditsDateRange] = React.useState<DateRange | undefined>(undefined)
+  const [creditsDateRange, setCreditsDateRange] = React.useState<DateRange | undefined>(() => {
+    const range = getDateRangeFromPreset('all')
+    return range ? { from: range.from, to: range.to } : undefined
+  })
   const [creditsDatePreset, setCreditsDatePreset] = React.useState<DateRangePreset | undefined>('all')
   const [creditReasons, setCreditReasons] = React.useState<string[]>([])
 
   // Date preset state for unfulfilled filter
   const [unfulfilledDatePreset, setUnfulfilledDatePreset] = React.useState<DateRangePreset | undefined>('all')
-  const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
-  // Track if we're in the middle of selecting a range (waiting for end date)
-  const [isAwaitingEndDate, setIsAwaitingEndDate] = React.useState(false)
-
-  // Handle preset selection
-  const handleDatePresetChange = (preset: DateRangePreset) => {
-    setUnfulfilledDatePreset(preset)
-    if (preset === 'custom') {
-      // Custom will use the existing date range picker
-      setIsCustomRangeOpen(true)
-    } else {
-      // Set date range from preset
-      const range = getDateRangeFromPreset(preset)
-      if (range) {
-        setUnfulfilledDateRange({ from: range.from, to: range.to })
-      }
-      setIsCustomRangeOpen(false)
-    }
-  }
-
-  // Handle custom range selection
-  const handleCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
-    // If we're not awaiting end date, this is the first click - always start fresh
-    if (!isAwaitingEndDate) {
-      // First click - set just the from date, wait for end date
-      const clickedDate = range.from || range.to
-      if (clickedDate) {
-        setUnfulfilledDateRange({ from: clickedDate, to: undefined })
-        setIsAwaitingEndDate(true)
-      }
-      return
-    }
-
-    // We're awaiting end date - this is the second click
-    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
-      // Complete range selected with different dates - close popover
-      setUnfulfilledDateRange(range)
-      setUnfulfilledDatePreset('custom')
-      setIsCustomRangeOpen(false)
-      setIsAwaitingEndDate(false)
-    } else if (range.from && range.to) {
-      // Same date clicked again (clicking on the already-selected from date)
-      // Just update the range but don't close
-      setUnfulfilledDateRange(range)
-    } else {
-      // Partial range update
-      setUnfulfilledDateRange(range)
-    }
-  }
-
-  // Format custom range display
-  const customRangeLabel = React.useMemo(() => {
-    if (unfulfilledDateRange?.from && unfulfilledDateRange?.to) {
-      return `${format(unfulfilledDateRange.from, 'MMM d')} - ${format(unfulfilledDateRange.to, 'MMM d')}`
-    }
-    return 'Custom'
-  }, [unfulfilledDateRange])
 
   // Check if unfulfilled filters are active and count them (now using arrays)
   // Note: Date range is NOT counted as a filter since it has its own indicator
@@ -657,16 +640,12 @@ export function DataTable({
     unfulfilledTypeFilter.length +
     unfulfilledChannelFilter.length
 
-  // Clear unfulfilled filters
+  // Clear unfulfilled filters (does NOT clear date range - date has separate control)
   const clearUnfulfilledFilters = () => {
     setUnfulfilledStatusFilter([])
     setUnfulfilledAgeFilter([])
     setUnfulfilledTypeFilter([])
     setUnfulfilledChannelFilter([])
-    setUnfulfilledDateRange(undefined)
-    setUnfulfilledDatePreset(undefined)
-    setIsCustomRangeOpen(false)
-    setIsAwaitingEndDate(false)
   }
 
   // ============================================================================
@@ -684,57 +663,51 @@ export function DataTable({
     shipmentsChannelFilter.length +
     shipmentsCarrierFilter.length
 
+  // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
     setShipmentsStatusFilter([])
     setShipmentsAgeFilter([])
     setShipmentsTypeFilter([])
     setShipmentsChannelFilter([])
     setShipmentsCarrierFilter([])
-    setShipmentsDateRange(undefined)
-    setShipmentsDatePreset(undefined)
   }
 
   // Additional Services tab computed values
-  const hasAdditionalServicesFilters = additionalServicesTypeFilter !== "all" || additionalServicesStatusFilter !== "all" || additionalServicesDateRange?.from
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasAdditionalServicesFilters = additionalServicesTypeFilter !== "all" || additionalServicesStatusFilter !== "all"
   const additionalServicesFilterCount = [
     additionalServicesTypeFilter !== "all",
     additionalServicesStatusFilter !== "all",
-    additionalServicesDateRange?.from,
   ].filter(Boolean).length
 
+  // Clear additional services filters (does NOT clear date range - date has separate control)
   const clearAdditionalServicesFilters = () => {
     setAdditionalServicesTypeFilter("all")
     setAdditionalServicesStatusFilter("all")
-    setAdditionalServicesDateRange(undefined)
-    setAdditionalServicesDatePreset(undefined)
   }
 
   // Returns tab computed values
-  const hasReturnsFilters = returnStatusFilter !== "all" || returnTypeFilter !== "all" || returnsDateRange?.from
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasReturnsFilters = returnStatusFilter !== "all" || returnTypeFilter !== "all"
   const returnsFilterCount = [
     returnStatusFilter !== "all",
     returnTypeFilter !== "all",
-    returnsDateRange?.from,
   ].filter(Boolean).length
 
+  // Clear returns filters (does NOT clear date range - date has separate control)
   const clearReturnsFilters = () => {
     setReturnStatusFilter("all")
     setReturnTypeFilter("all")
-    setReturnsDateRange(undefined)
-    setReturnsDatePreset(undefined)
   }
 
   // Receiving tab computed values
-  const hasReceivingFilters = receivingStatusFilter !== "all" || receivingDateRange?.from
-  const receivingFilterCount = [
-    receivingStatusFilter !== "all",
-    receivingDateRange?.from,
-  ].filter(Boolean).length
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasReceivingFilters = receivingStatusFilter !== "all"
+  const receivingFilterCount = receivingStatusFilter !== "all" ? 1 : 0
 
+  // Clear receiving filters (does NOT clear date range - date has separate control)
   const clearReceivingFilters = () => {
     setReceivingStatusFilter("all")
-    setReceivingDateRange(undefined)
-    setReceivingDatePreset(undefined)
   }
 
   // Storage tab computed values
@@ -750,16 +723,13 @@ export function DataTable({
   }
 
   // Credits tab computed values
-  const hasCreditsFilters = creditsReasonFilter !== "all" || creditsDateRange?.from
-  const creditsFilterCount = [
-    creditsReasonFilter !== "all",
-    creditsDateRange?.from,
-  ].filter(Boolean).length
+  // Note: Date range is NOT counted as a filter since it has its own indicator
+  const hasCreditsFilters = creditsReasonFilter !== "all"
+  const creditsFilterCount = creditsReasonFilter !== "all" ? 1 : 0
 
+  // Clear credits filters (does NOT clear date range - date has separate control)
   const clearCreditsFilters = () => {
     setCreditsReasonFilter("all")
-    setCreditsDateRange(undefined)
-    setCreditsDatePreset(undefined)
   }
 
   // ============================================================================
@@ -807,52 +777,13 @@ export function DataTable({
   const handleGenericDatePresetChange = (preset: DateRangePreset) => {
     const { setPreset, setDateRange } = currentTabDateState
     setPreset(preset)
-    if (preset === 'custom') {
-      setIsCustomRangeOpen(true)
-    } else if (preset === 'all') {
-      // Clear the date range when "All" is selected
-      setDateRange(undefined)
-      setIsCustomRangeOpen(false)
-    } else {
+    if (preset !== 'custom') {
       const range = getDateRangeFromPreset(preset)
       if (range) {
         setDateRange({ from: range.from, to: range.to })
       }
-      setIsCustomRangeOpen(false)
     }
   }
-
-  // Generic custom range select handler
-  const handleGenericCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
-    const { setPreset, setDateRange } = currentTabDateState
-    if (!isAwaitingEndDate) {
-      const clickedDate = range.from || range.to
-      if (clickedDate) {
-        setDateRange({ from: clickedDate, to: undefined })
-        setIsAwaitingEndDate(true)
-      }
-      return
-    }
-    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
-      setDateRange(range)
-      setPreset('custom')
-      setIsCustomRangeOpen(false)
-      setIsAwaitingEndDate(false)
-    } else if (range.from && range.to) {
-      setDateRange(range)
-    } else {
-      setDateRange(range)
-    }
-  }
-
-  // Format custom range display for current tab
-  const currentCustomRangeLabel = React.useMemo(() => {
-    const { dateRange } = currentTabDateState
-    if (dateRange?.from && dateRange?.to) {
-      return `${format(dateRange.from, 'MMM d')} - ${format(dateRange.to, 'MMM d')}`
-    }
-    return 'Custom'
-  }, [currentTabDateState])
 
   // Get current table config for columns dropdown
   const currentTableConfig = React.useMemo(() => {
@@ -1052,105 +983,46 @@ export function DataTable({
                 )}
               </div>
 
-              {/* Date Range Dropdown - compact replacement for inline buttons */}
+              {/* Date Range - Preset dropdown + Inline date range picker */}
               {currentTab !== "storage" && (
-                <Popover
-                  open={isCustomRangeOpen}
-                  onOpenChange={(open) => {
-                    if (open) {
-                      setIsCustomRangeOpen(true)
-                      setIsAwaitingEndDate(false)
-                    } else {
-                      setIsCustomRangeOpen(false)
-                    }
-                  }}
-                  modal={false}
-                >
-                  <div className="flex items-center gap-1">
-                    <Select
-                      value={currentTabDateState.preset === 'custom' ? 'custom' : (currentTabDateState.preset || '60d')}
-                      onValueChange={(value) => {
-                        if (value === 'custom') {
-                          setIsCustomRangeOpen(true)
-                        } else {
-                          handleGenericDatePresetChange(value as DateRangePreset)
-                          setIsCustomRangeOpen(false)
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
-                        <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                        <SelectValue>
-                          {currentTabDateState.preset === 'custom'
-                            ? currentCustomRangeLabel
-                            : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent align="start">
-                        {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="custom">Custom Range...</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <PopoverContent
-                    className="w-auto p-3"
-                    align="start"
-                    onInteractOutside={(e) => e.preventDefault()}
-                    onPointerDownOutside={(e) => e.preventDefault()}
-                    onFocusOutside={(e) => e.preventDefault()}
+                <div className="flex items-center gap-1.5">
+                  {/* Preset dropdown (no Custom option) */}
+                  <Select
+                    value={currentTabDateState.preset === 'custom' ? '' : (currentTabDateState.preset || '60d')}
+                    onValueChange={(value) => {
+                      if (value) {
+                        handleGenericDatePresetChange(value as DateRangePreset)
+                      }
+                    }}
                   >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Select Date Range</span>
-                      </div>
-                      {(currentTabDateState.dateRange?.from || currentTabDateState.dateRange?.to) && (
-                        <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                          <div className="flex-1 text-xs">
-                            <span className="text-muted-foreground">From: </span>
-                            <span className="font-medium">
-                              {currentTabDateState.dateRange?.from ? format(currentTabDateState.dateRange.from, 'MMM d, yyyy') : '—'}
-                            </span>
-                          </div>
-                          <div className="flex-1 text-xs">
-                            <span className="text-muted-foreground">To: </span>
-                            <span className="font-medium">
-                              {currentTabDateState.dateRange?.to ? format(currentTabDateState.dateRange.to, 'MMM d, yyyy') : '—'}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => {
-                              currentTabDateState.setDateRange(undefined)
-                              currentTabDateState.setPreset(undefined)
-                              setIsCustomRangeOpen(false)
-                              setIsAwaitingEndDate(false)
-                            }}
-                            className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Reset
-                          </button>
-                        </div>
-                      )}
-                      <div className="text-[11px] text-muted-foreground px-1">
-                        {isAwaitingEndDate
-                          ? "Click a date to select end date"
-                          : "Click a date to select start date"}
-                      </div>
-                      <Calendar
-                        mode="range"
-                        selected={{
-                          from: currentTabDateState.dateRange?.from,
-                          to: currentTabDateState.dateRange?.to,
-                        }}
-                        onSelect={(range) => handleGenericCustomRangeSelect({ from: range?.from, to: range?.to })}
-                        numberOfMonths={2}
-                      />
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                    <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
+                      <SelectValue placeholder="Custom">
+                        {currentTabDateState.preset === 'custom'
+                          ? 'Custom'
+                          : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Inline date range picker - shows actual dates, allows custom selection */}
+                  <InlineDateRangePicker
+                    dateRange={currentTabDateState.dateRange}
+                    onDateRangeChange={(range) => {
+                      currentTabDateState.setDateRange(range)
+                      // When user manually selects dates, switch to custom mode
+                      if (range?.from && range?.to) {
+                        currentTabDateState.setPreset('custom')
+                      }
+                    }}
+                  />
+                </div>
               )}
 
               {/* Jetpack Loading Indicator - shows when data is loading */}
@@ -1560,6 +1432,10 @@ export function DataTable({
           userColumnVisibility={additionalServicesPrefs.columnVisibility}
           initialPageSize={additionalServicesPrefs.pageSize}
           onPageSizeChange={additionalServicesPrefs.setPageSize}
+          // Pre-fetched data for instant initial render
+          initialData={prefetchedAdditionalServicesData}
+          initialTotalCount={prefetchedAdditionalServicesTotalCount}
+          initialLoading={prefetchedAdditionalServicesLoading}
           onExportTriggerReady={(trigger) => {
             if (currentTab === 'additional-services') exportTriggerRef.current = trigger
           }}

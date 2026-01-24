@@ -108,17 +108,23 @@ export async function GET(request: NextRequest) {
 
     // Map to response format matching XLS columns
     // Use billed_amount (marked-up amount) for Charge column
+    // CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
     // Use Jetpack invoice fields (invoice_id_jp, invoice_date_jp) instead of ShipBob
     const mapped = (data || []).map((row: Record<string, unknown>) => ({
       id: row.id,
       clientId: row.client_id,
       referenceId: row.reference_id || '',
       feeType: row.fee_type || '',
-      charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,
+      // Return billed_amount if available, null otherwise (UI shows "-")
+      charge: row.billed_amount !== null && row.billed_amount !== undefined
+        ? parseFloat(String(row.billed_amount)) || 0
+        : null,
       transactionDate: row.charge_date,
       invoiceNumber: row.invoice_id_jp?.toString() || '',
       invoiceDate: row.invoice_date_jp,
       status: row.invoiced_status_jp ? 'invoiced' : 'pending',
+      // Include preview flag for UI styling (optional indicator)
+      isPreview: row.markup_is_preview === true,
     }))
 
     return NextResponse.json({

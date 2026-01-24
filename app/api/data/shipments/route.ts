@@ -175,8 +175,9 @@ export async function GET(request: NextRequest) {
             dbFilters.push('status_details->0->>name.eq.InTransit')
             break
           case 'out for delivery':
-            // OutForDelivery tracking status
-            dbFilters.push('status_details->0->>name.eq.OutForDelivery')
+            // OutForDelivery tracking status - but NOT if already delivered
+            // status_details may lag behind event_delivered, so we exclude delivered shipments
+            dbFilters.push('and(status_details->0->>name.eq.OutForDelivery,event_delivered.is.null)')
             break
         }
       }
@@ -284,12 +285,15 @@ export async function GET(request: NextRequest) {
 
       // Try RPC function first (database-level filtering - very fast!)
       const rpcStartTime = Date.now()
+      // Convert status filter values to lowercase to match RPC function expectations
+      const statusFilterLower = statusFilter.map(s => s.toLowerCase())
+
       const { data: rpcData, error: rpcError } = await supabase.rpc('get_shipments_by_age', {
         p_client_id: clientId || null,
         p_age_ranges: ageRangesJsonb,
         p_limit: limit,
         p_offset: offset,
-        p_status_filter: statusFilter.length > 0 ? statusFilter : null,
+        p_status_filter: statusFilterLower.length > 0 ? statusFilterLower : null,
         p_type_filter: typeFilter.length > 0 ? typeFilter : null,
         p_channel_filter: channelFilter.length > 0 ? channelFilter : null,
         p_carrier_filter: carrierFilter.length > 0 ? carrierFilter : null,
@@ -350,7 +354,7 @@ export async function GET(request: NextRequest) {
                 case 'labelled': dbFilters.push('status.eq.LabeledCreated'); break
                 case 'awaiting carrier': dbFilters.push('status.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>name.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>description.ilike.*Carrier*'); break
                 case 'in transit': dbFilters.push('status_details->0->>name.eq.InTransit'); break
-                case 'out for delivery': dbFilters.push('status_details->0->>name.eq.OutForDelivery'); break
+                case 'out for delivery': dbFilters.push('and(status_details->0->>name.eq.OutForDelivery,event_delivered.is.null)'); break
               }
             }
             if (dbFilters.length > 0) {
@@ -485,7 +489,7 @@ export async function GET(request: NextRequest) {
             case 'labelled': dbFilters.push('status.eq.LabeledCreated'); break
             case 'awaiting carrier': dbFilters.push('status.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>name.eq.AwaitingCarrierScan'); dbFilters.push('status_details->0->>description.ilike.*Carrier*'); break
             case 'in transit': dbFilters.push('status_details->0->>name.eq.InTransit'); break
-            case 'out for delivery': dbFilters.push('status_details->0->>name.eq.OutForDelivery'); break
+            case 'out for delivery': dbFilters.push('and(status_details->0->>name.eq.OutForDelivery,event_delivered.is.null)'); break
           }
         }
         if (dbFilters.length > 0) {
@@ -520,6 +524,7 @@ export async function GET(request: NextRequest) {
 
     // =========================================================================
     // Get item counts, billing data, and refund status for the returned shipments
+    // OPTIMIZATION: Run these queries IN PARALLEL instead of sequentially
     // =========================================================================
 
     const shipmentIds = (shipmentsData || []).map((s: any) => s.shipment_id)
@@ -527,50 +532,60 @@ export async function GET(request: NextRequest) {
     let itemCounts: Record<string, number> = {}
     let billingMap: Record<string, { totalCost: number }> = {}
     let refundedTrackingIds: Set<string> = new Set()
+    let voidedTrackingIds: Set<string> = new Set()
 
     if (shipmentIds.length > 0) {
-      // Count items per shipment
-      const { data: itemData } = await supabase
-        .from('shipment_items')
-        .select('shipment_id')
-        .in('shipment_id', shipmentIds)
+      // Run item counts and billing queries IN PARALLEL
+      const [itemResult, billingResult] = await Promise.all([
+        // Query 1: Count items per shipment
+        supabase
+          .from('shipment_items')
+          .select('shipment_id')
+          .in('shipment_id', shipmentIds),
+        // Query 2: Get billing data (only if we have tracking IDs)
+        trackingIds.length > 0
+          ? supabase
+              .from('transactions')
+              .select('tracking_id, total_charge, fee_type, transaction_type, is_voided')
+              .in('tracking_id', trackingIds)
+          : Promise.resolve({ data: null })
+      ])
 
-      if (itemData) {
-        itemCounts = itemData.reduce((acc: Record<string, number>, item: any) => {
+      // Process item counts
+      if (itemResult.data) {
+        itemCounts = itemResult.data.reduce((acc: Record<string, number>, item: any) => {
           acc[item.shipment_id] = (acc[item.shipment_id] || 0) + 1
           return acc
         }, {})
       }
 
-      // Get billing data from transactions table by tracking_id
-      // Sum all billed_amount for each tracking_id (includes shipping + fees)
-      if (trackingIds.length > 0) {
-        const { data: billingData } = await supabase
-          .from('transactions')
-          .select('tracking_id, billed_amount, transaction_type')
-          .in('tracking_id', trackingIds)
-
-        if (billingData) {
-          // Group by tracking_id and sum billed_amount (excluding refunds)
-          billingMap = billingData.reduce((acc: Record<string, { totalCost: number }>, tx: any) => {
-            if (tx.tracking_id && tx.transaction_type !== 'Refund') {
-              const amount = parseFloat(tx.billed_amount) || 0
-              if (!acc[tx.tracking_id]) {
-                acc[tx.tracking_id] = { totalCost: 0 }
-              }
-              acc[tx.tracking_id].totalCost += amount
-            }
-            return acc
-          }, {})
-
-          // Also track refunded tracking IDs
-          for (const tx of billingData) {
-            if (tx.transaction_type === 'Refund' && tx.tracking_id) {
-              refundedTrackingIds.add(tx.tracking_id)
-            }
+      // Process billing data
+      if (billingResult.data) {
+        // Get total_charge from Shipping transactions only (excludes pick fees, insurance)
+        // CRITICAL: Only show charge if total_charge is set (has preview or invoice markup)
+        billingMap = billingResult.data.reduce((acc: Record<string, { totalCost: number | null }>, tx: any) => {
+          if (tx.tracking_id && tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund') {
+            // total_charge = base_charge + surcharge (marked up shipping cost)
+            // Returns null if not yet calculated (UI shows "-")
+            const amount = tx.total_charge !== null && tx.total_charge !== undefined
+              ? parseFloat(tx.total_charge) || 0
+              : null
+            acc[tx.tracking_id] = { totalCost: amount }
           }
-          if (refundedTrackingIds.size > 0) {
-            console.log(`[Refund Check] Found ${refundedTrackingIds.size} refunded shipments`)
+          return acc
+        }, {})
+
+        // Also track refunded tracking IDs
+        for (const tx of billingResult.data) {
+          if (tx.transaction_type === 'Refund' && tx.tracking_id) {
+            refundedTrackingIds.add(tx.tracking_id)
+          }
+        }
+
+        // Track voided tracking IDs (duplicate shipping labels that were recreated)
+        for (const tx of billingResult.data) {
+          if (tx.is_voided === true && tx.tracking_id) {
+            voidedTrackingIds.add(tx.tracking_id)
           }
         }
       }
@@ -583,7 +598,7 @@ export async function GET(request: NextRequest) {
     let shipments = (shipmentsData || []).map((row: any) => {
       // Order data comes from the JOIN (nested under 'orders' key)
       const order = row.orders || null
-      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled || row.event_intransit, row.event_delivered)
+      let shipmentStatus = getShipmentStatus(row.status, row.estimated_fulfillment_date_status, row.status_details, row.event_labeled, row.event_delivered, row.event_picked, row.event_packed, row.event_intransit)
       // Look up billing by tracking_id (transactions table is keyed by tracking_id)
       const billing = row.tracking_id ? billingMap[row.tracking_id] : null
 
@@ -592,6 +607,9 @@ export async function GET(request: NextRequest) {
       if (isRefunded) {
         shipmentStatus = 'Refunded'
       }
+
+      // Check if this shipment has a voided billing transaction
+      const isVoided = row.tracking_id && voidedTrackingIds.has(row.tracking_id)
 
       // Compute age in days (from label creation to delivery or now)
       let age: number | null = null
@@ -610,7 +628,9 @@ export async function GET(request: NextRequest) {
         customerName: row.recipient_name || order?.customer_name || 'Unknown',
         orderType: order?.order_type || 'DTC',
         qty: itemCounts[row.shipment_id] || 1,
-        charge: billing?.totalCost || 0,  // Sum of billed_amount from transactions table
+        // CRITICAL: Only show charge if Shipping transaction has total_charge calculated
+        // Returns null if awaiting SFTP/markup calculation (UI shows "-")
+        charge: billing?.totalCost ?? null,
         importDate: order?.order_import_date || null,
         labelCreated: row.event_labeled || null,  // When label was created
         slaDate: row.estimated_fulfillment_date || null,
@@ -633,6 +653,8 @@ export async function GET(request: NextRequest) {
         age: age,
         // Client identification (for admin badge)
         clientId: row.client_id || null,
+        // Voided status (duplicate shipping transaction that was recreated)
+        isVoided: isVoided || false,
       }
     })
 
@@ -641,17 +663,23 @@ export async function GET(request: NextRequest) {
 
     // =========================================================================
     // Get ALL unique carriers from the entire dataset (not just current page)
-    // This query ignores pagination but respects client_id filter
+    // OPTIMIZATION: Use a single query with distinct carrier values
+    // The idx_shipments_carrier index makes this fast
     // =========================================================================
     let allCarriers: string[] = []
     try {
-      // Use a separate query to get all distinct carriers
+      const EXCLUDED_CARRIERS = ['DE_KITTING']
+
+      // Use RPC function for distinct carriers if available, otherwise fall back to simple query
+      // The carrier column has limited cardinality (typically <20 unique values)
+      // so even scanning all rows is fast with the index
       let carriersQuery = supabase
         .from('shipments')
         .select('carrier')
         .not('event_labeled', 'is', null)
         .not('carrier', 'is', null)
         .is('deleted_at', null)
+        .limit(1000)  // Carriers have low cardinality, 1000 rows will capture all unique values
 
       if (clientId) {
         carriersQuery = carriersQuery.eq('client_id', clientId)
@@ -660,13 +688,13 @@ export async function GET(request: NextRequest) {
       const { data: carriersData } = await carriersQuery
 
       if (carriersData) {
-        // Filter out non-carrier values that got stored in carrier field
-        const EXCLUDED_CARRIERS = ['DE_KITTING']
-        allCarriers = [...new Set(
-          carriersData
-            .map((r: any) => r.carrier)
-            .filter((c: string) => c && !EXCLUDED_CARRIERS.includes(c))
-        )].sort() as string[]
+        const carrierSet = new Set<string>()
+        for (const row of carriersData) {
+          if (row.carrier && !EXCLUDED_CARRIERS.includes(row.carrier)) {
+            carrierSet.add(row.carrier)
+          }
+        }
+        allCarriers = [...carrierSet].sort()
       }
     } catch (err) {
       console.error('Error fetching all carriers:', err)
@@ -695,24 +723,56 @@ function getShipmentStatus(
   efdStatus?: string,
   statusDetails?: any[],
   shippedDate?: string | null,
-  deliveredDate?: string | null
+  deliveredDate?: string | null,
+  eventPicked?: string | null,
+  eventPacked?: string | null,
+  eventInTransit?: string | null
 ): string {
   if (deliveredDate) {
     return 'Delivered'
   }
 
+  // Check status_details FIRST for tracking updates (InTransit, OutForDelivery, etc.)
+  // These are more authoritative than event timestamps for carrier tracking status
+  if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
+    const trackingStatus = statusDetails[0]?.name
+    if (trackingStatus) {
+      // Tracking updates take priority
+      switch (trackingStatus) {
+        case 'Delivered': return 'Delivered'
+        case 'OutForDelivery': return 'Out for Delivery'
+        case 'InTransit': return 'In Transit'
+        case 'DeliveryException': return 'Exception'
+        case 'DeliveryAttemptFailed': return 'Delivery Attempted'
+      }
+    }
+  }
+
+  // Also check event_intransit timestamp - if we have it, we're in transit
+  if (eventInTransit) {
+    return 'In Transit'
+  }
+
+  // Check event timestamps for fulfillment progress (most specific first)
+  // These are more reliable than the raw status field for in-progress shipments
+  if (shippedDate) {
+    return 'Awaiting Carrier'
+  }
+  if (eventPacked) {
+    return 'Packed'
+  }
+  if (eventPicked) {
+    return 'Picked'
+  }
+
+  // Check status_details for hold reasons and fulfillment progress
   if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
     const trackingStatus = statusDetails[0]?.name
     const trackingDescription = statusDetails[0]?.description
 
     if (trackingStatus) {
       switch (trackingStatus) {
-        case 'Delivered': return 'Delivered'
-        case 'OutForDelivery': return 'Out for Delivery'
-        case 'InTransit': return 'In Transit'
         case 'AwaitingCarrierScan': return 'Awaiting Carrier'
-        case 'DeliveryException': return 'Exception'
-        case 'DeliveryAttemptFailed': return 'Delivery Attempted'
         case 'Picked': return 'Picked'
         case 'Packed': return 'Packed'
         case 'PickInProgress': return 'Pick In-Progress'

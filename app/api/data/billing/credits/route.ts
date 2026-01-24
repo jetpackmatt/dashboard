@@ -62,10 +62,17 @@ export async function GET(request: NextRequest) {
 
     // Map to response format matching XLS columns
     // Use billed_amount (marked-up amount) for Credit column
+    // CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
     // Credits are typically stored as negative amounts
     let mapped = (data || []).map((row: Record<string, unknown>) => {
       const details = row.additional_details as Record<string, unknown> || {}
-      const amount = parseFloat(String(row.billed_amount || row.cost || 0)) || 0
+
+      // Return billed_amount if available, null otherwise (UI shows "-")
+      let creditAmount: number | null = null
+      if (row.billed_amount !== null && row.billed_amount !== undefined) {
+        const amount = parseFloat(String(row.billed_amount)) || 0
+        creditAmount = Math.abs(amount) // Display as positive
+      }
 
       return {
         id: row.id,
@@ -76,18 +83,20 @@ export async function GET(request: NextRequest) {
         creditInvoiceNumber: row.invoice_id_jp?.toString() || '',
         invoiceDate: row.invoice_date_jp,
         creditReason: String(details.Comment || details.CreditReason || ''),
-        creditAmount: Math.abs(amount), // Display as positive
+        creditAmount,
         status: row.invoiced_status_jp ? 'invoiced' : 'pending',
+        // Include preview flag for UI styling (optional indicator)
+        isPreview: row.markup_is_preview === true,
       }
     })
 
     // Apply search filter post-mapping
     if (search) {
-      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; creditInvoiceNumber: string; creditAmount: number }) =>
+      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; creditInvoiceNumber: string; creditAmount: number | null }) =>
         item.referenceId.toLowerCase().includes(search) ||
         item.sbTicketReference.toLowerCase().includes(search) ||
         item.creditInvoiceNumber.toLowerCase().includes(search) ||
-        item.creditAmount.toString().includes(search)
+        (item.creditAmount !== null && item.creditAmount.toString().includes(search))
       )
     }
 

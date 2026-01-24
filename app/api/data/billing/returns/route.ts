@@ -119,6 +119,7 @@ export async function GET(request: NextRequest) {
 
     // Map to response format
     // Use billed_amount (marked-up amount) for Charge column
+    // CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
     // Merge data from returns table for actual return details
     let mapped = (transactions || []).map((row: Record<string, unknown>) => {
       const returnId = String(row.reference_id || '')
@@ -134,21 +135,26 @@ export async function GET(request: NextRequest) {
         returnType: String(returnData.return_type || ''),
         returnCreationDate: row.charge_date,
         fcName: String(row.fulfillment_center || ''),
-        charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,
+        // Return billed_amount if available, null otherwise (UI shows "-")
+        charge: row.billed_amount !== null && row.billed_amount !== undefined
+          ? parseFloat(String(row.billed_amount)) || 0
+          : null,
         invoiceNumber: row.invoice_id_jp?.toString() || '',
         invoiceDate: row.invoice_date_jp,
         status: row.invoiced_status_jp ? 'invoiced' : 'pending',
+        // Include preview flag for UI styling (optional indicator)
+        isPreview: row.markup_is_preview === true,
       }
     })
 
     // Apply search filter post-mapping (to search across multiple fields)
     if (search) {
-      mapped = mapped.filter((item: { returnId: string; originalShipmentId: string; trackingNumber: string; invoiceNumber: string; charge: number }) =>
+      mapped = mapped.filter((item: { returnId: string; originalShipmentId: string; trackingNumber: string; invoiceNumber: string; charge: number | null }) =>
         item.returnId.toLowerCase().includes(search) ||
         item.originalShipmentId.toLowerCase().includes(search) ||
         item.trackingNumber.toLowerCase().includes(search) ||
         item.invoiceNumber.toLowerCase().includes(search) ||
-        item.charge.toString().includes(search)
+        (item.charge !== null && item.charge.toString().includes(search))
       )
     }
 

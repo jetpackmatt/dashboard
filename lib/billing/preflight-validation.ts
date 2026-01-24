@@ -152,6 +152,7 @@ export async function runPreflightValidation(
       .eq('reference_type', 'Shipment')
       .in('invoice_id_sb', invoiceIds)
       .is('dispute_status', null) // Exclude disputed/invalid transactions
+      .or('is_voided.is.null,is_voided.eq.false') // Exclude voided (duplicate) transactions
       .range(shippingOffset, shippingOffset + PAGE_SIZE - 1)
 
     if (shippingBatch && shippingBatch.length > 0) {

@@ -163,6 +163,7 @@ export async function GET(request: NextRequest) {
 
     // ==========================================
     // 4. Map billed transactions to response format
+    // CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
     // ==========================================
     const billedMapped = (transactions || []).map((row: Record<string, unknown>) => {
       const refId = String(row.reference_id || '')
@@ -176,11 +177,16 @@ export async function GET(request: NextRequest) {
         receivingStatus: String(receivingData.status || ''),
         contents: getWroContents(receivingData),
         feeType: String(row.fee_type || ''),
-        charge: parseFloat(String(row.billed_amount || row.cost || 0)) || 0,
+        // Return billed_amount if available, null otherwise (UI shows "-")
+        charge: row.billed_amount !== null && row.billed_amount !== undefined
+          ? parseFloat(String(row.billed_amount)) || 0
+          : null,
         transactionDate: row.charge_date,
         invoiceNumber: row.invoice_id_jp?.toString() || '',
         invoiceDate: row.invoice_date_jp,
         isPending: false,
+        // Include preview flag for UI styling (optional indicator)
+        isPreview: row.markup_is_preview === true,
       }
     })
 
@@ -213,11 +219,11 @@ export async function GET(request: NextRequest) {
 
     // Apply search filter
     if (search) {
-      allMapped = allMapped.filter((item: { wroId: string; contents: string; invoiceNumber: string; charge: number }) =>
+      allMapped = allMapped.filter((item: { wroId: string; contents: string; invoiceNumber: string; charge: number | null }) =>
         item.wroId.toLowerCase().includes(search) ||
         item.contents.toLowerCase().includes(search) ||
         item.invoiceNumber.toLowerCase().includes(search) ||
-        item.charge.toString().includes(search)
+        (item.charge !== null && item.charge.toString().includes(search))
       )
     }
 

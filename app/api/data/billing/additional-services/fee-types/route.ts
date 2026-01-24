@@ -44,31 +44,31 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
   try {
-    // For each fee type in our allowed list, check if any records exist
-    // This is more efficient than fetching all records when there are many
-    const existingFeeTypes: string[] = []
+    // Single query to get all distinct fee types from transactions
+    // Filter by our allowed list in the query, then get unique values
+    let query = supabase
+      .from('transactions')
+      .select('fee_type')
+      .in('fee_type', ADDITIONAL_SERVICE_FEES)
+      .not('fee_type', 'is', null)
+      .limit(1000) // Low cardinality - 1000 rows will capture all unique fee types
 
-    for (const feeType of ADDITIONAL_SERVICE_FEES) {
-      let query = supabase
-        .from('transactions')
-        .select('fee_type', { count: 'exact', head: true })
-        .eq('fee_type', feeType)
-
-      if (clientId) {
-        query = query.eq('client_id', clientId)
-      }
-
-      const { count, error } = await query
-
-      if (error) {
-        console.error(`Error checking fee type ${feeType}:`, error)
-        continue
-      }
-
-      if (count && count > 0) {
-        existingFeeTypes.push(feeType)
-      }
+    if (clientId) {
+      query = query.eq('client_id', clientId)
     }
+
+    const { data, error } = await query
+
+    if (error) {
+      console.error('Error fetching fee types:', error)
+      return NextResponse.json({ error: 'Failed to fetch fee types' }, { status: 500 })
+    }
+
+    // Extract unique fee types from results
+    const feeTypeSet = new Set<string>(
+      data?.map((row: { fee_type: string }) => row.fee_type).filter((v: string | null | undefined): v is string => Boolean(v)) || []
+    )
+    const existingFeeTypes = [...feeTypeSet]
 
     // Sort alphabetically
     existingFeeTypes.sort((a, b) => a.localeCompare(b))

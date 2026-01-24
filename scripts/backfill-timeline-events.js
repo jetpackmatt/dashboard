@@ -1,305 +1,158 @@
-#!/usr/bin/env node
-/**
- * Timeline Events Backfill Script
- *
- * Backfills timeline event data (event_created, event_picked, event_packed,
- * event_labeled, event_labelvalidated, event_intransit, event_outfordelivery,
- * event_delivered, event_deliveryattemptfailed, event_logs) for historical shipments.
- *
- * Usage:
- *   node scripts/backfill-timeline-events.js [options]
- *
- * Options:
- *   --batch-size=N    Number of shipments per batch (default: 1000, max Supabase allows)
- *   --delay=N         Delay between API calls in ms (default: 30)
- *   --client=ID       Only process shipments for this client ID
- *   --dry-run         Don't write to database, just log what would be done
- *   --only-missing    Only process shipments where event_created IS NULL (default)
- *   --all             Process all shipments, even those with existing timeline data
- *   --no-loop         Process single batch only (default: loop until all done)
- *
- * Examples:
- *   node scripts/backfill-timeline-events.js --client=6b94c274-0446-4167-9d02-b998f8be59ad
- *   node scripts/backfill-timeline-events.js --dry-run --no-loop
- */
-
+// Script to backfill missing event_labeled from Timeline API
 require('dotenv').config({ path: '.env.local' })
 const { createClient } = require('@supabase/supabase-js')
 
-const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
-const BATCH_SIZE = 1000 // Supabase max limit
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
-// Map ShipBob timeline log_type_id to database column names
-const TIMELINE_EVENT_MAP = {
-  601: 'event_created',
-  602: 'event_picked',
-  603: 'event_packed',
-  604: 'event_labeled',
-  605: 'event_labelvalidated',
-  607: 'event_intransit',
-  608: 'event_outfordelivery',
-  609: 'event_delivered',
-  611: 'event_deliveryattemptfailed',
+const HENSON_CLIENT_ID = '6b94c274-0446-4167-9d02-b998f8be59ad'
+
+// Shipments missing event_labeled
+const SHIPMENTS_TO_CHECK = ['329113958', '329328123']
+
+async function getHensonToken() {
+  const { data, error } = await supabase
+    .from('client_api_credentials')
+    .select('api_token')
+    .eq('client_id', HENSON_CLIENT_ID)
+    .single()
+
+  if (error) throw error
+  return data.api_token
 }
 
-// Parse command line arguments
-function parseArgs() {
-  const args = {
-    delay: 30,
-    clientId: null,
-    dryRun: false,
-    onlyMissing: true,
-    loop: true,
-  }
+async function fetchTimeline(token, shipmentId) {
+  const url = `https://api.shipbob.com/2.0/shipment/${shipmentId}/timeline`
+  console.log(`Fetching timeline for shipment ${shipmentId}...`)
 
-  for (const arg of process.argv.slice(2)) {
-    if (arg.startsWith('--delay=')) {
-      args.delay = parseInt(arg.split('=')[1]) || 30
-    } else if (arg.startsWith('--client=')) {
-      args.clientId = arg.split('=')[1]
-    } else if (arg === '--dry-run') {
-      args.dryRun = true
-    } else if (arg === '--only-missing') {
-      args.onlyMissing = true
-    } else if (arg === '--all') {
-      args.onlyMissing = false
-    } else if (arg === '--no-loop') {
-      args.loop = false
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
     }
-  }
+  })
 
-  return args
-}
-
-async function fetchShipmentTimeline(shipmentId, token) {
-  try {
-    const res = await fetch(`${SHIPBOB_API_BASE}/shipment/${shipmentId}/timeline`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-
-    if (res.status === 429) {
-      console.log(`  [Rate limited] Waiting 60s...`)
-      await new Promise(r => setTimeout(r, 60000))
-      return fetchShipmentTimeline(shipmentId, token) // Retry
-    }
-
-    if (res.status === 404) {
-      return { eventColumns: {}, eventLogs: [] }
-    }
-
-    if (!res.ok) {
-      console.error(`  [Error] Shipment ${shipmentId}: ${res.status} ${res.statusText}`)
-      return null
-    }
-
-    const timeline = await res.json()
-    if (!timeline || timeline.length === 0) {
-      return { eventColumns: {}, eventLogs: [] }
-    }
-
-    // Map timeline events to database columns
-    const eventColumns = {}
-    for (const event of timeline) {
-      const col = TIMELINE_EVENT_MAP[event.log_type_id]
-      if (col && event.timestamp) {
-        eventColumns[col] = event.timestamp
-      }
-    }
-
-    return { eventColumns, eventLogs: timeline }
-  } catch (e) {
-    console.error(`  [Error] Shipment ${shipmentId}:`, e.message)
+  if (!response.ok) {
+    console.error(`Failed to fetch timeline for ${shipmentId}: ${response.status}`)
     return null
   }
+
+  return response.json()
+}
+
+async function fetchShipment(token, shipmentId) {
+  const url = `https://api.shipbob.com/2.0/shipment/${shipmentId}`
+  console.log(`Fetching shipment ${shipmentId}...`)
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }
+  })
+
+  if (!response.ok) {
+    console.error(`Failed to fetch shipment ${shipmentId}: ${response.status}`)
+    return null
+  }
+
+  return response.json()
 }
 
 async function main() {
-  const args = parseArgs()
-  const startTime = Date.now()
+  console.log('=== Backfill Timeline Events ===\n')
 
-  console.log('=== Timeline Events Backfill ===')
-  console.log(`Delay: ${args.delay}ms`)
-  console.log(`Client filter: ${args.clientId || 'all'}`)
-  console.log(`Mode: ${args.onlyMissing ? 'only-missing' : 'all'}`)
-  console.log(`Loop: ${args.loop ? 'yes (until all done)' : 'no (single batch)'}`)
-  console.log(`Dry run: ${args.dryRun}`)
-  console.log('')
+  const token = await getHensonToken()
+  console.log('Got Henson API token\n')
 
-  // Initialize Supabase client
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  )
+  for (const shipmentId of SHIPMENTS_TO_CHECK) {
+    console.log(`\n--- Shipment ${shipmentId} ---`)
 
-  // Get all clients with their tokens
-  const { data: clients, error: clientsError } = await supabase
-    .from('clients')
-    .select('id, company_name, client_api_credentials(api_token, provider)')
-    .eq('is_active', true)
-
-  if (clientsError) {
-    console.error('Error fetching clients:', clientsError.message)
-    process.exit(1)
-  }
-
-  const clientTokens = {}
-  const clientNames = {}
-  for (const c of clients || []) {
-    const creds = c.client_api_credentials
-    const token = creds?.find(cred => cred.provider === 'shipbob')?.api_token
-    if (token) {
-      clientTokens[c.id] = token
-      clientNames[c.id] = c.company_name
-    }
-  }
-
-  console.log(`Found ${Object.keys(clientTokens).length} clients with ShipBob tokens`)
-  console.log('')
-
-  // Total counters across all batches
-  let totalUpdated = 0
-  let totalSkipped = 0
-  let totalErrors = 0
-  let totalProcessed = 0
-  let batchNumber = 0
-
-  // Loop until no more shipments to process
-  while (true) {
-    batchNumber++
-
-    // Build query for shipments needing backfill
-    let query = supabase
+    // First check current DB state
+    const { data: dbShipment } = await supabase
       .from('shipments')
-      .select('id, shipment_id, client_id, status')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .limit(BATCH_SIZE)
+      .select('shipment_id, status, event_created, event_labeled, event_intransit, event_delivered, tracking_id')
+      .eq('shipment_id', shipmentId)
+      .single()
 
-    if (args.onlyMissing) {
-      query = query.is('event_created', null)
+    console.log('\nCurrent DB state:')
+    console.log(`  Status: ${dbShipment?.status}`)
+    console.log(`  event_created: ${dbShipment?.event_created}`)
+    console.log(`  event_labeled: ${dbShipment?.event_labeled}`)
+    console.log(`  event_intransit: ${dbShipment?.event_intransit}`)
+    console.log(`  event_delivered: ${dbShipment?.event_delivered}`)
+    console.log(`  tracking_id: ${dbShipment?.tracking_id}`)
+
+    // Fetch from API
+    const shipment = await fetchShipment(token, shipmentId)
+    if (shipment) {
+      console.log('\nAPI Shipment data:')
+      console.log(`  Status: ${shipment.status}`)
+      console.log(`  Tracking: ${shipment.tracking?.tracking_number}`)
+      console.log(`  Actual Delivery: ${shipment.actual_delivery_date}`)
+      console.log(`  Estimated Delivery: ${shipment.estimated_delivery_date}`)
     }
 
-    if (args.clientId) {
-      query = query.eq('client_id', args.clientId)
-    }
+    // Fetch timeline
+    const timeline = await fetchTimeline(token, shipmentId)
+    if (timeline) {
+      console.log('\nRaw timeline response:')
+      console.log(JSON.stringify(timeline[0], null, 2)) // Log first event to see structure
 
-    const { data: shipments, error: shipmentsError } = await query
-
-    if (shipmentsError) {
-      console.error('Error fetching shipments:', shipmentsError.message)
-      process.exit(1)
-    }
-
-    if (!shipments || shipments.length === 0) {
-      console.log('')
-      console.log('No more shipments to process!')
-      break
-    }
-
-    console.log(`\n=== Batch ${batchNumber}: ${shipments.length} shipments ===`)
-
-    // Process shipments
-    let batchUpdated = 0
-    let batchSkipped = 0
-    let batchErrors = 0
-
-    for (let i = 0; i < shipments.length; i++) {
-      const ship = shipments[i]
-      totalProcessed++
-      const token = clientTokens[ship.client_id]
-      const clientName = clientNames[ship.client_id] || 'Unknown'
-
-      if (!token) {
-        console.log(`[${i + 1}/${shipments.length}] Skipping ${ship.shipment_id} - no token for client ${ship.client_id}`)
-        batchSkipped++
-        totalSkipped++
-        continue
-      }
-
-      console.log(`[${i + 1}/${shipments.length}] Processing ${ship.shipment_id} (${clientName})...`)
-
-      const timelineResult = await fetchShipmentTimeline(ship.shipment_id, token)
-
-      if (timelineResult === null) {
-        batchErrors++
-        totalErrors++
-        continue
-      }
-
-      if (Object.keys(timelineResult.eventColumns).length === 0 && timelineResult.eventLogs.length === 0) {
-        console.log(`  No timeline data (Processing/Exception status)`)
-        batchSkipped++
-        totalSkipped++
-        continue
-      }
-
-      // Build update object
-      const updateData = {
-        ...timelineResult.eventColumns,
-      }
-
-      if (timelineResult.eventLogs.length > 0) {
-        updateData.event_logs = timelineResult.eventLogs
-      }
-
-      // Calculate transit_time_days when we have both intransit and delivered timestamps
-      const intransitDate = timelineResult.eventColumns.event_intransit
-      const deliveredDate = timelineResult.eventColumns.event_delivered
-      if (intransitDate && deliveredDate) {
-        const intransit = new Date(intransitDate).getTime()
-        const delivered = new Date(deliveredDate).getTime()
-        const transitMs = delivered - intransit
-        const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10 // Round to 1 decimal
-        if (transitDays >= 0) {
-          updateData.transit_time_days = transitDays
+      console.log('\nTimeline events from API:')
+      if (Array.isArray(timeline) && timeline.length > 0) {
+        for (const event of timeline) {
+          // Try different possible field names
+          const status = event.status || event.Status || event.event_type || event.EventType || event.type || event.Type || Object.keys(event).find(k => k !== 'timestamp' && k !== 'Timestamp')
+          console.log(`  ${event.timestamp || event.Timestamp}: ${status} (keys: ${Object.keys(event).join(', ')})`)
         }
-      }
 
-      const eventCount = Object.keys(timelineResult.eventColumns).length
-      console.log(`  Found ${eventCount} events: ${Object.keys(timelineResult.eventColumns).join(', ')}`)
+        // Extract events - use log_type_text field
+        const events = {}
+        for (const e of timeline) {
+          const eventText = (e.log_type_text || e.log_type_name || '').toLowerCase()
+          console.log(`    Checking: "${eventText}"`)
+          if (eventText.includes('created')) events.event_created = e.timestamp
+          if (eventText.includes('label') && !events.event_labeled) events.event_labeled = e.timestamp
+          if (eventText.includes('transit') || eventText.includes('picked up') || eventText.includes('scanned')) events.event_intransit = e.timestamp
+          if (eventText.includes('delivered')) events.event_delivered = e.timestamp
+        }
 
-      if (args.dryRun) {
-        console.log(`  [DRY RUN] Would update`)
-        batchUpdated++
-        totalUpdated++
-      } else {
-        const { error } = await supabase
-          .from('shipments')
-          .update(updateData)
-          .eq('id', ship.id)
+        console.log('\nParsed events:', events)
 
-        if (error) {
-          console.error(`  [Error] Update failed: ${error.message}`)
-          batchErrors++
-          totalErrors++
+        // Build update object
+        const updateData = {}
+        if (events.event_labeled) updateData.event_labeled = events.event_labeled
+        if (events.event_intransit) updateData.event_intransit = events.event_intransit
+        if (events.event_delivered) updateData.event_delivered = events.event_delivered
+
+        // Also update status from shipment API
+        if (shipment?.status) updateData.status = shipment.status
+
+        if (Object.keys(updateData).length > 0) {
+          console.log('\n>>> UPDATING shipment with:', updateData)
+          const { error } = await supabase
+            .from('shipments')
+            .update(updateData)
+            .eq('shipment_id', shipmentId)
+
+          if (error) {
+            console.error('Error updating:', error.message)
+          } else {
+            console.log('Updated successfully!')
+          }
         } else {
-          console.log(`  Updated successfully`)
-          batchUpdated++
-          totalUpdated++
+          console.log('\nNo updates needed - shipment may not have been labeled yet')
         }
+      } else {
+        console.log('  No timeline events found')
       }
-
-      // Delay between API calls
-      await new Promise(r => setTimeout(r, args.delay))
-    }
-
-    console.log(`\nBatch ${batchNumber} complete: ${batchUpdated} updated, ${batchSkipped} skipped, ${batchErrors} errors`)
-    console.log(`Running total: ${totalUpdated} updated, ${totalSkipped} skipped, ${totalErrors} errors`)
-
-    // If not looping, break after first batch
-    if (!args.loop) {
-      break
     }
   }
 
-  const duration = Math.round((Date.now() - startTime) / 1000)
-  console.log('')
-  console.log('=== Final Summary ===')
-  console.log(`Total processed: ${totalProcessed}`)
-  console.log(`Total updated: ${totalUpdated}`)
-  console.log(`Total skipped: ${totalSkipped}`)
-  console.log(`Total errors: ${totalErrors}`)
-  console.log(`Duration: ${duration}s (${Math.round(duration / 60)}m)`)
+  console.log('\n\n=== Done ===')
 }
 
 main().catch(console.error)

@@ -13,12 +13,21 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetTitle,
 } from "@/components/ui/sheet"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { getCarrierDisplayName } from "./transactions/cell-renderers"
+import { ClaimSubmissionDialog } from "./claims/claim-submission-dialog"
+import { ClaimType, ClaimEligibilityResult, getClaimTypeLabel } from "@/lib/claims/eligibility"
 
 // ============================================
 // TYPES
@@ -81,6 +90,9 @@ interface ShipmentDetails {
   metrics: {
     transitTimeDays: number | null
     totalShipments: number
+    fulfillTimeDays: number | null
+    fulfillTimeHours: number | null
+    metSla: boolean | null
   }
   timeline: Array<{
     event: string
@@ -128,7 +140,23 @@ interface ShipmentDetails {
     transactionType: string
     chargeDate: string
     invoiceId: string
+    baseCharge?: number | null
+    surcharge?: number | null
+    totalCharge?: number | null
+    insuranceCharge?: number | null
+    isPreview?: boolean
   }>
+  chargesBreakdown: {
+    baseFulfillmentFees: number | null
+    surcharges: number | null
+    totalFulfillmentCost: number | null
+    pickFees: number | null
+    insurance: number | null
+    subtotal: number | null
+    taxes: number | null
+    total: number | null
+    isPreview: boolean
+  }
   returns: Array<{
     id: string
     returnId: number
@@ -451,6 +479,124 @@ function IssueAlert({ data }: IssueAlertProps) {
 }
 
 // ============================================
+// CLAIM DROPDOWN COMPONENT (for header)
+// ============================================
+
+interface ClaimDropdownProps {
+  eligibility: ClaimEligibilityResult | null
+  isLoadingEligibility: boolean
+  onSubmitClaim: (claimType: ClaimType) => void
+}
+
+function ClaimDropdown({ eligibility, isLoadingEligibility, onSubmitClaim }: ClaimDropdownProps) {
+  const [hoveredItem, setHoveredItem] = React.useState<{ type: ClaimType; rect: DOMRect } | null>(null)
+
+  // Don't show anything while loading or if no eligibility data
+  if (isLoadingEligibility || !eligibility) return null
+
+  const claimTypes: ClaimType[] = ['lostInTransit', 'damage', 'incorrectItems', 'incorrectQuantity']
+  const hasEligibleClaim = claimTypes.some(type => eligibility.eligibility[type].eligible)
+
+  // Hide entirely if no claims are eligible
+  if (!hasEligibleClaim) return null
+
+  // Helper to get the reason why a claim type is not eligible
+  const getIneligibleReason = (type: ClaimType): string => {
+    const info = eligibility.eligibility[type]
+    if (info.eligible) return ''
+
+    if (type === 'lostInTransit') {
+      if (eligibility.isDelivered) {
+        return 'Package has been delivered'
+      }
+      const requiredDays = eligibility.isInternational ? 20 : 15
+      const daysRemaining = eligibility.daysSinceLastUpdate !== null
+        ? requiredDays - eligibility.daysSinceLastUpdate
+        : requiredDays
+      return `Requires ${requiredDays} days of inactivity (${Math.max(0, daysRemaining)} days remaining)`
+    }
+
+    // For damage, incorrect items, incorrect quantity - requires delivery
+    return 'Package must be delivered first'
+  }
+
+  const handleMouseEnter = (type: ClaimType, event: React.MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    setHoveredItem({ type, rect })
+  }
+
+  const handleMouseLeave = () => {
+    setHoveredItem(null)
+  }
+
+  return (
+    <>
+      <DropdownMenu onOpenChange={(open) => !open && setHoveredItem(null)}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+          >
+            Submit a Claim
+            <ChevronDownIcon className="ml-2 h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          {claimTypes.map((type) => {
+            const isEligible = eligibility.eligibility[type].eligible
+
+            if (isEligible) {
+              return (
+                <DropdownMenuItem
+                  key={type}
+                  onClick={() => onSubmitClaim(type)}
+                >
+                  {getClaimTypeLabel(type)}
+                </DropdownMenuItem>
+              )
+            }
+
+            // Ineligible item
+            return (
+              <div
+                key={type}
+                className="px-2 py-1.5 text-sm opacity-50 cursor-not-allowed"
+                onMouseEnter={(e) => handleMouseEnter(type, e)}
+                onMouseLeave={handleMouseLeave}
+              >
+                <div className="flex items-center justify-between">
+                  <span>{getClaimTypeLabel(type)}</span>
+                  <AlertTriangleIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+              </div>
+            )
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Portal tooltip - rendered outside dropdown to avoid clipping */}
+      {hoveredItem && (
+        <div
+          className="fixed pointer-events-none"
+          style={{
+            top: hoveredItem.rect.top - 8,
+            left: hoveredItem.rect.left,
+            width: hoveredItem.rect.width,
+            transform: 'translateY(-100%)',
+            zIndex: 99999,
+          }}
+        >
+          <div className="bg-slate-900 text-white text-xs px-2 py-1.5 rounded-md shadow-lg">
+            {getIneligibleReason(hoveredItem.type)}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 
@@ -463,12 +609,20 @@ export function ShipmentDetailsDrawer({
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Claim dialog state
+  const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
+  const [selectedClaimType, setSelectedClaimType] = React.useState<ClaimType | undefined>()
+  const [eligibility, setEligibility] = React.useState<ClaimEligibilityResult | null>(null)
+  const [isLoadingEligibility, setIsLoadingEligibility] = React.useState(false)
+
   // Fetch shipment details when opened
   React.useEffect(() => {
     if (open && shipmentId) {
       setIsLoading(true)
+      setIsLoadingEligibility(true)
       setError(null)
 
+      // Fetch shipment details
       fetch(`/api/data/shipments/${shipmentId}`)
         .then((res) => {
           if (!res.ok) throw new Error("Failed to load shipment")
@@ -482,6 +636,23 @@ export function ShipmentDetailsDrawer({
           setError(err.message)
           setIsLoading(false)
         })
+
+      // Fetch claim eligibility (separate request, non-blocking)
+      fetch(`/api/data/shipments/${shipmentId}/claim-eligibility`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to load eligibility")
+          return res.json()
+        })
+        .then((eligibilityData) => {
+          setEligibility(eligibilityData)
+        })
+        .catch((err) => {
+          console.error('Eligibility fetch error:', err)
+          setEligibility(null)
+        })
+        .finally(() => {
+          setIsLoadingEligibility(false)
+        })
     }
   }, [open, shipmentId])
 
@@ -490,8 +661,24 @@ export function ShipmentDetailsDrawer({
     if (!open) {
       setData(null)
       setError(null)
+      setEligibility(null)
+      setClaimDialogOpen(false)
+      setSelectedClaimType(undefined)
     }
   }, [open])
+
+  // Handle submit claim from drawer
+  const handleSubmitClaim = (claimType: ClaimType) => {
+    setSelectedClaimType(claimType)
+    setClaimDialogOpen(true)
+  }
+
+  const handleClaimDialogClose = (dialogOpen: boolean) => {
+    setClaimDialogOpen(dialogOpen)
+    if (!dialogOpen) {
+      setSelectedClaimType(undefined)
+    }
+  }
 
   // Get tracking URL for the carrier
   const getTrackingUrl = (carrier: string, trackingId: string): string | null => {
@@ -521,6 +708,7 @@ export function ShipmentDetailsDrawer({
         side="right"
         className="w-full sm:max-w-xl md:max-w-2xl lg:max-w-3xl p-0 flex flex-col gap-0"
       >
+        <SheetTitle className="sr-only">Shipment Details</SheetTitle>
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="flex flex-col items-center gap-4">
@@ -568,14 +756,22 @@ export function ShipmentDetailsDrawer({
                     )}
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => onOpenChange(false)}
-                >
-                  <XIcon className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Claim Dropdown - only shows if at least one claim type is eligible */}
+                  <ClaimDropdown
+                    eligibility={eligibility}
+                    isLoadingEligibility={isLoadingEligibility}
+                    onSubmitClaim={handleSubmitClaim}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => onOpenChange(false)}
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -604,11 +800,28 @@ export function ShipmentDetailsDrawer({
                     <div className="text-xs font-semibold text-violet-900 dark:text-violet-100 whitespace-nowrap">{data.shipping.zone || '-'}</div>
                   </div>
                   <div className="flex-auto bg-gradient-to-br from-amber-50 to-amber-100/50 dark:from-amber-950/30 dark:to-amber-900/20 rounded-lg p-2.5 border border-amber-200/50 dark:border-amber-800/30">
-                    <div className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400 font-medium mb-0.5">Weight</div>
+                    <div className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400 font-medium mb-0.5">Billed Weight</div>
                     <div className="text-xs font-semibold text-amber-900 dark:text-amber-100 whitespace-nowrap">{data.package.billableWeightOz ? `${(data.package.billableWeightOz / 16).toFixed(1)} lb` : '-'}</div>
                   </div>
+                  <div className="flex-auto bg-gradient-to-br from-cyan-50 to-cyan-100/50 dark:from-cyan-950/30 dark:to-cyan-900/20 rounded-lg p-2.5 border border-cyan-200/50 dark:border-cyan-800/30">
+                    <div className="text-[10px] uppercase tracking-wide text-cyan-600 dark:text-cyan-400 font-medium mb-0.5">Fulfill Time</div>
+                    <div className="text-xs font-semibold text-cyan-900 dark:text-cyan-100 whitespace-nowrap flex items-center gap-1">
+                      {data.metrics.fulfillTimeDays !== null && data.metrics.fulfillTimeDays !== undefined ? (
+                        <>
+                          {data.metrics.fulfillTimeHours !== null && data.metrics.fulfillTimeHours < 24
+                            ? `${data.metrics.fulfillTimeHours} hours`
+                            : `${data.metrics.fulfillTimeDays} days`}
+                          {data.metrics.metSla && (
+                            <svg className="h-3.5 w-3.5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </>
+                      ) : '-'}
+                    </div>
+                  </div>
                   <div className="flex-auto bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/30 dark:to-emerald-900/20 rounded-lg p-2.5 border border-emerald-200/50 dark:border-emerald-800/30">
-                    <div className="text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400 font-medium mb-0.5">Transit</div>
+                    <div className="text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400 font-medium mb-0.5">Transit Time</div>
                     <div className="text-xs font-semibold text-emerald-900 dark:text-emerald-100 whitespace-nowrap">{data.metrics.transitTimeDays ? `${data.metrics.transitTimeDays} days` : '-'}</div>
                   </div>
                   <div className="flex-auto bg-gradient-to-br from-rose-50 to-rose-100/50 dark:from-rose-950/30 dark:to-rose-900/20 rounded-lg p-2.5 border border-rose-200/50 dark:border-rose-800/30">
@@ -710,6 +923,14 @@ export function ShipmentDetailsDrawer({
                         <span className="text-sm text-foreground">{formatWeight(data.package.actualWeightOz)}</span>
                       </div>
                       <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Dimensional Weight</span>
+                        <span className="text-sm text-foreground">{formatWeight(data.package.dimWeightOz)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Billable Weight</span>
+                        <span className="text-sm font-medium text-foreground">{formatWeight(data.package.billableWeightOz)}</span>
+                      </div>
+                      <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Tracking Details</span>
                         {data.trackingId ? (
                           <a
@@ -755,12 +976,14 @@ export function ShipmentDetailsDrawer({
                           </div>
                           <div className="col-span-3">
                             {item.lotNumber ? (
-                              <span className="text-sm text-foreground">{item.lotNumber}</span>
+                              <>
+                                <span className="text-sm text-foreground">{item.lotNumber}</span>
+                                {item.expirationDate && (
+                                  <p className="text-xs text-muted-foreground">Exp: {format(new Date(item.expirationDate), 'MMM d, yyyy')}</p>
+                                )}
+                              </>
                             ) : (
-                              <span className="text-sm text-muted-foreground italic">No Lot Number</span>
-                            )}
-                            {item.expirationDate && (
-                              <p className="text-xs text-muted-foreground">{format(new Date(item.expirationDate), 'MM/dd/yyyy')}</p>
+                              <span className="text-sm text-muted-foreground italic">-</span>
                             )}
                           </div>
                           <div className="col-span-3 text-right">
@@ -772,30 +995,238 @@ export function ShipmentDetailsDrawer({
                   </div>
                 )}
 
-                {/* ROW 4: Charges Card */}
+                {/* ROW 4: Charges Card - Redesigned for clarity */}
                 {data.transactions.length > 0 && (
-                  <div className="rounded-lg border border-border/60 dark:border-border/30 bg-card">
-                    <div className="px-4 py-3 border-b border-border/40 dark:border-border/20 bg-muted/30">
-                      <h3 className="text-sm font-semibold text-foreground">Charges</h3>
-                    </div>
-                    <div className="divide-y divide-border/50">
-                      {data.transactions.map((tx) => (
-                        <div key={tx.id} className="flex items-center justify-between px-4 py-2.5">
-                          <span className="text-sm text-foreground">{tx.feeType}</span>
-                          <span className={`text-sm font-medium tabular-nums ${
-                            tx.transactionType === "Refund" ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
-                          }`}>
-                            {tx.transactionType === "Refund" ? "−" : ""}${Math.abs(tx.billedAmount || tx.cost || 0).toFixed(2)}
-                          </span>
-                        </div>
-                      ))}
-                      <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
-                        <span className="text-sm font-semibold text-foreground">Total</span>
-                        <span className="text-sm font-bold text-foreground tabular-nums">
-                          ${(data.billing.totalCost - data.billing.totalRefunds).toFixed(2)}
-                        </span>
+                  <div className="rounded-lg border border-border/60 dark:border-border/30 bg-card overflow-hidden">
+                    {/* Header with preview indicator */}
+                    <div className="px-4 py-3 border-b border-border/40 dark:border-border/20 bg-muted/30 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <svg className="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                        <h3 className="text-sm font-semibold text-foreground">Charges <span className="font-normal text-muted-foreground">(USD)</span></h3>
                       </div>
+                      {data.chargesBreakdown.isPreview && data.chargesBreakdown.total !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Estimated
+                        </span>
+                      )}
                     </div>
+
+                    {data.chargesBreakdown.total !== null ? (
+                      <div className="divide-y divide-border/30">
+                        {/* SECTION: Fulfillment Charges */}
+                        {(data.chargesBreakdown.baseFulfillmentFees !== null || data.chargesBreakdown.surcharges !== null) && (
+                          <div className="bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-950/20 dark:to-transparent">
+                            <div className="px-4 py-2 border-b border-border/20">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">Fulfillment</span>
+                            </div>
+                            <div className="px-4 py-1">
+                              {data.chargesBreakdown.baseFulfillmentFees !== null && (
+                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                  <span className="text-sm text-muted-foreground">Base Fulfillment</span>
+                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                    ${data.chargesBreakdown.baseFulfillmentFees.toFixed(2)}
+                                  </span>
+                                </div>
+                              )}
+                              {data.chargesBreakdown.surcharges !== null && (
+                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                  <span className="text-sm text-muted-foreground">Carrier Surcharges</span>
+                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                    ${data.chargesBreakdown.surcharges.toFixed(2)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Fulfillment subtotal */}
+                        {data.chargesBreakdown.totalFulfillmentCost !== null && (
+                          <div className="px-4 py-2">
+                            <div className="flex items-center justify-end">
+                              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-border/50 bg-muted/30">
+                                <span className="text-xs text-muted-foreground">Fulfillment</span>
+                                <span className="text-sm font-semibold tabular-nums text-foreground w-14 text-right">
+                                  ${data.chargesBreakdown.totalFulfillmentCost.toFixed(2)}
+                                </span>
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SECTION: Additional Fees */}
+                        {(data.chargesBreakdown.pickFees !== null || (data.chargesBreakdown.insurance !== null && data.chargesBreakdown.insurance > 0)) && (
+                          <div className="bg-gradient-to-r from-violet-50/50 to-transparent dark:from-violet-950/20 dark:to-transparent">
+                            <div className="px-4 py-2 border-b border-border/20">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-violet-600 dark:text-violet-400">Additional Fees</span>
+                            </div>
+                            <div className="px-4 py-1">
+                              {data.chargesBreakdown.pickFees !== null && (
+                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                  <span className="text-sm text-muted-foreground">Pick Fees</span>
+                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                    ${data.chargesBreakdown.pickFees.toFixed(2)}
+                                  </span>
+                                </div>
+                              )}
+                              {data.chargesBreakdown.insurance !== null && data.chargesBreakdown.insurance > 0 && (
+                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                  <span className="text-sm text-muted-foreground">Insurance</span>
+                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                    ${data.chargesBreakdown.insurance.toFixed(2)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Subtotal (before taxes) */}
+                        {data.chargesBreakdown.subtotal !== null && (
+                          <div className="px-4 py-2">
+                            <div className="flex items-center justify-end">
+                              <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-border/50 bg-muted/30">
+                                <span className="text-xs text-muted-foreground">Subtotal</span>
+                                <span className="text-sm font-semibold tabular-nums text-foreground w-14 text-right">
+                                  ${data.chargesBreakdown.subtotal.toFixed(2)}
+                                </span>
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SECTION: Taxes (if any) */}
+                        {data.chargesBreakdown.taxes !== null && data.chargesBreakdown.taxes > 0 && (
+                          <div className="bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-950/20 dark:to-transparent">
+                            <div className="px-4 py-2 border-b border-border/20">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">Taxes</span>
+                            </div>
+                            <div className="px-4 py-1">
+                              <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                <span className="text-sm text-muted-foreground">Sales Tax</span>
+                                <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                  ${data.chargesBreakdown.taxes.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SECTION: Refunds (if any) */}
+                        {data.transactions.some(tx => tx.transactionType === "Refund") && (
+                          <div className="bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-950/20 dark:to-transparent">
+                            <div className="px-4 py-2 border-b border-border/20">
+                              <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Refunds</span>
+                            </div>
+                            <div className="px-4 py-1">
+                              {data.transactions
+                                .filter(tx => tx.transactionType === "Refund")
+                                .map((tx) => (
+                                  <div key={tx.id} className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm text-muted-foreground">{tx.feeType}</span>
+                                      <span className="text-xs text-muted-foreground/70">
+                                        {tx.chargeDate ? format(new Date(tx.chargeDate), 'M/d') : ''}
+                                      </span>
+                                    </div>
+                                    <span className="text-sm tabular-nums text-emerald-600 dark:text-emerald-400 text-right w-14">
+                                      −${Math.abs(tx.billedAmount || tx.cost || 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TOTAL */}
+                        <div className="px-4 py-3">
+                          <div className="flex items-center justify-end">
+                            <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-emerald-200/50 bg-emerald-100/50 dark:bg-emerald-900/15 dark:border-emerald-800/50">
+                              <span className="text-xs text-muted-foreground">Grand Total</span>
+                              <span className="text-sm font-semibold tabular-nums text-foreground w-20 text-right">
+                                ${data.chargesBreakdown.total.toFixed(2)}
+                              </span>
+                            </span>
+                          </div>
+                          {/* Show net after refunds if different */}
+                          {data.transactions.some(tx => tx.transactionType === "Refund") && (() => {
+                            const refundTotal = data.transactions
+                              .filter(tx => tx.transactionType === "Refund")
+                              .reduce((sum, tx) => sum + Math.abs(tx.billedAmount || tx.cost || 0), 0)
+                            const netTotal = data.chargesBreakdown.total! - refundTotal
+                            return (
+                              <div className="flex items-center justify-end mt-2">
+                                <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-emerald-200/50 bg-emerald-100/50 dark:bg-emerald-900/15 dark:border-emerald-800/50">
+                                  <span className="text-xs text-muted-foreground">Net</span>
+                                  <span className="text-sm font-semibold tabular-nums text-foreground w-14 text-right">
+                                    ${netTotal.toFixed(2)}
+                                  </span>
+                                </span>
+                              </div>
+                            )
+                          })()}
+                        </div>
+
+                        {/* Transaction Details Expandable (for reshipments, multiple charges) */}
+                        {data.transactions.filter(tx => tx.transactionType !== "Refund").length > 1 && (
+                          <details className="group">
+                            <summary className="px-4 py-2 cursor-pointer hover:bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
+                              <span>View {data.transactions.filter(tx => tx.transactionType !== "Refund").length} individual transactions</span>
+                              <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                            </summary>
+                            <div className="border-t border-border/30 bg-muted/10">
+                              <div className="px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground border-b border-border/20">
+                                <div className="col-span-3">Date</div>
+                                <div className="col-span-5">Type</div>
+                                <div className="col-span-4 text-right">Amount</div>
+                              </div>
+                              {data.transactions
+                                .filter(tx => tx.transactionType !== "Refund")
+                                .sort((a, b) => new Date(a.chargeDate).getTime() - new Date(b.chargeDate).getTime())
+                                .map((tx, idx) => (
+                                  <div key={tx.id} className="px-4 py-2 grid grid-cols-12 gap-2 text-xs hover:bg-muted/20">
+                                    <div className="col-span-3 text-muted-foreground">
+                                      {tx.chargeDate ? format(new Date(tx.chargeDate), 'MMM d, yyyy') : '-'}
+                                    </div>
+                                    <div className="col-span-5 text-foreground flex items-center gap-1.5">
+                                      {tx.feeType}
+                                      {idx > 0 && tx.feeType === 'Shipping' && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+                                          Reshipment
+                                        </span>
+                                      )}
+                                      {tx.isPreview && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                          Est.
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="col-span-4 text-right tabular-nums text-foreground">
+                                      ${(tx.billedAmount || tx.cost || 0).toFixed(2)}
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    ) : (
+                      /* No breakdown data yet - show pending state */
+                      <div className="px-4 py-8 text-center">
+                        <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-muted/50 mb-3">
+                          <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <p className="text-sm text-muted-foreground">Charges are being calculated</p>
+                        <p className="text-xs text-muted-foreground/70 mt-1">Cost data syncs daily</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -905,6 +1336,14 @@ export function ShipmentDetailsDrawer({
           </>
         ) : null}
       </SheetContent>
+
+      {/* Claim Submission Dialog */}
+      <ClaimSubmissionDialog
+        open={claimDialogOpen}
+        onOpenChange={handleClaimDialogClose}
+        shipmentId={shipmentId || undefined}
+        preselectedClaimType={selectedClaimType}
+      />
     </Sheet>
   )
 }

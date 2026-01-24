@@ -12,6 +12,7 @@ interface MappedTicket {
   ticketNumber: unknown
   clientId: unknown
   clientName: string
+  partner: 'shipbob' | 'eshipper'
   ticketType: unknown
   issueType: unknown
   status: unknown
@@ -131,6 +132,8 @@ export async function GET(request: NextRequest) {
         ticketNumber: row.ticket_number,
         clientId: row.client_id,
         clientName: clientData?.company_name || 'Unknown',
+        // Partner - default to shipbob for now (will come from DB later)
+        partner: (row.partner as 'shipbob' | 'eshipper') || 'shipbob',
         // Classification
         ticketType: row.ticket_type,
         issueType: row.issue_type,
@@ -250,6 +253,8 @@ export async function POST(request: NextRequest) {
       inventoryId,
       description,
       internalNotes,
+      attachments,
+      eligibilityMetadata,
     } = body
 
     // Validate required fields
@@ -280,13 +285,32 @@ export async function POST(request: NextRequest) {
 
     // Insert the ticket
     const supabase = createAdminClient()
+    const ticketStatus = status || 'Input Required'
+
+    // Create initial event for claims submitted with "Under Review" status
+    const initialEvents: Array<{
+      status: string
+      note: string
+      createdAt: string
+      createdBy: string
+    }> = []
+
+    if (ticketStatus === 'Under Review' && ticketType === 'Claim') {
+      initialEvents.push({
+        status: 'Under Review',
+        note: 'Claim details sent to warehouse team for review',
+        createdAt: new Date().toISOString(),
+        createdBy: 'System',
+      })
+    }
+
     const { data: ticket, error } = await supabase
       .from('care_tickets')
       .insert({
         client_id: clientId,
         ticket_type: ticketType,
         issue_type: issueType || null,
-        status: status || 'Input Required',
+        status: ticketStatus,
         manager: manager || null,
         created_by: user.id,
         order_id: orderId || null,
@@ -304,6 +328,9 @@ export async function POST(request: NextRequest) {
         inventory_id: inventoryId || null,
         description: description || null,
         internal_notes: internalNotes || null,
+        attachments: attachments || [],
+        eligibility_metadata: eligibilityMetadata || null,
+        events: initialEvents.length > 0 ? initialEvents : [],
       })
       .select()
       .single()

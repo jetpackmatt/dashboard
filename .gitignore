@@ -38,3 +38,4 @@ next-env.d.ts
 
 # claude context (personal notes)
 CLAUDE.local.md
+.backups

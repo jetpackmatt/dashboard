@@ -24,6 +24,10 @@ interface AdditionalServicesTableProps {
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
+  // Pre-fetched data for instant initial render
+  initialData?: AdditionalService[]
+  initialTotalCount?: number
+  initialLoading?: boolean
   // Export handler registration
   onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
 }
@@ -37,6 +41,9 @@ export function AdditionalServicesTable({
   userColumnVisibility = {},
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
+  initialData,
+  initialTotalCount = 0,
+  initialLoading = false,
   onExportTriggerReady,
 }: AdditionalServicesTableProps) {
   // Check if admin viewing all clients (for client badge prefix column)
@@ -45,12 +52,27 @@ export function AdditionalServicesTable({
 
   // Use stable reference for empty array
   const effectiveStatusFilter = statusFilter ?? EMPTY_STATUS_FILTER
-  const [data, setData] = React.useState<AdditionalService[]>([])
-  const [isLoading, setIsLoading] = React.useState(true)
+
+  // Track if we've used initial data (to avoid re-fetching on first mount)
+  const usedInitialData = React.useRef(false)
+
+  // Initialize state with pre-fetched data when available
+  const [data, setData] = React.useState<AdditionalService[]>(initialData || [])
+  const [isLoading, setIsLoading] = React.useState(initialData ? initialLoading : true)
   const [isPageLoading, setIsPageLoading] = React.useState(false)
-  const [totalCount, setTotalCount] = React.useState(0)
+  const [totalCount, setTotalCount] = React.useState(initialTotalCount)
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Sync with pre-fetched data when it arrives
+  React.useEffect(() => {
+    if (initialData && initialData.length > 0 && !usedInitialData.current) {
+      setData(initialData)
+      setTotalCount(initialTotalCount)
+      setIsLoading(initialLoading)
+      usedInitialData.current = true
+    }
+  }, [initialData, initialTotalCount, initialLoading])
 
   // Wrap setPageSize to notify parent for persistence
   const setPageSize = React.useCallback((size: number) => {
@@ -122,8 +144,17 @@ export function AdditionalServicesTable({
     }
   }, [clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery])
 
-  // Initial load
+  // Initial load - skip if we have prefetched data and no filters applied
   React.useEffect(() => {
+    // If we have prefetched data and no filters are applied, skip the initial fetch
+    const hasFilters = effectiveStatusFilter.length > 0 || (feeTypeFilter && feeTypeFilter !== 'all') || searchQuery
+    const hasPrefetchedData = initialData && initialData.length > 0
+
+    if (hasPrefetchedData && !hasFilters && usedInitialData.current) {
+      // Already using prefetched data, no need to fetch
+      return
+    }
+
     setPageIndex(0)
     fetchData(0, pageSize, true)
   }, [clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps

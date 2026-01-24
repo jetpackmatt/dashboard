@@ -2351,6 +2351,38 @@ export async function syncAllUndeliveredTimelines(
               }
             }
 
+            // Synthesize status_details based on timeline events to keep status consistent
+            // This avoids extra API calls while ensuring filters work correctly
+            // Priority: Delivered > OutForDelivery > InTransit (most advanced status wins)
+            if (timelineResult.eventColumns.event_delivered) {
+              updateData.status_details = [{
+                id: 203,
+                name: 'Delivered',
+                description: 'Shipment Delivered',
+                inventory_id: null,
+                extra_information: null,
+                exception_fulfillment_center_id: null,
+              }]
+            } else if (timelineResult.eventColumns.event_outfordelivery) {
+              updateData.status_details = [{
+                id: 202,
+                name: 'OutForDelivery',
+                description: 'Shipment Out For Delivery',
+                inventory_id: null,
+                extra_information: null,
+                exception_fulfillment_center_id: null,
+              }]
+            } else if (timelineResult.eventColumns.event_intransit) {
+              updateData.status_details = [{
+                id: 201,
+                name: 'InTransit',
+                description: 'Shipment In Transit',
+                inventory_id: null,
+                extra_information: null,
+                exception_fulfillment_center_id: null,
+              }]
+            }
+
             // If timeline shows Labeled but our status is still pre-label, fetch full shipment for status/tracking
             const preLabelStatuses = ['None', 'Processing', 'Pending', 'OnHold', 'Exception']
             const hasLabeledEvent = timelineResult.eventColumns.event_labeled != null

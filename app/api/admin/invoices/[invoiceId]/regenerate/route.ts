@@ -95,7 +95,9 @@ export async function POST(
     }
 
     // Step 2: Collect and process line items
+    console.log(`[Regenerate] Collecting line items for client ${client.id}...`)
     let lineItems = await collectBillingTransactionsByInvoiceIds(client.id, shipbobInvoiceIds)
+    console.log(`[Regenerate] Collected ${lineItems.length} line items`)
 
     if (lineItems.length === 0) {
       return NextResponse.json(

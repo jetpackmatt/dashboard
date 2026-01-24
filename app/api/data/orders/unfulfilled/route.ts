@@ -44,6 +44,8 @@ export async function GET(request: NextRequest) {
         estimated_fulfillment_date_status,
         status_details,
         event_labeled,
+        event_picked,
+        event_packed,
         created_at,
         recipient_name,
         carrier_service,
@@ -72,6 +74,8 @@ export async function GET(request: NextRequest) {
         estimated_fulfillment_date_status,
         status_details,
         event_labeled,
+        event_picked,
+        event_packed,
         created_at,
         recipient_name,
         carrier_service,
@@ -101,63 +105,13 @@ export async function GET(request: NextRequest) {
       query = query.eq('client_id', clientId)
     }
 
-    // Apply status filter at database level for accurate count
-    // Map derived status names to database conditions
-    if (statusFilter) {
-      const statuses = statusFilter.split(',').map(s => s.trim().toLowerCase())
-      const dbFilters: string[] = []
-
-      for (const status of statuses) {
-        switch (status) {
-          case 'exception':
-            dbFilters.push('status.eq.Exception')
-            break
-          case 'out of stock':
-            dbFilters.push('estimated_fulfillment_date_status.eq.AwaitingInventoryAllocation')
-            dbFilters.push('status_details->0->>name.eq.OutOfStock')
-            break
-          case 'address issue':
-            dbFilters.push('status_details->0->>name.eq.AddressValidationFailed')
-            break
-          case 'on hold':
-            // Main status is "OnHold", status_details.name varies (Manual, InvalidAddress, etc.)
-            dbFilters.push('status.eq.OnHold')
-            break
-          case 'picked':
-            dbFilters.push('status.eq.Picked')
-            dbFilters.push('status_details->0->>name.eq.Picked')
-            break
-          case 'packed':
-            dbFilters.push('status.eq.Packed')
-            dbFilters.push('status_details->0->>name.eq.Packed')
-            break
-          case 'pick in-progress':
-            dbFilters.push('status.eq.PickInProgress')
-            dbFilters.push('status_details->0->>name.eq.PickInProgress')
-            break
-          case 'labelled':
-            dbFilters.push('status.eq.LabeledCreated')
-            dbFilters.push('status_details->0->>name.eq.LabeledCreated')
-            dbFilters.push('status_details->0->>name.eq.Labelled')
-            break
-          case 'import review':
-            dbFilters.push('status.eq.ImportReview')
-            break
-          case 'awaiting pick':
-          case 'awaiting pick (late)':
-            // Processing status with label_generation_date set
-            dbFilters.push('status.eq.Processing')
-            break
-          case 'processing':
-            dbFilters.push('status.eq.Processing')
-            break
-        }
-      }
-
-      if (dbFilters.length > 0) {
-        query = query.or(dbFilters.join(','))
-      }
-    }
+    // Status filtering is done client-side after deriving statuses
+    // This ensures accurate filtering since derived status uses event timestamps
+    // which can't be easily expressed in Supabase .or() queries
+    // (e.g., "Picked" = event_picked IS NOT NULL AND event_packed IS NULL)
+    const statusFilterValues = statusFilter
+      ? statusFilter.split(',').map(s => s.trim().toLowerCase())
+      : null
 
     // Apply search filter - hybrid approach:
     // - Full-text search (GIN indexed) for name-like searches
@@ -186,10 +140,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Order by label generation date (most recent first) and paginate
-    let { data: shipmentsData, error: shipmentsError, count } = await query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
+    // Order by creation date (most recent first)
+    // When status filter is applied, fetch ALL records for client-side filtering
+    // (because derived status uses event timestamps that can't be queried directly)
+    // Without status filter, use pagination for efficiency
+    let shipmentsData: any[] | null = null
+    let shipmentsError: any = null
+    let count: number | null = null
+
+    if (statusFilterValues) {
+      // Fetch all records for client-side status filtering (up to 1000 limit)
+      // Note: Unfulfilled shipments are typically <1000, so this is safe
+      const result = await query
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      shipmentsData = result.data
+      shipmentsError = result.error
+      count = result.count
+    } else {
+      // Normal pagination
+      const result = await query
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1)
+      shipmentsData = result.data
+      shipmentsError = result.error
+      count = result.count
+    }
 
     // If full-text search failed (column doesn't exist), retry with client-side filtering
     if (shipmentsError && useFullTextSearch && shipmentsError.message.includes('search_vector')) {
@@ -208,13 +184,21 @@ export async function GET(request: NextRequest) {
       if (endDate) fallbackQuery = fallbackQuery.lte('orders.order_import_date', `${endDate}T23:59:59.999Z`)
       if (clientId) fallbackQuery = fallbackQuery.eq('client_id', clientId)
 
-      const fallbackResult = await fallbackQuery
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1)
-
-      shipmentsData = fallbackResult.data
-      shipmentsError = fallbackResult.error
-      count = fallbackResult.count
+      if (statusFilterValues) {
+        const fallbackResult = await fallbackQuery
+          .order('created_at', { ascending: false })
+          .limit(1000)
+        shipmentsData = fallbackResult.data
+        shipmentsError = fallbackResult.error
+        count = fallbackResult.count
+      } else {
+        const fallbackResult = await fallbackQuery
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+        shipmentsData = fallbackResult.data
+        shipmentsError = fallbackResult.error
+        count = fallbackResult.count
+      }
     }
 
     if (shipmentsError) {
@@ -315,12 +299,25 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Note: Status filtering is now done at database level (see above)
-    // This ensures the count reflects the filtered results
+    // Apply status filter client-side (after deriving statuses)
+    // This ensures accurate filtering since derived status uses event timestamps
+    // which can't be easily expressed in Supabase .or() queries
+    let filteredShipments = shipments
+    if (statusFilterValues && statusFilterValues.length > 0) {
+      filteredShipments = filteredShipments.filter((s: any) => {
+        const derivedStatusLower = s.status.toLowerCase()
+        return statusFilterValues.some(filterStatus => {
+          // Handle "awaiting pick (late)" matching "awaiting pick" filter
+          if (filterStatus === 'awaiting pick' && derivedStatusLower.startsWith('awaiting pick')) {
+            return true
+          }
+          return derivedStatusLower === filterStatus
+        })
+      })
+    }
 
     // Apply search filter client-side ONLY if full-text search was unavailable
     // (when migration hasn't been run yet)
-    let filteredShipments = shipments
     if (searchQuery && needsClientSideSearch) {
       const searchLower = searchQuery.toLowerCase()
       filteredShipments = filteredShipments.filter((s: any) =>
@@ -332,8 +329,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       data: filteredShipments,
-      totalCount: count || 0,
-      hasMore: (offset + limit) < (count || 0),
+      // Note: count from DB query may not match filtered count when using client-side status filter
+      // Return the actual filtered count for accuracy
+      totalCount: statusFilterValues ? filteredShipments.length : (count || 0),
+      hasMore: statusFilterValues ? false : (offset + limit) < (count || 0),
     })
   } catch (err) {
     console.error('Unfulfilled orders API error:', err)
@@ -366,7 +365,19 @@ function deriveGranularStatus(shipment: any): string {
   const efdStatus = shipment.estimated_fulfillment_date_status
   const statusDetails = shipment.status_details
 
-  // Check status_details first - contains the most granular status info
+  // Check event timestamps FIRST - these are the most reliable indicators
+  // of fulfillment progress (even when raw status says "Processing")
+  if (shipment.event_labeled) {
+    return 'Labelled'
+  }
+  if (shipment.event_packed) {
+    return 'Packed'
+  }
+  if (shipment.event_picked) {
+    return 'Picked'
+  }
+
+  // Check status_details next - contains granular status info
   if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
     const detailName = statusDetails[0]?.name
 
@@ -443,16 +454,12 @@ function deriveGranularStatus(shipment: any): string {
 
       // Generic Processing - derive more detail
       case 'Processing':
-        // Check if label has been created
-        if (shipment.event_labeled) {
-          // Has label, waiting to be picked/shipped
-          if (efdStatus === 'PendingLate') {
-            return 'Awaiting Pick (Late)'
-          }
-          return 'Awaiting Pick'
+        // Event timestamps are checked at the top of the function
+        // If we reach here, no picking/packing has started yet
+        if (efdStatus === 'PendingLate') {
+          return 'Awaiting Pick (Late)'
         }
-        // No label yet
-        return 'Processing'
+        return 'Awaiting Pick'
     }
   }
 

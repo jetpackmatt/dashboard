@@ -1728,17 +1728,12 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                 {items.map((item, idx) => (
                                   <div
                                     key={idx}
-                                    className={cn(
-                                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                                      item.isCredit
-                                        ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                        : "bg-white/80 text-slate-700 dark:bg-slate-700/50 dark:text-slate-300 shadow-sm"
-                                    )}
+                                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-white/80 text-slate-700 dark:bg-slate-700/50 dark:text-slate-300 shadow-sm"
                                   >
                                     <span>{item.label}</span>
                                     <span className="text-muted-foreground tabular-nums">{item.count.toLocaleString()}</span>
-                                    <span className={cn("tabular-nums font-semibold", item.value < 0 && !item.isCredit && "text-red-600 dark:text-red-400")}>
-                                      {item.value < 0 && !item.isCredit ? '-' : ''}${formatCurrency(Math.abs(item.value))}
+                                    <span className={cn("tabular-nums font-semibold", (item.value < 0 || item.isCredit) && "text-red-600 dark:text-red-400")}>
+                                      {item.value < 0 || item.isCredit ? '-' : ''}${formatCurrency(Math.abs(item.value))}
                                     </span>
                                   </div>
                                 ))}
@@ -1798,17 +1793,12 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   {items.map((item, idx) => (
                                     <div
                                       key={idx}
-                                      className={cn(
-                                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                                        item.isCredit
-                                          ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                                          : "bg-white/80 text-slate-700 dark:bg-slate-700/50 dark:text-slate-300 shadow-sm"
-                                      )}
+                                      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium bg-white/80 text-slate-700 dark:bg-slate-700/50 dark:text-slate-300 shadow-sm"
                                     >
                                       <span>{item.label}</span>
                                       <span className="text-muted-foreground tabular-nums">{item.count.toLocaleString()}</span>
-                                      <span className={cn("tabular-nums font-semibold", item.cost < 0 && !item.isCredit && "text-red-600 dark:text-red-400")}>
-                                        {item.cost < 0 && !item.isCredit ? '-' : ''}${Math.abs(item.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      <span className={cn("tabular-nums font-semibold", (item.cost < 0 || item.isCredit) && "text-red-600 dark:text-red-400")}>
+                                        {item.cost < 0 || item.isCredit ? '-' : ''}${Math.abs(item.cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   ))}

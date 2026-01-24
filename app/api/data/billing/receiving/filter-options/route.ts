@@ -22,9 +22,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // Fetch distinct statuses from receiving_orders
+    // Limit to 1000 rows - sufficient to capture all unique values for low-cardinality columns
     let query = supabase
       .from('receiving_orders')
       .select('status')
+      .limit(1000)
 
     if (clientId) {
       query = query.eq('client_id', clientId)

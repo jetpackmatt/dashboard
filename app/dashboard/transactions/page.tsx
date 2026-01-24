@@ -6,6 +6,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { DataTable } from "@/components/data-table"
 import { useClient } from "@/components/client-context"
+import { getStoredPageSize } from "@/hooks/use-table-preferences"
 import {
   Select,
   SelectContent,
@@ -82,6 +83,17 @@ export default function TransactionsPage() {
   const [shipmentsTotalCount, setShipmentsTotalCount] = React.useState(0)
   const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>([])
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>([])
+
+  // Additional Services data state (pre-fetched for instant tab switching)
+  const [additionalServicesData, setAdditionalServicesData] = React.useState<any[]>([])
+  const [additionalServicesLoading, setAdditionalServicesLoading] = React.useState(true)
+  const [additionalServicesTotalCount, setAdditionalServicesTotalCount] = React.useState(0)
+  const [additionalServicesFeeTypes, setAdditionalServicesFeeTypes] = React.useState<string[]>([])
+
+  // Returns data state (pre-fetched for instant tab switching)
+  const [returnsData, setReturnsData] = React.useState<any[]>([])
+  const [returnsLoading, setReturnsLoading] = React.useState(true)
+  const [returnsTotalCount, setReturnsTotalCount] = React.useState(0)
 
   // Determine which client to fetch data for
   // For admins: 'all' = all brands, specific ID = single brand
@@ -162,11 +174,94 @@ export default function TransactionsPage() {
     }
   }, [effectiveClientId])
 
-  // Initial load - fetch both unfulfilled and shipments data for instant tab switching
+  // Fetch Additional Services data with 60-day filter - called on initial load
+  const fetchAdditionalServicesData = React.useCallback(async (size: number) => {
+    setAdditionalServicesLoading(true)
+
+    try {
+      const { startDate, endDate } = get60DayRange()
+      const response = await fetch(
+        buildUrl('/api/data/billing/additional-services', { clientId: effectiveClientId, limit: size, offset: 0, startDate, endDate })
+      )
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch additional services: ${response.status}`)
+      }
+
+      const result = await response.json()
+      const data = result.data || []
+      setAdditionalServicesData(data)
+      setAdditionalServicesTotalCount(result.totalCount || 0)
+
+      // Extract unique fee types for filter dropdown
+      const feeTypes = [...new Set(data.map((d: any) => d.feeType).filter(Boolean))] as string[]
+      setAdditionalServicesFeeTypes(feeTypes)
+    } catch (err) {
+      console.error('Error fetching additional services:', err)
+      setAdditionalServicesData([])
+    } finally {
+      setAdditionalServicesLoading(false)
+    }
+  }, [effectiveClientId])
+
+  // Fetch Returns data with 60-day filter - called on initial load
+  const fetchReturnsData = React.useCallback(async (size: number) => {
+    setReturnsLoading(true)
+
+    try {
+      const { startDate, endDate } = get60DayRange()
+      const response = await fetch(
+        buildUrl('/api/data/billing/returns', { clientId: effectiveClientId, limit: size, offset: 0, startDate, endDate })
+      )
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch returns: ${response.status}`)
+      }
+
+      const result = await response.json()
+      const data = result.data || []
+      setReturnsData(data)
+      setReturnsTotalCount(result.totalCount || 0)
+    } catch (err) {
+      console.error('Error fetching returns:', err)
+      setReturnsData([])
+    } finally {
+      setReturnsLoading(false)
+    }
+  }, [effectiveClientId])
+
+  // Initial load - fetch current tab FIRST, then background-load others
+  // This ensures the user sees data immediately for their active tab
+  // Use user's preferred page sizes from localStorage for optimal initial fetch
   React.useEffect(() => {
     if (!isClientLoading) {
-      fetchUnfulfilledData(DEFAULT_PAGE_SIZE)
-      fetchShipmentsData(DEFAULT_PAGE_SIZE)
+      const loadData = async () => {
+        // Get user's preferred page sizes from localStorage (or use defaults)
+        const unfulfilledPageSize = getStoredPageSize('unfulfilled', DEFAULT_PAGE_SIZE)
+        const shipmentsPageSize = getStoredPageSize('shipments', DEFAULT_PAGE_SIZE)
+        const additionalServicesPageSize = getStoredPageSize('additional-services', DEFAULT_PAGE_SIZE)
+        const returnsPageSize = getStoredPageSize('returns', DEFAULT_PAGE_SIZE)
+
+        // Priority 1: Load current tab first (await it) using user's preferred page size
+        if (currentTab === 'unfulfilled') {
+          await fetchUnfulfilledData(unfulfilledPageSize)
+        } else if (currentTab === 'shipments') {
+          await fetchShipmentsData(shipmentsPageSize)
+        } else if (currentTab === 'additional-services') {
+          await fetchAdditionalServicesData(additionalServicesPageSize)
+        } else if (currentTab === 'returns') {
+          await fetchReturnsData(returnsPageSize)
+        }
+
+        // Priority 2: Background-load other tabs for instant switching
+        // Don't await - let them load in parallel in the background
+        if (currentTab !== 'unfulfilled') fetchUnfulfilledData(unfulfilledPageSize)
+        if (currentTab !== 'shipments') fetchShipmentsData(shipmentsPageSize)
+        if (currentTab !== 'additional-services') fetchAdditionalServicesData(additionalServicesPageSize)
+        if (currentTab !== 'returns') fetchReturnsData(returnsPageSize)
+      }
+
+      loadData()
     }
   }, [effectiveClientId, isClientLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -210,6 +305,15 @@ export default function TransactionsPage() {
               shipmentsLoading={shipmentsLoading}
               shipmentsChannels={shipmentsChannels}
               shipmentsCarriers={shipmentsCarriers}
+              // Pre-fetched Additional Services data for instant tab switching
+              additionalServicesData={additionalServicesData}
+              additionalServicesTotalCount={additionalServicesTotalCount}
+              additionalServicesLoading={additionalServicesLoading}
+              additionalServicesFeeTypes={additionalServicesFeeTypes}
+              // Pre-fetched Returns data for instant tab switching
+              returnsData={returnsData}
+              returnsTotalCount={returnsTotalCount}
+              returnsLoading={returnsLoading}
             />
           </div>
         </div>
