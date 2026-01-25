@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
     )
 
     // Handle claim eligibility status filters by querying lost_in_transit_checks first
-    let claimFilterShipmentIds: string[] | null = null
+    let claimFilterShipmentIds: string[] = []
     if (claimStatusFilters.length > 0) {
       const claimStatuses = claimStatusFilters.map(s =>
         s.toLowerCase() === 'at risk' ? 'at_risk' : 'eligible'
@@ -167,7 +167,7 @@ export async function GET(request: NextRequest) {
       }
 
       const { data: claimData } = await claimQuery
-      claimFilterShipmentIds = (claimData || []).map(c => c.shipment_id)
+      claimFilterShipmentIds = (claimData || []).map((c: { shipment_id: string }) => c.shipment_id)
 
       // If no matching shipments found and no regular filters, return empty
       if (claimFilterShipmentIds.length === 0 && regularStatusFilters.length === 0) {

@@ -109,7 +109,7 @@ export async function getAtRiskCandidates(
     return []
   }
 
-  return (shipments || []).filter(s => s.tracking_id && s.client_id) as AtRiskShipment[]
+  return (shipments || []).filter((s: { tracking_id: string | null; client_id: string | null }) => s.tracking_id && s.client_id) as AtRiskShipment[]
 }
 
 /**
@@ -132,7 +132,7 @@ export async function getNewAtRiskCandidates(
     .select('shipment_id')
     .in('shipment_id', candidates.map(c => c.shipment_id))
 
-  const existingIds = new Set((existingChecks || []).map(c => c.shipment_id))
+  const existingIds = new Set((existingChecks || []).map((c: { shipment_id: string }) => c.shipment_id))
 
   // Filter out already-checked shipments
   return candidates

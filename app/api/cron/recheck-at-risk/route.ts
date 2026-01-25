@@ -81,14 +81,15 @@ export async function GET(request: NextRequest) {
     console.log(`[At-Risk Recheck] Checking ${atRiskShipments.length} shipments...`)
 
     // Get shipment data for country info (needed for international determination)
-    const shipmentIds = atRiskShipments.map(s => s.shipment_id)
+    const shipmentIds = atRiskShipments.map((s: { shipment_id: string }) => s.shipment_id)
     const { data: shipmentData } = await supabase
       .from('shipments')
       .select('shipment_id, origin_country, destination_country, event_labeled')
       .in('shipment_id', shipmentIds)
 
-    const shipmentMap = new Map(
-      (shipmentData || []).map(s => [s.shipment_id, s])
+    type ShipmentInfo = { shipment_id: string; origin_country: string | null; destination_country: string | null; event_labeled: string | null }
+    const shipmentMap = new Map<string, ShipmentInfo>(
+      (shipmentData || []).map((s: ShipmentInfo) => [s.shipment_id, s])
     )
 
     for (const check of atRiskShipments) {
