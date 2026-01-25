@@ -301,17 +301,11 @@ export async function processAtRiskShipment(
   const trackingResult = await getTracking(shipment.tracking_id, shipment.carrier)
 
   if (!trackingResult.success) {
-    // Still calculate eligibility using label date as fallback
-    const eligibility = calculateEligibility(
-      null,
-      shipment,
-      new Date(shipment.event_labeled)
-    )
-
+    // DO NOT mark as eligible without TrackingMore data
+    // We need actual carrier checkpoint data to verify lost in transit
     return {
-      success: true, // Partial success - we have eligibility even without tracking
-      eligibility,
-      error: trackingResult.error,
+      success: false,
+      error: trackingResult.error || 'TrackingMore lookup failed',
     }
   }
 
