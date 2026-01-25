@@ -13,6 +13,31 @@
 
 const TRACKINGMORE_API_BASE = 'https://api.trackingmore.com/v4'
 
+// Timeout for TrackingMore API calls (30 seconds - realtime endpoint can be slow)
+const API_TIMEOUT_MS = 30000
+
+/**
+ * Fetch with timeout
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    return response
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 export interface TrackingMoreCheckpoint {
   // TrackingMore v4 API field names
   checkpoint_date: string
@@ -89,6 +114,27 @@ export function getTrackingMoreCarrierCode(carrier: string): string | null {
   if (carrierLower.includes('spee-dee') || carrierLower.includes('speedee')) return 'speedee'
   // Cirro eCommerce (also known as GOFO) - use 'gofoexpress' as carrier code
   if (carrierLower.includes('cirro') || carrierLower.includes('gofo')) return 'gofoexpress'
+  // BetterTrucks - Regional last-mile carrier
+  if (carrierLower.includes('bettertrucks') || carrierLower.includes('better trucks')) return 'bettertrucks'
+  // OSM Worldwide - Parcel consolidator (hands off to USPS for final delivery)
+  // TrackingMore supports OSM tracking
+  if (carrierLower.includes('osm')) return 'osm-worldwide'
+  // UniUni - Canadian regional carrier
+  if (carrierLower.includes('uniuni')) return 'uniuni'
+  // Passport - International shipping
+  if (carrierLower.includes('passport')) return 'passport'
+  // APC Postal Logistics
+  if (carrierLower.includes('apc')) return 'apc'
+  // UPS Mail Innovations - uses USPS for final delivery
+  if (carrierLower.includes('upsmi') || carrierLower.includes('mail innovations')) return 'ups-mi'
+  // FedEx SmartPost - uses USPS for final delivery
+  if (carrierLower.includes('smartpost')) return 'fedex'
+
+  // Carriers with no TrackingMore support - return null to skip
+  // ShipBob internal, PrePaid, DE_KITTING - these are internal/freight and have no tracking
+  if (carrierLower.includes('shipbob') || carrierLower.includes('prepaid') || carrierLower.includes('kitting')) {
+    return null
+  }
 
   return null
 }
@@ -179,7 +225,7 @@ export async function getTracking(
       courier_code: carrierCode,
     })
 
-    const getResponse = await fetch(
+    const getResponse = await fetchWithTimeout(
       `${TRACKINGMORE_API_BASE}/trackings/get?${getParams.toString()}`,
       {
         method: 'GET',
@@ -211,7 +257,7 @@ export async function getTracking(
 
     // Use the realtime endpoint to get tracking data immediately
     // This fetches from the carrier in real-time rather than waiting for async updates
-    const realtimeResponse = await fetch(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
+    const realtimeResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -241,7 +287,7 @@ export async function getTracking(
         // Delete the tracking with wrong carrier
         await deleteTrackingById(existingData.id, apiKey)
         // Try creating again with correct carrier
-        const retryResponse = await fetch(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
+        const retryResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -267,7 +313,7 @@ export async function getTracking(
 
     // Try regular create as fallback
     console.log('[TrackingMore] Realtime failed, trying regular create')
-    const createResponse = await fetch(`${TRACKINGMORE_API_BASE}/trackings/create`, {
+    const createResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -295,7 +341,7 @@ export async function getTracking(
         console.log('[TrackingMore] Tracking exists with wrong carrier:', existingData.courier_code, '- deleting and recreating with:', carrierCode)
         await deleteTrackingById(existingData.id, apiKey)
         // Retry create
-        const retryResponse = await fetch(`${TRACKINGMORE_API_BASE}/trackings/create`, {
+        const retryResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/create`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -323,6 +369,11 @@ export async function getTracking(
     return { success: false, error: createData.meta?.message || 'Failed to create tracking' }
 
   } catch (error) {
+    // Check if this was a timeout (AbortError)
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('[TrackingMore] Request timed out for:', trackingNumber)
+      return { success: false, error: 'Carrier lookup timed out. The carrier may be slow to respond - please try again.' }
+    }
     console.error('[TrackingMore] Request failed:', error)
     return { success: false, error: 'Failed to connect to TrackingMore' }
   }
@@ -333,7 +384,7 @@ export async function getTracking(
  */
 async function deleteTrackingById(id: string, apiKey: string): Promise<boolean> {
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TRACKINGMORE_API_BASE}/trackings/delete/${id}`,
       {
         method: 'DELETE',
@@ -341,7 +392,8 @@ async function deleteTrackingById(id: string, apiKey: string): Promise<boolean> 
           'Content-Type': 'application/json',
           'Tracking-Api-Key': apiKey,
         },
-      }
+      },
+      15000 // 15 second timeout for delete
     )
     const data = await response.json()
     console.log('[TrackingMore] Delete by ID response:', data.meta?.code, data.meta?.message)
@@ -402,7 +454,7 @@ async function getExistingTracking(
         courier_code: carrier,
       })
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${TRACKINGMORE_API_BASE}/trackings/get?${params.toString()}`,
         {
           method: 'GET',
@@ -410,7 +462,8 @@ async function getExistingTracking(
             'Content-Type': 'application/json',
             'Tracking-Api-Key': apiKey,
           },
-        }
+        },
+        15000 // 15 second timeout per carrier attempt
       )
 
       const data: TrackingMoreResponse<TrackingMoreTracking[]> = await response.json()
@@ -422,6 +475,7 @@ async function getExistingTracking(
         return processTrackingResponse(data.data[0])
       }
     } catch (err) {
+      // Continue to next carrier on timeout or error
       console.error('[TrackingMore] Error trying carrier', carrier, ':', err)
     }
   }
@@ -547,7 +601,7 @@ export async function deleteTracking(
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TRACKINGMORE_API_BASE}/trackings/${carrierCode}/${trackingNumber}`,
       {
         method: 'DELETE',
@@ -555,7 +609,8 @@ export async function deleteTracking(
           'Content-Type': 'application/json',
           'Tracking-Api-Key': apiKey,
         },
-      }
+      },
+      15000 // 15 second timeout
     )
 
     const data = await response.json()
