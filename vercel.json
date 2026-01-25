@@ -35,6 +35,14 @@
     {
       "path": "/api/cron/sync-sftp-costs",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/sync-at-risk",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/recheck-at-risk",
+      "schedule": "0 0,5,10,15,20 * * *"
     }
   ]
 }

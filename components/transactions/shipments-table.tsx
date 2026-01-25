@@ -6,8 +6,9 @@ import { DateRange } from "react-day-picker"
 
 import { SHIPMENTS_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable, PrefixColumn } from "./transactions-table"
-import { Shipment, shipmentCellRenderers } from "./cell-renderers"
+import { Shipment, createShipmentCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
+import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
@@ -78,6 +79,22 @@ export function ShipmentsTable({
   // Shipment details drawer state
   const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = React.useState(false)
+
+  // Claim submission dialog state
+  const [claimShipmentId, setClaimShipmentId] = React.useState<string | null>(null)
+  const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
+
+  // Handle "File a Claim" badge click
+  const handleFileClaimClick = React.useCallback((shipmentId: string) => {
+    setClaimShipmentId(shipmentId)
+    setClaimDialogOpen(true)
+  }, [])
+
+  // Create cell renderers with the claim click handler
+  const cellRenderers = React.useMemo(
+    () => createShipmentCellRenderers({ onFileClaimClick: handleFileClaimClick }),
+    [handleFileClaimClick]
+  )
 
   // Pagination state - use initialPageSize from props for persistence
   const [pageIndex, setPageIndex] = React.useState(0)
@@ -328,7 +345,7 @@ export function ShipmentsTable({
       <TransactionsTable
         config={SHIPMENTS_TABLE_CONFIG}
         data={data}
-        cellRenderers={shipmentCellRenderers}
+        cellRenderers={cellRenderers}
         getRowKey={(row) => row.id.toString()}
         isLoading={isLoading}
         isPageLoading={isPageLoading}
@@ -347,6 +364,13 @@ export function ShipmentsTable({
         shipmentId={selectedShipmentId}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
+      />
+      {/* Claim submission dialog - opened via "File a Claim" badge */}
+      <ClaimSubmissionDialog
+        shipmentId={claimShipmentId || undefined}
+        open={claimDialogOpen}
+        onOpenChange={setClaimDialogOpen}
+        preselectedClaimType="lostInTransit"
       />
     </>
   )

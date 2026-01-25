@@ -142,10 +142,53 @@ export async function GET(request: NextRequest) {
     // Apply status filter at database level
     // For shipped records, tracking status comes from status_details JSONB
     // The status column is typically 'Completed' for shipped items
-    if (statusFilter.length > 0) {
+    // Check for special claim eligibility status filters
+    const claimStatusFilters = statusFilter.filter(s =>
+      s.toLowerCase() === 'at risk' || s.toLowerCase() === 'file a claim'
+    )
+    const regularStatusFilters = statusFilter.filter(s =>
+      s.toLowerCase() !== 'at risk' && s.toLowerCase() !== 'file a claim'
+    )
+
+    // Handle claim eligibility status filters by querying lost_in_transit_checks first
+    let claimFilterShipmentIds: string[] | null = null
+    if (claimStatusFilters.length > 0) {
+      const claimStatuses = claimStatusFilters.map(s =>
+        s.toLowerCase() === 'at risk' ? 'at_risk' : 'eligible'
+      )
+
+      let claimQuery = supabase
+        .from('lost_in_transit_checks')
+        .select('shipment_id')
+        .in('claim_eligibility_status', claimStatuses)
+
+      if (clientId) {
+        claimQuery = claimQuery.eq('client_id', clientId)
+      }
+
+      const { data: claimData } = await claimQuery
+      claimFilterShipmentIds = (claimData || []).map(c => c.shipment_id)
+
+      // If no matching shipments found and no regular filters, return empty
+      if (claimFilterShipmentIds.length === 0 && regularStatusFilters.length === 0) {
+        return NextResponse.json({
+          data: [],
+          totalCount: 0,
+          hasMore: false,
+          carriers: [],
+        })
+      }
+
+      // Apply the shipment ID filter
+      if (claimFilterShipmentIds.length > 0) {
+        query = query.in('shipment_id', claimFilterShipmentIds)
+      }
+    }
+
+    if (regularStatusFilters.length > 0) {
       const dbFilters: string[] = []
 
-      for (const status of statusFilter) {
+      for (const status of regularStatusFilters) {
         switch (status.toLowerCase()) {
           case 'delivered':
             // Delivered shipments have event_delivered set
@@ -533,10 +576,11 @@ export async function GET(request: NextRequest) {
     let billingMap: Record<string, { totalCost: number }> = {}
     let refundedTrackingIds: Set<string> = new Set()
     let voidedTrackingIds: Set<string> = new Set()
+    let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null }> = {}
 
     if (shipmentIds.length > 0) {
-      // Run item counts and billing queries IN PARALLEL
-      const [itemResult, billingResult] = await Promise.all([
+      // Run item counts, billing, and claim eligibility queries IN PARALLEL
+      const [itemResult, billingResult, claimEligibilityResult] = await Promise.all([
         // Query 1: Count items per shipment
         supabase
           .from('shipment_items')
@@ -548,7 +592,12 @@ export async function GET(request: NextRequest) {
               .from('transactions')
               .select('tracking_id, total_charge, fee_type, transaction_type, is_voided')
               .in('tracking_id', trackingIds)
-          : Promise.resolve({ data: null })
+          : Promise.resolve({ data: null }),
+        // Query 3: Get claim eligibility status from lost_in_transit_checks
+        supabase
+          .from('lost_in_transit_checks')
+          .select('shipment_id, claim_eligibility_status, eligible_after')
+          .in('shipment_id', shipmentIds)
       ])
 
       // Process item counts
@@ -586,6 +635,27 @@ export async function GET(request: NextRequest) {
         for (const tx of billingResult.data) {
           if (tx.is_voided === true && tx.tracking_id) {
             voidedTrackingIds.add(tx.tracking_id)
+          }
+        }
+      }
+
+      // Process claim eligibility data
+      if (claimEligibilityResult.data) {
+        for (const check of claimEligibilityResult.data) {
+          if (check.shipment_id && check.claim_eligibility_status) {
+            // Calculate days remaining if at_risk
+            let daysRemaining: number | null = null
+            if (check.claim_eligibility_status === 'at_risk' && check.eligible_after) {
+              const eligibleDate = new Date(check.eligible_after)
+              const today = new Date()
+              today.setHours(0, 0, 0, 0)
+              daysRemaining = Math.max(0, Math.ceil((eligibleDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)))
+            }
+            claimEligibilityMap[check.shipment_id] = {
+              status: check.claim_eligibility_status,
+              daysRemaining,
+              eligibleAfter: check.eligible_after || null,
+            }
           }
         }
       }
@@ -655,6 +725,9 @@ export async function GET(request: NextRequest) {
         clientId: row.client_id || null,
         // Voided status (duplicate shipping transaction that was recreated)
         isVoided: isVoided || false,
+        // Claim eligibility status (for At Risk / File a Claim badges)
+        claimEligibilityStatus: claimEligibilityMap[row.shipment_id]?.status || null,
+        claimDaysRemaining: claimEligibilityMap[row.shipment_id]?.daysRemaining || null,
       }
     })
 

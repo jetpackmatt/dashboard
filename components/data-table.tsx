@@ -215,6 +215,8 @@ const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Out for Delivery', label: 'Out for Delivery' },
   { value: 'Delivered', label: 'Delivered' },
   { value: 'Exception', label: 'Exception' },
+  { value: 'At Risk', label: 'At Risk' },
+  { value: 'File a Claim', label: 'File a Claim' },
 ]
 
 // Fee types are now loaded dynamically from the API

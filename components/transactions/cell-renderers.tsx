@@ -411,6 +411,9 @@ export interface Shipment {
   clientId?: string | null
   // Voided status (duplicate shipping transaction that was recreated)
   isVoided?: boolean
+  // Claim eligibility status (for At Risk / File a Claim badges)
+  claimEligibilityStatus?: 'at_risk' | 'eligible' | null
+  claimDaysRemaining?: number | null
 }
 
 // Status colors for shipments - Complete ShipBob status hierarchy
@@ -578,6 +581,49 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     if (row.isVoided) {
       return <VoidedBadge />
     }
+
+    // Priority: Show claim eligibility badges before normal status
+    // "File a Claim" - eligible for Lost in Transit claim
+    // Note: Click handler is added via createShipmentCellRenderers() for interactive version
+    if (row.claimEligibilityStatus === 'eligible') {
+      return (
+        <Badge
+          variant="outline"
+          className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+        >
+          <AlertCircleIcon className="h-3.5 w-3.5" />
+          File a Claim
+        </Badge>
+      )
+    }
+
+    // "At Risk" - potentially lost but not yet eligible (tooltip shows days remaining)
+    if (row.claimEligibilityStatus === 'at_risk') {
+      const daysRemaining = row.claimDaysRemaining ?? 0
+      return (
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Badge
+                variant="outline"
+                className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+              >
+                <ClockIcon className="h-3.5 w-3.5" />
+                At Risk
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+              <p className="text-sm">
+                {daysRemaining > 0
+                  ? `Check back in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} to file a claim`
+                  : 'Eligibility check in progress'}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )
+    }
+
     return (
       <Badge
         variant="outline"
@@ -773,6 +819,80 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       {row.storeOrderId || "-"}
     </div>
   ),
+}
+
+/**
+ * Factory function to create shipment cell renderers with click handlers
+ * Use this when you need interactive "File a Claim" badges
+ */
+export function createShipmentCellRenderers(options?: {
+  onFileClaimClick?: (shipmentId: string) => void
+}): Record<string, CellRenderer<Shipment>> {
+  return {
+    ...shipmentCellRenderers,
+    // Override status renderer with interactive version
+    status: (row) => {
+      // Show Voided badge for duplicate shipping transactions that were recreated
+      if (row.isVoided) {
+        return <VoidedBadge />
+      }
+
+      // Priority: Show claim eligibility badges before normal status
+      // "File a Claim" - eligible for Lost in Transit claim (clickable)
+      if (row.claimEligibilityStatus === 'eligible') {
+        return (
+          <Badge
+            variant="outline"
+            className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap cursor-pointer bg-red-100/50 text-red-700 border-red-200 hover:bg-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30 dark:hover:bg-red-900/30"
+            onClick={(e) => {
+              e.stopPropagation()
+              options?.onFileClaimClick?.(row.shipmentId)
+            }}
+          >
+            <AlertCircleIcon className="h-3.5 w-3.5" />
+            File a Claim
+          </Badge>
+        )
+      }
+
+      // "At Risk" - potentially lost but not yet eligible (tooltip shows days remaining)
+      if (row.claimEligibilityStatus === 'at_risk') {
+        const daysRemaining = row.claimDaysRemaining ?? 0
+        return (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+                >
+                  <ClockIcon className="h-3.5 w-3.5" />
+                  At Risk
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                <p className="text-sm">
+                  {daysRemaining > 0
+                    ? `Check back in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''} to file a claim`
+                    : 'Eligibility check in progress'}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
+      }
+
+      return (
+        <Badge
+          variant="outline"
+          className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
+        >
+          {getShipmentStatusIcon(row.status)}
+          {row.status}
+        </Badge>
+      )
+    },
+  }
 }
 
 // ============================================
