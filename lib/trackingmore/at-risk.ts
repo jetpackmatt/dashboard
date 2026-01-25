@@ -14,6 +14,7 @@ import {
   getTracking,
   getTrackingMoreCarrierCode,
   isDelivered,
+  isReturned,
   daysSinceLastCheckpoint,
   getLastCheckpointDate,
   type TrackingMoreTracking,
@@ -168,34 +169,17 @@ export function calculateEligibility(
     trackingMoreId: null,
   }
 
-  // If no tracking data, use label date as fallback
+  // CRITICAL: If no tracking data, return null status
+  // We NEVER mark as eligible without TrackingMore confirmation
   if (!tracking) {
-    const daysSinceLabel = Math.floor(
-      (Date.now() - labelDate.getTime()) / (1000 * 60 * 60 * 24)
-    )
-
-    if (daysSinceLabel >= requiredDays) {
-      return {
-        ...baseResult,
-        status: 'eligible',
-        daysSinceLastScan: daysSinceLabel,
-        daysRemaining: 0,
-        eligibleAfter: labelDate,
-        lastScanDescription: 'No carrier data available',
-      }
-    }
-
     return {
       ...baseResult,
-      status: 'at_risk',
-      daysSinceLastScan: daysSinceLabel,
-      daysRemaining: requiredDays - daysSinceLabel,
-      eligibleAfter: new Date(labelDate.getTime() + requiredDays * 24 * 60 * 60 * 1000),
+      status: null, // Cannot determine eligibility without tracking data
       lastScanDescription: 'No carrier data available',
     }
   }
 
-  // Check if delivered
+  // Check if delivered (enhanced check includes checkpoint descriptions)
   if (isDelivered(tracking)) {
     return {
       ...baseResult,
@@ -205,37 +189,37 @@ export function calculateEligibility(
     }
   }
 
+  // Check if returned to sender (not lost in transit)
+  if (isReturned(tracking)) {
+    return {
+      ...baseResult,
+      status: null, // Not at risk, returned
+      trackingMoreId: tracking.id,
+      lastScanDescription: tracking.latest_event || 'Returned to sender',
+    }
+  }
+
   // Get last checkpoint info
   const lastCheckpointDate = getLastCheckpointDate(tracking)
   const daysSince = daysSinceLastCheckpoint(tracking)
 
-  // If no checkpoint data, use label date
+  // CRITICAL: If no checkpoint data, mark as at_risk only (pending recheck)
+  // We NEVER mark as eligible without actual checkpoint data
   if (!lastCheckpointDate || daysSince === null) {
     const daysSinceLabel = Math.floor(
       (Date.now() - labelDate.getTime()) / (1000 * 60 * 60 * 24)
     )
 
+    // Use label date for estimated eligibility date, but status is at_risk (not eligible)
     const eligibleAfterDate = new Date(labelDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
-
-    if (daysSinceLabel >= requiredDays) {
-      return {
-        ...baseResult,
-        status: 'eligible',
-        daysSinceLastScan: daysSinceLabel,
-        daysRemaining: 0,
-        eligibleAfter: eligibleAfterDate,
-        lastScanDescription: tracking.latest_event || 'Never scanned by carrier',
-        trackingMoreId: tracking.id,
-      }
-    }
 
     return {
       ...baseResult,
-      status: 'at_risk',
+      status: 'at_risk', // Never 'eligible' without checkpoint data
       daysSinceLastScan: daysSinceLabel,
-      daysRemaining: requiredDays - daysSinceLabel,
+      daysRemaining: Math.max(0, requiredDays - daysSinceLabel),
       eligibleAfter: eligibleAfterDate,
-      lastScanDescription: tracking.latest_event || 'Never scanned by carrier',
+      lastScanDescription: tracking.latest_event || 'Awaiting carrier scan data',
       trackingMoreId: tracking.id,
     }
   }

@@ -538,9 +538,62 @@ function processTrackingResponse(tracking: TrackingMoreTracking): TrackingResult
 
 /**
  * Check if a tracking shows the package as delivered
+ * Checks both the status field AND the latest event description
+ * (TrackingMore sometimes doesn't set status='delivered' immediately after create)
  */
 export function isDelivered(tracking: TrackingMoreTracking): boolean {
-  return tracking.status === 'delivered'
+  // Check official status field
+  if (tracking.status === 'delivered') return true
+
+  // Also check latest_event for delivery keywords
+  // This catches cases where status isn't updated but checkpoint shows delivered
+  const latestEvent = (tracking.latest_event || '').toLowerCase()
+  if (latestEvent.includes('delivered') && !latestEvent.includes('undelivered')) {
+    return true
+  }
+
+  // Check checkpoints for delivery status
+  const checkpoints = [
+    ...(tracking.origin_info?.trackinfo || []),
+    ...(tracking.destination_info?.trackinfo || []),
+  ]
+
+  for (const checkpoint of checkpoints) {
+    const status = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
+    const detail = (checkpoint.tracking_detail || '').toLowerCase()
+
+    if (status === 'delivered') return true
+    if (detail.includes('delivered') && !detail.includes('undelivered')) return true
+  }
+
+  return false
+}
+
+/**
+ * Check if a tracking shows the package was returned to sender
+ * Returned packages are NOT lost in transit - they were sent back
+ */
+export function isReturned(tracking: TrackingMoreTracking): boolean {
+  // Check latest_event for return keywords
+  const latestEvent = (tracking.latest_event || '').toLowerCase()
+  if (latestEvent.includes('returned') || latestEvent.includes('return to sender')) {
+    return true
+  }
+
+  // Check checkpoints for return status
+  const checkpoints = [
+    ...(tracking.origin_info?.trackinfo || []),
+    ...(tracking.destination_info?.trackinfo || []),
+  ]
+
+  for (const checkpoint of checkpoints) {
+    const detail = (checkpoint.tracking_detail || '').toLowerCase()
+    if (detail.includes('returned') || detail.includes('return to sender')) {
+      return true
+    }
+  }
+
+  return false
 }
 
 /**
