@@ -372,7 +372,8 @@ export async function getAtRiskShipmentsForRecheck(
   }
 
   // Join with shipments to get country info for international determination
-  const shipmentIds = (data || []).map(d => d.shipment_id)
+  type CheckRecord = { shipment_id: string; tracking_number: string; carrier: string; client_id: string; eligible_after: string; last_recheck_at: string | null }
+  const shipmentIds = (data || []).map((d: CheckRecord) => d.shipment_id)
 
   if (shipmentIds.length === 0) return []
 
@@ -381,11 +382,12 @@ export async function getAtRiskShipmentsForRecheck(
     .select('shipment_id, origin_country, destination_country')
     .in('shipment_id', shipmentIds)
 
-  const shipmentMap = new Map(
-    (shipments || []).map(s => [s.shipment_id, s])
+  type ShipmentRecord = { shipment_id: string; origin_country: string | null; destination_country: string | null }
+  const shipmentMap = new Map<string, ShipmentRecord>(
+    (shipments || []).map((s: ShipmentRecord) => [s.shipment_id, s])
   )
 
-  return (data || []).map(d => ({
+  return (data || []).map((d: CheckRecord) => ({
     ...d,
     origin_country: shipmentMap.get(d.shipment_id)?.origin_country || null,
     destination_country: shipmentMap.get(d.shipment_id)?.destination_country || null,
