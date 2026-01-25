@@ -1590,9 +1590,10 @@ export function getTrackingUrl(carrier: string, trackingId: string): string | nu
     return `https://tracking.bettertrucks.com/tracking?trackingNumber=${trackingId}`
   }
 
-  // OSM Worldwide - Parcel consolidator, use their official tracking
+  // OSM Worldwide - Parcel consolidator that hands off to USPS for final delivery
+  // Use USPS tracking since their portal doesn't provide useful tracking info
   if (carrierLower.includes('osm')) {
-    return `https://www.osmworldwide.com/tracking/?TrackingNumbers=${trackingId}`
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingId}`
   }
 
   // Cirro eCommerce / Cirro Parcel (Pitney Bowes) - use their track portal
