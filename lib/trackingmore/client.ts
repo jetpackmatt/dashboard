@@ -108,7 +108,7 @@ export function getTrackingMoreCarrierCode(carrier: string): string | null {
     return 'dhl'
   }
   if (carrierLower.includes('ontrac')) return 'ontrac'
-  if (carrierLower.includes('amazon')) return 'amazon-shipping-us'
+  if (carrierLower.includes('amazon')) return 'amazon-us'
   if (carrierLower.includes('veho')) return 'veho'
   if (carrierLower.includes('lasership')) return 'lasership'
   if (carrierLower.includes('spee-dee') || carrierLower.includes('speedee')) return 'speedee'
@@ -118,7 +118,7 @@ export function getTrackingMoreCarrierCode(carrier: string): string | null {
   if (carrierLower.includes('bettertrucks') || carrierLower.includes('better trucks')) return 'bettertrucks'
   // OSM Worldwide - Parcel consolidator (hands off to USPS for final delivery)
   // TrackingMore supports OSM tracking
-  if (carrierLower.includes('osm')) return 'osm-worldwide'
+  if (carrierLower.includes('osm')) return 'osmworldwide'
   // UniUni - Canadian regional carrier
   if (carrierLower.includes('uniuni')) return 'uniuni'
   // Passport - International shipping
