@@ -883,7 +883,7 @@ export async function GET(request: NextRequest) {
           .eq('client_id', clientId)
 
         if (!viewError && viewData) {
-          allCarriers = viewData.map(r => r.carrier).filter(Boolean).sort()
+          allCarriers = viewData.map((r: { carrier: string }) => r.carrier).filter(Boolean).sort()
         } else {
           // View doesn't exist yet - fall back to current page carriers
           // (This avoids the slow 114ms query until the view is created)
@@ -897,7 +897,7 @@ export async function GET(request: NextRequest) {
           .select('carrier')
 
         if (!viewError && viewData) {
-          allCarriers = viewData.map(r => r.carrier).filter(Boolean).sort()
+          allCarriers = viewData.map((r: { carrier: string }) => r.carrier).filter(Boolean).sort()
         } else {
           // View doesn't exist yet - fall back to current page carriers
           console.log('[Carriers] Materialized view not available, using current page carriers')
