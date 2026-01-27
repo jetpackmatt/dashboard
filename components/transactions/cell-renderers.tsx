@@ -12,6 +12,7 @@ import {
   EyeIcon,
   FileSpreadsheet,
   FileText,
+  FileTextIcon,
   HandIcon,
   InboxIcon,
   LoaderIcon,
@@ -358,18 +359,39 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
 // ============================================
 
 // Carrier display names for proper formatting and brevity
+// Maps raw DB carrier values to user-friendly display names
+// Multiple DB values may map to the same display name (for consolidation)
 const CARRIER_DISPLAY_NAMES: Record<string, string> = {
   'Amazon Shipping': 'Amazon',
+  'APC ORD': 'APC',
+  'APG eCommerce': 'APG',
   'BetterTrucks': 'BetterTrucks',
-  'DHLExpress': 'DHL Express',
+  'CanadaPost': 'Canada Post',
   'CirroECommerce': 'Cirro',
+  // DHL consolidation: DHL + DHLExpress → "DHL Express"
+  'DHL': 'DHL Express',
+  'DHLExpress': 'DHL Express',
+  // DHL Ecom consolidation: DhlEcs + DHL eCommerce MDW → "DHL Ecom"
   'DhlEcs': 'DHL Ecom',
+  'DHL eCommerce MDW (Shipbob)': 'DHL Ecom',
+  // FedEx consolidation: FedEx + FedExSmartPost → "FedEx"
   'FedEx': 'FedEx',
-  'FedExSmartPost': 'FedEx SP',
-  'OSMWorldwide': 'OSM',
+  'FedExSmartPost': 'FedEx',
   'OnTrac': 'OnTrac',
+  'OSMWorldwide': 'OSM',
+  'Passport': 'Passport',
+  // PrePaid consolidation: PrePaid + PrePaid Freight → "Prepaid"
+  'PrePaid': 'Prepaid',
+  'PrePaid Freight': 'Prepaid',
+  // ShipBob consolidation: ShipBob + ShipBob Freight → "ShipBob"
   'ShipBob': 'ShipBob',
+  'ShipBob Freight': 'ShipBob',
+  'UniUni': 'UniUni',
   'UPS': 'UPS',
+  // UPS MI consolidation: UPSMI + upsmi + UPSMailInnovations → "UPS MI"
+  'UPSMI': 'UPS MI',
+  'upsmi': 'UPS MI',
+  'UPSMailInnovations': 'UPS MI',
   'USPS': 'USPS',
   'Veho': 'Veho',
 }
@@ -378,6 +400,34 @@ const CARRIER_DISPLAY_NAMES: Record<string, string> = {
 export function getCarrierDisplayName(carrier: string): string {
   if (!carrier) return '-'
   return CARRIER_DISPLAY_NAMES[carrier] || carrier
+}
+
+// Get unique display carriers from a list of raw carrier values
+// Used to consolidate multiple DB values into single filter options
+export function getUniqueDisplayCarriers(carriers: string[]): string[] {
+  const displayNames = new Set<string>()
+  for (const carrier of carriers) {
+    if (carrier) {
+      displayNames.add(getCarrierDisplayName(carrier))
+    }
+  }
+  return [...displayNames].sort()
+}
+
+// Get all raw carrier values that map to a given display name
+// Used for filtering - when user selects "DHL Express", we need to match both "DHL" and "DHLExpress"
+export function getRawCarriersForDisplayName(displayName: string): string[] {
+  const rawCarriers: string[] = []
+  for (const [raw, display] of Object.entries(CARRIER_DISPLAY_NAMES)) {
+    if (display === displayName) {
+      rawCarriers.push(raw)
+    }
+  }
+  // If no mapping found, assume the display name is also the raw name
+  if (rawCarriers.length === 0) {
+    rawCarriers.push(displayName)
+  }
+  return rawCarriers
 }
 
 export interface Shipment {
@@ -414,6 +464,101 @@ export interface Shipment {
   // Claim eligibility status (for At Risk / File a Claim badges)
   claimEligibilityStatus?: 'at_risk' | 'eligible' | null
   claimDaysRemaining?: number | null
+  // TrackingMore substatus for granular tracking info
+  claimSubstatusCategory?: string | null
+  claimLastScanDescription?: string | null
+  claimLastScanDate?: string | null
+  // Claim ticket info (from care_tickets - overrides eligibility status in UI)
+  claimTicketNumber?: number | null
+  claimTicketStatus?: string | null
+  claimCreditAmount?: number | null
+}
+
+// ============================================
+// TRACKINGMORE SUBSTATUS DISPLAY
+// Convert substatus_category to user-friendly display names
+// ============================================
+
+// Substatus display for AT RISK shipments (not yet eligible for claim)
+// These should be neutral/informative, not alarming - package may still be moving
+const SUBSTATUS_DISPLAY_NAMES: Record<string, { label: string; color: string; icon: 'clock' | 'alert' | 'truck' | 'return' | 'customs' | 'damaged' }> = {
+  'awaiting_pickup': { label: 'Awaiting Pickup', color: 'amber', icon: 'clock' },
+  // For at_risk: these are "potentially delayed" not "lost" - use neutral labels
+  'lost_no_scan': { label: 'No Recent Scans', color: 'amber', icon: 'clock' },
+  'lost_in_transit': { label: 'Tracking Stalled', color: 'amber', icon: 'clock' },
+  'returned': { label: 'Returned to Sender', color: 'blue', icon: 'return' },
+  'address_issue': { label: 'Address Issue', color: 'amber', icon: 'alert' },
+  'customs_hold': { label: 'Customs Hold', color: 'amber', icon: 'customs' },
+  'damaged': { label: 'Damaged', color: 'red', icon: 'damaged' },
+  'carrier_delay': { label: 'Carrier Delay', color: 'amber', icon: 'truck' },
+  'prepaid_label': { label: 'Prepaid Label', color: 'slate', icon: 'clock' },
+}
+
+// Substatus display for ELIGIBLE shipments (can file a claim)
+// These can use stronger language since claim threshold has been met
+const SUBSTATUS_ELIGIBLE_DISPLAY_NAMES: Record<string, { label: string; color: string; icon: 'clock' | 'alert' | 'truck' | 'return' | 'customs' | 'damaged' }> = {
+  'awaiting_pickup': { label: 'Never Picked Up', color: 'red', icon: 'alert' },
+  'lost_no_scan': { label: 'Lost - No Scans', color: 'red', icon: 'alert' },
+  'lost_in_transit': { label: 'Lost in Transit', color: 'red', icon: 'alert' },
+  'returned': { label: 'Returned to Sender', color: 'blue', icon: 'return' },
+  'address_issue': { label: 'Undeliverable', color: 'red', icon: 'alert' },
+  'customs_hold': { label: 'Stuck in Customs', color: 'red', icon: 'customs' },
+  'damaged': { label: 'Damaged', color: 'red', icon: 'damaged' },
+  'carrier_delay': { label: 'Severely Delayed', color: 'red', icon: 'alert' },
+  'prepaid_label': { label: 'Prepaid Label', color: 'slate', icon: 'clock' },
+}
+
+function getSubstatusColors(substatus: string, isEligible: boolean = false) {
+  const configMap = isEligible ? SUBSTATUS_ELIGIBLE_DISPLAY_NAMES : SUBSTATUS_DISPLAY_NAMES
+  const config = configMap[substatus]
+  if (!config) {
+    return isEligible
+      ? "bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+      : "bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+  }
+  switch (config.color) {
+    case 'red':
+      return "bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+    case 'amber':
+      return "bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+    case 'blue':
+      return "bg-blue-100/50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
+    case 'slate':
+    default:
+      return "bg-slate-100/50 text-slate-700 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800/30"
+  }
+}
+
+function getSubstatusIcon(substatus: string, isEligible: boolean = false) {
+  const configMap = isEligible ? SUBSTATUS_ELIGIBLE_DISPLAY_NAMES : SUBSTATUS_DISPLAY_NAMES
+  const config = configMap[substatus]
+  if (!config) return isEligible ? <AlertCircleIcon className="h-3.5 w-3.5" /> : <ClockIcon className="h-3.5 w-3.5" />
+  switch (config.icon) {
+    case 'alert': return <AlertCircleIcon className="h-3.5 w-3.5" />
+    case 'truck': return <TruckIcon className="h-3.5 w-3.5" />
+    case 'return': return <RotateCcwIcon className="h-3.5 w-3.5" />
+    case 'customs': return <BoxIcon className="h-3.5 w-3.5" />
+    case 'damaged': return <XCircleIcon className="h-3.5 w-3.5" />
+    case 'clock':
+    default: return <ClockIcon className="h-3.5 w-3.5" />
+  }
+}
+
+function getSubstatusDisplayName(substatus: string, isEligible: boolean = false): string {
+  const configMap = isEligible ? SUBSTATUS_ELIGIBLE_DISPLAY_NAMES : SUBSTATUS_DISPLAY_NAMES
+  return configMap[substatus]?.label || substatus?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Unknown'
+}
+
+// Format last scan date for tooltip display (e.g., "Jan 12, 2025")
+function formatLastScanDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null
+  try {
+    const date = new Date(dateStr)
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`
+  } catch {
+    return null
+  }
 }
 
 // Status colors for shipments - Complete ShipBob status hierarchy
@@ -582,10 +727,140 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       return <VoidedBadge />
     }
 
-    // Priority: Show claim eligibility badges before normal status
+    // Priority 1: Show claim ticket status if a claim has been filed
+    // This takes precedence over eligibility status since the claim is in progress
+    if (row.claimTicketStatus) {
+      const ticketStatus = row.claimTicketStatus
+      const ticketNumber = row.claimTicketNumber
+
+      // Map care_tickets status to display badge
+      switch (ticketStatus) {
+        case 'Credit Approved':
+        case 'Resolved':
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-emerald-100/50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
+                  >
+                    <CheckCircle2Icon className="h-3.5 w-3.5" />
+                    Credit Approved
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                  <p className="text-sm">
+                    Ticket #{ticketNumber} - {row.claimCreditAmount ? `$${row.claimCreditAmount.toFixed(2)} credited` : 'Credit applied'}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+
+        case 'Credit Requested':
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+                  >
+                    <ClockIcon className="h-3.5 w-3.5" />
+                    Credit Requested
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                  <p className="text-sm">Ticket #{ticketNumber} - Awaiting approval</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+
+        case 'Credit Denied':
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-slate-100/50 text-slate-700 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800/30"
+                  >
+                    <XCircleIcon className="h-3.5 w-3.5" />
+                    Credit Denied
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                  <p className="text-sm">Ticket #{ticketNumber} - Claim denied</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+
+        default:
+          // Input Required, Under Review, etc. - show as "Claim Filed"
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-blue-100/50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
+                  >
+                    <FileTextIcon className="h-3.5 w-3.5" />
+                    Claim Filed
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                  <p className="text-sm">Ticket #{ticketNumber} - {ticketStatus}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+      }
+    }
+
+    // Priority 2: Show claim eligibility badges before normal status
     // "File a Claim" - eligible for Lost in Transit claim
+    // Show specific substatus with stronger language since claim threshold is met
     // Note: Click handler is added via createShipmentCellRenderers() for interactive version
     if (row.claimEligibilityStatus === 'eligible') {
+      const substatus = row.claimSubstatusCategory
+      const lastScan = row.claimLastScanDescription
+      const lastScanDate = formatLastScanDate(row.claimLastScanDate)
+
+      // Show specific status if available, with eligible=true for stronger labels
+      if (substatus) {
+        const displayName = getSubstatusDisplayName(substatus, true)
+        const colors = getSubstatusColors(substatus, true)
+        const icon = getSubstatusIcon(substatus, true)
+
+        return (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                >
+                  {icon}
+                  {displayName}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md max-w-xs">
+                <div className="text-sm">
+                  {lastScanDate && <p className="text-muted-foreground mb-1">Last scan: {lastScanDate}</p>}
+                  {lastScan && <p className="mb-1">{lastScan}</p>}
+                  <p className="font-medium text-red-600 dark:text-red-400">Eligible to file a claim</p>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
+      }
+
+      // Fallback to generic "File a Claim" if no substatus
       return (
         <Badge
           variant="outline"
@@ -597,9 +872,47 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       )
     }
 
-    // "At Risk" - potentially lost but not yet eligible (tooltip shows days remaining)
+    // "At Risk" - show granular TrackingMore substatus with tooltip for details
     if (row.claimEligibilityStatus === 'at_risk') {
       const daysRemaining = row.claimDaysRemaining ?? 0
+      const substatus = row.claimSubstatusCategory
+      const lastScan = row.claimLastScanDescription
+
+      // If we have a substatus from TrackingMore, show that instead of generic "At Risk"
+      // Pass isEligible=false for neutral/non-alarming labels
+      if (substatus) {
+        const displayName = getSubstatusDisplayName(substatus, false)
+        const colors = getSubstatusColors(substatus, false)
+        const icon = getSubstatusIcon(substatus, false)
+
+        return (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                >
+                  {icon}
+                  {displayName}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md max-w-xs">
+                <div className="text-sm">
+                  {lastScan && <p className="mb-1">{lastScan}</p>}
+                  <p className="text-muted-foreground">
+                    {daysRemaining > 0
+                      ? `Eligible for claim in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`
+                      : 'Checking eligibility...'}
+                  </p>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
+      }
+
+      // Fallback to generic "At Risk" if no substatus
       return (
         <TooltipProvider>
           <Tooltip delayDuration={300}>
@@ -839,7 +1152,47 @@ export function createShipmentCellRenderers(options?: {
 
       // Priority: Show claim eligibility badges before normal status
       // "File a Claim" - eligible for Lost in Transit claim (clickable)
+      // Show specific substatus with stronger language since claim threshold is met
       if (row.claimEligibilityStatus === 'eligible') {
+        const substatus = row.claimSubstatusCategory
+        const lastScan = row.claimLastScanDescription
+        const lastScanDate = formatLastScanDate(row.claimLastScanDate)
+
+        // Show specific status if available, with eligible=true for stronger labels
+        if (substatus) {
+          const displayName = getSubstatusDisplayName(substatus, true)
+          const colors = getSubstatusColors(substatus, true)
+          const icon = getSubstatusIcon(substatus, true)
+
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap cursor-pointer hover:opacity-80 ${colors}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      options?.onFileClaimClick?.(row.shipmentId)
+                    }}
+                  >
+                    {icon}
+                    {displayName}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md max-w-xs">
+                  <div className="text-sm">
+                    {lastScanDate && <p className="text-muted-foreground mb-1">Last scan: {lastScanDate}</p>}
+                    {lastScan && <p className="mb-1">{lastScan}</p>}
+                    <p className="font-medium text-red-600 dark:text-red-400">Click to file a claim</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+        }
+
+        // Fallback to generic "File a Claim" if no substatus
         return (
           <Badge
             variant="outline"
@@ -855,9 +1208,47 @@ export function createShipmentCellRenderers(options?: {
         )
       }
 
-      // "At Risk" - potentially lost but not yet eligible (tooltip shows days remaining)
+      // "At Risk" - show granular TrackingMore substatus with tooltip for details
       if (row.claimEligibilityStatus === 'at_risk') {
         const daysRemaining = row.claimDaysRemaining ?? 0
+        const substatus = row.claimSubstatusCategory
+        const lastScan = row.claimLastScanDescription
+
+        // If we have a substatus from TrackingMore, show that instead of generic "At Risk"
+        // Pass isEligible=false for neutral/non-alarming labels
+        if (substatus) {
+          const displayName = getSubstatusDisplayName(substatus, false)
+          const colors = getSubstatusColors(substatus, false)
+          const icon = getSubstatusIcon(substatus, false)
+
+          return (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                  >
+                    {icon}
+                    {displayName}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md max-w-xs">
+                  <div className="text-sm">
+                    {lastScan && <p className="mb-1">{lastScan}</p>}
+                    <p className="text-muted-foreground">
+                      {daysRemaining > 0
+                        ? `Eligible for claim in ${daysRemaining} day${daysRemaining !== 1 ? 's' : ''}`
+                        : 'Checking eligibility...'}
+                    </p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )
+        }
+
+        // Fallback to generic "At Risk" if no substatus
         return (
           <TooltipProvider>
             <Tooltip delayDuration={300}>

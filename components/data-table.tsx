@@ -95,7 +95,7 @@ import {
 } from "@/lib/table-config"
 
 // Table preferences are now managed via useTablePreferences hook (localStorage)
-import { getCarrierDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
+import { getCarrierDisplayName, getUniqueDisplayCarriers, getRawCarriersForDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
 import { ExportFormat, ExportScope } from "@/lib/export"
 
 // Normalize channel names for display (e.g., "Walmartv2" -> "Walmart", "Shopifyv3" -> "Shopify")
@@ -208,6 +208,7 @@ const TYPE_OPTIONS: FilterOption[] = [
   { value: 'Dropship', label: 'Dropship' },
 ]
 
+// Regular shipment status options (tracking/delivery statuses)
 const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Labelled', label: 'Labelled' },
   { value: 'Awaiting Carrier', label: 'Awaiting Carrier' },
@@ -215,8 +216,16 @@ const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Out for Delivery', label: 'Out for Delivery' },
   { value: 'Delivered', label: 'Delivered' },
   { value: 'Exception', label: 'Exception' },
+]
+
+// Claims-related status options (separate filter)
+const SHIPMENTS_CLAIMS_OPTIONS: FilterOption[] = [
   { value: 'At Risk', label: 'At Risk' },
   { value: 'File a Claim', label: 'File a Claim' },
+  { value: 'Credit Requested', label: 'Credit Requested' },
+  { value: 'Credit Approved', label: 'Credit Approved' },
+  { value: 'Credit Denied', label: 'Credit Denied' },
+  { value: 'Claim Resolved', label: 'Claim Resolved' },
 ]
 
 // Fee types are now loaded dynamically from the API
@@ -427,6 +436,7 @@ export function DataTable({
 
   // Shipments tab filter state - now using arrays for multi-select
   const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>([])
+  const [shipmentsClaimsFilter, setShipmentsClaimsFilter] = React.useState<string[]>([])
   const [shipmentsAgeFilter, setShipmentsAgeFilter] = React.useState<string[]>([])
   const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>([])
   const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>([])
@@ -441,13 +451,30 @@ export function DataTable({
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
   const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)
 
+  // Consolidated carrier display names for filter dropdown
+  // Multiple raw carriers (e.g., "DHL", "DHLExpress") map to single display name ("DHL Express")
+  const consolidatedCarrierOptions = React.useMemo(() => {
+    return getUniqueDisplayCarriers(shipmentsCarriers)
+  }, [shipmentsCarriers])
+
+  // Combine status and claims filters for API call
+  const combinedShipmentsStatusFilter = React.useMemo(() => {
+    return [...shipmentsStatusFilter, ...shipmentsClaimsFilter]
+  }, [shipmentsStatusFilter, shipmentsClaimsFilter])
+
+  // Expand carrier display names back to raw carriers for API call
+  // When user selects "DHL Express", we need to filter by both "DHL" and "DHLExpress"
+  const expandedCarrierFilter = React.useMemo(() => {
+    return shipmentsCarrierFilter.flatMap(displayName => getRawCarriersForDisplayName(displayName))
+  }, [shipmentsCarrierFilter])
+
   // Debounced shipments filters - UI updates immediately, API calls debounced
   const debouncedShipmentsFilters = useDebouncedShipmentsFilters({
-    statusFilter: shipmentsStatusFilter,
+    statusFilter: combinedShipmentsStatusFilter,
     ageFilter: shipmentsAgeFilter,
     typeFilter: shipmentsTypeFilter,
     channelFilter: shipmentsChannelFilter,
-    carrierFilter: shipmentsCarrierFilter,
+    carrierFilter: expandedCarrierFilter,
     dateRange: shipmentsDateRange,
   })
 
@@ -656,10 +683,12 @@ export function DataTable({
 
   // Shipments tab computed values (now using arrays)
   // Note: Date range is NOT counted as a filter since it has its own indicator
-  const hasShipmentsFilters = shipmentsStatusFilter.length > 0 || shipmentsAgeFilter.length > 0 ||
-    shipmentsTypeFilter.length > 0 || shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0
+  const hasShipmentsFilters = shipmentsStatusFilter.length > 0 || shipmentsClaimsFilter.length > 0 ||
+    shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
+    shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
+    shipmentsClaimsFilter.length +
     shipmentsAgeFilter.length +
     shipmentsTypeFilter.length +
     shipmentsChannelFilter.length +
@@ -668,6 +697,7 @@ export function DataTable({
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
     setShipmentsStatusFilter([])
+    setShipmentsClaimsFilter([])
     setShipmentsAgeFilter([])
     setShipmentsTypeFilter([])
     setShipmentsChannelFilter([])
@@ -1169,28 +1199,24 @@ export function DataTable({
                       selected={unfulfilledStatusFilter}
                       onSelectionChange={setUnfulfilledStatusFilter}
                       placeholder="Status"
-                      className="w-[130px]"
                     />
                     <MultiSelectFilter
                       options={UNFULFILLED_AGE_OPTIONS}
                       selected={unfulfilledAgeFilter}
                       onSelectionChange={setUnfulfilledAgeFilter}
                       placeholder="Age"
-                      className="w-[110px]"
                     />
                     <MultiSelectFilter
                       options={TYPE_OPTIONS}
                       selected={unfulfilledTypeFilter}
                       onSelectionChange={setUnfulfilledTypeFilter}
                       placeholder="Type"
-                      className="w-[100px]"
                     />
                     <MultiSelectFilter
                       options={availableChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
                       selected={unfulfilledChannelFilter}
                       onSelectionChange={setUnfulfilledChannelFilter}
                       placeholder="Channel"
-                      className="w-[130px]"
                     />
                   </>
                 )}
@@ -1203,35 +1229,36 @@ export function DataTable({
                       selected={shipmentsStatusFilter}
                       onSelectionChange={setShipmentsStatusFilter}
                       placeholder="Status"
-                      className="w-[130px]"
+                    />
+                    <MultiSelectFilter
+                      options={SHIPMENTS_CLAIMS_OPTIONS}
+                      selected={shipmentsClaimsFilter}
+                      onSelectionChange={setShipmentsClaimsFilter}
+                      placeholder="Claims"
                     />
                     <MultiSelectFilter
                       options={UNFULFILLED_AGE_OPTIONS}
                       selected={shipmentsAgeFilter}
                       onSelectionChange={setShipmentsAgeFilter}
                       placeholder="Age"
-                      className="w-[110px]"
                     />
                     <MultiSelectFilter
                       options={TYPE_OPTIONS}
                       selected={shipmentsTypeFilter}
                       onSelectionChange={setShipmentsTypeFilter}
                       placeholder="Type"
-                      className="w-[100px]"
                     />
                     <MultiSelectFilter
                       options={shipmentsChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
                       selected={shipmentsChannelFilter}
                       onSelectionChange={setShipmentsChannelFilter}
                       placeholder="Channel"
-                      className="w-[130px]"
                     />
                     <MultiSelectFilter
-                      options={shipmentsCarriers.map(c => ({ value: c, label: getCarrierDisplayName(c) }))}
+                      options={consolidatedCarrierOptions.map(c => ({ value: c, label: c }))}
                       selected={shipmentsCarrierFilter}
                       onSelectionChange={setShipmentsCarrierFilter}
                       placeholder="Carrier"
-                      className="w-[130px]"
                     />
                   </>
                 )}
