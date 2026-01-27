@@ -163,64 +163,31 @@ export async function GET(request: NextRequest) {
     )
 
     // Handle claim eligibility status filters
-    // "At Risk" = 15+ days since label, not delivered (direct DB query - FREE)
-    // "File a Claim" = eligibility verified via TrackingMore (lost_in_transit_checks)
+    // Both "At Risk" and "File a Claim" now query lost_in_transit_checks (TrackingMore verified)
+    // This ensures we only show shipments with actual carrier tracking data, not just age-based guesses
     let claimFilterShipmentIds: string[] = []
     if (claimEligibilityFilters.length > 0) {
       const hasAtRisk = claimEligibilityFilters.some(s => s.toLowerCase() === 'at risk')
       const hasFileAClaim = claimEligibilityFilters.some(s => s.toLowerCase() === 'file a claim')
 
-      // "At Risk" - query shipments directly (15+ days since label, not delivered)
+      // "At Risk" - query lost_in_transit_checks for TrackingMore-verified at-risk shipments
+      // These are shipments where TrackingMore confirmed tracking is stalled but not yet eligible for claim
       if (hasAtRisk) {
-        const cutoffDate = new Date()
-        cutoffDate.setDate(cutoffDate.getDate() - 15)
-
         let atRiskQuery = supabase
-          .from('shipments')
+          .from('lost_in_transit_checks')
           .select('shipment_id')
-          .is('event_delivered', null)
-          .is('deleted_at', null)
-          .neq('status', 'Cancelled')
-          .not('tracking_id', 'is', null)
-          .not('event_labeled', 'is', null)
-          .lt('event_labeled', cutoffDate.toISOString())
-          // Exclude PrePaid carrier (customer-provided labels - no Jetpack liability)
-          .not('carrier', 'ilike', '%PrePaid%')
-          // Exclude internal/freight carriers that can't be tracked
-          .not('carrier', 'ilike', '%ShipBob%')
-          .not('carrier', 'ilike', '%KITTING%')
-          // Exclude "Delivered" and "Processing" statuses (not truly at-risk)
-          .or(
-            'status_details->0->>name.eq.InTransit,' +
-            'status_details->0->>name.eq.OutForDelivery,' +
-            'status_details->0->>name.eq.DeliveryException,' +
-            'status_details->0->>name.eq.DeliveryAttemptFailed,' +
-            'status_details->0->>name.eq.AwaitingCarrierScan,' +
-            'status_details->0->>name.is.null'
-          )
+          .eq('claim_eligibility_status', 'at_risk')
 
         if (clientId) {
           atRiskQuery = atRiskQuery.eq('client_id', clientId)
         }
 
-        // Exclude shipments that already have a resolved care ticket
-        const { data: resolvedTickets } = await supabase
-          .from('care_tickets')
-          .select('shipment_id')
-          .eq('status', 'Resolved')
-          .not('shipment_id', 'is', null)
-
-        const resolvedShipmentIds = new Set((resolvedTickets || []).map((t: { shipment_id: string }) => t.shipment_id))
-
-        const { data: atRiskData } = await atRiskQuery.limit(1000)
-        const atRiskIds = (atRiskData || [])
-          .map((s: { shipment_id: string }) => s.shipment_id)
-          .filter((id: string) => !resolvedShipmentIds.has(id))
-
+        const { data: atRiskData } = await atRiskQuery
+        const atRiskIds = (atRiskData || []).map((c: { shipment_id: string }) => c.shipment_id)
         claimFilterShipmentIds.push(...atRiskIds)
       }
 
-      // "File a Claim" - query lost_in_transit_checks (verified via TrackingMore)
+      // "File a Claim" - query lost_in_transit_checks for eligible shipments
       if (hasFileAClaim) {
         let eligibleQuery = supabase
           .from('lost_in_transit_checks')
