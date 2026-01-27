@@ -43,6 +43,14 @@
     {
       "path": "/api/cron/recheck-at-risk",
       "schedule": "0 0,5,10,15,20 * * *"
+    },
+    {
+      "path": "/api/cron/advance-claims",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-carrier-views",
+      "schedule": "30 5 * * *"
     }
   ]
 }

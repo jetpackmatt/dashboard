@@ -142,47 +142,149 @@ export async function GET(request: NextRequest) {
     // Apply status filter at database level
     // For shipped records, tracking status comes from status_details JSONB
     // The status column is typically 'Completed' for shipped items
-    // Check for special claim eligibility status filters
-    const claimStatusFilters = statusFilter.filter(s =>
+    // Check for special claim eligibility status filters (from lost_in_transit_checks)
+    const claimEligibilityFilters = statusFilter.filter(s =>
       s.toLowerCase() === 'at risk' || s.toLowerCase() === 'file a claim'
     )
+    // Check for claim ticket status filters (from care_tickets)
+    const claimTicketFilters = statusFilter.filter(s =>
+      s.toLowerCase() === 'credit requested' ||
+      s.toLowerCase() === 'credit approved' ||
+      s.toLowerCase() === 'credit denied' ||
+      s.toLowerCase() === 'claim resolved'
+    )
     const regularStatusFilters = statusFilter.filter(s =>
-      s.toLowerCase() !== 'at risk' && s.toLowerCase() !== 'file a claim'
+      s.toLowerCase() !== 'at risk' &&
+      s.toLowerCase() !== 'file a claim' &&
+      s.toLowerCase() !== 'credit requested' &&
+      s.toLowerCase() !== 'credit approved' &&
+      s.toLowerCase() !== 'credit denied' &&
+      s.toLowerCase() !== 'claim resolved'
     )
 
-    // Handle claim eligibility status filters by querying lost_in_transit_checks first
+    // Handle claim eligibility status filters
+    // "At Risk" = 15+ days since label, not delivered (direct DB query - FREE)
+    // "File a Claim" = eligibility verified via TrackingMore (lost_in_transit_checks)
     let claimFilterShipmentIds: string[] = []
-    if (claimStatusFilters.length > 0) {
-      const claimStatuses = claimStatusFilters.map(s =>
-        s.toLowerCase() === 'at risk' ? 'at_risk' : 'eligible'
-      )
+    if (claimEligibilityFilters.length > 0) {
+      const hasAtRisk = claimEligibilityFilters.some(s => s.toLowerCase() === 'at risk')
+      const hasFileAClaim = claimEligibilityFilters.some(s => s.toLowerCase() === 'file a claim')
 
-      let claimQuery = supabase
-        .from('lost_in_transit_checks')
+      // "At Risk" - query shipments directly (15+ days since label, not delivered)
+      if (hasAtRisk) {
+        const cutoffDate = new Date()
+        cutoffDate.setDate(cutoffDate.getDate() - 15)
+
+        let atRiskQuery = supabase
+          .from('shipments')
+          .select('shipment_id')
+          .is('event_delivered', null)
+          .is('deleted_at', null)
+          .neq('status', 'Cancelled')
+          .not('tracking_id', 'is', null)
+          .not('event_labeled', 'is', null)
+          .lt('event_labeled', cutoffDate.toISOString())
+          // Exclude PrePaid carrier (customer-provided labels - no Jetpack liability)
+          .not('carrier', 'ilike', '%PrePaid%')
+          // Exclude internal/freight carriers that can't be tracked
+          .not('carrier', 'ilike', '%ShipBob%')
+          .not('carrier', 'ilike', '%KITTING%')
+          // Exclude "Delivered" and "Processing" statuses (not truly at-risk)
+          .or(
+            'status_details->0->>name.eq.InTransit,' +
+            'status_details->0->>name.eq.OutForDelivery,' +
+            'status_details->0->>name.eq.DeliveryException,' +
+            'status_details->0->>name.eq.DeliveryAttemptFailed,' +
+            'status_details->0->>name.eq.AwaitingCarrierScan,' +
+            'status_details->0->>name.is.null'
+          )
+
+        if (clientId) {
+          atRiskQuery = atRiskQuery.eq('client_id', clientId)
+        }
+
+        // Exclude shipments that already have a resolved care ticket
+        const { data: resolvedTickets } = await supabase
+          .from('care_tickets')
+          .select('shipment_id')
+          .eq('status', 'Resolved')
+          .not('shipment_id', 'is', null)
+
+        const resolvedShipmentIds = new Set((resolvedTickets || []).map((t: { shipment_id: string }) => t.shipment_id))
+
+        const { data: atRiskData } = await atRiskQuery.limit(1000)
+        const atRiskIds = (atRiskData || [])
+          .map((s: { shipment_id: string }) => s.shipment_id)
+          .filter((id: string) => !resolvedShipmentIds.has(id))
+
+        claimFilterShipmentIds.push(...atRiskIds)
+      }
+
+      // "File a Claim" - query lost_in_transit_checks (verified via TrackingMore)
+      if (hasFileAClaim) {
+        let eligibleQuery = supabase
+          .from('lost_in_transit_checks')
+          .select('shipment_id')
+          .eq('claim_eligibility_status', 'eligible')
+
+        if (clientId) {
+          eligibleQuery = eligibleQuery.eq('client_id', clientId)
+        }
+
+        const { data: eligibleData } = await eligibleQuery
+        const eligibleIds = (eligibleData || []).map((c: { shipment_id: string }) => c.shipment_id)
+        claimFilterShipmentIds.push(...eligibleIds)
+      }
+
+      // Dedupe
+      claimFilterShipmentIds = [...new Set(claimFilterShipmentIds)]
+    }
+
+    // Handle claim ticket status filters by querying care_tickets
+    let claimTicketShipmentIds: string[] = []
+    if (claimTicketFilters.length > 0) {
+      // Map filter values to care_tickets status values
+      const ticketStatuses = claimTicketFilters.map(s => {
+        const lower = s.toLowerCase()
+        if (lower === 'credit requested') return 'Credit Requested'
+        if (lower === 'credit approved') return 'Credit Approved'
+        if (lower === 'credit denied') return 'Credit Denied'
+        if (lower === 'claim resolved') return 'Resolved'
+        return s
+      })
+
+      let ticketQuery = supabase
+        .from('care_tickets')
         .select('shipment_id')
-        .in('claim_eligibility_status', claimStatuses)
+        .eq('ticket_type', 'Claim')
+        .in('status', ticketStatuses)
+        .not('shipment_id', 'is', null)
 
       if (clientId) {
-        claimQuery = claimQuery.eq('client_id', clientId)
+        ticketQuery = ticketQuery.eq('client_id', clientId)
       }
 
-      const { data: claimData } = await claimQuery
-      claimFilterShipmentIds = (claimData || []).map((c: { shipment_id: string }) => c.shipment_id)
+      const { data: ticketData } = await ticketQuery
+      claimTicketShipmentIds = (ticketData || []).map((t: { shipment_id: string }) => t.shipment_id)
+    }
 
-      // If no matching shipments found and no regular filters, return empty
-      if (claimFilterShipmentIds.length === 0 && regularStatusFilters.length === 0) {
-        return NextResponse.json({
-          data: [],
-          totalCount: 0,
-          hasMore: false,
-          carriers: [],
-        })
-      }
+    // Combine claim filter shipment IDs (union of eligibility and ticket filters)
+    const allClaimShipmentIds = [...new Set([...claimFilterShipmentIds, ...claimTicketShipmentIds])]
 
-      // Apply the shipment ID filter
-      if (claimFilterShipmentIds.length > 0) {
-        query = query.in('shipment_id', claimFilterShipmentIds)
-      }
+    // If we have claim filters but no matching shipments, and no regular filters, return empty
+    if ((claimEligibilityFilters.length > 0 || claimTicketFilters.length > 0) &&
+        allClaimShipmentIds.length === 0 && regularStatusFilters.length === 0) {
+      return NextResponse.json({
+        data: [],
+        totalCount: 0,
+        hasMore: false,
+        carriers: [],
+      })
+    }
+
+    // Apply the shipment ID filter if we have claim-related filters
+    if (allClaimShipmentIds.length > 0) {
+      query = query.in('shipment_id', allClaimShipmentIds)
     }
 
     if (regularStatusFilters.length > 0) {
@@ -576,11 +678,12 @@ export async function GET(request: NextRequest) {
     let billingMap: Record<string, { totalCost: number }> = {}
     let refundedTrackingIds: Set<string> = new Set()
     let voidedTrackingIds: Set<string> = new Set()
-    let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null }> = {}
+    let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null; substatusCategory: string | null; lastScanDescription: string | null; lastScanDate: string | null }> = {}
+    let claimTicketMap: Record<string, { ticketNumber: number; status: string; creditAmount: number | null }> = {}
 
     if (shipmentIds.length > 0) {
-      // Run item counts, billing, and claim eligibility queries IN PARALLEL
-      const [itemResult, billingResult, claimEligibilityResult] = await Promise.all([
+      // Run item counts, billing, claim eligibility, and claim tickets queries IN PARALLEL
+      const [itemResult, billingResult, claimEligibilityResult, claimTicketsResult] = await Promise.all([
         // Query 1: Count items per shipment
         supabase
           .from('shipment_items')
@@ -596,8 +699,14 @@ export async function GET(request: NextRequest) {
         // Query 3: Get claim eligibility status from lost_in_transit_checks
         supabase
           .from('lost_in_transit_checks')
-          .select('shipment_id, claim_eligibility_status, eligible_after')
+          .select('shipment_id, claim_eligibility_status, eligible_after, substatus_category, last_scan_description, last_scan_date')
+          .in('shipment_id', shipmentIds),
+        // Query 4: Get claim ticket status from care_tickets (for filed claims)
+        supabase
+          .from('care_tickets')
+          .select('shipment_id, ticket_number, status, credit_amount')
           .in('shipment_id', shipmentIds)
+          .eq('ticket_type', 'Claim')
       ])
 
       // Process item counts
@@ -655,6 +764,22 @@ export async function GET(request: NextRequest) {
               status: check.claim_eligibility_status,
               daysRemaining,
               eligibleAfter: check.eligible_after || null,
+              substatusCategory: check.substatus_category || null,
+              lastScanDescription: check.last_scan_description || null,
+              lastScanDate: check.last_scan_date || null,
+            }
+          }
+        }
+      }
+
+      // Process claim tickets data (filed claims from care_tickets)
+      if (claimTicketsResult.data) {
+        for (const ticket of claimTicketsResult.data) {
+          if (ticket.shipment_id) {
+            claimTicketMap[ticket.shipment_id] = {
+              ticketNumber: ticket.ticket_number,
+              status: ticket.status,
+              creditAmount: ticket.credit_amount,
             }
           }
         }
@@ -728,6 +853,14 @@ export async function GET(request: NextRequest) {
         // Claim eligibility status (for At Risk / File a Claim badges)
         claimEligibilityStatus: claimEligibilityMap[row.shipment_id]?.status || null,
         claimDaysRemaining: claimEligibilityMap[row.shipment_id]?.daysRemaining || null,
+        // TrackingMore substatus for granular tracking status
+        claimSubstatusCategory: claimEligibilityMap[row.shipment_id]?.substatusCategory || null,
+        claimLastScanDescription: claimEligibilityMap[row.shipment_id]?.lastScanDescription || null,
+        claimLastScanDate: claimEligibilityMap[row.shipment_id]?.lastScanDate || null,
+        // Claim ticket info (for filed claims - overrides eligibility status in UI)
+        claimTicketNumber: claimTicketMap[row.shipment_id]?.ticketNumber || null,
+        claimTicketStatus: claimTicketMap[row.shipment_id]?.status || null,
+        claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,
       }
     })
 
@@ -736,41 +869,43 @@ export async function GET(request: NextRequest) {
 
     // =========================================================================
     // Get ALL unique carriers from the entire dataset (not just current page)
-    // OPTIMIZATION: Use a single query with distinct carrier values
-    // The idx_shipments_carrier index makes this fast
+    // OPTIMIZATION: Use materialized view for instant lookup (<1ms vs 114ms)
+    // Falls back to shipments table query if view doesn't exist
     // =========================================================================
     let allCarriers: string[] = []
     try {
-      const EXCLUDED_CARRIERS = ['DE_KITTING']
-
-      // Use RPC function for distinct carriers if available, otherwise fall back to simple query
-      // The carrier column has limited cardinality (typically <20 unique values)
-      // so even scanning all rows is fast with the index
-      let carriersQuery = supabase
-        .from('shipments')
-        .select('carrier')
-        .not('event_labeled', 'is', null)
-        .not('carrier', 'is', null)
-        .is('deleted_at', null)
-        .limit(1000)  // Carriers have low cardinality, 1000 rows will capture all unique values
-
+      // Try materialized view first (instant query)
       if (clientId) {
-        carriersQuery = carriersQuery.eq('client_id', clientId)
-      }
+        // Per-client carriers from materialized view
+        const { data: viewData, error: viewError } = await supabase
+          .from('carrier_options_by_client')
+          .select('carrier')
+          .eq('client_id', clientId)
 
-      const { data: carriersData } = await carriersQuery
-
-      if (carriersData) {
-        const carrierSet = new Set<string>()
-        for (const row of carriersData) {
-          if (row.carrier && !EXCLUDED_CARRIERS.includes(row.carrier)) {
-            carrierSet.add(row.carrier)
-          }
+        if (!viewError && viewData) {
+          allCarriers = viewData.map(r => r.carrier).filter(Boolean).sort()
+        } else {
+          // View doesn't exist yet - fall back to current page carriers
+          // (This avoids the slow 114ms query until the view is created)
+          console.log('[Carriers] Materialized view not available, using current page carriers')
+          allCarriers = [...new Set(shipments.map((s: any) => s.carrier).filter(Boolean))].sort() as string[]
         }
-        allCarriers = [...carrierSet].sort()
+      } else {
+        // Admin viewing all clients - use the all-carriers view
+        const { data: viewData, error: viewError } = await supabase
+          .from('carrier_options_all')
+          .select('carrier')
+
+        if (!viewError && viewData) {
+          allCarriers = viewData.map(r => r.carrier).filter(Boolean).sort()
+        } else {
+          // View doesn't exist yet - fall back to current page carriers
+          console.log('[Carriers] Materialized view not available, using current page carriers')
+          allCarriers = [...new Set(shipments.map((s: any) => s.carrier).filter(Boolean))].sort() as string[]
+        }
       }
     } catch (err) {
-      console.error('Error fetching all carriers:', err)
+      console.error('Error fetching carriers:', err)
       // Fall back to carriers from current page
       allCarriers = [...new Set(shipments.map((s: any) => s.carrier).filter(Boolean))].sort() as string[]
     }
