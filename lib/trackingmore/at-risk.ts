@@ -21,11 +21,26 @@ import {
   type TrackingResult,
 } from './client'
 
-// Thresholds for Lost in Transit eligibility
+// Thresholds for Lost in Transit eligibility (minimum days before filing)
 export const LOST_IN_TRANSIT_DOMESTIC_DAYS = 15
 export const LOST_IN_TRANSIT_INTERNATIONAL_DAYS = 20
 
-export type ClaimEligibilityStatus = 'at_risk' | 'eligible' | null
+// Filing window limits (maximum days before window expires)
+export const FILING_WINDOW_DOMESTIC_MAX_DAYS = 45
+export const FILING_WINDOW_INTERNATIONAL_MAX_DAYS = 50
+
+/**
+ * Claim eligibility status values (full lifecycle):
+ *
+ * - null: Not tracked (delivered, returned, or not yet checked)
+ * - 'at_risk': Potentially lost, waiting for eligibility threshold (15/20 days)
+ * - 'eligible': Eligible for claim, awaiting user action ("File a Claim")
+ * - 'claim_filed': Claim submitted via Jetpack Care ("Credit Requested")
+ * - 'approved': ShipBob approved the credit ("Credit Approved")
+ * - 'denied': ShipBob denied the credit ("Credit Denied")
+ * - 'missed_window': Filing window expired (>45 days domestic, >50 days international)
+ */
+export type ClaimEligibilityStatus = 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | 'missed_window' | null
 
 export interface AtRiskShipment {
   id: string // DB primary key
@@ -72,7 +87,8 @@ export async function getAtRiskCandidates(
   cutoffDate.setDate(cutoffDate.getDate() - minDaysOld)
 
   // Find shipments that are potentially stuck
-  // Status filter: Labelled, Awaiting Carrier, In Transit, Out for Delivery, Exception
+  // Status filter: Processing (labeled but no carrier scan), In Transit, Out for Delivery, Exception
+  // Key requirement: event_labeled must exist (label was created, package handed to carrier)
   const { data: shipments, error } = await supabase
     .from('shipments')
     .select(`
@@ -92,7 +108,9 @@ export async function getAtRiskCandidates(
     .not('event_labeled', 'is', null)
     .lt('event_labeled', cutoffDate.toISOString())
     // Status indicates package is "in progress" - not yet delivered
+    // Processing = labeled but carrier never scanned (lost at pickup)
     .or(
+      'status_details->0->>name.eq.Processing,' +
       'status_details->0->>name.eq.InTransit,' +
       'status_details->0->>name.eq.OutForDelivery,' +
       'status_details->0->>name.eq.DeliveryException,' +
@@ -114,7 +132,94 @@ export async function getAtRiskCandidates(
 }
 
 /**
+ * Get shipment IDs that have been replaced by a newer shipment for the same order
+ * (reshipment scenario - original shipment failed, replacement was created)
+ *
+ * These should be excluded from at-risk tracking since the customer already
+ * received a replacement shipment.
+ */
+export async function getReplacedShipmentIds(
+  shipmentIds: string[]
+): Promise<Set<string>> {
+  if (shipmentIds.length === 0) return new Set()
+
+  const supabase = createAdminClient()
+
+  // Get order_ids for these shipments
+  const { data: shipmentData } = await supabase
+    .from('shipments')
+    .select('shipment_id, order_id, event_labeled')
+    .in('shipment_id', shipmentIds)
+    .not('order_id', 'is', null)
+
+  if (!shipmentData || shipmentData.length === 0) return new Set()
+
+  type ShipmentData = { shipment_id: string; order_id: string; event_labeled: string }
+  const orderIds = [...new Set((shipmentData as ShipmentData[]).map(s => s.order_id))]
+  const shipmentLabelDates = new Map<string, Date>(
+    (shipmentData as ShipmentData[]).map(s => [s.shipment_id, new Date(s.event_labeled)])
+  )
+  const shipmentOrderMap = new Map<string, string>(
+    (shipmentData as ShipmentData[]).map(s => [s.shipment_id, s.order_id])
+  )
+
+  // Find orders that have a delivered shipment
+  const { data: deliveredSiblings } = await supabase
+    .from('shipments')
+    .select('order_id, shipment_id, event_labeled, event_delivered')
+    .in('order_id', orderIds)
+    .not('event_delivered', 'is', null)
+
+  if (!deliveredSiblings || deliveredSiblings.length === 0) return new Set()
+
+  // Build a map of order_id -> delivered shipments
+  type DeliveredSibling = { order_id: string; shipment_id: string; event_labeled: string; event_delivered: string }
+  const deliveredByOrder = new Map<string, DeliveredSibling[]>()
+  for (const sibling of (deliveredSiblings as DeliveredSibling[])) {
+    const existing = deliveredByOrder.get(sibling.order_id) || []
+    existing.push(sibling)
+    deliveredByOrder.set(sibling.order_id, existing)
+  }
+
+  // A shipment is "replaced" if:
+  // 1. Same order has a newer shipment that was delivered
+  // 2. The replacement was labeled AFTER the original
+  const replacedIds = new Set<string>()
+
+  for (const shipmentId of shipmentIds) {
+    const orderId = shipmentOrderMap.get(shipmentId)
+    if (!orderId) continue
+
+    const labelDate = shipmentLabelDates.get(shipmentId)
+    if (!labelDate) continue
+
+    const deliveredSibs = deliveredByOrder.get(orderId) || []
+
+    // Check if any delivered sibling was labeled after this shipment
+    for (const sibling of deliveredSibs) {
+      if (sibling.shipment_id === shipmentId) continue
+
+      const siblingLabelDate = new Date(sibling.event_labeled)
+      if (siblingLabelDate > labelDate) {
+        // This shipment was replaced by a newer, delivered shipment
+        replacedIds.add(shipmentId)
+        break
+      }
+    }
+  }
+
+  return replacedIds
+}
+
+/**
  * Get shipments that are candidates but NOT already in lost_in_transit_checks
+ *
+ * Note: We intentionally do NOT filter out reshipments. If a shipment was lost
+ * and a replacement was sent, the original shipment is STILL eligible for a claim.
+ * The claim lifecycle will track it through: at_risk -> eligible -> claim_filed -> approved/denied
+ *
+ * We DO filter out shipments that already have resolved Loss care_tickets,
+ * since those already have a claim filed/processed.
  */
 export async function getNewAtRiskCandidates(
   minDaysOld: number = 15,
@@ -127,17 +232,29 @@ export async function getNewAtRiskCandidates(
 
   if (candidates.length === 0) return []
 
+  const candidateShipmentIds = candidates.map(c => c.shipment_id)
+
   // Get shipment IDs already in lost_in_transit_checks
   const { data: existingChecks } = await supabase
     .from('lost_in_transit_checks')
     .select('shipment_id')
-    .in('shipment_id', candidates.map(c => c.shipment_id))
+    .in('shipment_id', candidateShipmentIds)
 
   const existingIds = new Set((existingChecks || []).map((c: { shipment_id: string }) => c.shipment_id))
 
-  // Filter out already-checked shipments
+  // Get shipment IDs that already have resolved Loss care_tickets
+  const { data: existingClaims } = await supabase
+    .from('care_tickets')
+    .select('shipment_id')
+    .in('shipment_id', candidateShipmentIds)
+    .eq('issue_type', 'Loss')
+    .in('status', ['Resolved', 'Credit Approved', 'Credit Requested'])
+
+  const claimedIds = new Set((existingClaims || []).map((c: { shipment_id: string }) => c.shipment_id))
+
+  // Filter out already-checked shipments AND shipments with existing claims
   return candidates
-    .filter(c => !existingIds.has(c.shipment_id))
+    .filter(c => !existingIds.has(c.shipment_id) && !claimedIds.has(c.shipment_id))
     .slice(0, limit)
 }
 
@@ -237,6 +354,27 @@ export function calculateEligibility(
 
   const lastCheckpoint = checkpoints[0]
 
+  // Check filing window limits
+  const maxDays = isInternational
+    ? FILING_WINDOW_INTERNATIONAL_MAX_DAYS
+    : FILING_WINDOW_DOMESTIC_MAX_DAYS
+
+  // If past the filing window, mark as missed
+  if (daysSince > maxDays) {
+    return {
+      ...baseResult,
+      status: 'missed_window',
+      daysSinceLastScan: daysSince,
+      daysRemaining: 0,
+      eligibleAfter: eligibleAfterDate,
+      lastScanDate: lastCheckpointDate,
+      lastScanDescription: lastCheckpoint?.tracking_detail || tracking.latest_event || null,
+      lastScanLocation: lastCheckpoint?.location || null,
+      trackingMoreId: tracking.id,
+    }
+  }
+
+  // If within the filing window and past the minimum threshold, eligible to file
   if (daysSince >= requiredDays) {
     return {
       ...baseResult,
@@ -317,6 +455,30 @@ export async function recheckTracking(
   // getTracking checks for existing tracking first (free),
   // only creates if not found
   return getTracking(trackingNumber, carrier)
+}
+
+/**
+ * Check if a shipment already has a Loss claim (care_ticket) in progress or resolved
+ *
+ * Returns true if a claim exists, meaning we should NOT mark the shipment as eligible
+ */
+export async function hasExistingLossClaim(shipmentId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+
+  const { data, error } = await supabase
+    .from('care_tickets')
+    .select('id')
+    .eq('shipment_id', shipmentId)
+    .eq('issue_type', 'Loss')
+    .in('status', ['Resolved', 'Credit Approved', 'Credit Requested', 'Under Review'])
+    .limit(1)
+
+  if (error) {
+    console.error('[At-Risk] Error checking for existing claim:', error)
+    return false // On error, allow the update to proceed
+  }
+
+  return (data || []).length > 0
 }
 
 /**
