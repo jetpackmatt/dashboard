@@ -528,10 +528,12 @@ export async function syncClient(
           tracking_number?: string
           tracking_url?: string
           carrier?: string
+          carrier_service?: string  // Actual carrier service (e.g., "Ground Advantage", "FedEx Ground")
           last_update_at?: string
           bol?: string
           pro_number?: string
           scac?: string
+          shipping_date?: string
         }
         recipient?: {
           name?: string
@@ -735,7 +737,10 @@ export async function syncClient(
           created_at: shipment.created_date || null,
           // Timeline event columns (event_created, event_intransit, event_delivered, etc.) populated in STEP 3b
           carrier: shipment.tracking?.carrier || null,
-          carrier_service: shipment.ship_option || null,
+          // carrier_service = actual carrier service (e.g., "Ground Advantage", "FedEx Ground")
+          // ship_option_name = ShipBob ship option (e.g., "ShipBob Economy", "Ground")
+          carrier_service: shipment.tracking?.carrier_service || null,
+          ship_option_name: shipment.ship_option || null,
           ship_option_id: getShipOptionId(shipment.ship_option || null),
           zone_used: shipment.zone?.id || null,
           fc_name: fcName,
@@ -1416,6 +1421,7 @@ export interface TransactionSyncResult {
   transactionsUpserted: number
   attributed: number
   unattributed: number
+  careTicketsLinked: number
   errors: string[]
   duration: number
 }
@@ -1436,6 +1442,7 @@ export async function syncAllTransactions(
     transactionsUpserted: 0,
     attributed: 0,
     unattributed: 0,
+    careTicketsLinked: 0,
     errors: [],
     duration: 0,
   }
@@ -2134,10 +2141,99 @@ export async function syncAllTransactions(
       console.error('[TransactionSync] Preview markup calculation failed (non-fatal):', markupError)
     }
 
+    // ==========================================
+    // FIFTH PASS: Link Credit transactions to care_tickets
+    // ==========================================
+    // When a Credit transaction comes in with a shipment reference_id,
+    // check if there's a care_ticket with status "Credit Requested" for that shipment.
+    // If so, update the ticket to "Credit Approved" and set the credit_amount.
+    console.log('[TransactionSync] Linking Credit transactions to care_tickets...')
+
+    let careTicketsLinked = 0
+    try {
+      // Get Credit transactions from this sync that have a shipment reference_id
+      const creditTxs = transactions.filter(tx =>
+        tx.transaction_fee === 'Credit' &&
+        tx.reference_id &&
+        // Negative amount = credit to customer
+        tx.amount < 0
+      )
+
+      if (creditTxs.length > 0) {
+        console.log(`[TransactionSync] Found ${creditTxs.length} Credit transactions to check for care_tickets`)
+
+        // Get shipment IDs from these credit transactions
+        const creditShipmentIds = creditTxs.map(tx => tx.reference_id)
+
+        // Find care_tickets that are "Credit Requested" for these shipments
+        const { data: ticketsToUpdate, error: ticketFetchError } = await supabase
+          .from('care_tickets')
+          .select('id, ticket_number, shipment_id, events, credit_amount')
+          .eq('status', 'Credit Requested')
+          .eq('ticket_type', 'Claim')
+          .in('shipment_id', creditShipmentIds)
+
+        if (ticketFetchError) {
+          console.error('[TransactionSync] Error fetching care_tickets:', ticketFetchError.message)
+        } else if (ticketsToUpdate && ticketsToUpdate.length > 0) {
+          console.log(`[TransactionSync] Found ${ticketsToUpdate.length} care_tickets to update to Credit Approved`)
+
+          // Build lookup: shipment_id -> credit transaction
+          const creditTxMap: Record<string, typeof creditTxs[0]> = {}
+          for (const tx of creditTxs) {
+            creditTxMap[tx.reference_id] = tx
+          }
+
+          for (const ticket of ticketsToUpdate) {
+            const creditTx = creditTxMap[ticket.shipment_id]
+            if (!creditTx) continue
+
+            const creditAmount = Math.abs(creditTx.amount)
+            const events = (ticket.events as Array<{ status: string; note: string; createdAt: string; createdBy: string }>) || []
+
+            // Add Credit Approved event
+            const approvedEvent = {
+              note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+              status: 'Credit Approved',
+              createdAt: new Date().toISOString(),
+              createdBy: 'System',
+            }
+
+            const updatedEvents = [...events, approvedEvent]
+
+            const { error: updateError } = await supabase
+              .from('care_tickets')
+              .update({
+                status: 'Credit Approved',
+                credit_amount: creditAmount,
+                events: updatedEvents,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', ticket.id)
+
+            if (updateError) {
+              console.warn(`[TransactionSync] Failed to update care_ticket #${ticket.ticket_number}:`, updateError.message)
+            } else {
+              careTicketsLinked++
+              console.log(`[TransactionSync] Updated care_ticket #${ticket.ticket_number} to Credit Approved ($${creditAmount.toFixed(2)})`)
+            }
+          }
+        }
+      }
+    } catch (careTicketError) {
+      // Don't fail the sync if care_ticket linking fails
+      console.error('[TransactionSync] Care ticket linking failed (non-fatal):', careTicketError)
+    }
+
+    if (careTicketsLinked > 0) {
+      console.log(`[TransactionSync] Linked ${careTicketsLinked} Credit transactions to care_tickets`)
+    }
+
     console.log(
-      `[TransactionSync] Final: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed`
+      `[TransactionSync] Final: ${result.transactionsUpserted} upserted, ${result.attributed} attributed, ${result.unattributed} unattributed, ${careTicketsLinked} care_tickets linked`
     )
 
+    result.careTicketsLinked = careTicketsLinked
     result.success = result.errors.length === 0
     result.duration = Date.now() - startTime
     return result
@@ -2240,6 +2336,8 @@ export async function syncAllUndeliveredTimelines(
     const clientShipmentResults = await Promise.all(
       clientIds.map(async (clientId) => {
         // Query fresh shipments for this client
+        // IMPORTANT: Use event_labeled (ship date) NOT created_at (record creation date)
+        // This ensures we track shipments based on when they actually shipped
         const { data: freshShipments, error: freshError } = await supabase
           .from('shipments')
           .select('id, shipment_id, client_id, status')
@@ -2247,7 +2345,8 @@ export async function syncAllUndeliveredTimelines(
           .is('event_delivered', null)
           .is('deleted_at', null)
           .neq('status', 'Cancelled')
-          .gte('created_at', freshCutoff.toISOString())
+          .not('event_labeled', 'is', null)
+          .gte('event_labeled', freshCutoff.toISOString())
           .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${freshCheckWindow.toISOString()}`)
           .order('timeline_checked_at', { ascending: true, nullsFirst: true })
           .limit(freshLimitPerClient)
@@ -2256,6 +2355,7 @@ export async function syncAllUndeliveredTimelines(
         const actualOlderLimit = olderLimitPerClient + (freshLimitPerClient - freshCount)
 
         // Query older shipments for this client
+        // IMPORTANT: Use event_labeled (ship date) NOT created_at (record creation date)
         const { data: olderShipments, error: olderError } = await supabase
           .from('shipments')
           .select('id, shipment_id, client_id, status')
@@ -2263,8 +2363,9 @@ export async function syncAllUndeliveredTimelines(
           .is('event_delivered', null)
           .is('deleted_at', null)
           .neq('status', 'Cancelled')
-          .gte('created_at', cutoffDate.toISOString())
-          .lt('created_at', freshCutoff.toISOString())
+          .not('event_labeled', 'is', null)
+          .gte('event_labeled', cutoffDate.toISOString())
+          .lt('event_labeled', freshCutoff.toISOString())
           .or(`timeline_checked_at.is.null,timeline_checked_at.lt.${olderCheckWindow.toISOString()}`)
           .order('timeline_checked_at', { ascending: true, nullsFirst: true })
           .limit(actualOlderLimit)
@@ -2400,12 +2501,27 @@ export async function syncAllUndeliveredTimelines(
                     updateData.tracking_url = shipData.tracking.tracking_url || null
                     updateData.carrier = shipData.tracking.carrier || null
                   }
+                  // If ShipBob says "Delivered" but we don't have event_delivered, set it now
+                  // This handles cases where ShipBob marks delivered without a proper 609 event
+                  if (shipData.status_details?.[0]?.name === 'Delivered' && !updateData.event_delivered) {
+                    // Use the last event timestamp or current time
+                    const lastEventTime = timelineResult.eventLogs?.[timelineResult.eventLogs.length - 1]?.timestamp
+                    updateData.event_delivered = lastEventTime || new Date().toISOString()
+                  }
                 }
                 // Extra delay after full shipment fetch
                 await new Promise((r) => setTimeout(r, TIMELINE_DELAY_MS))
               } catch {
                 // Ignore errors - we'll still update timeline data
               }
+            }
+
+            // Final check: if status_details says Delivered but event_delivered not set, fix it
+            // This catches shipments already in DB with Delivered status but missing event_delivered
+            const statusDetailsArr = updateData.status_details as Array<{ name?: string }> | undefined
+            if (statusDetailsArr?.[0]?.name === 'Delivered' && !updateData.event_delivered && !timelineResult.eventColumns.event_delivered) {
+              const lastEventTime = timelineResult.eventLogs?.[timelineResult.eventLogs.length - 1]?.timestamp
+              updateData.event_delivered = lastEventTime || new Date().toISOString()
             }
 
             // Update the shipment with timeline data + mark as checked
@@ -3986,13 +4102,13 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
   }
 
   try {
-    // Step 1: Find all Shipping transactions that might be duplicates
-    // Group by (reference_id, tracking_id, invoice_id_sb) and find groups with count > 1
+    // Step 1: Find all Shipping transactions (positive cost only - charges, not credits)
     const { data: transactions, error } = await supabase
       .from('transactions')
-      .select('transaction_id, reference_id, tracking_id, invoice_id_sb, charge_date')
+      .select('transaction_id, reference_id, tracking_id, invoice_id_sb, charge_date, cost')
       .eq('fee_type', 'Shipping')
       .eq('reference_type', 'Shipment')
+      .gt('cost', 0) // Only positive costs (charges)
       .not('invoice_id_sb', 'is', null)
       .not('tracking_id', 'is', null)
       .or('is_voided.is.null,is_voided.eq.false')
@@ -4009,50 +4125,92 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
       return result
     }
 
-    // Group transactions by (reference_id, tracking_id, invoice_id_sb)
-    const groups = new Map<string, Array<{ transaction_id: string; charge_date: string }>>()
+    // Step 2: Find all negative transactions (credits) for these shipments
+    // Credits can be in fee_type 'Shipping' or 'Credits'
+    const shipmentIds = [...new Set(transactions.map((t: { reference_id: string }) => t.reference_id))]
+
+    const { data: credits } = await supabase
+      .from('transactions')
+      .select('reference_id, cost')
+      .in('reference_type', ['Shipment', 'Credit'])
+      .in('reference_id', shipmentIds)
+      .lt('cost', 0) // Negative costs only (credits)
+
+    // Build set of shipment_ids that have credits
+    const shipmentsWithCredits = new Set(credits?.map((c: { reference_id: string }) => c.reference_id) || [])
+    console.log(`[VoidedReconcile] Found ${shipmentsWithCredits.size} shipments with credits`)
+
+    // Step 3: Group transactions by reference_id (shipment)
+    // This catches both Pattern B (same tracking) and Pattern D (different tracking)
+    const groupsByShipment = new Map<string, Array<{
+      transaction_id: string
+      tracking_id: string
+      charge_date: string
+    }>>()
+
     for (const tx of transactions) {
-      const key = `${tx.reference_id}:${tx.tracking_id}:${tx.invoice_id_sb}`
-      if (!groups.has(key)) {
-        groups.set(key, [])
+      const key = tx.reference_id
+      if (!groupsByShipment.has(key)) {
+        groupsByShipment.set(key, [])
       }
-      groups.get(key)!.push({
+      groupsByShipment.get(key)!.push({
         transaction_id: tx.transaction_id,
+        tracking_id: tx.tracking_id,
         charge_date: tx.charge_date,
       })
     }
 
-    // Find groups with duplicates
-    const duplicateGroups: Array<{ transaction_id: string }> = []
-    for (const [, txs] of groups) {
-      if (txs.length > 1) {
-        result.duplicateGroups++
-        // Sort by charge_date descending (newest first) and mark all but first as voided
-        txs.sort((a, b) => new Date(b.charge_date).getTime() - new Date(a.charge_date).getTime())
-        for (let i = 1; i < txs.length; i++) {
-          duplicateGroups.push({ transaction_id: txs[i].transaction_id })
-        }
+    // Step 4: Find groups with multiple charges
+    const toVoid: Array<{ transaction_id: string; reason: string }> = []
+
+    for (const [shipmentId, txs] of groupsByShipment) {
+      if (txs.length <= 1) continue
+
+      // Check if this shipment has credits - if so, ShipBob already handled it
+      if (shipmentsWithCredits.has(shipmentId)) {
+        continue // Skip - has credit, not a voided label scenario
+      }
+
+      result.duplicateGroups++
+
+      // Check if tracking IDs are the same or different
+      const uniqueTrackings = new Set(txs.map(t => t.tracking_id))
+      const isDifferentTracking = uniqueTrackings.size > 1
+
+      // Sort by charge_date descending (newest first)
+      txs.sort((a, b) => new Date(b.charge_date).getTime() - new Date(a.charge_date).getTime())
+
+      // Mark all but the newest as voided
+      for (let i = 1; i < txs.length; i++) {
+        const reason = isDifferentTracking
+          ? 'Pattern D: voided label (different tracking, no credit)'
+          : 'Pattern B: duplicate charge (same tracking)'
+        toVoid.push({
+          transaction_id: txs[i].transaction_id,
+          reason
+        })
       }
     }
 
-    if (duplicateGroups.length === 0) {
-      console.log('[VoidedReconcile] No duplicate shipping transactions found')
+    if (toVoid.length === 0) {
+      console.log('[VoidedReconcile] No voided shipping transactions found')
       return result
     }
 
-    console.log(`[VoidedReconcile] Found ${result.duplicateGroups} duplicate groups, ${duplicateGroups.length} to void`)
+    console.log(`[VoidedReconcile] Found ${result.duplicateGroups} duplicate groups, ${toVoid.length} to void`)
 
-    // Mark older transactions as voided
-    for (const dup of duplicateGroups) {
+    // Step 5: Mark older transactions as voided
+    for (const item of toVoid) {
       const { error: updateErr } = await supabase
         .from('transactions')
         .update({ is_voided: true })
-        .eq('transaction_id', dup.transaction_id)
+        .eq('transaction_id', item.transaction_id)
 
       if (updateErr) {
-        result.errors.push(`Update ${dup.transaction_id}: ${updateErr.message}`)
+        result.errors.push(`Update ${item.transaction_id}: ${updateErr.message}`)
       } else {
         result.voided++
+        console.log(`[VoidedReconcile] Voided ${item.transaction_id}: ${item.reason}`)
       }
     }
 

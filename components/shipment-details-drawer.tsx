@@ -28,6 +28,7 @@ import { JetpackLoader } from "@/components/jetpack-loader"
 import { getCarrierDisplayName } from "./transactions/cell-renderers"
 import { ClaimSubmissionDialog } from "./claims/claim-submission-dialog"
 import { ClaimType, ClaimEligibilityResult, getClaimTypeLabel } from "@/lib/claims/eligibility"
+import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
 
 // ============================================
 // TYPES
@@ -61,6 +62,7 @@ interface ShipmentDetails {
   shipping: {
     carrier: string
     carrierService: string
+    shipOptionName: string
     shipOptionId: number
     zone: number
     fulfillmentCenter: string
@@ -99,6 +101,10 @@ interface ShipmentDetails {
     timestamp: string
     description: string
     icon: string
+    source?: 'shipment' | 'claim'
+    claimStatus?: string
+    invoiceId?: number | null
+    jetpackInvoiceNumber?: string | null
   }>
   statusDetails: any[]
   items: Array<{
@@ -171,6 +177,34 @@ interface ShipmentDetails {
     totalCost: number
     totalRefunds: number
   }
+  claimTicket: {
+    id: string
+    ticketNumber: number
+    ticketType: string
+    issueType: string | null
+    status: string
+    creditAmount: number | null
+    currency: string
+    description: string | null
+    createdAt: string
+    updatedAt: string
+    resolvedAt: string | null
+    reshipmentStatus: string | null
+    reshipmentId: string | null
+    jetpackInvoiceNumber: string | null
+  } | null
+  // Lookout IQ AI Assessment
+  aiAssessment: {
+    statusBadge: 'MOVING' | 'DELAYED' | 'WATCHLIST' | 'STALLED' | 'STUCK' | 'RETURNING' | 'LOST'
+    riskLevel: 'low' | 'medium' | 'high' | 'critical'
+    customerSentiment: string
+    merchantAction: string
+    reshipmentUrgency: number
+    keyInsight: string
+    nextMilestone: string
+    confidence: number
+  } | null
+  claimEligibilityStatus: 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | null
 }
 
 interface ShipmentDetailsDrawerProps {
@@ -254,9 +288,23 @@ interface TimelineStep {
   isCurrent: boolean
 }
 
-// Get status badge for timeline events
-function getEventStatusBadge(event: string): { label: string; color: string } | null {
+// Get status badge for timeline events (supports both shipment and claim events)
+function getEventStatusBadge(event: string, source?: 'shipment' | 'claim'): { label: string; color: string } | null {
   const eventLower = event.toLowerCase()
+
+  // Claim-related badges (distinct styling to differentiate from shipment events)
+  if (source === 'claim') {
+    if (eventLower.includes('claim filed')) return { label: 'Claim Filed', color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' }
+    if (eventLower.includes('under review')) return { label: 'Under Review', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' }
+    if (eventLower.includes('credit requested')) return { label: 'Credit Requested', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' }
+    if (eventLower.includes('credit approved')) return { label: 'Credit Approved', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' }
+    if (eventLower.includes('credit denied')) return { label: 'Credit Denied', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }
+    if (eventLower.includes('resolved')) return { label: 'Resolved', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' }
+    // Default claim badge
+    return { label: 'Claim', color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' }
+  }
+
+  // Shipment-related badges
   if (eventLower.includes('picked')) return { label: 'Picked', color: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400' }
   if (eventLower.includes('packed') || eventLower.includes('packaged')) return { label: 'Packed', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' }
   if (eventLower.includes('label') && eventLower.includes('created')) return { label: 'Labeled', color: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400' }
@@ -379,14 +427,15 @@ function ProgressTimeline({ data }: { data: ShipmentDetails }) {
                 {(() => {
                   let lastDateKey = ''
                   return data.timeline.map((event, index) => {
-                    const badge = getEventStatusBadge(event.event)
+                    const isClaimEvent = event.source === 'claim'
+                    const badge = getEventStatusBadge(event.event, event.source)
                     const isLast = index === data.timeline.length - 1
                     const dateKey = format(new Date(event.timestamp), "MMMM do, yyyy")
                     const showDateHeader = dateKey !== lastDateKey
                     lastDateKey = dateKey
 
                     return (
-                      <div key={`${event.event}-${event.timestamp}`}>
+                      <div key={`${event.event}-${event.timestamp}-${index}`}>
                         {/* Date header when date changes */}
                         {showDateHeader && (
                           <div className={`ml-6 ${index === 0 ? 'mb-3' : 'mt-6 mb-3'}`}>
@@ -396,9 +445,11 @@ function ProgressTimeline({ data }: { data: ShipmentDetails }) {
 
                         {/* Event row */}
                         <div className={`flex gap-3 ${isLast ? '' : 'mb-5'}`}>
-                          {/* Timeline dot */}
+                          {/* Timeline dot - rose for claims, emerald for shipment events */}
                           <div className="flex flex-col items-center">
-                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 mt-1 z-10" />
+                            <div className={`w-2.5 h-2.5 rounded-full shrink-0 mt-1 z-10 ${
+                              isClaimEvent ? 'bg-rose-500' : 'bg-emerald-500'
+                            }`} />
                           </div>
 
                           {/* Event content */}
@@ -415,7 +466,29 @@ function ProgressTimeline({ data }: { data: ShipmentDetails }) {
                               )}
                             </div>
                             {event.description && (
-                              <p className="text-xs text-muted-foreground mt-0.5">{event.description}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {event.description}
+                                {event.jetpackInvoiceNumber && (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      try {
+                                        const res = await fetch(`/api/invoices/${event.jetpackInvoiceNumber}/files?type=pdf`)
+                                        const data = await res.json()
+                                        if (data.pdfUrl) {
+                                          window.open(data.pdfUrl, '_blank')
+                                        }
+                                      } catch (err) {
+                                        console.error('Failed to get invoice PDF:', err)
+                                      }
+                                    }}
+                                    className="ml-1 text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-0.5"
+                                  >
+                                    View Invoice
+                                    <ExternalLinkIcon className="h-2.5 w-2.5" />
+                                  </button>
+                                )}
+                              </p>
                             )}
                           </div>
                         </div>
@@ -472,6 +545,102 @@ function IssueAlert({ data }: IssueAlertProps) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// LOOKOUT IQ ASSESSMENT ALERT COMPONENT
+// ============================================
+
+interface AIAssessmentAlertProps {
+  data: ShipmentDetails
+}
+
+function AIAssessmentAlert({ data }: AIAssessmentAlertProps) {
+  const assessment = data.aiAssessment
+  if (!assessment) return null
+
+  // Badge colors based on status
+  const badgeColors: Record<string, string> = {
+    MOVING: 'bg-lime-100 text-lime-700 border-lime-200',
+    DELAYED: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+    WATCHLIST: 'bg-amber-100 text-amber-700 border-amber-200',
+    STALLED: 'bg-orange-100 text-orange-700 border-orange-200',
+    STUCK: 'bg-red-100 text-red-600 border-red-200',
+    RETURNING: 'bg-purple-100 text-purple-700 border-purple-200',
+    LOST: 'bg-red-100 text-red-700 border-red-200',
+  }
+
+  const riskColors: Record<string, string> = {
+    low: 'bg-green-100 text-green-700 border-green-200',
+    medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+    high: 'bg-orange-100 text-orange-700 border-orange-200',
+    critical: 'bg-red-100 text-red-700 border-red-200',
+  }
+
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
+      <div className="flex items-start gap-3">
+        <svg
+          className="h-5 w-5 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0"
+          fill="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+        </svg>
+        <div className="flex-1 space-y-3">
+          {/* Header with badge */}
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-indigo-900 dark:text-indigo-100">
+              Delivery IQ Assessment
+            </span>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${badgeColors[assessment.statusBadge] || 'bg-gray-100'}`}>
+                {assessment.statusBadge}
+              </span>
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full border ${riskColors[assessment.riskLevel] || ''}`}>
+                {assessment.riskLevel} risk
+              </span>
+            </div>
+          </div>
+
+          {/* Key insight */}
+          <p className="text-sm text-indigo-800 dark:text-indigo-200">
+            {assessment.keyInsight}
+          </p>
+
+          {/* Customer perspective */}
+          <div className="rounded bg-indigo-100/50 p-2 dark:bg-indigo-900/30">
+            <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mb-1">
+              Customer Perspective
+            </p>
+            <p className="text-sm text-indigo-800 dark:text-indigo-200">
+              {assessment.customerSentiment}
+            </p>
+          </div>
+
+          {/* Recommendation */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">
+              Recommendation:
+            </span>
+            <span className="px-2 py-0.5 text-xs font-medium rounded-full border border-indigo-300 bg-indigo-100/50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
+              {assessment.merchantAction}
+            </span>
+            {assessment.reshipmentUrgency > 60 && (
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/50 dark:text-red-300 dark:border-red-800">
+                Reshipment urgency: {assessment.reshipmentUrgency}%
+              </span>
+            )}
+          </div>
+
+          {/* Next milestone */}
+          <p className="text-xs text-indigo-600 dark:text-indigo-400">
+            <span className="font-medium">Next:</span> {assessment.nextMilestone}
+          </p>
         </div>
       </div>
     </div>
@@ -782,14 +951,92 @@ export function ShipmentDetailsDrawer({
             <ScrollArea className="flex-1">
               <div className="p-5 space-y-4">
 
+                {/* Delivery IQ Assessment Alert - shows for monitored shipments */}
+                <AIAssessmentAlert data={data} />
+
                 {/* Issue Alert - shows for problematic statuses */}
                 <IssueAlert data={data} />
+
+                {/* Claim Status Alert - shows when a claim is filed */}
+                {data.claimTicket && (
+                  <div className={`rounded-lg p-4 ${
+                    data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
+                      ? 'bg-emerald-500/10 dark:bg-emerald-500/5'
+                      : data.claimTicket.status === 'Credit Denied'
+                        ? 'bg-red-500/10 dark:bg-red-500/5'
+                        : 'bg-rose-500/10 dark:bg-rose-500/5'
+                  }`}>
+                    <div className="flex gap-3">
+                      <div className={`h-5 w-5 shrink-0 ${
+                        data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
+                          ? 'text-emerald-500'
+                          : data.claimTicket.status === 'Credit Denied'
+                            ? 'text-red-500'
+                            : 'text-rose-500'
+                      }`}>
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <p className={`text-sm font-semibold ${
+                            data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : data.claimTicket.status === 'Credit Denied'
+                                ? 'text-red-700 dark:text-red-400'
+                                : 'text-rose-700 dark:text-rose-400'
+                          }`}>
+                            Claim #{data.claimTicket.ticketNumber} - {data.claimTicket.status}
+                          </p>
+                          {data.claimTicket.creditAmount && data.claimTicket.creditAmount > 0 && (
+                            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                              ${data.claimTicket.creditAmount.toFixed(2)} {data.claimTicket.currency}
+                            </span>
+                          )}
+                        </div>
+                        {(data.claimTicket.issueType || (data.claimTicket.status === 'Resolved' && data.claimTicket.jetpackInvoiceNumber)) && (
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-muted-foreground">
+                              {data.claimTicket.issueType}
+                            </p>
+                            {data.claimTicket.status === 'Resolved' && data.claimTicket.jetpackInvoiceNumber && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  try {
+                                    const res = await fetch(`/api/invoices/${data.claimTicket!.jetpackInvoiceNumber}/files?type=pdf`)
+                                    const responseData = await res.json()
+                                    if (responseData.pdfUrl) {
+                                      window.open(responseData.pdfUrl, '_blank')
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to get invoice PDF:', err)
+                                  }
+                                }}
+                                className="text-sm text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+                              >
+                                View Invoice <ExternalLinkIcon className="inline h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {data.claimTicket.reshipmentStatus && (
+                          <p className="text-xs text-muted-foreground">
+                            Reshipment: {data.claimTicket.reshipmentStatus}
+                            {data.claimTicket.reshipmentId && ` (#${data.claimTicket.reshipmentId})`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Quick Stats Bar */}
                 <div className="flex gap-2">
                   <div className="flex-auto bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/30 dark:to-blue-900/20 rounded-lg p-2.5 border border-blue-200/50 dark:border-blue-800/30">
                     <div className="text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 font-medium mb-0.5">Ship Option</div>
-                    <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 whitespace-nowrap">{data.shipping.carrierService || '-'}</div>
+                    <div className="text-xs font-semibold text-blue-900 dark:text-blue-100 whitespace-nowrap">{data.shipping.shipOptionName || '-'}</div>
                   </div>
                   <div className="flex-auto bg-gradient-to-br from-orange-50 to-orange-100/50 dark:from-orange-950/30 dark:to-orange-900/20 rounded-lg p-2.5 border border-orange-200/50 dark:border-orange-800/30">
                     <div className="text-[10px] uppercase tracking-wide text-orange-600 dark:text-orange-400 font-medium mb-0.5">Carrier</div>
@@ -872,7 +1119,7 @@ export function ShipmentDetailsDrawer({
                     <div className="p-4 space-y-3">
                       <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Ship Option</span>
-                        <span className="text-sm text-foreground font-medium">{data.shipping.carrierService || '-'}</span>
+                        <span className="text-sm text-foreground font-medium">{data.shipping.shipOptionName || '-'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Fulfillment Center</span>
@@ -909,8 +1156,8 @@ export function ShipmentDetailsDrawer({
                         <span className="text-sm text-foreground">{getCarrierDisplayName(data.shipping.carrier) || '-'}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-xs text-muted-foreground">Carrier Service</span>
-                        <span className="text-sm text-foreground">{data.shipping.carrierService || '-'}</span>
+                        <span className="text-xs text-muted-foreground">Service</span>
+                        <span className="text-sm text-foreground">{getCarrierServiceDisplay(data.shipping.carrierService, data.shipping.carrier) || '-'}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Dimensions</span>

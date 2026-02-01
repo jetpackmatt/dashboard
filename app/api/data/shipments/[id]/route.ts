@@ -318,8 +318,18 @@ export async function GET(
       .select('id, shipbob_return_id, status, return_type, tracking_number, insert_date, arrived_date, completed_date')
       .eq('original_shipment_id', parseInt(id))
 
-    // Build timeline from event_* columns and event_logs
-    const timeline = buildTimeline(shipment)
+    // Fetch any associated care ticket (claim) for this shipment
+    const { data: careTicket } = await supabase
+      .from('care_tickets')
+      .select('id, ticket_number, ticket_type, issue_type, status, credit_amount, currency, description, events, created_at, updated_at, resolved_at, reshipment_status, reshipment_id')
+      .eq('shipment_id', id)
+      .eq('ticket_type', 'Claim')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    // Build timeline from event_* columns, event_logs, and claim ticket events
+    const timeline = buildTimeline(shipment, careTicket)
 
     // Calculate status
     const status = getShipmentStatus(
@@ -434,6 +444,7 @@ export async function GET(
       shipping: {
         carrier: shipment.carrier,
         carrierService: shipment.carrier_service,
+        shipOptionName: shipment.ship_option_name,
         shipOptionId: shipment.ship_option_id,
         zone: shipment.zone_used,
         fulfillmentCenter: shipment.fc_name,
@@ -610,6 +621,26 @@ export async function GET(
         totalRefunds: transactions.filter((tx: any) => tx.transaction_type === 'Refund')
           .reduce((sum: number, tx: any) => sum + Math.abs(parseFloat(tx.billed_amount) || 0), 0),
       },
+
+      // Associated claim ticket info (if any)
+      claimTicket: careTicket ? {
+        id: careTicket.id,
+        ticketNumber: careTicket.ticket_number,
+        ticketType: careTicket.ticket_type,
+        issueType: careTicket.issue_type,
+        status: careTicket.status,
+        creditAmount: careTicket.credit_amount,
+        currency: careTicket.currency || 'USD',
+        description: careTicket.description,
+        createdAt: careTicket.created_at,
+        updatedAt: careTicket.updated_at,
+        resolvedAt: careTicket.resolved_at,
+        reshipmentStatus: careTicket.reshipment_status,
+        reshipmentId: careTicket.reshipment_id,
+        // Extract jetpackInvoiceNumber from the Resolved event for View Invoice link
+        jetpackInvoiceNumber: (careTicket.events as ClaimTicketEvent[] | null)
+          ?.find(e => e.status === 'Resolved')?.jetpackInvoiceNumber || null,
+      } : null,
     }
 
     return NextResponse.json(response)
@@ -632,14 +663,28 @@ const LOG_TYPE_MAP: Record<number, { name: string; icon: string }> = {
   611: { name: 'Delivery Attempt Failed', icon: 'alert-circle' },
 }
 
-// Build timeline from event columns and event_logs
-function buildTimeline(shipment: any): Array<{
+// Claim ticket event interface
+interface ClaimTicketEvent {
+  note: string
+  status: string
+  createdAt: string
+  createdBy: string
+  invoiceId?: number | null
+  jetpackInvoiceNumber?: string | null
+}
+
+// Build timeline from event columns, event_logs, and claim ticket events
+function buildTimeline(shipment: any, careTicket?: any): Array<{
   event: string
   timestamp: string
   description: string
   icon: string
+  source?: 'shipment' | 'claim'
+  claimStatus?: string
+  invoiceId?: number | null
+  jetpackInvoiceNumber?: string | null
 }> {
-  const timeline: Array<{ event: string; timestamp: string; description: string; icon: string }> = []
+  const timeline: Array<{ event: string; timestamp: string; description: string; icon: string; source?: 'shipment' | 'claim'; claimStatus?: string; invoiceId?: number | null; jetpackInvoiceNumber?: string | null }> = []
 
   // Map from database column to display name
   const eventColumnMap: Record<string, { name: string; icon: string }> = {
@@ -794,6 +839,39 @@ function buildTimeline(shipment: any): Array<{
           existingEventKeywords.add(eventLower)
         }
       }
+    }
+  }
+
+  // Merge claim ticket events if a care ticket exists
+  if (careTicket?.events && Array.isArray(careTicket.events)) {
+    // Map claim status to display name and icon
+    const claimStatusConfig: Record<string, { displayName: string; icon: string }> = {
+      'Input Required': { displayName: 'Claim Filed', icon: 'file-text' },
+      'Under Review': { displayName: 'Claim Under Review', icon: 'search' },
+      'Credit Requested': { displayName: 'Credit Requested', icon: 'clock' },
+      'Credit Approved': { displayName: 'Credit Approved', icon: 'check-circle' },
+      'Credit Denied': { displayName: 'Credit Denied', icon: 'x-circle' },
+      'Resolved': { displayName: 'Claim Resolved', icon: 'check-circle-2' },
+    }
+
+    for (const claimEvent of careTicket.events as ClaimTicketEvent[]) {
+      if (!claimEvent.createdAt) continue
+
+      const config = claimStatusConfig[claimEvent.status] || {
+        displayName: claimEvent.status,
+        icon: 'circle'
+      }
+
+      timeline.push({
+        event: config.displayName,
+        timestamp: claimEvent.createdAt,
+        description: claimEvent.note || '',
+        icon: config.icon,
+        source: 'claim',
+        claimStatus: claimEvent.status,
+        invoiceId: claimEvent.invoiceId || null,
+        jetpackInvoiceNumber: claimEvent.jetpackInvoiceNumber || null,
+      })
     }
   }
 

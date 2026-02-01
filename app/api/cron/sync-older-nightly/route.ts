@@ -49,6 +49,7 @@ interface ShipBobShipment {
     tracking_number?: string
     tracking_url?: string
     carrier?: string
+    carrier_service?: string // Actual carrier service (e.g., "Ground Advantage")
   }
   ship_option?: string
   measurements?: {
@@ -98,14 +99,15 @@ export async function GET(request: NextRequest) {
 
       console.log(`[Nightly Timeline] Processing ${client.company_name}...`)
 
-      // Get older undelivered shipments (14-45 days old)
+      // Get older undelivered shipments (14-180 days old)
       // These fell out of the real-time sync window
+      // Extended from 45 to 180 days to catch late carrier updates
       const now = new Date()
       const recentCutoff = new Date(now)
       recentCutoff.setDate(recentCutoff.getDate() - 14) // 14 days ago
 
       const oldCutoff = new Date(now)
-      oldCutoff.setDate(oldCutoff.getDate() - 45) // 45 days ago
+      oldCutoff.setDate(oldCutoff.getDate() - 180) // 180 days ago (6 months)
 
       const { data: shipments, error } = await supabase
         .from('shipments')
@@ -114,9 +116,10 @@ export async function GET(request: NextRequest) {
         .is('event_delivered', null)
         .is('deleted_at', null)
         .neq('status', 'Cancelled')
-        .lt('created_at', recentCutoff.toISOString()) // Older than 14 days
-        .gte('created_at', oldCutoff.toISOString()) // But not older than 45 days
-        .order('created_at', { ascending: true })
+        .not('event_labeled', 'is', null) // Must have a ship date
+        .lt('event_labeled', recentCutoff.toISOString()) // Shipped more than 14 days ago
+        .gte('event_labeled', oldCutoff.toISOString()) // But not more than 180 days ago
+        .order('event_labeled', { ascending: true })
         .limit(200) // Process up to 200 per client per night
 
       if (error) {
@@ -129,7 +132,7 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      console.log(`[Nightly Sync] ${client.company_name}: Full refresh on ${shipments.length} older shipments (14-45 days)`)
+      console.log(`[Nightly Sync] ${client.company_name}: Full refresh on ${shipments.length} older shipments (14-180 days)`)
       results.totalShipments += shipments.length
 
       for (const ship of shipments) {
@@ -159,10 +162,15 @@ export async function GET(request: NextRequest) {
               updateData.tracking_id = shipData.tracking.tracking_number || null
               updateData.tracking_url = shipData.tracking.tracking_url || null
               updateData.carrier = shipData.tracking.carrier || null
+              // carrier_service = actual carrier service (e.g., "Ground Advantage")
+              if (shipData.tracking.carrier_service) {
+                updateData.carrier_service = shipData.tracking.carrier_service
+              }
             }
 
+            // ship_option_name = ShipBob ship option (e.g., "ShipBob Economy")
             if (shipData.ship_option) {
-              updateData.carrier_service = shipData.ship_option
+              updateData.ship_option_name = shipData.ship_option
             }
 
             if (shipData.measurements) {
@@ -231,6 +239,99 @@ export async function GET(request: NextRequest) {
             results.updated++
             if (updateData.event_delivered) {
               results.delivered++
+            }
+          }
+
+          await new Promise((r) => setTimeout(r, API_DELAY_MS))
+        } catch (e) {
+          results.errors.push(`${ship.shipment_id}: ${e instanceof Error ? e.message : 'Unknown'}`)
+        }
+      }
+    }
+
+    // Second pass: Check very old shipments (180+ days) with smaller batch
+    // These are likely lost in transit but occasionally get late updates
+    console.log('[Nightly Timeline] Starting second pass for very old shipments (180+ days)...')
+
+    for (const client of clients) {
+      const creds = client.client_api_credentials as Array<{ api_token: string; provider: string }> | null
+      const token = creds?.find((c) => c.provider === 'shipbob')?.api_token
+      if (!token) continue
+
+      const now = new Date()
+      const veryOldCutoff = new Date(now)
+      veryOldCutoff.setDate(veryOldCutoff.getDate() - 180) // 180 days ago
+
+      // Get very old undelivered shipments (180+ days)
+      const { data: veryOldShipments, error: veryOldError } = await supabase
+        .from('shipments')
+        .select('id, shipment_id, status')
+        .eq('client_id', client.id)
+        .is('event_delivered', null)
+        .is('deleted_at', null)
+        .neq('status', 'Cancelled')
+        .not('event_labeled', 'is', null)
+        .lt('event_labeled', veryOldCutoff.toISOString()) // Shipped more than 180 days ago
+        .order('timeline_checked_at', { ascending: true, nullsFirst: true }) // Check least recently checked first
+        .limit(50) // Smaller batch for very old shipments
+
+      if (veryOldError || !veryOldShipments || veryOldShipments.length === 0) {
+        continue
+      }
+
+      console.log(`[Nightly Sync] ${client.company_name}: Checking ${veryOldShipments.length} very old shipments (180+ days)`)
+      results.totalShipments += veryOldShipments.length
+
+      for (const ship of veryOldShipments) {
+        try {
+          const updateData: Record<string, unknown> = {
+            timeline_checked_at: new Date().toISOString(),
+          }
+
+          // Fetch timeline events
+          const timelineRes = await fetch(`${SHIPBOB_API_BASE}/shipment/${ship.shipment_id}/timeline`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+
+          if (timelineRes.status === 429) {
+            console.log(`[Nightly] Rate limited on very old shipments, stopping ${client.company_name}`)
+            break
+          }
+
+          if (timelineRes.ok) {
+            const timeline: TimelineEvent[] = await timelineRes.json()
+
+            if (timeline && timeline.length > 0) {
+              for (const event of timeline) {
+                const col = TIMELINE_EVENT_MAP[event.log_type_id]
+                if (col && event.timestamp) {
+                  updateData[col] = event.timestamp
+                }
+              }
+              updateData.event_logs = timeline
+
+              const intransitDate = updateData.event_intransit as string | undefined
+              const deliveredDate = updateData.event_delivered as string | undefined
+              if (intransitDate && deliveredDate) {
+                const transitMs = new Date(deliveredDate).getTime() - new Date(intransitDate).getTime()
+                const transitDays = Math.round((transitMs / (1000 * 60 * 60 * 24)) * 10) / 10
+                if (transitDays >= 0) {
+                  updateData.transit_time_days = transitDays
+                }
+              }
+            }
+          }
+
+          const { error: updateError } = await supabase
+            .from('shipments')
+            .update(updateData)
+            .eq('id', ship.id)
+
+          if (!updateError) {
+            results.updated++
+            if (updateData.event_delivered) {
+              results.delivered++
+              console.log(`[Nightly] Very old shipment ${ship.shipment_id} now delivered!`)
             }
           }
 

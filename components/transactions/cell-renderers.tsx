@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { CellRenderer } from "./transactions-table"
+import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
 
 // ============================================
 // FEE TYPE DISPLAY NAME MAPPING
@@ -243,9 +244,28 @@ function ChannelIcon({ channelName }: { channelName: string }) {
 
 // Cell renderers for unfulfilled orders table
 export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOrder>> = {
-  orderId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.orderId}</div>
-  ),
+  orderId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.orderId)
+      toast.success("Order ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+        {row.orderId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Order ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
 
   shipmentId: (row) => {
     const handleCopy = (e: React.MouseEvent) => {
@@ -256,7 +276,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     }
     return (
       <div className="flex items-center gap-1.5">
-        <span className="text-sm truncate">{row.shipmentId || "-"}</span>
+        <span className="text-xs font-mono truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -394,6 +414,19 @@ const CARRIER_DISPLAY_NAMES: Record<string, string> = {
   'UPSMailInnovations': 'UPS MI',
   'USPS': 'USPS',
   'Veho': 'Veho',
+  // TrackingMore lowercase carrier codes (used in lost_in_transit_checks)
+  'dhl': 'DHL Express',
+  'amazon-us': 'Amazon',
+  'usps': 'USPS',
+  'ups': 'UPS',
+  'fedex': 'FedEx',
+  'ontrac': 'OnTrac',
+  'gofoexpress': 'GoFo Express',
+  'canada-post': 'Canada Post',
+  'veho': 'Veho',
+  'bettertrucks': 'BetterTrucks',
+  'lasership': 'LaserShip',
+  'tforce': 'TForce',
 }
 
 // Get display name for carrier (falls back to original if not mapped)
@@ -694,9 +727,28 @@ function getShipmentStatusIcon(status: string) {
 
 // Cell renderers for shipments table
 export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
-  orderId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.orderId}</div>
-  ),
+  orderId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.orderId)
+      toast.success("Order ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+        {row.orderId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Order ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
 
   shipmentId: (row) => {
     const handleCopy = (e: React.MouseEvent) => {
@@ -707,7 +759,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        <span className="text-sm truncate">{row.shipmentId || "-"}</span>
+        <span className="text-xs font-mono truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -1039,12 +1091,12 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
             href={trackingUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm truncate"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-mono truncate"
           >
             {row.trackingId}
           </a>
         ) : (
-          <span className="text-sm truncate">{row.trackingId}</span>
+          <span className="text-xs font-mono truncate">{row.trackingId}</span>
         )}
         <button
           onClick={handleCopy}
@@ -1506,9 +1558,28 @@ export interface AdditionalService {
 }
 
 export const additionalServicesCellRenderers: Record<string, CellRenderer<AdditionalService>> = {
-  referenceId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.referenceId || '-'}</div>
-  ),
+  referenceId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.referenceId)
+      toast.success("Reference ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.referenceId || '-'}</span>
+        {row.referenceId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Reference ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
   feeType: (row) => (
     <div className="truncate">{getFeeTypeDisplayName(row.feeType) || '-'}</div>
   ),
@@ -1570,9 +1641,28 @@ function getReturnStatusColors(status: string) {
 }
 
 export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
-  returnId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.returnId || '-'}</div>
-  ),
+  returnId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.returnId)
+      toast.success("Return ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.returnId || '-'}</span>
+        {row.returnId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Return ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
   originalShipmentId: (row) => {
     const handleCopy = (e: React.MouseEvent) => {
       e.preventDefault()
@@ -1584,7 +1674,7 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       <div className="flex items-center gap-1.5">
         {row.originalShipmentId ? (
           <>
-            <span className="truncate">{row.originalShipmentId}</span>
+            <span className="text-xs font-mono truncate">{row.originalShipmentId}</span>
             <button
               onClick={handleCopy}
               className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
@@ -1710,9 +1800,28 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
   transactionDate: (row) => (
     <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
   ),
-  wroId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.wroId || '-'}</div>
-  ),
+  wroId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.wroId)
+      toast.success("WRO ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.wroId || '-'}</span>
+        {row.wroId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy WRO ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
   receivingStatus: (row) => (
     row.receivingStatus ? (
       <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getReceivingStatusColors(row.receivingStatus)}`}>
@@ -1782,9 +1891,28 @@ export interface Storage {
 }
 
 export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
-  inventoryId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.inventoryId || '-'}</div>
-  ),
+  inventoryId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.inventoryId)
+      toast.success("Inventory ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.inventoryId || '-'}</span>
+        {row.inventoryId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Inventory ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
   fcName: (row) => (
     <div className="truncate">{row.fcName || '-'}</div>
   ),
@@ -1843,7 +1971,7 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     }
     return (
       <div className="flex items-center gap-1.5">
-        <span className="font-medium text-foreground">{row.referenceId || '-'}</span>
+        <span className="text-xs font-mono text-foreground">{row.referenceId || '-'}</span>
         {row.referenceId && (
           <button
             onClick={handleCopy}
@@ -2006,9 +2134,28 @@ export function getTrackingUrl(carrier: string, trackingId: string): string | nu
 }
 
 export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = {
-  orderId: (row) => (
-    <div className="font-medium text-foreground truncate">{row.orderId}</div>
-  ),
+  orderId: (row) => {
+    const handleCopy = (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      navigator.clipboard.writeText(row.orderId)
+      toast.success("Order ID copied")
+    }
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+        {row.orderId && (
+          <button
+            onClick={handleCopy}
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            title="Copy Order ID"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    )
+  },
   storeOrderId: (row) => (
     <div className="text-muted-foreground text-sm truncate">{row.storeOrderId || "-"}</div>
   ),
@@ -2025,7 +2172,7 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
     <div>
       <div className="font-medium truncate">{getCarrierDisplayName(row.carrier)}</div>
       {row.carrierService && (
-        <div className="text-xs text-muted-foreground truncate">{row.carrierService}</div>
+        <div className="text-xs text-muted-foreground truncate">{getCarrierServiceDisplay(row.carrierService, row.carrier)}</div>
       )}
     </div>
   ),
@@ -2037,12 +2184,12 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
         href={trackingUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 truncate block"
+        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-mono truncate block"
       >
         {row.trackingId}
       </a>
     ) : (
-      <span className="truncate block">{row.trackingId}</span>
+      <span className="text-xs font-mono truncate block">{row.trackingId}</span>
     )
   },
   shippedDate: (row) => (

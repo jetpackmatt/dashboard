@@ -27,6 +27,7 @@ import {
 import { format } from "date-fns"
 
 import { Badge } from "@/components/ui/badge"
+import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -168,7 +169,7 @@ const columns: ColumnDef<ShippedOrder>[] = [
           <div className="font-medium">{carrier || "-"}</div>
           {service && (
             <div className="text-xs text-muted-foreground truncate max-w-[120px]">
-              {service}
+              {getCarrierServiceDisplay(service, carrier)}
             </div>
           )}
         </div>
