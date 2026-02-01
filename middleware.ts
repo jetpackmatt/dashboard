@@ -18,7 +18,7 @@ export async function middleware(request: NextRequest) {
     const isCronApi = pathname.startsWith('/api/cron/')
     const isWebhookApi = pathname.startsWith('/api/webhooks/')
     const isAuthCallback = pathname.startsWith('/auth/callback')
-    const isPublicMarketing = pathname === '/dashboard/about-delivery-iq'
+    const isPublicMarketing = pathname === '/about-delivery-iq'
     const hasAccess = request.cookies.get('site_access')?.value === 'granted'
 
     // Skip password for cron jobs, webhooks, auth callbacks, and public marketing pages
