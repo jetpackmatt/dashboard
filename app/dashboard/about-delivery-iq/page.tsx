@@ -28,7 +28,7 @@ export default function AboutDeliveryIQPage() {
             <h2 className="text-2xl font-semibold">The Problem</h2>
             <p className="text-muted-foreground leading-relaxed">
               Every day, packages go missing. Customers get anxious. They email. They call. They leave bad reviews.
-              And by the time you find out, it's already a crisis.
+              And by the time you find out, it&apos;s already a crisis.
             </p>
             <p className="text-muted-foreground leading-relaxed">
               Lost packages cost e-commerce brands more than refunds. They cost trust.
@@ -39,7 +39,7 @@ export default function AboutDeliveryIQPage() {
           <section className="space-y-4">
             <h2 className="text-2xl font-semibold">The Solution</h2>
             <p className="text-lg font-medium">
-              Delivery IQ watches every package, so you don't have to.
+              Delivery IQ watches every package, so you don&apos;t have to.
             </p>
             <p className="text-muted-foreground leading-relaxed">
               We monitor your shipments in real-time, detect problems before they become complaints,
@@ -66,7 +66,7 @@ export default function AboutDeliveryIQPage() {
                 <Brain className="w-8 h-8 mb-4 text-primary" />
                 <h3 className="font-semibold mb-2">2. Proactive Risk Detection</h3>
                 <p className="text-sm text-muted-foreground">
-                  Scout analyzes each shipment's journey and assigns risk levels based on
+                  Scout analyzes each shipment&apos;s journey and assigns risk levels based on
                   silence duration, movement direction, seasonal patterns, and carrier behavior.
                 </p>
               </div>
@@ -92,11 +92,11 @@ export default function AboutDeliveryIQPage() {
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Predictive Intelligence That Spots Problems First</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Scout is Jetpack's proprietary delivery intelligence engine—<strong>powered by AI</strong> to
+                Scout is Jetpack&apos;s proprietary delivery intelligence engine—<strong>powered by AI</strong> to
                 detect issues with each package proactively, before a human could identify the problem.
               </p>
               <blockquote className="border-l-4 border-primary pl-4 py-2 italic text-lg">
-                "What's the probability this package will be delivered?"
+                &quot;What&apos;s the probability this package will be delivered?&quot;
               </blockquote>
               <p className="text-muted-foreground">
                 Not a guess. Not a rule-based flag. A real probability calculated from patterns
@@ -130,7 +130,7 @@ export default function AboutDeliveryIQPage() {
                 <div>
                   <h3 className="font-medium mb-1">Time-in-state analysis</h3>
                   <p className="text-sm text-muted-foreground">
-                    Scout doesn't just look at what scan happened—it measures how long.
+                    Scout doesn&apos;t just look at what scan happened—it measures how long.
                     A package at a hub for 2 days? Normal. 8 days? Concerning.
                   </p>
                 </div>
@@ -161,7 +161,7 @@ export default function AboutDeliveryIQPage() {
                 <div className="text-muted-foreground">likely to deliver</div>
                 <div className="text-left space-y-2 mt-6 pt-6 border-t">
                   <p>Your package is at the Chicago distribution center and has an 87% chance of delivery based on 2,400 similar USPS shipments.</p>
-                  <p>It's been at this facility for 2 days, which is typical for cross-country routes in January.</p>
+                  <p>It&apos;s been at this facility for 2 days, which is typical for cross-country routes in January.</p>
                   <p className="font-semibold">Expected delivery: 2-3 more days</p>
                 </div>
               </div>
@@ -193,7 +193,7 @@ export default function AboutDeliveryIQPage() {
                 <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5" />
                 <div>
                   <span className="font-medium">Automatic detection</span>
-                  <span className="text-muted-foreground"> — Scout identifies when a package crosses from "delayed" to "likely lost"</span>
+                  <span className="text-muted-foreground"> — Scout identifies when a package crosses from &quot;delayed&quot; to &quot;likely lost&quot;</span>
                 </div>
               </div>
               <div className="flex gap-4 items-start">
