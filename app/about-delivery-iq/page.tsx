@@ -1,15 +1,19 @@
-"use client"
-
-import { SiteHeader } from "@/components/site-header"
 import { Badge } from "@/components/ui/badge"
 import { Sparkles, Eye, Brain, TrendingUp, BarChart3, Clock, AlertTriangle, CheckCircle2, Radar } from "lucide-react"
+import Image from "next/image"
 
 export default function AboutDeliveryIQPage() {
   return (
-    <>
-      <SiteHeader sectionName="About Delivery IQ" />
-      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
-        <div className="max-w-4xl mx-auto px-6 py-12 space-y-16">
+    <div className="min-h-screen bg-white dark:bg-zinc-950">
+      {/* Simple header with logo */}
+      <header className="border-b py-4 px-6">
+        <div className="max-w-4xl mx-auto flex items-center gap-3">
+          <Image src="/logos/jetpack-dark.svg" alt="Jetpack" width={120} height={32} className="dark:hidden" />
+          <Image src="/logos/jetpack-light.svg" alt="Jetpack" width={120} height={32} className="hidden dark:block" />
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-6 py-12 space-y-16">
 
           {/* Hero */}
           <section className="text-center space-y-4">
@@ -271,8 +275,7 @@ export default function AboutDeliveryIQPage() {
             </p>
           </section>
 
-        </div>
-      </div>
-    </>
+      </main>
+    </div>
   )
 }
