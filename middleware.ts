@@ -18,10 +18,11 @@ export async function middleware(request: NextRequest) {
     const isCronApi = pathname.startsWith('/api/cron/')
     const isWebhookApi = pathname.startsWith('/api/webhooks/')
     const isAuthCallback = pathname.startsWith('/auth/callback')
+    const isPublicMarketing = pathname === '/dashboard/about-delivery-iq'
     const hasAccess = request.cookies.get('site_access')?.value === 'granted'
 
-    // Skip password for cron jobs, webhooks, and auth callbacks (they have their own auth)
-    if (!hasAccess && !isPasswordPage && !isPasswordApi && !isCronApi && !isWebhookApi && !isAuthCallback) {
+    // Skip password for cron jobs, webhooks, auth callbacks, and public marketing pages
+    if (!hasAccess && !isPasswordPage && !isPasswordApi && !isCronApi && !isWebhookApi && !isAuthCallback && !isPublicMarketing) {
       return NextResponse.redirect(new URL('/password', request.url))
     }
   }
