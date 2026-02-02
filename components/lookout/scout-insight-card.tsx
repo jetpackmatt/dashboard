@@ -1,28 +1,8 @@
 "use client"
 
 import * as React from "react"
-import {
-  TrendingUpIcon,
-  TrendingDownIcon,
-  AlertTriangleIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  BarChart3Icon,
-  SparklesIcon,
-  InfoIcon,
-  Loader2Icon,
-} from "lucide-react"
-
+import { Loader2Icon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 
 // Types matching the API response
 export interface ScoutProbabilityData {
@@ -66,142 +46,74 @@ interface ScoutInsightCardProps {
   compact?: boolean
 }
 
-// Risk level styling
-const RISK_STYLES: Record<string, { bg: string; text: string; border: string; icon: React.ReactNode }> = {
-  low: {
-    bg: 'bg-green-50',
-    text: 'text-green-700',
-    border: 'border-green-200',
-    icon: <CheckCircleIcon className="h-4 w-4 text-green-600" />,
-  },
-  medium: {
-    bg: 'bg-yellow-50',
-    text: 'text-yellow-700',
-    border: 'border-yellow-200',
-    icon: <ClockIcon className="h-4 w-4 text-yellow-600" />,
-  },
-  high: {
-    bg: 'bg-orange-50',
-    text: 'text-orange-700',
-    border: 'border-orange-200',
-    icon: <AlertTriangleIcon className="h-4 w-4 text-orange-600" />,
-  },
-  critical: {
-    bg: 'bg-red-50',
-    text: 'text-red-700',
-    border: 'border-red-200',
-    icon: <AlertTriangleIcon className="h-4 w-4 text-red-600" />,
-  },
+// Risk level colors - very subtle
+const RISK_COLORS = {
+  low: { bg: 'bg-emerald-500', text: 'text-emerald-600', light: 'bg-emerald-50' },
+  medium: { bg: 'bg-amber-500', text: 'text-amber-600', light: 'bg-amber-50' },
+  high: { bg: 'bg-orange-500', text: 'text-orange-600', light: 'bg-orange-50' },
+  critical: { bg: 'bg-red-500', text: 'text-red-600', light: 'bg-red-50' },
 }
 
-// Confidence badge styling
-const CONFIDENCE_STYLES: Record<string, string> = {
-  high: 'bg-green-100 text-green-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-orange-100 text-orange-700',
-  insufficient: 'bg-gray-100 text-gray-500',
-}
+// Clean transit timeline visualization
+function TransitTimeline({
+  currentDay,
+  p50,
+  p90,
+  p95,
+  riskLevel
+}: {
+  currentDay: number
+  p50: number | null
+  p90: number | null
+  p95: number | null
+  riskLevel: string
+}) {
+  const maxDay = Math.max(p95 || 10, currentDay * 1.2, 10)
+  const colors = RISK_COLORS[riskLevel as keyof typeof RISK_COLORS] || RISK_COLORS.medium
 
-function ProbabilityGauge({ probability, riskLevel }: { probability: number; riskLevel: string }) {
-  const pct = Math.round(probability * 100)
-  const riskStyle = RISK_STYLES[riskLevel] || RISK_STYLES.medium
+  // Calculate positions as percentages
+  const currentPos = Math.min((currentDay / maxDay) * 100, 100)
+  const p50Pos = p50 ? (p50 / maxDay) * 100 : null
+  const p90Pos = p90 ? (p90 / maxDay) * 100 : null
+  const p95Pos = p95 ? (p95 / maxDay) * 100 : null
 
   return (
-    <div className="relative">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-muted-foreground">Delivery Probability</span>
-        <span className={cn("text-2xl font-bold", riskStyle.text)}>{pct}%</span>
-      </div>
-      <Progress
-        value={pct}
-        className="h-2"
-      />
-      <div className="flex justify-between mt-1 text-xs text-muted-foreground">
-        <span>0%</span>
-        <span>100%</span>
-      </div>
-    </div>
-  )
-}
-
-function RiskFactorsList({ factors }: { factors: string[] }) {
-  if (factors.length === 0) return null
-
-  const factorLabels: Record<string, string> = {
-    exception_detected: 'Exception in tracking',
-    delivery_attempt_failed: 'Failed delivery attempt',
-    past_p90_delivery_time: 'Past 90% delivery window',
-    past_p95_delivery_time: 'Past 95% delivery window',
-  }
-
-  return (
-    <div className="space-y-1">
-      <span className="text-xs font-medium text-muted-foreground">Risk Factors</span>
-      <div className="flex flex-wrap gap-1">
-        {factors.map((factor) => (
-          <Badge key={factor} variant="outline" className="text-xs bg-red-50 text-red-700 border-red-200">
-            {factorLabels[factor] || factor}
-          </Badge>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function PercentileChart({ percentiles, currentDay }: { percentiles: ScoutProbabilityData['percentiles']; currentDay: number }) {
-  const maxDay = Math.max(percentiles.p95 || 10, currentDay + 2)
-
-  return (
-    <div className="space-y-2">
-      <span className="text-xs font-medium text-muted-foreground">Transit Benchmarks</span>
-      <div className="relative h-8 bg-muted rounded-full overflow-hidden">
-        {/* P50 marker */}
-        {percentiles.p50 && (
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-green-500"
-            style={{ left: `${(percentiles.p50 / maxDay) * 100}%` }}
-          >
-            <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-green-600">
-              P50
-            </span>
-          </div>
-        )}
-        {/* P90 marker */}
-        {percentiles.p90 && (
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-orange-500"
-            style={{ left: `${(percentiles.p90 / maxDay) * 100}%` }}
-          >
-            <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-orange-600">
-              P90
-            </span>
-          </div>
-        )}
-        {/* P95 marker */}
-        {percentiles.p95 && (
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-red-500"
-            style={{ left: `${(percentiles.p95 / maxDay) * 100}%` }}
-          >
-            <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] text-red-600">
-              P95
-            </span>
-          </div>
-        )}
-        {/* Current position */}
+    <div className="space-y-3">
+      {/* Timeline bar */}
+      <div className="relative h-2 bg-gray-100 rounded-full overflow-visible">
+        {/* Progress fill */}
         <div
-          className="absolute top-1 bottom-1 w-3 h-3 rounded-full bg-blue-600 border-2 border-white shadow-sm -ml-1.5"
-          style={{ left: `${Math.min((currentDay / maxDay) * 100, 100)}%` }}
+          className={cn("absolute top-0 left-0 h-full rounded-full transition-all", colors.bg)}
+          style={{ width: `${currentPos}%` }}
         />
-        {/* Fill to current */}
-        <div
-          className="absolute top-0 bottom-0 left-0 bg-blue-200 opacity-50"
-          style={{ width: `${Math.min((currentDay / maxDay) * 100, 100)}%` }}
-        />
+
+        {/* Percentile markers */}
+        {p50Pos && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-300"
+            style={{ left: `${p50Pos}%` }}
+          />
+        )}
+        {p90Pos && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-400"
+            style={{ left: `${p90Pos}%` }}
+          />
+        )}
+        {p95Pos && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-500"
+            style={{ left: `${p95Pos}%` }}
+          />
+        )}
       </div>
-      <div className="flex justify-between text-[10px] text-muted-foreground">
-        <span>Day 0</span>
-        <span>Day {Math.round(maxDay)}</span>
+
+      {/* Labels row */}
+      <div className="flex justify-between text-[11px] text-gray-400">
+        <span>0</span>
+        {p50 && <span className="relative" style={{ left: `${(p50Pos || 0) - 50}%` }}>P50: {p50}d</span>}
+        {p90 && <span className="relative" style={{ left: `${(p90Pos || 0) - 50}%` }}>P90: {p90}d</span>}
+        <span>{Math.round(maxDay)}d</span>
       </div>
     </div>
   )
@@ -214,175 +126,155 @@ export function ScoutInsightCard({
   error = null,
   compact = false,
 }: ScoutInsightCardProps) {
+  // Loading state
   if (isLoading) {
     return (
-      <Card className="border-dashed">
-        <CardContent className="flex items-center justify-center py-8">
-          <Loader2Icon className="h-6 w-6 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Analyzing shipment...</span>
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="flex items-center justify-center gap-2 text-gray-400">
+          <Loader2Icon className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Analyzing...</span>
+        </div>
+      </div>
     )
   }
 
+  // Error state
   if (error) {
     return (
-      <Card className="border-dashed border-orange-200 bg-orange-50">
-        <CardContent className="flex items-center justify-center py-6">
-          <AlertTriangleIcon className="h-5 w-5 text-orange-500" />
-          <span className="ml-2 text-sm text-orange-700">{error}</span>
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm text-gray-500">{error}</p>
+      </div>
     )
   }
 
+  // No data
   if (!data) {
     return (
-      <Card className="border-dashed">
-        <CardContent className="flex items-center justify-center py-6">
-          <InfoIcon className="h-5 w-5 text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">No probability data available</span>
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm text-gray-400">No analysis available</p>
+      </div>
     )
   }
 
-  // Don't display probability for low/insufficient confidence - not reliable enough
+  // Insufficient confidence
   if (data.confidence === 'low' || data.confidence === 'insufficient') {
     return (
-      <Card className="border-dashed border-gray-200">
-        <CardContent className="flex items-center justify-center py-6">
-          <InfoIcon className="h-5 w-5 text-gray-400" />
-          <span className="ml-2 text-sm text-gray-500">
-            Insufficient data for probability analysis ({data.sampleSize} samples)
-          </span>
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <p className="text-sm text-gray-400">
+          Limited data ({data.sampleSize} samples)
+        </p>
+      </div>
     )
   }
 
-  const riskStyle = RISK_STYLES[data.riskLevel] || RISK_STYLES.medium
+  const colors = RISK_COLORS[data.riskLevel] || RISK_COLORS.medium
+  const pct = Math.round(data.deliveryProbability * 100)
+  const daysOverdue = data.percentiles.p50
+    ? Math.max(0, data.daysInTransit - data.percentiles.p50)
+    : 0
 
-  // Compact view for inline display
+  // Compact inline view
   if (compact) {
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className={cn(
-              "inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-help",
-              riskStyle.bg,
-              riskStyle.border
-            )}>
-              {riskStyle.icon}
-              <span className={cn("font-semibold", riskStyle.text)}>
-                {Math.round(data.deliveryProbability * 100)}%
-              </span>
-              <Badge variant="outline" className={cn("text-[10px]", CONFIDENCE_STYLES[data.confidence])}>
-                {data.confidence}
-              </Badge>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-xs">
-            <p className="font-medium">{data.ai_summary?.headline || data.summary}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {data.daysInTransit.toFixed(1)} days in transit • {data.riskFactors.length} risk factors
-            </p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <div className={cn(
+        "inline-flex items-center gap-2 px-2.5 py-1 rounded-md text-sm",
+        colors.light
+      )}>
+        <span className={cn("font-semibold tabular-nums", colors.text)}>{pct}%</span>
+        <span className="text-gray-400">·</span>
+        <span className="text-gray-500">{data.daysInTransit.toFixed(0)}d</span>
+      </div>
     )
   }
 
-  // Full card view
+  // Full card - clean and flat
   return (
-    <Card className={cn("overflow-hidden", riskStyle.border)}>
-      <CardHeader className={cn("py-3", riskStyle.bg)}>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <BarChart3Icon className="h-4 w-4" />
-            Scout Analysis
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className={cn("text-xs", CONFIDENCE_STYLES[data.confidence])}>
-              {data.confidence} confidence
-            </Badge>
-            {data.sampleSize > 0 && (
-              <span className="text-xs text-muted-foreground">
-                n={data.sampleSize.toLocaleString()}
+    <div className="rounded-lg border border-gray-200 bg-white">
+      {/* Header - very minimal */}
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+          Delivery Analysis
+        </span>
+        <span className="text-[10px] text-gray-300">
+          n={data.sampleSize.toLocaleString()}
+        </span>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Primary metric row */}
+        <div className="flex items-start justify-between">
+          {/* Probability - large and prominent */}
+          <div>
+            <div className="flex items-baseline gap-1">
+              <span className={cn("text-4xl font-light tabular-nums", colors.text)}>
+                {pct}
               </span>
+              <span className={cn("text-lg", colors.text)}>%</span>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">delivery probability</p>
+          </div>
+
+          {/* Days in transit */}
+          <div className="text-right">
+            <div className="flex items-baseline gap-1 justify-end">
+              <span className="text-2xl font-light tabular-nums text-gray-700">
+                {data.daysInTransit.toFixed(0)}
+              </span>
+              <span className="text-sm text-gray-400">days</span>
+            </div>
+            {daysOverdue > 0 && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                +{daysOverdue.toFixed(0)} over expected
+              </p>
             )}
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4 pt-4">
-        {/* AI Summary (if available) */}
-        {data.ai_summary && (
-          <div className={cn("rounded-lg p-3 border", riskStyle.bg, riskStyle.border)}>
-            <div className="flex items-start gap-2">
-              <SparklesIcon className="h-4 w-4 text-indigo-500 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className={cn("font-semibold", riskStyle.text)}>{data.ai_summary.headline}</p>
-                <p className="text-sm text-muted-foreground mt-1">{data.ai_summary.summary}</p>
-              </div>
-            </div>
+
+        {/* Transit timeline - clean visualization */}
+        <TransitTimeline
+          currentDay={data.daysInTransit}
+          p50={data.percentiles.p50}
+          p90={data.percentiles.p90}
+          p95={data.percentiles.p95}
+          riskLevel={data.riskLevel}
+        />
+
+        {/* Risk factors - subtle pills */}
+        {data.riskFactors.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {data.riskFactors.map((factor) => (
+              <span
+                key={factor}
+                className="px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-500"
+              >
+                {factor.replace(/_/g, ' ').replace('detected', '').replace('delivery time', '').trim()}
+              </span>
+            ))}
           </div>
         )}
 
-        {/* Probability gauge */}
-        <ProbabilityGauge probability={data.deliveryProbability} riskLevel={data.riskLevel} />
-
-        {/* Transit benchmarks */}
-        <PercentileChart percentiles={data.percentiles} currentDay={data.daysInTransit} />
-
-        {/* Risk factors */}
-        <RiskFactorsList factors={data.riskFactors} />
-
-        {/* Transit stats */}
-        <div className="grid grid-cols-2 gap-4 pt-2 border-t">
-          <div>
-            <p className="text-xs text-muted-foreground">Days in Transit</p>
-            <p className="text-lg font-semibold flex items-center gap-1">
-              {data.daysInTransit.toFixed(1)}
-              {data.daysInTransit > (data.percentiles.p90 || 7) ? (
-                <TrendingDownIcon className="h-4 w-4 text-red-500" />
-              ) : (
-                <TrendingUpIcon className="h-4 w-4 text-green-500" />
-              )}
+        {/* AI insight - only if meaningful */}
+        {data.ai_summary?.headline && (
+          <div className={cn("rounded-md p-3", colors.light)}>
+            <p className={cn("text-sm font-medium", colors.text)}>
+              {data.ai_summary.headline}
             </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Expected (P50)</p>
-            <p className="text-lg font-semibold">
-              {data.percentiles.p50 ? `${data.percentiles.p50} days` : '—'}
-            </p>
-          </div>
-        </div>
-
-        {/* Recommended action */}
-        {(data.ai_summary?.merchantAction || data.recommended_action) && (
-          <div className="pt-2 border-t">
-            <p className="text-xs font-medium text-muted-foreground mb-1">Recommended Action</p>
-            <p className="text-sm font-medium">
-              {data.ai_summary?.merchantAction || data.recommended_action}
-            </p>
+            {data.ai_summary.merchantAction && (
+              <p className="text-xs text-gray-500 mt-1">
+                {data.ai_summary.merchantAction}
+              </p>
+            )}
           </div>
         )}
 
-        {/* Segment info (collapsed) */}
-        <details className="pt-2 border-t">
-          <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-            Segment details
-          </summary>
-          <div className="mt-2 text-xs text-muted-foreground space-y-1">
-            <p>Carrier: {data.segmentUsed.carrier}</p>
-            <p>Service: {data.segmentUsed.service_bucket}</p>
-            <p>Zone: {data.segmentUsed.zone_bucket}</p>
-            <p>Season: {data.segmentUsed.season_bucket}</p>
-          </div>
-        </details>
-      </CardContent>
-    </Card>
+        {/* Fallback action when no AI */}
+        {!data.ai_summary && data.recommended_action && (
+          <p className="text-xs text-gray-500 pt-2 border-t border-gray-100">
+            {data.recommended_action}
+          </p>
+        )}
+      </div>
+    </div>
   )
 }
 

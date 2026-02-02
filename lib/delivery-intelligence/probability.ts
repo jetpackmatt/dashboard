@@ -185,37 +185,82 @@ export async function calculateProbabilityForShipment(
   // Calculate survival probability (still in transit)
   const stillInTransitProb = interpolateSurvivalProbability(curve.curve_data, daysInTransit)
 
-  // Calculate delivery probability considering loss rate
-  // P(delivered) ≈ P(delivered by now or will deliver) = deliveryRate * P(delivered | will deliver)
-  const deliveryRate = curve.delivered_count / curve.sample_size
-  const deliveredByNowProb = getDeliveryProbabilityAtDay(curve.curve_data, daysInTransit)
-
-  // Adjusted delivery probability considering potential loss
-  // If still in transit, probability of eventual delivery = deliveryRate
-  const eventualDeliveryProb = stillInTransitProb > 0.1
-    ? deliveryRate // Still likely in transit
-    : deliveredByNowProb * deliveryRate // Likely lost if past expected delivery
-
-  // Collect risk factors
+  // Collect risk factors first (needed for probability calculation)
   const riskFactors: string[] = []
-
-  if (checkEventLogsForException(shipment.event_logs)) {
+  const hasException = checkEventLogsForException(shipment.event_logs)
+  if (hasException) {
     riskFactors.push('exception_detected')
   }
-
   if (shipment.event_deliveryattemptfailed) {
     riskFactors.push('delivery_attempt_failed')
   }
-
   if (daysInTransit > (curve.p90_days || 7)) {
     riskFactors.push('past_p90_delivery_time')
   }
-
   if (daysInTransit > (curve.p95_days || 10)) {
     riskFactors.push('past_p95_delivery_time')
   }
 
-  // Calculate risk level
+  // Calculate delivery probability using Bayesian approach:
+  // P(delivers | overdue, risk_factors)
+  //
+  // Key insight: If a package SHOULD have delivered by now (past P95) but hasn't,
+  // and especially if it has exceptions, the probability drops significantly.
+  //
+  // Historical delivery rate is ~99%, but that doesn't apply to packages that
+  // are already showing signs of being lost.
+
+  const deliveryRate = curve.delivered_count / curve.sample_size
+  const p50 = curve.median_days || 3
+  const p95 = curve.p95_days || 7
+
+  // Calculate how overdue the package is (ratio of current days to expected P95)
+  const overdueRatio = daysInTransit / p95
+
+  // Base probability starts at delivery rate
+  let eventualDeliveryProb = deliveryRate
+
+  // If within normal delivery window, use historical rate
+  if (daysInTransit <= p95) {
+    // Package is within expected delivery window - use high probability
+    eventualDeliveryProb = deliveryRate
+  } else {
+    // Package is overdue - apply decay based on how overdue it is
+    // The longer overdue, the lower the probability
+    //
+    // Formula: prob = baseRate * decay^(overdueRatio - 1)
+    // At P95: prob = 99%
+    // At 2x P95: prob = 99% * 0.7 = 69%
+    // At 3x P95: prob = 99% * 0.49 = 48%
+    // At 4x P95: prob = 99% * 0.34 = 34%
+
+    const decayFactor = 0.7 // 30% reduction per P95 interval
+    const intervalsOverdue = overdueRatio - 1
+    const overdueDecay = Math.pow(decayFactor, intervalsOverdue)
+
+    eventualDeliveryProb = deliveryRate * overdueDecay
+  }
+
+  // Apply additional penalties for risk factors
+  // Exception detected: significant penalty (packages with exceptions are more likely to be lost)
+  if (hasException) {
+    // Exception penalty increases the longer the package is overdue
+    // At P95: 10% penalty
+    // At 2x P95: 25% penalty
+    // At 4x P95: 50% penalty
+    const exceptionPenalty = Math.min(0.5, 0.1 * overdueRatio)
+    eventualDeliveryProb *= (1 - exceptionPenalty)
+  }
+
+  // Failed delivery attempt: moderate penalty
+  if (shipment.event_deliveryattemptfailed) {
+    eventualDeliveryProb *= 0.85 // 15% penalty
+  }
+
+  // Ensure probability stays in valid range
+  eventualDeliveryProb = Math.max(0.05, Math.min(0.999, eventualDeliveryProb))
+
+  // Calculate risk level (risk factors already collected above)
   const riskLevel = getRiskLevel(daysInTransit, riskFactors, curve)
 
   return {
