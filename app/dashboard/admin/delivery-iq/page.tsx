@@ -1,0 +1,32 @@
+import { Suspense } from "react"
+import { createClient } from "@/lib/supabase/server"
+import { redirect } from "next/navigation"
+import { SiteHeader } from "@/components/site-header"
+import { DeliveryIQContent } from "@/components/admin/delivery-iq-content"
+
+export default async function DeliveryIQPage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  // Check if user is admin
+  if (user.user_metadata?.role !== 'admin') {
+    redirect('/dashboard')
+  }
+
+  return (
+    <>
+      <SiteHeader sectionName="Admin" />
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
+        <div className="@container/main flex flex-1 flex-col gap-2 w-full">
+          <Suspense fallback={null}>
+            <DeliveryIQContent />
+          </Suspense>
+        </div>
+      </div>
+    </>
+  )
+}

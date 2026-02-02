@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { getTracking, getTrackingMoreCarrierCode } from '@/lib/trackingmore/client'
+import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 
 /**
  * GET /api/data/tracking/[trackingNumber]/timeline
@@ -529,6 +530,14 @@ export async function GET(
       if (trackingResult.success && trackingResult.tracking) {
         const tracking = trackingResult.tracking
         currentStatus = tracking.status || currentStatus
+
+        // Store ALL checkpoints for Delivery IQ (permanent storage)
+        try {
+          await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
+        } catch (storeError) {
+          // Log but don't fail the request if storage fails
+          console.error('[Tracking Timeline] Failed to store checkpoints:', storeError)
+        }
 
         // Combine origin and destination checkpoints
         const checkpoints = [

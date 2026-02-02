@@ -20,6 +20,7 @@ import {
   type TrackingMoreTracking,
   type TrackingResult,
 } from './client'
+import { storeCheckpoints } from './checkpoint-storage'
 
 // Thresholds for Lost in Transit eligibility (minimum days before filing)
 export const LOST_IN_TRANSIT_DOMESTIC_DAYS = 15
@@ -406,10 +407,12 @@ export function calculateEligibility(
  * Process a shipment: Create tracking in TrackingMore and calculate eligibility
  *
  * This COSTS $0.04 per shipment (creates a new tracking)
+ *
+ * IMPORTANT: Also stores ALL checkpoints permanently for survival analysis (Tier 2 data)
  */
 export async function processAtRiskShipment(
   shipment: AtRiskShipment
-): Promise<{ success: boolean; eligibility?: EligibilityResult; error?: string }> {
+): Promise<{ success: boolean; eligibility?: EligibilityResult; error?: string; checkpointsStored?: number }> {
   // Validate carrier code
   const carrierCode = getTrackingMoreCarrierCode(shipment.carrier)
   if (!carrierCode) {
@@ -431,6 +434,23 @@ export async function processAtRiskShipment(
     }
   }
 
+  // CRITICAL: Store ALL checkpoints permanently for survival analysis
+  // This is Tier 2 data - granular carrier scan data that expires in TrackingMore after ~4 months
+  let checkpointsStored = 0
+  if (trackingResult.tracking) {
+    try {
+      const storageResult = await storeCheckpoints(
+        shipment.shipment_id,
+        trackingResult.tracking,
+        shipment.carrier
+      )
+      checkpointsStored = storageResult.stored
+    } catch (err) {
+      // Log but don't fail the whole operation - checkpoint storage is secondary
+      console.error('[At-Risk] Failed to store checkpoints:', err)
+    }
+  }
+
   const eligibility = calculateEligibility(
     trackingResult.tracking!,
     shipment,
@@ -440,6 +460,7 @@ export async function processAtRiskShipment(
   return {
     success: true,
     eligibility,
+    checkpointsStored,
   }
 }
 
@@ -455,6 +476,40 @@ export async function recheckTracking(
   // getTracking checks for existing tracking first (free),
   // only creates if not found
   return getTracking(trackingNumber, carrier)
+}
+
+/**
+ * Recheck tracking and store any new checkpoints
+ *
+ * This is FREE (uses existing tracking) and also stores checkpoints permanently.
+ * Use this for rechecks to ensure we capture all checkpoint data over time.
+ */
+export async function recheckTrackingWithStorage(
+  shipmentId: string,
+  trackingNumber: string,
+  carrier: string
+): Promise<TrackingResult & { checkpointsStored?: number }> {
+  const result = await recheckTracking(trackingNumber, carrier)
+
+  if (result.success && result.tracking) {
+    try {
+      const storageResult = await storeCheckpoints(
+        shipmentId,
+        result.tracking,
+        carrier
+      )
+      return {
+        ...result,
+        checkpointsStored: storageResult.stored,
+      }
+    } catch (err) {
+      console.error('[At-Risk] Failed to store checkpoints on recheck:', err)
+      // Return original result if checkpoint storage fails
+      return { ...result, checkpointsStored: 0 }
+    }
+  }
+
+  return result
 }
 
 /**

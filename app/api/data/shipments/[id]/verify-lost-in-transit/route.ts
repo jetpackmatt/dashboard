@@ -6,6 +6,7 @@ import {
   daysSinceLastCheckpoint,
   getLastCheckpointDate,
 } from '@/lib/trackingmore/client'
+import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 
 // Eligibility thresholds
 const LOST_IN_TRANSIT_DOMESTIC_DAYS = 15
@@ -207,6 +208,14 @@ export async function POST(
 
     const tracking = trackingResult.tracking
 
+    // Store ALL checkpoints for Delivery IQ (permanent storage)
+    try {
+      await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
+    } catch (storeError) {
+      // Log but don't fail the request if storage fails
+      console.error('[LIT Verify] Failed to store checkpoints:', storeError)
+    }
+
     // Log the raw tracking data for debugging
     console.log('[LIT Verify] TrackingMore response for', shipment.tracking_id, ':', JSON.stringify({
       status: tracking.status,
@@ -244,8 +253,12 @@ export async function POST(
     // never made it into the carrier's system at all.
     if (!lastCheckpointDate) {
       const statusMessage = tracking.latest_event || tracking.status || 'pending'
-      const neverScannedStatuses = ['pending', 'notfound', 'inforeceived']
-      const wasNeverScanned = neverScannedStatuses.includes(tracking.status?.toLowerCase() || '')
+      const neverScannedStatuses = ['pending', 'notfound', 'inforeceived', '']
+      // Treat null/undefined/empty status as "never scanned" - if TrackingMore has no data, the carrier hasn't scanned it
+      const trackingStatus = tracking.status?.toLowerCase() || ''
+      const wasNeverScanned = neverScannedStatuses.includes(trackingStatus) || !tracking.status
+
+      console.log('[LIT Verify] No checkpoint data. Status:', tracking.status, 'wasNeverScanned:', wasNeverScanned)
 
       // Calculate days since label was created
       const labelDate = shipment.event_labeled ? new Date(shipment.event_labeled) : null
