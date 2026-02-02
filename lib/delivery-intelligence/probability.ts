@@ -81,36 +81,114 @@ export async function calculateDeliveryProbability(
 ): Promise<DeliveryProbabilityResult | null> {
   const supabase = createAdminClient()
 
-  // Fetch shipment data
-  const { data: shipment, error } = await supabase
-    .from('shipments')
-    .select(`
-      shipment_id,
-      carrier,
-      carrier_service,
-      zone_used,
-      event_intransit,
-      event_outfordelivery,
-      event_delivered,
-      event_deliveryattemptfailed,
-      event_logs
-    `)
-    .eq('shipment_id', shipmentId)
-    .single()
+  // Fetch shipment data AND latest tracking checkpoint in parallel
+  const [shipmentResult, checkpointResult] = await Promise.all([
+    supabase
+      .from('shipments')
+      .select(`
+        shipment_id,
+        carrier,
+        carrier_service,
+        zone_used,
+        event_intransit,
+        event_outfordelivery,
+        event_delivered,
+        event_deliveryattemptfailed,
+        event_logs
+      `)
+      .eq('shipment_id', shipmentId)
+      .single(),
+    supabase
+      .from('tracking_checkpoints')
+      .select('normalized_type, raw_status, raw_description, sentiment')
+      .eq('shipment_id', shipmentId)
+      .order('checkpoint_date', { ascending: false })
+      .limit(1)
+      .single()
+  ])
 
-  if (error || !shipment) {
-    console.error('[Probability] Error fetching shipment:', error)
+  if (shipmentResult.error || !shipmentResult.data) {
+    console.error('[Probability] Error fetching shipment:', shipmentResult.error)
     return null
   }
 
-  return calculateProbabilityForShipment(shipment as ShipmentData)
+  // Get latest checkpoint status (may not exist)
+  const latestCheckpoint = checkpointResult.data
+
+  return calculateProbabilityForShipment(
+    shipmentResult.data as ShipmentData,
+    latestCheckpoint
+  )
+}
+
+// Types for checkpoint data
+interface LatestCheckpoint {
+  normalized_type: string | null
+  raw_status: string | null
+  raw_description: string | null
+  sentiment: string | null
+}
+
+/**
+ * Check if tracking status indicates a terminal negative state (no delivery possible)
+ */
+function isTerminalNegativeState(checkpoint: LatestCheckpoint | null): {
+  isTerminal: boolean
+  reason: string | null
+  probability: number
+} {
+  if (!checkpoint) {
+    return { isTerminal: false, reason: null, probability: 1 }
+  }
+
+  const normalizedType = checkpoint.normalized_type?.toUpperCase()
+  const rawStatus = checkpoint.raw_status?.toLowerCase() || ''
+  const rawDesc = checkpoint.raw_description?.toLowerCase() || ''
+
+  // RETURN type = package going back to sender = 0% delivery
+  if (normalizedType === 'RETURN') {
+    return { isTerminal: true, reason: 'returned_to_shipper', probability: 0.02 }
+  }
+
+  // Check raw status for return indicators
+  if (rawStatus.includes('return') || rawDesc.includes('return to sender') || rawDesc.includes('returned to shipper')) {
+    return { isTerminal: true, reason: 'returned_to_shipper', probability: 0.02 }
+  }
+
+  // Refused delivery = 0%
+  if (rawDesc.includes('refused') || rawStatus.includes('refused')) {
+    return { isTerminal: true, reason: 'delivery_refused', probability: 0.02 }
+  }
+
+  // Seized/confiscated = 0%
+  if (rawDesc.includes('seized') || rawDesc.includes('confiscated') || rawDesc.includes('customs rejected')) {
+    return { isTerminal: true, reason: 'seized_or_confiscated', probability: 0.01 }
+  }
+
+  // Unable to locate with extended delay = very low probability
+  if ((rawDesc.includes('unable to locate') || rawDesc.includes('cannot locate')) && checkpoint.sentiment === 'critical') {
+    return { isTerminal: false, reason: 'unable_to_locate', probability: 0.15 }
+  }
+
+  // On hold at customs for extended period with critical sentiment
+  if (normalizedType === 'CUSTOMS' && checkpoint.sentiment === 'critical') {
+    return { isTerminal: false, reason: 'customs_delay', probability: 0.40 }
+  }
+
+  // General EXCEPTION with critical sentiment
+  if (normalizedType === 'EXCEPTION' && checkpoint.sentiment === 'critical') {
+    return { isTerminal: false, reason: 'critical_exception', probability: 0.25 }
+  }
+
+  return { isTerminal: false, reason: null, probability: 1 }
 }
 
 /**
  * Calculate probability from shipment data (internal)
  */
 export async function calculateProbabilityForShipment(
-  shipment: ShipmentData
+  shipment: ShipmentData,
+  latestCheckpoint?: LatestCheckpoint | null
 ): Promise<DeliveryProbabilityResult | null> {
   // Must have transit start
   if (!shipment.event_intransit) {
@@ -141,6 +219,9 @@ export async function calculateProbabilityForShipment(
       percentiles: { p50: null, p75: null, p90: null, p95: null },
     }
   }
+
+  // Check for terminal negative states from tracking checkpoints
+  const terminalCheck = isTerminalNegativeState(latestCheckpoint || null)
 
   // Calculate days in transit
   const transitStart = new Date(shipment.event_intransit)
@@ -257,11 +338,23 @@ export async function calculateProbabilityForShipment(
     eventualDeliveryProb *= 0.85 // 15% penalty
   }
 
+  // Apply terminal state override from tracking checkpoints
+  // This takes precedence over statistical calculations
+  if (terminalCheck.isTerminal || terminalCheck.probability < 1) {
+    // Cap probability at the terminal state probability
+    eventualDeliveryProb = Math.min(eventualDeliveryProb, terminalCheck.probability)
+
+    // Add appropriate risk factor
+    if (terminalCheck.reason) {
+      riskFactors.push(terminalCheck.reason)
+    }
+  }
+
   // Ensure probability stays in valid range
-  eventualDeliveryProb = Math.max(0.05, Math.min(0.999, eventualDeliveryProb))
+  eventualDeliveryProb = Math.max(0.01, Math.min(0.999, eventualDeliveryProb))
 
   // Calculate risk level (risk factors already collected above)
-  const riskLevel = getRiskLevel(daysInTransit, riskFactors, curve)
+  const riskLevel = getRiskLevel(daysInTransit, riskFactors, curve, terminalCheck)
 
   return {
     deliveryProbability: Math.round(eventualDeliveryProb * 1000) / 1000,
@@ -307,12 +400,33 @@ function interpolateBasicSurvival(daysInTransit: number): number {
 function getRiskLevel(
   daysInTransit: number,
   riskFactors: string[],
-  curve?: SurvivalCurve
+  curve?: SurvivalCurve,
+  terminalCheck?: { isTerminal: boolean; reason: string | null; probability: number }
 ): 'low' | 'medium' | 'high' | 'critical' {
+  // Terminal states are always critical
+  if (terminalCheck?.isTerminal) {
+    return 'critical'
+  }
+
+  // Very low probability from tracking status = critical
+  if (terminalCheck && terminalCheck.probability < 0.3) {
+    return 'critical'
+  }
+
   const hasException = riskFactors.includes('exception_detected')
   const hasFailedAttempt = riskFactors.includes('delivery_attempt_failed')
   const pastP90 = riskFactors.includes('past_p90_delivery_time')
   const pastP95 = riskFactors.includes('past_p95_delivery_time')
+  const hasTerminalReason = riskFactors.includes('returned_to_shipper') ||
+    riskFactors.includes('delivery_refused') ||
+    riskFactors.includes('seized_or_confiscated') ||
+    riskFactors.includes('unable_to_locate') ||
+    riskFactors.includes('critical_exception')
+
+  // Terminal reasons = critical
+  if (hasTerminalReason) {
+    return 'critical'
+  }
 
   // Critical: Past P95 with exception or failed attempt
   if (pastP95 && (hasException || hasFailedAttempt)) {
