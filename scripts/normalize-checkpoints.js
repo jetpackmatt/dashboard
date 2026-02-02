@@ -22,9 +22,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// Initialize Gemini
+// Initialize Gemini - using gemini-3-flash-preview (Gemini 3 Flash)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-const model = genAI.getGenerativeModel({ model: 'gemini-3.0-flash-preview' })
+const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' })
 
 const BATCH_SIZE = 20
 const MAX_CHECKPOINTS = 5000 // Process up to 5000 in one run

@@ -570,9 +570,16 @@ export async function GET(
         else if (['EXCEPTION', 'RETURN', 'ATTEMPT'].includes(cp.normalized_type || '')) type = 'exception'
         else if (cp.normalized_type === 'LABEL') type = 'info'
 
+        // Use AI display_title if available, otherwise fall back to regex extraction
+        let title = cp.display_title
+        if (!title) {
+          // Fallback: extract title from raw description using regex
+          title = extractCarrierTitle(cp.raw_description || '')
+        }
+
         carrierTimeline.push({
           timestamp: cp.checkpoint_date,
-          title: cp.display_title || cp.raw_description,
+          title,
           description: cp.raw_description,
           location: cp.raw_location,
           source: 'carrier',

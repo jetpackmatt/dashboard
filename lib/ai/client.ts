@@ -10,9 +10,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 // Initialize the client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '')
 
-// Get the model - using gemini-3.0-flash-preview
+// Get the model - using gemini-3-flash-preview (Gemini 3 Flash)
 export const geminiModel = genAI.getGenerativeModel({
-  model: 'gemini-3.0-flash-preview',
+  model: 'gemini-3-flash-preview',
 })
 
 // AI Assessment response type
