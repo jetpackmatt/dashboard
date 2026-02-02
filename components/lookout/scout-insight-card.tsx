@@ -46,77 +46,24 @@ interface ScoutInsightCardProps {
   compact?: boolean
 }
 
-// Risk level colors - very subtle
-const RISK_COLORS = {
-  low: { bg: 'bg-emerald-500', text: 'text-emerald-600', light: 'bg-emerald-50' },
-  medium: { bg: 'bg-amber-500', text: 'text-amber-600', light: 'bg-amber-50' },
-  high: { bg: 'bg-orange-500', text: 'text-orange-600', light: 'bg-orange-50' },
-  critical: { bg: 'bg-red-500', text: 'text-red-600', light: 'bg-red-50' },
+// Terminal status labels for risk factors
+const TERMINAL_STATUS_LABELS: Record<string, { label: string; action: string }> = {
+  returned_to_shipper: { label: 'Returned to Sender', action: 'Reship or refund required' },
+  delivery_refused: { label: 'Delivery Refused', action: 'Contact customer for resolution' },
+  seized_or_confiscated: { label: 'Seized by Customs', action: 'Cannot be delivered' },
+  unable_to_locate: { label: 'Unable to Locate', action: 'Consider filing claim' },
+  critical_exception: { label: 'Critical Exception', action: 'Carrier investigation needed' },
+  customs_delay: { label: 'Customs Delay', action: 'Monitor closely' },
 }
 
-// Clean transit timeline visualization
-function TransitTimeline({
-  currentDay,
-  p50,
-  p90,
-  p95,
-  riskLevel
-}: {
-  currentDay: number
-  p50: number | null
-  p90: number | null
-  p95: number | null
-  riskLevel: string
-}) {
-  const maxDay = Math.max(p95 || 10, currentDay * 1.2, 10)
-  const colors = RISK_COLORS[riskLevel as keyof typeof RISK_COLORS] || RISK_COLORS.medium
-
-  // Calculate positions as percentages
-  const currentPos = Math.min((currentDay / maxDay) * 100, 100)
-  const p50Pos = p50 ? (p50 / maxDay) * 100 : null
-  const p90Pos = p90 ? (p90 / maxDay) * 100 : null
-  const p95Pos = p95 ? (p95 / maxDay) * 100 : null
-
-  return (
-    <div className="space-y-3">
-      {/* Timeline bar */}
-      <div className="relative h-2 bg-gray-100 rounded-full overflow-visible">
-        {/* Progress fill */}
-        <div
-          className={cn("absolute top-0 left-0 h-full rounded-full transition-all", colors.bg)}
-          style={{ width: `${currentPos}%` }}
-        />
-
-        {/* Percentile markers */}
-        {p50Pos && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-300"
-            style={{ left: `${p50Pos}%` }}
-          />
-        )}
-        {p90Pos && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-400"
-            style={{ left: `${p90Pos}%` }}
-          />
-        )}
-        {p95Pos && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-gray-500"
-            style={{ left: `${p95Pos}%` }}
-          />
-        )}
-      </div>
-
-      {/* Labels row */}
-      <div className="flex justify-between text-[11px] text-gray-400">
-        <span>0</span>
-        {p50 && <span className="relative" style={{ left: `${(p50Pos || 0) - 50}%` }}>P50: {p50}d</span>}
-        {p90 && <span className="relative" style={{ left: `${(p90Pos || 0) - 50}%` }}>P90: {p90}d</span>}
-        <span>{Math.round(maxDay)}d</span>
-      </div>
-    </div>
-  )
+// Get the primary terminal status from risk factors
+function getTerminalStatus(riskFactors: string[]): { label: string; action: string } | null {
+  for (const factor of riskFactors) {
+    if (TERMINAL_STATUS_LABELS[factor]) {
+      return TERMINAL_STATUS_LABELS[factor]
+    }
+  }
+  return null
 }
 
 export function ScoutInsightCard({
@@ -138,20 +85,11 @@ export function ScoutInsightCard({
     )
   }
 
-  // Error state
-  if (error) {
+  // Error or no data
+  if (error || !data) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-500">{error}</p>
-      </div>
-    )
-  }
-
-  // No data
-  if (!data) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-400">No analysis available</p>
+        <p className="text-sm text-gray-400">{error || 'No analysis available'}</p>
       </div>
     )
   }
@@ -167,85 +105,158 @@ export function ScoutInsightCard({
     )
   }
 
-  const colors = RISK_COLORS[data.riskLevel] || RISK_COLORS.medium
   const pct = Math.round(data.deliveryProbability * 100)
+  const terminalStatus = getTerminalStatus(data.riskFactors)
+  const isCritical = data.riskLevel === 'critical'
+  const isTerminal = terminalStatus !== null
   const daysOverdue = data.percentiles.p50
-    ? Math.max(0, data.daysInTransit - data.percentiles.p50)
+    ? Math.max(0, Math.round(data.daysInTransit - data.percentiles.p50))
     : 0
 
   // Compact inline view
   if (compact) {
+    if (isTerminal) {
+      return (
+        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md text-sm bg-red-50">
+          <span className="font-medium text-red-700">{terminalStatus.label}</span>
+        </div>
+      )
+    }
     return (
       <div className={cn(
         "inline-flex items-center gap-2 px-2.5 py-1 rounded-md text-sm",
-        colors.light
+        isCritical ? "bg-red-50" : "bg-gray-50"
       )}>
-        <span className={cn("font-semibold tabular-nums", colors.text)}>{pct}%</span>
+        <span className={cn("font-semibold tabular-nums", isCritical ? "text-red-600" : "text-gray-700")}>
+          {pct}%
+        </span>
         <span className="text-gray-400">·</span>
         <span className="text-gray-500">{data.daysInTransit.toFixed(0)}d</span>
       </div>
     )
   }
 
-  // Full card - clean and flat
+  // Full card view
+  // For terminal states, show a completely different layout
+  if (isTerminal) {
+    return (
+      <div className="rounded-lg border-2 border-red-200 bg-red-50 overflow-hidden">
+        {/* Terminal status banner */}
+        <div className="bg-red-500 px-4 py-3">
+          <p className="text-white font-semibold">{terminalStatus.label}</p>
+          <p className="text-red-100 text-sm mt-0.5">{terminalStatus.action}</p>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {/* Stats row */}
+          <div className="flex items-center justify-between text-sm">
+            <div>
+              <span className="text-red-900 font-semibold tabular-nums">{data.daysInTransit.toFixed(0)}</span>
+              <span className="text-red-700 ml-1">days in transit</span>
+            </div>
+            <div className="text-right">
+              <span className="text-red-600 font-semibold tabular-nums">{pct}%</span>
+              <span className="text-red-500 ml-1">delivery probability</span>
+            </div>
+          </div>
+
+          {/* AI insight if available */}
+          {data.ai_summary?.merchantAction && (
+            <p className="text-sm text-red-800 pt-2 border-t border-red-200">
+              {data.ai_summary.merchantAction}
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Non-terminal states - show probability-focused view
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      {/* Header - very minimal */}
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-        <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">
-          Delivery Analysis
+    <div className={cn(
+      "rounded-lg border overflow-hidden",
+      isCritical ? "border-red-200 bg-white" : "border-gray-200 bg-white"
+    )}>
+      {/* Header with status indicator */}
+      <div className={cn(
+        "px-4 py-2 flex items-center justify-between",
+        isCritical ? "bg-red-50" : "bg-gray-50"
+      )}>
+        <span className={cn(
+          "text-xs font-medium uppercase tracking-wide",
+          isCritical ? "text-red-600" : "text-gray-500"
+        )}>
+          {isCritical ? 'At Risk' : 'Delivery Analysis'}
         </span>
-        <span className="text-[10px] text-gray-300">
-          n={data.sampleSize.toLocaleString()}
-        </span>
+        {data.sampleSize > 0 && (
+          <span className="text-[10px] text-gray-400">n={data.sampleSize.toLocaleString()}</span>
+        )}
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Primary metric row */}
-        <div className="flex items-start justify-between">
-          {/* Probability - large and prominent */}
+        {/* Primary metrics */}
+        <div className="flex items-end justify-between">
           <div>
-            <div className="flex items-baseline gap-1">
-              <span className={cn("text-4xl font-light tabular-nums", colors.text)}>
+            <div className="flex items-baseline">
+              <span className={cn(
+                "text-5xl font-extralight tabular-nums tracking-tight",
+                isCritical ? "text-red-600" : pct >= 80 ? "text-emerald-600" : "text-amber-600"
+              )}>
                 {pct}
               </span>
-              <span className={cn("text-lg", colors.text)}>%</span>
+              <span className={cn(
+                "text-xl ml-0.5",
+                isCritical ? "text-red-400" : pct >= 80 ? "text-emerald-400" : "text-amber-400"
+              )}>%</span>
             </div>
-            <p className="text-xs text-gray-400 mt-0.5">delivery probability</p>
+            <p className="text-[11px] text-gray-400 mt-1">delivery probability</p>
           </div>
 
-          {/* Days in transit */}
-          <div className="text-right">
-            <div className="flex items-baseline gap-1 justify-end">
-              <span className="text-2xl font-light tabular-nums text-gray-700">
-                {data.daysInTransit.toFixed(0)}
-              </span>
-              <span className="text-sm text-gray-400">days</span>
-            </div>
+          <div className="text-right pb-1">
+            <p className="text-2xl font-light tabular-nums text-gray-800">
+              {data.daysInTransit.toFixed(0)}
+              <span className="text-sm text-gray-400 ml-1">days</span>
+            </p>
             {daysOverdue > 0 && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                +{daysOverdue.toFixed(0)} over expected
+              <p className={cn(
+                "text-[11px] mt-0.5",
+                isCritical ? "text-red-500" : "text-amber-500"
+              )}>
+                +{daysOverdue} over expected
               </p>
             )}
           </div>
         </div>
 
-        {/* Transit timeline - clean visualization */}
-        <TransitTimeline
-          currentDay={data.daysInTransit}
-          p50={data.percentiles.p50}
-          p90={data.percentiles.p90}
-          p95={data.percentiles.p95}
-          riskLevel={data.riskLevel}
-        />
+        {/* Simple progress indicator */}
+        <div className="space-y-1">
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                isCritical ? "bg-red-500" : pct >= 80 ? "bg-emerald-500" : "bg-amber-500"
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          {data.percentiles.p50 && (
+            <div className="flex justify-between text-[10px] text-gray-400">
+              <span>Expected: {data.percentiles.p50}d</span>
+              {data.percentiles.p90 && <span>P90: {data.percentiles.p90}d</span>}
+            </div>
+          )}
+        </div>
 
-        {/* Risk factors - subtle pills */}
+        {/* Risk factors for non-terminal states */}
         {data.riskFactors.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {data.riskFactors.map((factor) => (
+          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">
+            {data.riskFactors.filter(f => !TERMINAL_STATUS_LABELS[f]).map((factor) => (
               <span
                 key={factor}
-                className="px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-500"
+                className={cn(
+                  "px-2 py-0.5 text-[10px] rounded-full",
+                  isCritical ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-500"
+                )}
               >
                 {factor.replace(/_/g, ' ').replace('detected', '').replace('delivery time', '').trim()}
               </span>
@@ -253,10 +264,16 @@ export function ScoutInsightCard({
           </div>
         )}
 
-        {/* AI insight - only if meaningful */}
+        {/* AI insight */}
         {data.ai_summary?.headline && (
-          <div className={cn("rounded-md p-3", colors.light)}>
-            <p className={cn("text-sm font-medium", colors.text)}>
+          <div className={cn(
+            "rounded-md p-3 mt-2",
+            isCritical ? "bg-red-50" : "bg-gray-50"
+          )}>
+            <p className={cn(
+              "text-sm font-medium",
+              isCritical ? "text-red-700" : "text-gray-700"
+            )}>
               {data.ai_summary.headline}
             </p>
             {data.ai_summary.merchantAction && (
@@ -265,13 +282,6 @@ export function ScoutInsightCard({
               </p>
             )}
           </div>
-        )}
-
-        {/* Fallback action when no AI */}
-        {!data.ai_summary && data.recommended_action && (
-          <p className="text-xs text-gray-500 pt-2 border-t border-gray-100">
-            {data.recommended_action}
-          </p>
         )}
       </div>
     </div>
