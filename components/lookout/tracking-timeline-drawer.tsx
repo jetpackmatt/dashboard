@@ -386,11 +386,26 @@ export function TrackingTimelineDrawer({
                               )}
                             </div>
 
-                            {/* Raw description as subtext - always show for carrier events with normalized data */}
+                            {/* Raw description as subtext - only show if it adds meaningful context beyond the title */}
                             {event.description && event.source === 'carrier' && event.normalizedType && (
-                              <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
-                                {event.description}
-                              </p>
+                              (() => {
+                                // Don't show if description is essentially the same as title
+                                const titleNorm = event.title.toLowerCase().replace(/[^a-z0-9]/g, '')
+                                const descNorm = event.description.toLowerCase().replace(/[^a-z0-9]/g, '')
+                                // Show if description is meaningfully longer (has extra context)
+                                const hasExtraContext = descNorm.length > titleNorm.length + 10
+                                // Or if it contains details the title doesn't
+                                const isSubstantiallyDifferent = !descNorm.startsWith(titleNorm) && !titleNorm.startsWith(descNorm)
+
+                                if (hasExtraContext || isSubstantiallyDifferent) {
+                                  return (
+                                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
+                                      {event.description}
+                                    </p>
+                                  )
+                                }
+                                return null
+                              })()
                             )}
                             {/* For non-normalized events, strip title from description to avoid repetition */}
                             {event.description && !(event.source === 'carrier' && event.normalizedType) && (
