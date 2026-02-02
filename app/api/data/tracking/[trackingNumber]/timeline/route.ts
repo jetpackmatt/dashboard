@@ -21,6 +21,9 @@ interface TimelineEvent {
   source: 'shipbob' | 'carrier' | 'claim'
   type: 'warehouse' | 'transit' | 'delivery' | 'exception' | 'info' | 'claim'
   status?: string
+  // AI-normalized fields (for carrier events from tracking_checkpoints)
+  normalizedType?: string  // LABEL, PICKUP, HUB, LOCAL, OFD, DELIVERED, etc.
+  sentiment?: string  // positive, neutral, concerning, critical
 }
 
 interface TrackingTimelineResponse {
@@ -33,9 +36,12 @@ interface TrackingTimelineResponse {
   timeline: TimelineEvent[]
   lastCarrierScan: {
     date: string | null
-    description: string | null
+    description: string | null  // Raw carrier description
+    displayTitle: string | null  // AI-normalized friendly title
     location: string | null
     daysSince: number | null
+    normalizedType: string | null  // LABEL, PICKUP, HUB, LOCAL, OFD, DELIVERED, etc.
+    sentiment: string | null  // positive, neutral, concerning, critical
   }
   shipmentInfo: {
     shipmentId: string
@@ -513,75 +519,134 @@ export async function GET(
       timeline.push(...latestByTitle.values())
     }
 
-    // 2. Fetch carrier tracking from TrackingMore (FREE for existing trackings)
+    // 2. Fetch carrier tracking - prefer stored normalized checkpoints, fallback to TrackingMore
     let carrierTimeline: TimelineEvent[] = []
     let lastCarrierScan = {
       date: null as string | null,
       description: null as string | null,
+      displayTitle: null as string | null,
       location: null as string | null,
       daysSince: null as number | null,
+      normalizedType: null as string | null,
+      sentiment: null as string | null,
     }
     let currentStatus = shipment.status || 'Unknown'
 
-    const carrierCode = getTrackingMoreCarrierCode(shipment.carrier)
-    if (carrierCode) {
-      const trackingResult = await getTracking(trackingNumber, shipment.carrier)
+    // First, check for stored normalized checkpoints
+    const { data: storedCheckpoints } = await supabase
+      .from('tracking_checkpoints')
+      .select('*')
+      .eq('shipment_id', shipment.shipment_id)
+      .order('checkpoint_date', { ascending: false })
 
-      if (trackingResult.success && trackingResult.tracking) {
-        const tracking = trackingResult.tracking
-        currentStatus = tracking.status || currentStatus
+    if (storedCheckpoints && storedCheckpoints.length > 0) {
+      // Use stored normalized checkpoints (preferred path)
+      console.log('[Tracking Timeline] Using', storedCheckpoints.length, 'stored checkpoints')
 
-        // Store ALL checkpoints for Delivery IQ (permanent storage)
-        try {
-          await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
-        } catch (storeError) {
-          // Log but don't fail the request if storage fails
-          console.error('[Tracking Timeline] Failed to store checkpoints:', storeError)
-        }
+      // Set current status from most recent checkpoint
+      const latest = storedCheckpoints[0]
+      if (latest.raw_status) {
+        currentStatus = latest.raw_status
+      }
 
-        // Combine origin and destination checkpoints
-        const checkpoints = [
-          ...(tracking.origin_info?.trackinfo || []),
-          ...(tracking.destination_info?.trackinfo || []),
-        ]
+      lastCarrierScan = {
+        date: latest.checkpoint_date,
+        description: latest.raw_description,
+        displayTitle: latest.display_title || latest.raw_description,
+        location: latest.raw_location || null,
+        daysSince: Math.floor((Date.now() - new Date(latest.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24)),
+        normalizedType: latest.normalized_type,
+        sentiment: latest.sentiment,
+      }
 
-        // Sort by date descending and get the latest
-        checkpoints.sort((a, b) =>
-          new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime()
-        )
+      // Build timeline from stored checkpoints
+      for (const cp of storedCheckpoints) {
+        // Skip LABEL type - redundant with warehouse "Shipping Label Created" event
+        if (cp.normalized_type === 'LABEL') continue
 
-        if (checkpoints.length > 0) {
-          const latest = checkpoints[0]
-          lastCarrierScan = {
-            date: latest.checkpoint_date,
-            description: latest.tracking_detail,
-            location: latest.location || [latest.city, latest.state].filter(Boolean).join(', ') || null,
-            daysSince: Math.floor((Date.now() - new Date(latest.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24)),
+        // Determine event type from normalized_type
+        let type: TimelineEvent['type'] = 'transit'
+        if (cp.normalized_type === 'DELIVERED') type = 'delivery'
+        else if (['EXCEPTION', 'RETURN', 'ATTEMPT'].includes(cp.normalized_type || '')) type = 'exception'
+        else if (cp.normalized_type === 'LABEL') type = 'info'
+
+        carrierTimeline.push({
+          timestamp: cp.checkpoint_date,
+          title: cp.display_title || cp.raw_description,
+          description: cp.raw_description,
+          location: cp.raw_location,
+          source: 'carrier',
+          type,
+          status: cp.raw_status || undefined,
+          normalizedType: cp.normalized_type || undefined,
+          sentiment: cp.sentiment || undefined,
+        })
+      }
+    } else {
+      // Fallback: Fetch from TrackingMore and store (FREE for existing trackings)
+      const carrierCode = getTrackingMoreCarrierCode(shipment.carrier)
+      if (carrierCode) {
+        const trackingResult = await getTracking(trackingNumber, shipment.carrier)
+
+        if (trackingResult.success && trackingResult.tracking) {
+          const tracking = trackingResult.tracking
+          currentStatus = tracking.status || currentStatus
+
+          // Store ALL checkpoints for Delivery IQ (permanent storage)
+          try {
+            await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
+          } catch (storeError) {
+            // Log but don't fail the request if storage fails
+            console.error('[Tracking Timeline] Failed to store checkpoints:', storeError)
           }
-        }
 
-        // Add all checkpoints to timeline (skip InfoReceived - redundant with warehouse label events)
-        for (const checkpoint of checkpoints) {
-          const statusLower = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
+          // Combine origin and destination checkpoints
+          const checkpoints = [
+            ...(tracking.origin_info?.trackinfo || []),
+            ...(tracking.destination_info?.trackinfo || []),
+          ]
 
-          // Skip "InfoReceived" status - it's just carrier acknowledging label data
-          // which is redundant with our warehouse "Shipping Label Created" event
-          if (statusLower === 'inforeceived') continue
-
-          const { title, type } = mapCarrierStatus(
-            checkpoint.checkpoint_delivery_status,
-            checkpoint.checkpoint_delivery_substatus,
-            checkpoint.tracking_detail || ''
+          // Sort by date descending and get the latest
+          checkpoints.sort((a, b) =>
+            new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime()
           )
-          carrierTimeline.push({
-            timestamp: checkpoint.checkpoint_date,
-            title,
-            description: checkpoint.tracking_detail || '',
-            location: checkpoint.location || [checkpoint.city, checkpoint.state].filter(Boolean).join(', ') || null,
-            source: 'carrier',
-            type,
-            status: checkpoint.checkpoint_delivery_status,
-          })
+
+          if (checkpoints.length > 0) {
+            const latest = checkpoints[0]
+            lastCarrierScan = {
+              date: latest.checkpoint_date,
+              description: latest.tracking_detail,
+              displayTitle: null, // No AI normalization yet
+              location: latest.location || [latest.city, latest.state].filter(Boolean).join(', ') || null,
+              daysSince: Math.floor((Date.now() - new Date(latest.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24)),
+              normalizedType: null,
+              sentiment: null,
+            }
+          }
+
+          // Add all checkpoints to timeline (skip InfoReceived - redundant with warehouse label events)
+          for (const checkpoint of checkpoints) {
+            const statusLower = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
+
+            // Skip "InfoReceived" status - it's just carrier acknowledging label data
+            // which is redundant with our warehouse "Shipping Label Created" event
+            if (statusLower === 'inforeceived') continue
+
+            const { title, type } = mapCarrierStatus(
+              checkpoint.checkpoint_delivery_status,
+              checkpoint.checkpoint_delivery_substatus,
+              checkpoint.tracking_detail || ''
+            )
+            carrierTimeline.push({
+              timestamp: checkpoint.checkpoint_date,
+              title,
+              description: checkpoint.tracking_detail || '',
+              location: checkpoint.location || [checkpoint.city, checkpoint.state].filter(Boolean).join(', ') || null,
+              source: 'carrier',
+              type,
+              status: checkpoint.checkpoint_delivery_status,
+            })
+          }
         }
       }
     }

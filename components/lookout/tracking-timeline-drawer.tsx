@@ -24,6 +24,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { cn } from "@/lib/utils"
 import { getCarrierDisplayName, getTrackingUrl } from "@/components/transactions/cell-renderers"
+import { ScoutInsightCard, useScoutData } from "@/components/lookout/scout-insight-card"
 
 // ============================================
 // TYPES
@@ -37,6 +38,9 @@ interface TimelineEvent {
   source: 'shipbob' | 'carrier'
   type: 'warehouse' | 'transit' | 'delivery' | 'exception' | 'info'
   status?: string
+  // AI-normalized fields (for carrier events)
+  normalizedType?: string  // LABEL, PICKUP, HUB, LOCAL, OFD, DELIVERED, etc.
+  sentiment?: 'positive' | 'neutral' | 'concerning' | 'critical'
 }
 
 interface TrackingTimelineData {
@@ -49,9 +53,12 @@ interface TrackingTimelineData {
   timeline: TimelineEvent[]
   lastCarrierScan: {
     date: string | null
-    description: string | null
+    description: string | null  // Raw carrier description
+    displayTitle: string | null  // AI-normalized friendly title
     location: string | null
     daysSince: number | null
+    normalizedType: string | null  // LABEL, PICKUP, HUB, LOCAL, OFD, DELIVERED, etc.
+    sentiment: 'positive' | 'neutral' | 'concerning' | 'critical' | null
   }
   shipmentInfo: {
     shipmentId: string
@@ -159,6 +166,10 @@ export function TrackingTimelineDrawer({
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Fetch Scout AI probability data when we have a shipment ID
+  const shipmentId = data?.shipmentInfo?.shipmentId || null
+  const { data: scoutData, isLoading: scoutLoading, error: scoutError } = useScoutData(shipmentId, true)
+
   // Fetch timeline data when drawer opens
   React.useEffect(() => {
     if (!open || !trackingNumber) {
@@ -260,44 +271,14 @@ export function TrackingTimelineDrawer({
             </div>
           ) : data ? (
             <div className="p-6 space-y-6">
-              {/* Last Carrier Scan Card */}
-              {data.lastCarrierScan.date && (
-                <div className="rounded-lg border bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/20 dark:to-orange-950/20 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-full bg-amber-100 dark:bg-amber-900/50 p-2">
-                      <ClockIcon className="h-4 w-4 text-amber-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                        Last Carrier Scan
-                      </p>
-                      <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
-                        {data.lastCarrierScan.daysSince !== null && (
-                          <span className="font-semibold">
-                            {data.lastCarrierScan.daysSince} days ago
-                          </span>
-                        )}
-                        {data.lastCarrierScan.date && (
-                          <span className="mx-1">·</span>
-                        )}
-                        {data.lastCarrierScan.date &&
-                          format(new Date(data.lastCarrierScan.date), 'MMM d, yyyy h:mm a')
-                        }
-                      </p>
-                      {data.lastCarrierScan.description && (
-                        <p className="text-sm text-amber-900 dark:text-amber-100 mt-2">
-                          {data.lastCarrierScan.description}
-                        </p>
-                      )}
-                      {data.lastCarrierScan.location && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                          <MapPinIcon className="h-3 w-3" />
-                          {data.lastCarrierScan.location}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
+              {/* Scout AI Insights Card - replaces Last Carrier Scan */}
+              {shipmentId && (
+                <ScoutInsightCard
+                  shipmentId={shipmentId}
+                  data={scoutData}
+                  isLoading={scoutLoading}
+                  error={scoutError}
+                />
               )}
 
               {/* Shipment Info Cards */}
@@ -374,6 +355,21 @@ export function TrackingTimelineDrawer({
                               >
                                 {event.source === 'shipbob' ? 'Warehouse' : 'Carrier'}
                               </Badge>
+                              {/* Sentiment badge for carrier events with AI normalization */}
+                              {event.sentiment && (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "text-[10px] px-1.5 py-0 h-4",
+                                    event.sentiment === 'positive' && "bg-green-50 text-green-700 border-green-200",
+                                    event.sentiment === 'neutral' && "bg-gray-50 text-gray-600 border-gray-200",
+                                    event.sentiment === 'concerning' && "bg-amber-50 text-amber-700 border-amber-200",
+                                    event.sentiment === 'critical' && "bg-red-50 text-red-700 border-red-200"
+                                  )}
+                                >
+                                  {event.sentiment}
+                                </Badge>
+                              )}
                             </div>
 
                             {/* Date & Location - styled as distinct metadata row */}
@@ -390,8 +386,14 @@ export function TrackingTimelineDrawer({
                               )}
                             </div>
 
-                            {/* Description - below metadata for better hierarchy */}
-                            {event.description && (
+                            {/* Raw description as subtext - always show for carrier events with normalized data */}
+                            {event.description && event.source === 'carrier' && event.normalizedType && (
+                              <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
+                                {event.description}
+                              </p>
+                            )}
+                            {/* For non-normalized events, strip title from description to avoid repetition */}
+                            {event.description && !(event.source === 'carrier' && event.normalizedType) && (
                               (() => {
                                 const cleanDesc = stripTitleFromDescription(event.title, event.description)
                                 return cleanDesc && cleanDesc !== event.title ? (
