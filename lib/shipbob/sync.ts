@@ -587,44 +587,81 @@ export async function syncClient(
     }
 
     const apiOrders: ShipBobOrder[] = []
-    let page = 1
-    let totalPages: number | null = null
+    const seenOrderIds = new Set<number>()
 
-    while (true) {
-      // For per-minute syncs (minutesBack), use LastUpdateStartDate to catch MODIFIED orders
-      // For daily/weekly syncs (daysBack), use StartDate to catch NEW orders for reconciliation
+    // Helper to fetch orders with given params
+    const fetchOrders = async (params: URLSearchParams): Promise<ShipBobOrder[]> => {
+      const orders: ShipBobOrder[] = []
+      let page = 1
+      let totalPages: number | null = null
+
+      while (true) {
+        params.set('Page', page.toString())
+        const response = await fetch(`${SHIPBOB_API_BASE}/order?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (totalPages === null) {
+          totalPages = parseInt(response.headers.get('total-pages') || '0') || null
+        }
+
+        const data = await response.json()
+        if (!Array.isArray(data) || data.length === 0) break
+        orders.push(...data)
+
+        if (totalPages && page >= totalPages) break
+        if (!totalPages && data.length < 250) break
+        page++
+      }
+
+      return orders
+    }
+
+    if (opts.minutesBack) {
+      // For per-minute syncs, we need BOTH queries:
+      // 1. StartDate - catches newly CREATED orders (which have null last_update_at)
+      // 2. LastUpdateStartDate - catches MODIFIED orders (status changes, etc.)
+      // This fixes a bug where new orders were missed because ShipBob sets
+      // last_update_at to null on creation, so LastUpdateStartDate doesn't catch them.
+
+      // Query 1: New orders by creation date
+      const createdParams = new URLSearchParams({
+        Limit: '250',
+        StartDate: startDate.toISOString(),
+        EndDate: endDate.toISOString(),
+      })
+      const newOrders = await fetchOrders(createdParams)
+      for (const order of newOrders) {
+        if (!seenOrderIds.has(order.id)) {
+          seenOrderIds.add(order.id)
+          apiOrders.push(order)
+        }
+      }
+
+      // Query 2: Modified orders by last update date
+      const modifiedParams = new URLSearchParams({
+        Limit: '250',
+        LastUpdateStartDate: startDate.toISOString(),
+        LastUpdateEndDate: endDate.toISOString(),
+      })
+      const modifiedOrders = await fetchOrders(modifiedParams)
+      for (const order of modifiedOrders) {
+        if (!seenOrderIds.has(order.id)) {
+          seenOrderIds.add(order.id)
+          apiOrders.push(order)
+        }
+      }
+
+      console.log(`[Sync] ${clientName}: ${newOrders.length} new + ${modifiedOrders.length} modified = ${apiOrders.length} unique orders`)
+    } else {
+      // For daily/weekly syncs, use StartDate only (full reconciliation)
       const params = new URLSearchParams({
         Limit: '250',
-        Page: page.toString(),
+        StartDate: startDate.toISOString(),
+        EndDate: endDate.toISOString(),
       })
-
-      if (opts.minutesBack) {
-        // LastUpdateStartDate catches orders modified since the given time
-        // This includes new orders (created = modified) AND updates to existing orders
-        params.set('LastUpdateStartDate', startDate.toISOString())
-        params.set('LastUpdateEndDate', endDate.toISOString())
-      } else {
-        // StartDate filters by creation date - used for full syncs and reconciliation
-        params.set('StartDate', startDate.toISOString())
-        params.set('EndDate', endDate.toISOString())
-      }
-
-      const response = await fetch(`${SHIPBOB_API_BASE}/order?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-
-      if (totalPages === null) {
-        totalPages = parseInt(response.headers.get('total-pages') || '0') || null
-      }
-
-      const orders = await response.json()
-
-      if (!Array.isArray(orders) || orders.length === 0) break
+      const orders = await fetchOrders(params)
       apiOrders.push(...orders)
-
-      if (totalPages && page >= totalPages) break
-      if (!totalPages && orders.length < 250) break
-      page++
     }
 
     result.ordersFound = apiOrders.length
