@@ -82,15 +82,45 @@ export interface RawShipment {
 
 /**
  * Convert zone number to zone bucket
+ *
+ * Uses individual zones 1-10 for domestic shipments (each has 700+ samples,
+ * sufficient for high confidence curves). International zones (11+) are
+ * bucketed together due to fragmented/sparse data.
+ *
+ * Zone sample sizes (verified Feb 2026):
+ *   Zone 1:  1,752 | Zone 6:  8,326
+ *   Zone 2:  5,437 | Zone 7: 10,464
+ *   Zone 3:  5,895 | Zone 8:  4,391
+ *   Zone 4: 12,116 | Zone 9:    715
+ *   Zone 5: 28,147 | Zone 10: 1,218
  */
 export function getZoneBucket(zone: number | null): string {
-  if (zone === null || zone === undefined) return 'regional' // Default
+  if (zone === null || zone === undefined) return 'zone_5' // Default to most common zone
 
-  if (zone >= 1 && zone <= 2) return 'local'       // 8% - Same metro/state
-  if (zone >= 3 && zone <= 5) return 'regional'    // 50% - Regional delivery
-  if (zone >= 6 && zone <= 8) return 'long_haul'   // 25% - Cross-country
-  if (zone >= 9 && zone <= 10) return 'extreme'    // 2% - AK, HI, remote
-  return 'international'                            // 15% - All int'l codes (11+)
+  // Individual zones for domestic (1-10) - each has distinct transit profile
+  if (zone >= 1 && zone <= 10) return `zone_${zone}`
+
+  // International zones (11+) bucketed together due to sparse data
+  return 'international'
+}
+
+/**
+ * Get adjacent zone buckets for fallback hierarchy
+ * Used when a specific zone has insufficient data
+ */
+export function getAdjacentZoneBuckets(zoneBucket: string): string[] {
+  // Parse zone number from bucket name
+  const match = zoneBucket.match(/^zone_(\d+)$/)
+  if (!match) return [] // International or invalid
+
+  const zone = parseInt(match[1], 10)
+
+  // Return adjacent zones for fallback (closer zones have more similar transit times)
+  const adjacent: string[] = []
+  if (zone > 1) adjacent.push(`zone_${zone - 1}`)
+  if (zone < 10) adjacent.push(`zone_${zone + 1}`)
+
+  return adjacent
 }
 
 // =============================================================================

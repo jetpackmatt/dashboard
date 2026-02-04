@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
-  recheckTracking,
+  recheckTrackingWithStorage,
   hasExistingLossClaim,
   LOST_IN_TRANSIT_DOMESTIC_DAYS,
   LOST_IN_TRANSIT_INTERNATIONAL_DAYS,
@@ -192,7 +192,7 @@ export async function GET(request: NextRequest) {
 
         // If already eligible, check for delivery and missed window using fresh tracking data
         if (check.claim_eligibility_status === 'eligible') {
-          const trackingResult = await recheckTracking(check.tracking_number, check.carrier)
+          const trackingResult = await recheckTrackingWithStorage(check.shipment_id, check.tracking_number, check.carrier)
 
           if (trackingResult.success && trackingResult.tracking) {
             // Check if now delivered
@@ -267,7 +267,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch latest tracking data from TrackingMore (FREE - already created)
-        const trackingResult = await recheckTracking(check.tracking_number, check.carrier)
+        const trackingResult = await recheckTrackingWithStorage(check.shipment_id, check.tracking_number, check.carrier)
 
         if (!trackingResult.success || !trackingResult.tracking) {
           // Tracking fetch failed - check if eligible_after date has passed
@@ -496,7 +496,7 @@ export async function GET(request: NextRequest) {
 
       for (const archived of archivedShipments) {
         try {
-          const trackingResult = await recheckTracking(archived.tracking_number, archived.carrier)
+          const trackingResult = await recheckTrackingWithStorage(archived.shipment_id, archived.tracking_number, archived.carrier)
 
           if (trackingResult.success && trackingResult.tracking && isDelivered(trackingResult.tracking)) {
             // Update shipments table with delivery status

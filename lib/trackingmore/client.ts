@@ -551,6 +551,10 @@ export function isDelivered(tracking: TrackingMoreTracking): boolean {
   if (latestEvent.includes('delivered') && !latestEvent.includes('undelivered')) {
     return true
   }
+  // DHL third-party delivery pattern (handed off to local delivery service)
+  if (latestEvent.includes('delivery has been arranged')) {
+    return true
+  }
 
   // Check checkpoints for delivery status
   const checkpoints = [
@@ -564,6 +568,8 @@ export function isDelivered(tracking: TrackingMoreTracking): boolean {
 
     if (status === 'delivered') return true
     if (detail.includes('delivered') && !detail.includes('undelivered')) return true
+    // DHL third-party delivery pattern
+    if (detail.includes('delivery has been arranged')) return true
   }
 
   return false

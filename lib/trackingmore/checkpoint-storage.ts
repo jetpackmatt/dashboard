@@ -34,7 +34,12 @@ export interface StoredCheckpoint {
 
 /**
  * Calculate SHA256 content hash for checkpoint deduplication
- * Same carrier + date + description + location = same checkpoint
+ * Same carrier + date (day only) + description + location = same checkpoint
+ *
+ * IMPORTANT: We normalize the date to day-only (YYYY-MM-DD) because TrackingMore
+ * often returns the same event in both origin_info and destination_info with
+ * slightly different timestamps (e.g., different time zones or precision).
+ * The actual time-of-day is not meaningful for deduplication.
  */
 export function calculateCheckpointHash(
   carrier: string,
@@ -42,11 +47,20 @@ export function calculateCheckpointHash(
   description: string,
   location: string | null
 ): string {
+  // Normalize date to day-only (YYYY-MM-DD) to catch duplicates with different times
+  const dateOnly = checkpointDate.split('T')[0]
+
+  // Normalize description: trim, lowercase, collapse whitespace
+  const normalizedDesc = description.trim().toLowerCase().replace(/\s+/g, ' ')
+
+  // Normalize location: trim, lowercase
+  const normalizedLocation = (location || '').trim().toLowerCase()
+
   const content = [
     carrier.toLowerCase().trim(),
-    checkpointDate.trim(),
-    description.trim(),
-    (location || '').toLowerCase().trim(),
+    dateOnly,
+    normalizedDesc,
+    normalizedLocation,
   ].join('|')
 
   return createHash('sha256').update(content).digest('hex')

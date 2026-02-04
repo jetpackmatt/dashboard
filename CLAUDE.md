@@ -76,6 +76,8 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 |------|--------------|
 | [CLAUDE.sync.md](CLAUDE.sync.md) | Data sync, cron jobs, ShipBob API |
 | [CLAUDE.billing.md](CLAUDE.billing.md) | Invoicing, markup rules, SFTP processing |
+| [CLAUDE.claims.md](CLAUDE.claims.md) | Claims, care tickets, credit lifecycle |
+| [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) | Delivery IQ (Lookout), at-risk monitoring, transit benchmarks |
 | [CLAUDE.schema.md](CLAUDE.schema.md) | Database tables and columns |
 
 ## Active Projects
@@ -98,6 +100,9 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | 300s | Full refresh for older shipments (14-45 days) |
 | `/api/cron/sync-products` | Daily 4:00 AM UTC | - | Products with variants (for inventory_id → client/SKU mapping) |
 | `/api/cron/sync-sftp-costs` | Daily 5 AM EST | 300s | SFTP shipping breakdown (base_cost, surcharge_details) |
+| `/api/cron/sync-at-risk` | Daily 3:00 AM UTC | - | Proactive Lost in Transit detection (TrackingMore) |
+| `/api/cron/recheck-at-risk` | Every 5 hours | - | FREE recheck of at-risk shipments |
+| `/api/cron/advance-claims` | Every 5 min | - | Auto-advance claims: Under Review → Credit Requested |
 
 **Note:** `maxDuration = 300` (5 minutes) required for crons that process large datasets. Vercel Pro tier supports up to 300s. Without explicit `maxDuration`, functions may timeout prematurely.
 
@@ -172,28 +177,38 @@ const { data: txByClient } = await supabase
 
 ---
 
-## Reshipments
+## Reshipments vs Voided Labels
 
-**What they are:** When an order needs to be shipped again (lost package, damaged, wrong item), ShipBob creates a new shipment with a new tracking number but the **same shipment_id**. This generates multiple Shipping transactions for the same shipment_id on different dates.
+**Reshipments:** When an order needs to be shipped again (lost package, damaged, wrong item), ShipBob creates a new shipment with a new tracking number but the **same shipment_id**. This generates multiple Shipping transactions for the same shipment_id on different dates.
 
-**Example:** Shipment 330867617
+**Example - Reshipment:** Shipment 330867617
 - Dec 22: First shipment, tracking `7517859134`, $3.95
 - Dec 26: Reshipment, tracking `1437163232`, $3.95
+- Both are billable (legitimate charges)
+
+**Voided Labels:** When a shipping label is voided and replaced (carrier change, label error), we get two transactions with different tracking IDs for the same shipment. Only the newest should be billed.
+
+**Example - Voided Label:** Shipment 338238030
+- Jan 20: Voided label, tracking `CR000459826535`, $6.34 (CirroECommerce) → `is_voided = true`
+- Jan 25: Current label, tracking `TBA328109631407`, $6.34 (Amazon) → billable
 
 **Database reality:**
 - `shipments` table: ONE row per shipment_id (latest data wins)
 - `transactions` table: MULTIPLE rows per shipment_id (one per shipping event)
+- `transactions.is_voided`: TRUE for voided labels that shouldn't be billed
 
-**Key implications:**
+**Detection logic (hourly reconcile cron):**
 
-| System | Handling |
-|--------|----------|
-| Transaction sync | Each shipping event creates a separate transaction with unique `transaction_id` |
-| SFTP cost sync | Matches by `shipment_id + charge_date` to update the correct transaction |
-| Invoice generation | Both transactions appear as separate line items (both are billable) |
-| Shipment lookups | Cannot assume 1:1 relationship between shipment_id and Shipping transaction |
+| Pattern | Same Tracking? | Has Credit? | Action |
+|---------|----------------|-------------|--------|
+| **A: Reshipment** | Yes | Yes | DO NOT VOID - both are billable |
+| **B: Duplicate billing** | Yes | No | Mark older as `is_voided = true` |
+| **C: Voided w/ credit** | No | Yes | DO NOT VOID - ShipBob credited it |
+| **D: Voided label** | No | No | Mark older as `is_voided = true` |
 
-**Anti-pattern:** Never use `shipment_id` alone as a unique key for Shipping transactions. Always consider that multiple transactions can exist for the same shipment_id.
+**Key insight:** If ShipBob issues a credit for the voided label (Pattern C), we don't need to mark it voided - the credit cancels it out. We only void when there's NO credit (Pattern B/D).
+
+See [CLAUDE.sync.md](CLAUDE.sync.md) for full implementation details.
 
 **Correct pattern for SFTP matching:**
 ```typescript

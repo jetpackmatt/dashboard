@@ -636,3 +636,19 @@ FROM transactions WHERE invoice_id_sb = 8693044;
 # Reprocess with correct date
 npx tsx scripts/reprocess-sftp-breakdown.ts MMDDYY
 ```
+
+### Credits and Care Tickets Integration
+
+**How credits flow through the system:**
+
+1. **Credit transaction synced** (`syncAllTransactions` Fifth Pass)
+   - Looks for `care_tickets` where `shipment_id` matches credit's `reference_id`
+   - If found with `status = 'Credit Requested'`, advances to "Credit Approved"
+   - Updates `care_tickets.credit_amount`
+
+2. **Invoice approved** (`/api/admin/invoices/[id]/approve`)
+   - Finds credit transactions on the invoice
+   - Advances matching care_tickets from "Credit Approved" → "Resolved"
+   - Adds event: "Your credit of $XX.XX has been applied to invoice #XXXX."
+
+**See [CLAUDE.claims.md](CLAUDE.claims.md) for full care ticket lifecycle.**

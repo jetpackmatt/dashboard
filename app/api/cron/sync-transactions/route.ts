@@ -55,6 +55,7 @@ export async function GET(request: NextRequest) {
       transactionsUpserted: result.transactionsUpserted,
       attributed: result.attributed,
       unattributed: result.unattributed,
+      careTicketsLinked: result.careTicketsLinked,
       errors: result.errors.slice(0, 20), // Limit error output
     })
   } catch (error) {

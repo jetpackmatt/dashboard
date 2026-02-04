@@ -7,7 +7,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getConfidenceLevel } from './feature-extraction'
+import { getConfidenceLevel, getAdjacentZoneBuckets } from './feature-extraction'
 
 // =============================================================================
 // Types
@@ -559,7 +559,8 @@ async function upsertSurvivalCurve(curve: SurvivalCurve): Promise<void> {
  * 2. carrier + carrier_service + zone (ignore season)
  * 3. carrier + service_bucket + zone (broaden service within same tier)
  * 4. all carriers + service_bucket + zone (all carriers in same tier)
- * 5. all + service_bucket + zone (last resort, same service tier)
+ * 5. Adjacent zones + service_bucket (for sparse zones, try zone±1)
+ * 6. all + service_bucket + zone (last resort, same service tier)
  */
 export async function getSurvivalCurveWithFallback(
   carrier: string,
@@ -611,7 +612,7 @@ export async function getSurvivalCurveWithFallback(
 
   if (curve) return curve as SurvivalCurve
 
-  // 4. All carriers in same service tier
+  // 4. All carriers in same service tier + zone
   ({ data: curve } = await supabase
     .from('survival_curves')
     .select('*')
@@ -624,7 +625,24 @@ export async function getSurvivalCurveWithFallback(
 
   if (curve) return curve as SurvivalCurve
 
-  // 5. Last resort: zone only (within same service tier)
+  // 5. Try adjacent zones (for sparse carrier × zone combinations)
+  // Zone 7 shipment with sparse data might use zone 6 or zone 8 curves
+  const adjacentZones = getAdjacentZoneBuckets(zoneBucket)
+  for (const adjZone of adjacentZones) {
+    ({ data: curve } = await supabase
+      .from('survival_curves')
+      .select('*')
+      .eq('carrier', 'all')
+      .eq('service_bucket', serviceBucket)
+      .eq('zone_bucket', adjZone)
+      .gte('sample_size', minSampleSize)
+      .limit(1)
+      .single())
+
+    if (curve) return curve as SurvivalCurve
+  }
+
+  // 6. Last resort: zone only (within same service tier)
   ({ data: curve } = await supabase
     .from('survival_curves')
     .select('*')

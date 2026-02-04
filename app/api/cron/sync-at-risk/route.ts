@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import {
   getNewAtRiskCandidates,
   processAtRiskShipment,
+  hasExistingLossClaim,
 } from '@/lib/trackingmore/at-risk'
 
 /**
@@ -96,6 +97,16 @@ export async function GET(request: NextRequest) {
           continue
         }
 
+        // If eligible, check for existing claim and downgrade to claim_filed if found
+        let finalStatus = eligibility.status
+        if (finalStatus === 'eligible') {
+          const hasClaim = await hasExistingLossClaim(shipment.shipment_id)
+          if (hasClaim) {
+            finalStatus = 'claim_filed'
+            console.log(`[At-Risk Sync] ${shipment.shipment_id} has existing claim - marking as claim_filed`)
+          }
+        }
+
         // Insert into lost_in_transit_checks
         const { error: insertError } = await supabase
           .from('lost_in_transit_checks')
@@ -111,7 +122,7 @@ export async function GET(request: NextRequest) {
             last_scan_location: eligibility.lastScanLocation || null,
             is_international: eligibility.isInternational,
             // New columns for at-risk tracking
-            claim_eligibility_status: eligibility.status,
+            claim_eligibility_status: finalStatus,
             first_checked_at: new Date().toISOString(),
             last_recheck_at: new Date().toISOString(),
             trackingmore_tracking_id: eligibility.trackingMoreId || null,
@@ -125,9 +136,12 @@ export async function GET(request: NextRequest) {
           results.skipped++
         } else {
           results.processed++
-          if (eligibility.status === 'at_risk') {
+          if (finalStatus === 'at_risk') {
             results.atRisk++
             console.log(`[At-Risk Sync] ${shipment.shipment_id} marked AT RISK (${eligibility.daysRemaining} days remaining)`)
+          } else if (finalStatus === 'claim_filed') {
+            // Already has claim - counted as processed but not eligible
+            console.log(`[At-Risk Sync] ${shipment.shipment_id} marked CLAIM_FILED (existing claim)`)
           } else {
             results.eligible++
             console.log(`[At-Risk Sync] ${shipment.shipment_id} marked ELIGIBLE for claim`)

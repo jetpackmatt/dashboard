@@ -559,7 +559,12 @@ export async function GET(
         sentiment: latest.sentiment,
       }
 
-      // Build timeline from stored checkpoints
+      // Build timeline from stored checkpoints with deduplication
+      // TrackingMore often returns the same event in both origin_info and destination_info
+      // with slightly different raw data, producing different content_hashes.
+      // We dedupe here by normalizing: date (day only) + title + location
+      const seenEvents = new Set<string>()
+
       for (const cp of storedCheckpoints) {
         // Skip LABEL type - redundant with warehouse "Shipping Label Created" event
         if (cp.normalized_type === 'LABEL') continue
@@ -576,6 +581,16 @@ export async function GET(
           // Fallback: extract title from raw description using regex
           title = extractCarrierTitle(cp.raw_description || '')
         }
+
+        // Dedupe key: normalize date to day-only + title + location
+        // This catches duplicates from origin_info vs destination_info
+        const dateDay = cp.checkpoint_date.split('T')[0]
+        const dedupeKey = `${dateDay}|${title.toLowerCase()}|${(cp.raw_location || '').toLowerCase()}`
+
+        if (seenEvents.has(dedupeKey)) {
+          continue // Skip duplicate
+        }
+        seenEvents.add(dedupeKey)
 
         carrierTimeline.push({
           timestamp: cp.checkpoint_date,
@@ -631,7 +646,10 @@ export async function GET(
             }
           }
 
-          // Add all checkpoints to timeline (skip InfoReceived - redundant with warehouse label events)
+          // Add all checkpoints to timeline with deduplication
+          // (skip InfoReceived - redundant with warehouse label events)
+          const seenCheckpoints = new Set<string>()
+
           for (const checkpoint of checkpoints) {
             const statusLower = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
 
@@ -644,11 +662,23 @@ export async function GET(
               checkpoint.checkpoint_delivery_substatus,
               checkpoint.tracking_detail || ''
             )
+
+            const location = checkpoint.location || [checkpoint.city, checkpoint.state].filter(Boolean).join(', ') || null
+
+            // Dedupe key: normalize date to day-only + title + location
+            const dateDay = checkpoint.checkpoint_date.split('T')[0]
+            const dedupeKey = `${dateDay}|${title.toLowerCase()}|${(location || '').toLowerCase()}`
+
+            if (seenCheckpoints.has(dedupeKey)) {
+              continue // Skip duplicate
+            }
+            seenCheckpoints.add(dedupeKey)
+
             carrierTimeline.push({
               timestamp: checkpoint.checkpoint_date,
               title,
               description: checkpoint.tracking_detail || '',
-              location: checkpoint.location || [checkpoint.city, checkpoint.state].filter(Boolean).join(', ') || null,
+              location,
               source: 'carrier',
               type,
               status: checkpoint.checkpoint_delivery_status,

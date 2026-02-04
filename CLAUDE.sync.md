@@ -189,13 +189,14 @@ In `clients` table with `is_internal=true`:
 | `channel.name` | `channel_name` |
 
 ### Shipments Table (from Orders API shipments array)
-| API Field | DB Column |
-|-----------|-----------|
-| `shipments[].id` | `shipment_id` |
-| `shipments[].tracking.tracking_number` | `tracking_id` |
-| `shipments[].tracking.carrier` | `carrier` |
-| `shipments[].ship_option` | `carrier_service` |
-| `shipments[].zone.id` | `zone_used` |
+| API Field | DB Column | Notes |
+|-----------|-----------|-------|
+| `shipments[].id` | `shipment_id` | |
+| `shipments[].tracking.tracking_number` | `tracking_id` | |
+| `shipments[].tracking.carrier` | `carrier` | e.g., "USPS", "FedEx" |
+| `shipments[].tracking.carrier_service` | `carrier_service` | e.g., "Ground Advantage", "FedEx Ground" |
+| `shipments[].ship_option` | `ship_option_name` | e.g., "ShipBob Economy", "Ground" |
+| `shipments[].zone.id` | `zone_used` | |
 | `shipments[].location.name` | `fc_name` |
 | `shipments[].measurements.total_weight_oz` | `actual_weight_oz` |
 | `shipments[].measurements.length_in` | `length` |
@@ -340,6 +341,37 @@ return baseRecord
 **Why:** These come from SFTP files, not API. Historical data wasn't backfilled.
 
 **Fix:** Process SFTP files for historical transactions or accept API total only.
+
+### Voided Shipping Transactions (is_voided) ✅ Implemented (Jan 2026)
+
+**Problem:** When ShipBob voids a shipping label and creates a new one, we get two Shipping transactions for the same shipment with different tracking IDs. Only one should be billed.
+
+**Detection patterns:**
+
+| Pattern | Same Tracking? | Has Credit? | Action |
+|---------|----------------|-------------|--------|
+| **A: Reshipment** | Yes | Yes | DO NOT VOID - legitimate reshipment with credit |
+| **B: Duplicate billing** | Yes | No | Mark older as `is_voided = true` |
+| **C: Voided w/ credit** | No | Yes | DO NOT VOID - ShipBob already credited |
+| **D: Voided label** | No | No | Mark older as `is_voided = true` |
+
+**How it works:**
+1. Hourly reconcile cron (`sync-reconcile`) calls `reconcileVoidedShippingTransactions()`
+2. Groups all positive Shipping transactions by `reference_id` (shipment)
+3. For shipments with 2+ transactions, checks if ANY credit exists for that shipment
+4. If NO credit exists, marks all but the newest (by `charge_date`) as `is_voided = true`
+5. Invoice generation excludes `is_voided = true` transactions via `.or('is_voided.is.null,is_voided.eq.false')`
+
+**Key insight:** ShipBob handles voided labels two ways:
+1. Issue a credit for the old label (Pattern C) - we don't need to void, ShipBob already handled it
+2. Simply void without credit (Pattern D) - we must mark `is_voided = true` to exclude from billing
+
+**Files:**
+- `lib/shipbob/sync.ts`: `reconcileVoidedShippingTransactions()` and `reconcileVoidedShippingTransactionsDirect()`
+- `lib/billing/invoice-generator.ts`: Filters out voided transactions
+- `lib/billing/preflight-validation.ts`: Filters out voided transactions
+
+**Preflight warning:** "X shipping transaction(s) have tracking IDs that don't match the shipment's current tracking" indicates potential voided labels still being billed.
 
 ### Invoice Linking DB Fallback ✅ Fixed (Dec 2025)
 

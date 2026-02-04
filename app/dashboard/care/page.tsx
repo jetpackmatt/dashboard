@@ -227,6 +227,7 @@ const STATUS_OPTIONS: FilterOption[] = [
 
 const TYPE_OPTIONS: FilterOption[] = [
   { value: 'Claim', label: 'Claim' },
+  { value: 'Track', label: 'Track' },
   { value: 'Work Order', label: 'Request' },
   { value: 'Technical', label: 'Technical' },
   { value: 'Inquiry', label: 'Inquiry' },
@@ -403,8 +404,8 @@ export default function CarePage() {
 
   // Get the most relevant reference ID for a ticket based on its type
   const getReferenceId = (ticket: Ticket): string | null => {
-    // For Claims, prioritize shipment ID, then order ID
-    if (ticket.ticketType === 'Claim') {
+    // For Claims and Track tickets, prioritize shipment ID, then order ID
+    if (ticket.ticketType === 'Claim' || ticket.ticketType === 'Track') {
       return ticket.shipmentId || ticket.orderId || null
     }
     // For Work Orders, use work order ID or inventory ID
@@ -602,39 +603,7 @@ export default function CarePage() {
       }
 
       const data = await response.json()
-      // Inject demo attachments for testing file display
-      // All Claim types except Loss get one file, one Damage claim gets two files
-      let firstDamageSeen = false
-      const ticketsWithDemoFiles = (data.data || []).map((t: Ticket) => {
-        // Only add files to Claim tickets that are NOT Loss type
-        if (t.ticketType === 'Claim' && t.issueType !== 'Loss') {
-          // First Damage claim gets two files
-          if (t.issueType === 'Damage' && !firstDamageSeen) {
-            firstDamageSeen = true
-            return {
-              ...t,
-              attachments: [
-                { name: 'damage-photo.jpg', url: '#', type: 'jpg' },
-                { name: 'claim-form.pdf', url: '#', type: 'pdf' },
-              ]
-            }
-          }
-          // Other non-Loss claims get one file based on issue type
-          if (t.issueType === 'Damage') {
-            return { ...t, attachments: [{ name: 'damage-photo.jpg', url: '#', type: 'jpg' }] }
-          }
-          if (t.issueType === 'Pick Error') {
-            return { ...t, attachments: [{ name: 'wrong-item-photo.jpg', url: '#', type: 'jpg' }] }
-          }
-          if (t.issueType === 'Short Ship') {
-            return { ...t, attachments: [{ name: 'packing-slip.pdf', url: '#', type: 'pdf' }] }
-          }
-          // Default for any other claim issues
-          return { ...t, attachments: [{ name: 'evidence.jpg', url: '#', type: 'jpg' }] }
-        }
-        return t
-      })
-      setTickets(ticketsWithDemoFiles)
+      setTickets(data.data || [])
       setTotalCount(data.totalCount || 0)
       setUsingStaticData(false)
     } catch (err) {
@@ -1309,8 +1278,9 @@ export default function CarePage() {
                     {isAdmin && !selectedClientId && (
                       <col style={{ width: '36px' }} />
                     )}
-                    {columnVisibility.dateCreated && <col style={{ width: '60px' }} />}
-                    {columnVisibility.lastUpdated && <col style={{ width: '60px' }} />}
+                    {/* When client column is hidden, dateCreated needs extra width for left padding */}
+                    {columnVisibility.dateCreated && <col style={{ width: (isAdmin && !selectedClientId) ? '60px' : '84px' }} />}
+                    {columnVisibility.lastUpdated && <col style={{ width: '50px' }} />}
                     {columnVisibility.reference && <col style={{ width: '110px' }} />}
                     {columnVisibility.type && <col style={{ width: '95px' }} />}
                     {columnVisibility.issue && <col style={{ width: '95px' }} />}
@@ -1492,10 +1462,7 @@ export default function CarePage() {
                                   <div className="pt-3 pb-5">
                                     <div className="flex items-start pl-4 lg:pl-6 pr-4">
                                       {/* Left Column: Credit/Buttons only */}
-                                      <div className={cn(
-                                        "flex-shrink-0 pr-[18px]",
-                                        isAdmin && !selectedClientId ? "w-[142px]" : "w-[82px]"
-                                      )}>
+                                      <div className="flex-shrink-0 pr-[18px] w-[120px]">
                                           {/* Credit Card - contextual based on state */}
                                           {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
                                             <div className={cn(
@@ -1964,6 +1931,7 @@ export default function CarePage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Claim">Claim</SelectItem>
+                    <SelectItem value="Track">Track</SelectItem>
                     <SelectItem value="Work Order">Work Order</SelectItem>
                     <SelectItem value="Technical">Technical</SelectItem>
                     <SelectItem value="Inquiry">Inquiry</SelectItem>
@@ -2169,6 +2137,7 @@ export default function CarePage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Claim">Claim</SelectItem>
+                    <SelectItem value="Track">Track</SelectItem>
                     <SelectItem value="Work Order">Work Order</SelectItem>
                     <SelectItem value="Technical">Technical</SelectItem>
                     <SelectItem value="Inquiry">Inquiry</SelectItem>

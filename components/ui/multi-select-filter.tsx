@@ -49,18 +49,6 @@ export function MultiSelectFilter({
     }
   }
 
-  // Display text for the trigger
-  const displayText = React.useMemo(() => {
-    if (selected.length === 0) {
-      return placeholder
-    }
-    if (selected.length === 1) {
-      const opt = options.find((o) => o.value === selected[0])
-      return opt?.label || selected[0]
-    }
-    return `${selected.length} selected`
-  }, [selected, options, placeholder])
-
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -69,13 +57,18 @@ export function MultiSelectFilter({
           role="combobox"
           aria-expanded={open}
           className={cn(
-            "h-[30px] justify-between text-sm font-normal text-muted-foreground",
+            "h-[30px] justify-between text-sm font-normal text-muted-foreground whitespace-nowrap",
             selected.length > 0 && "text-foreground",
             className
           )}
         >
-          <span className="truncate">{displayText}</span>
-          <ChevronDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <span>{placeholder}</span>
+          {selected.length > 0 && (
+            <span className="ml-1.5 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 text-xs font-medium rounded-full bg-primary/15 text-primary">
+              {selected.length}
+            </span>
+          )}
+          <ChevronDownIcon className="ml-1.5 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent

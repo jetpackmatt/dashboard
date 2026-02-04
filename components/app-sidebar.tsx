@@ -5,7 +5,9 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   BarChartIcon,
+  BinocularsIcon,
   ClipboardListIcon,
+  DollarSignIcon,
   FileIcon,
   FileTextIcon,
   HelpCircleIcon,
@@ -42,6 +44,11 @@ const baseNavItems = [
     title: "Transactions",
     url: "/dashboard/transactions",
     icon: ListIcon,
+  },
+  {
+    title: "Delivery IQ",
+    url: "/dashboard/lookout",
+    icon: BinocularsIcon,
   },
   {
     title: "Analytics",
@@ -82,6 +89,31 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
+  const [hasCommission, setHasCommission] = React.useState(false)
+
+  // Check if user has a commission assignment (for Financials nav visibility)
+  React.useEffect(() => {
+    async function checkCommission() {
+      try {
+        const response = await fetch('/api/data/commissions')
+        if (response.ok) {
+          const data = await response.json()
+          // User has commission if data.data is not null
+          setHasCommission(data.success && data.data !== null)
+        }
+      } catch {
+        // Silently fail - user just won't see the nav item
+      }
+    }
+    checkCommission()
+  }, [])
+
+  // Financials nav item (visible to users with commission OR admins)
+  const financialsNavItem = {
+    title: "Financials",
+    url: "/dashboard/financials",
+    icon: DollarSignIcon,
+  }
 
   // Admin-only nav item
   const adminNavItem = {
@@ -91,18 +123,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   // Build nav items based on user role
-  // - Admins: base items + Admin, but NOT Billing (nothing there for them)
-  // - Care users (care_admin, care_team): base items only (no Admin, no Billing)
-  // - Clients: base items + Billing (client-only items)
-  let allNavItems
+  // - Admins: base items + Financials (always) + Admin
+  // - Care users: base items + Financials (if assigned)
+  // - Clients: base items + Financials (if assigned) + Billing
+  let allNavItems = [...baseNavItems]
+
+  // Add Financials if user has commission assignment OR is admin
+  if (hasCommission || effectiveIsAdmin) {
+    allNavItems.push(financialsNavItem)
+  }
+
   if (effectiveIsAdmin) {
-    allNavItems = [...baseNavItems, adminNavItem]
-  } else if (effectiveIsCareUser) {
-    // Care users see base items only - no Admin panel, no Billing
-    allNavItems = [...baseNavItems]
-  } else {
-    // Regular clients
-    allNavItems = [...baseNavItems, ...clientOnlyNavItems]
+    allNavItems.push(adminNavItem)
+  } else if (!effectiveIsCareUser) {
+    // Regular clients get Billing
+    allNavItems = [...allNavItems, ...clientOnlyNavItems]
   }
 
   // Dynamically set isActive based on current pathname
@@ -146,17 +181,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <Image
                     src="/logos/jetpack-dark.svg"
                     alt="Jetpack"
-                    width={96}
-                    height={24}
-                    className="h-6 w-24 -ml-[3px] dark:hidden"
+                    width={120}
+                    height={30}
+                    className="h-[30px] w-[120px] -ml-[3px] dark:hidden"
                     priority
                   />
                   <Image
                     src="/logos/jetpack-light.svg"
                     alt="Jetpack"
-                    width={97}
-                    height={26}
-                    className="h-[26px] w-[97px] -ml-[3px] hidden dark:block"
+                    width={121}
+                    height={33}
+                    className="h-[33px] w-[121px] -ml-[3px] hidden dark:block"
                     priority
                   />
                 </a>

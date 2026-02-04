@@ -946,3 +946,50 @@ export async function getClientUsers(
     }
   })
 }
+
+/**
+ * Get parent-level users (users not assigned to any brand)
+ * These are typically admins, care users, or sales partners
+ */
+export async function getParentLevelUsers(): Promise<
+  Array<{ id: string; email: string; full_name?: string; role?: string }>
+> {
+  const supabase = createAdminClient()
+
+  // Get all users from auth
+  const { data: authData, error: authError } =
+    await supabase.auth.admin.listUsers()
+
+  if (authError) {
+    console.error('Failed to fetch users:', authError)
+    throw new Error('Failed to fetch users')
+  }
+
+  // Get all user-client assignments
+  const { data: assignments, error: assignError } = await supabase
+    .from('user_clients')
+    .select('user_id')
+
+  if (assignError) {
+    console.error('Failed to fetch user assignments:', assignError)
+    throw new Error('Failed to fetch user assignments')
+  }
+
+  // Get set of user IDs that have client assignments
+  const assignedUserIds = new Set((assignments || []).map((a: { user_id: string }) => a.user_id))
+
+  // Filter to users WITHOUT any client assignments
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parentUsers = (authData.users || [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((user: any) => !assignedUserIds.has(user.id))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((user: any) => ({
+      id: user.id,
+      email: user.email || '',
+      full_name: user.user_metadata?.full_name,
+      role: user.user_metadata?.role,
+    }))
+
+  return parentUsers
+}

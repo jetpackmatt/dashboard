@@ -23,6 +23,9 @@
 | `shipment_cartons` | `id` | Carton/box data |
 | `products` | `id` | Product catalog |
 | `fulfillment_centers` | `id` | FC lookup |
+| `care_tickets` | `id` / `ticket_number` | Claims and credit requests |
+| `lost_in_transit_checks` | `id` | Proactive at-risk shipment tracking (Delivery IQ) |
+| `transit_benchmarks` | `id` | Transit time benchmarks by carrier/zone/route |
 
 ---
 
@@ -92,7 +95,8 @@
 | `tracking_url` | text | |
 | `status` | text | Processing, LabeledCreated, Completed (see note below) |
 | `carrier` | text | USPS, FedEx, UPS, etc. |
-| `carrier_service` | text | ShipBob Economy, Ground, etc. |
+| `carrier_service` | text | Actual carrier service (e.g., "Ground Advantage", "FedEx Ground") |
+| `ship_option_name` | text | ShipBob ship option (e.g., "ShipBob Economy", "Ground") |
 | `ship_option_id` | integer | ShipBob service level ID |
 | `zone_used` | integer | Shipping zone |
 | `fc_name` | text | Fulfillment center name |
@@ -356,6 +360,26 @@ Canadian fulfillment centers (e.g., Brampton Ontario) charge GST/HST. The `taxes
 | `client_id` | uuid | FK |
 | `variants` | jsonb | Contains `inventory.inventory_id` for FC attribution |
 
+### ship_options
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | serial | PK |
+| `ship_option_id` | integer | Unique, ShipBob ship option ID |
+| `name` | text | Ship option name (e.g., "ShipBob Economy", "Ground") |
+| `description` | text | Optional description |
+| `is_active` | boolean | Default true |
+
+**Known ship options:**
+| ship_option_id | name |
+|----------------|------|
+| 3 | Ground |
+| 5 | UPSGround |
+| 8 | 1 Day |
+| 9 | 2 Day |
+| 49 | GlobalEDDPExpedited |
+| 146 | ShipBob Economy |
+| 160 | Walmart FBM |
+
 ---
 
 ## Key Relationships
@@ -392,3 +416,136 @@ transactions
 | `invoices_sb` | `shipbob_invoice_id` |
 | `invoices_jetpack` | `invoice_number` |
 | `client_api_credentials` | `client_id, provider` |
+| `care_tickets` | `ticket_number` |
+
+---
+
+## care_tickets
+
+**Claims and credit requests from brands.**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `client_id` | uuid | FK to clients |
+| `ticket_number` | integer | Auto-incrementing display number |
+| `ticket_type` | text | "Claim" or "Inquiry" |
+| `issue_type` | text | Loss, Damage, Pick Error, Short Ship, Other |
+| `status` | text | Under Review, Credit Requested, Credit Approved, Resolved |
+| `shipment_id` | text | FK to shipments.shipment_id |
+| `order_id` | text | FK to orders.shipbob_order_id |
+| `carrier` | text | From shipment |
+| `tracking_number` | text | From shipment |
+| `ship_date` | date | From shipment |
+| `description` | text | User's issue description |
+| `reshipment_status` | text | "Please reship for me", "I've already reshipped", "Don't reship" |
+| `reshipment_id` | text | If user already reshipped |
+| `compensation_request` | text | "Credit to account", "Free replacement", "Refund to payment method" |
+| `credit_amount` | numeric | Amount credited |
+| `currency` | text | USD |
+| `events` | jsonb | Timeline events array (see below) |
+| `attachments` | jsonb | File attachments array |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+| `resolved_at` | timestamptz | When status became Resolved |
+
+### Status Flow
+
+```
+Under Review → Credit Requested → Credit Approved → Resolved
+     │              │                   │              │
+     │              │                   │              └── Invoice approved
+     │              │                   └── Credit transaction synced
+     │              └── 15 min auto-advance (cron)
+     └── Claim submitted
+```
+
+### Events JSONB Structure
+
+Events stored **newest first**:
+```json
+[
+  { "status": "Resolved", "note": "Your credit of $45.00 has been applied to invoice #JP-2026-0015.", "createdAt": "2026-01-25T...", "createdBy": "System" },
+  { "status": "Credit Approved", "note": "A credit of $45.00 has been approved...", "createdAt": "2026-01-24T...", "createdBy": "System" },
+  { "status": "Credit Requested", "note": "Credit request has been sent...", "createdAt": "2026-01-23T...", "createdBy": "System" },
+  { "status": "Under Review", "note": "Jetpack team is reviewing your claim request.", "createdAt": "2026-01-23T...", "createdBy": "System" }
+]
+```
+
+### Issue Type Constraint
+
+```sql
+CHECK (issue_type = ANY (ARRAY['Loss', 'Damage', 'Pick Error', 'Short Ship', 'Other']))
+```
+
+**Note:** "Courtesy" is NOT an issue type - it's a credit reason. Map to "Other".
+
+---
+
+## lost_in_transit_checks
+
+**Proactive tracking for at-risk shipments (Delivery IQ).**
+
+See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) for full system documentation.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `client_id` | uuid | FK to clients |
+| `shipment_id` | text | FK to shipments.shipment_id |
+| `tracking_number` | text | |
+| `carrier` | text | |
+| `is_international` | boolean | origin_country ≠ destination_country |
+| `days_in_transit` | integer | Days since label created |
+| `days_since_last_update` | integer | Days since last carrier scan |
+| `eligible_after` | date | When claim becomes eligible |
+| `claim_eligibility_status` | text | See status values below |
+| `trackingmore_tracking_id` | text | TrackingMore's tracking ID |
+| `first_checked_at` | timestamptz | When first added to monitoring |
+| `last_recheck_at` | timestamptz | Last TrackingMore fetch |
+| `last_scan_date` | timestamptz | Most recent carrier checkpoint |
+| `last_scan_description` | text | Checkpoint description |
+| `last_scan_location` | text | Checkpoint location |
+| `created_at` | timestamptz | |
+
+### AI Assessment Columns
+| Column | Type | Notes |
+|--------|------|-------|
+| `ai_assessment` | jsonb | Full AI analysis response |
+| `ai_assessed_at` | timestamptz | When last assessed |
+| `ai_next_check_at` | timestamptz | When to reassess |
+| `ai_status_badge` | text | Short status (e.g., "Delayed") |
+| `ai_risk_level` | text | low, medium, high, critical |
+| `ai_reshipment_urgency` | text | Recommended action urgency |
+| `ai_predicted_outcome` | text | AI's prediction |
+
+**Status Values (`claim_eligibility_status`):**
+- `at_risk` - Exceeds threshold but < 15/20 days since last scan (amber badge)
+- `eligible` - ≥ 15/20 days since last scan, can file claim (red badge)
+- `claim_filed` - Existing claim found for shipment (gray badge)
+- `missed_window` - Exceeded maximum claim window (strikethrough)
+
+---
+
+## transit_benchmarks
+
+**Transit time benchmarks for Delivery IQ monitoring entry thresholds.**
+
+See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) for full system documentation.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `benchmark_type` | text | carrier_service, ship_option, international_route |
+| `benchmark_key` | text | Unique key within type |
+| `display_name` | text | Human-readable name |
+| `zone_1_avg` through `zone_10_avg` | decimal | Average transit days per zone |
+| `zone_1_count` through `zone_10_count` | integer | Sample size per zone |
+| `last_calculated_at` | timestamptz | When last updated |
+
+**Unique constraint:** `(benchmark_type, benchmark_key)`
+
+**Benchmark Types:**
+- `carrier_service` - Per-carrier averages by zone (e.g., "USPS")
+- `ship_option` - Per ShipBob service level by zone (e.g., "146")
+- `international_route` - Carrier + route (e.g., "DHLExpress:US:AU"), avg stored in zone_1_avg

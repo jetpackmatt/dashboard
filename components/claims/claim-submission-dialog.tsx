@@ -772,9 +772,33 @@ export function ClaimSubmissionDialog({
                 </div>
               )}
 
-              {!isVerifyingLIT && !isLoading && !litVerification && (
+              {!isVerifyingLIT && !isLoading && !litVerification && !error && (
                 <div className="text-center text-muted-foreground">
                   <p>Verification pending...</p>
+                </div>
+              )}
+
+              {!isVerifyingLIT && !isLoading && !litVerification && error && (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+                    <AlertCircle className="h-8 w-8 text-red-600" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-medium text-red-600">Verification Failed</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {error}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setError(null)
+                      verifyLostInTransit(formData.shipmentId)
+                    }}
+                  >
+                    Try Again
+                  </Button>
                 </div>
               )}
             </div>
@@ -905,6 +929,12 @@ export function ClaimSubmissionDialog({
   const applicableSteps = getApplicableSteps()
   const isLastStep = currentStep === applicableSteps.length - 1
 
+  // Show 4 steps as default until claim type is selected, then show actual count
+  const displayStepCount = formData.claimType ? applicableSteps.length : 4
+  const displaySteps = formData.claimType
+    ? applicableSteps
+    : Array.from({ length: 4 }, (_, i) => ({ id: `placeholder-${i}`, title: '' }))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[540px]">
@@ -913,7 +943,7 @@ export function ClaimSubmissionDialog({
           <DialogDescription>
             {!submitSuccess && applicableSteps[currentStep] && (
               <span>
-                Step {currentStep + 1} of {applicableSteps.length}: {applicableSteps[currentStep].title}
+                Step {currentStep + 1} of {displayStepCount}: {applicableSteps[currentStep].title}
               </span>
             )}
           </DialogDescription>
@@ -922,7 +952,7 @@ export function ClaimSubmissionDialog({
         {/* Progress indicator */}
         {!submitSuccess && (
           <div className="flex gap-1 mb-2">
-            {applicableSteps.map((_, index) => (
+            {displaySteps.map((_, index) => (
               <div
                 key={index}
                 className={cn(

@@ -48,8 +48,25 @@ export async function GET(
   const result = await calculateDeliveryProbability(shipmentId)
 
   if (!result) {
+    // Check if shipment has any tracking data to provide a better error message
+    const { data: checkpoints } = await supabase
+      .from('tracking_checkpoints')
+      .select('raw_description')
+      .eq('shipment_id', shipmentId)
+      .limit(5)
+
+    const checkpointDescs = checkpoints?.map((c: { raw_description: string }) => c.raw_description.toLowerCase()) || []
+    const hasPickupCancelled = checkpointDescs.some((d: string) => d.includes('cancelled') || d.includes('canceled'))
+
+    if (hasPickupCancelled) {
+      return NextResponse.json(
+        { error: 'Shipment pickup was cancelled - never entered transit', code: 'PICKUP_CANCELLED' },
+        { status: 400 }
+      )
+    }
+
     return NextResponse.json(
-      { error: 'Unable to calculate probability - missing transit data' },
+      { error: 'Unable to calculate probability - shipment has not entered transit yet', code: 'NOT_IN_TRANSIT' },
       { status: 400 }
     )
   }
@@ -63,7 +80,8 @@ export async function GET(
   }
 
   // Include AI summary if requested
-  if (includeAI) {
+  // Skip AI summary for positive terminal states - they don't need merchant advice
+  if (includeAI && !result.terminalState?.isPositive) {
     // Get checkpoints for context
     const checkpoints = await getCheckpoints(shipmentId)
     const lastCheckpoint = checkpoints.length > 0 ? checkpoints[checkpoints.length - 1] : null
@@ -80,6 +98,7 @@ export async function GET(
       lastCheckpointDate: lastCheckpoint?.checkpoint_date
         ? new Date(lastCheckpoint.checkpoint_date).toLocaleDateString()
         : undefined,
+      terminalState: result.terminalState,
     }
 
     const aiSummary = await getCachedSummary(context, true)

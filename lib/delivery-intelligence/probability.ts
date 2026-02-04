@@ -55,6 +55,14 @@ export interface DeliveryProbabilityResult {
     p90: number | null
     p95: number | null
   }
+
+  // Terminal state (if package has reached a final state)
+  terminalState?: {
+    isTerminal: boolean
+    isPositive: boolean  // true = good outcome (held for pickup)
+    reason: string | null
+    probability: number
+  }
 }
 
 interface ShipmentData {
@@ -81,8 +89,8 @@ export async function calculateDeliveryProbability(
 ): Promise<DeliveryProbabilityResult | null> {
   const supabase = createAdminClient()
 
-  // Fetch shipment data AND latest tracking checkpoint in parallel
-  const [shipmentResult, checkpointResult] = await Promise.all([
+  // Fetch shipment data, latest checkpoint, and first transit checkpoint in parallel
+  const [shipmentResult, latestCheckpointResult, firstTransitResult] = await Promise.all([
     supabase
       .from('shipments')
       .select(`
@@ -98,11 +106,26 @@ export async function calculateDeliveryProbability(
       `)
       .eq('shipment_id', shipmentId)
       .single(),
+    // Latest checkpoint for status assessment
     supabase
       .from('tracking_checkpoints')
       .select('normalized_type, raw_status, raw_description, sentiment')
       .eq('shipment_id', shipmentId)
       .order('checkpoint_date', { ascending: false })
+      .limit(1)
+      .single(),
+    // First transit checkpoint (skip label creation and pre-transit events) for fallback transit start
+    supabase
+      .from('tracking_checkpoints')
+      .select('checkpoint_date')
+      .eq('shipment_id', shipmentId)
+      .not('raw_description', 'ilike', '%label%created%')
+      .not('raw_description', 'ilike', '%pre-shipment%')
+      .not('raw_description', 'ilike', '%readyforreceive%')
+      .not('raw_description', 'ilike', '%pickupcancelled%')
+      .not('raw_description', 'ilike', '%pickup cancelled%')
+      .not('raw_description', 'ilike', '%pickup%cancel%')
+      .order('checkpoint_date', { ascending: true })
       .limit(1)
       .single()
   ])
@@ -112,12 +135,14 @@ export async function calculateDeliveryProbability(
     return null
   }
 
-  // Get latest checkpoint status (may not exist)
-  const latestCheckpoint = checkpointResult.data
+  // Get checkpoint data (may not exist)
+  const latestCheckpoint = latestCheckpointResult.data
+  const firstTransitCheckpoint = firstTransitResult.data
 
   return calculateProbabilityForShipment(
     shipmentResult.data as ShipmentData,
-    latestCheckpoint
+    latestCheckpoint,
+    firstTransitCheckpoint
   )
 }
 
@@ -130,57 +155,85 @@ interface LatestCheckpoint {
 }
 
 /**
- * Check if tracking status indicates a terminal negative state (no delivery possible)
+ * Check if tracking status indicates a terminal state
+ * Returns both positive (held for pickup) and negative (return, seized) terminal states
  */
-function isTerminalNegativeState(checkpoint: LatestCheckpoint | null): {
+function getTerminalState(checkpoint: LatestCheckpoint | null): {
   isTerminal: boolean
+  isPositive: boolean  // true = good outcome (held for pickup), false = bad outcome (return, seized)
   reason: string | null
   probability: number
 } {
   if (!checkpoint) {
-    return { isTerminal: false, reason: null, probability: 1 }
+    return { isTerminal: false, isPositive: false, reason: null, probability: 1 }
   }
 
   const normalizedType = checkpoint.normalized_type?.toUpperCase()
   const rawStatus = checkpoint.raw_status?.toLowerCase() || ''
   const rawDesc = checkpoint.raw_description?.toLowerCase() || ''
 
+  // =========================================================================
+  // POSITIVE TERMINAL STATES (package is safe, waiting for customer action)
+  // =========================================================================
+
+  // HOLD with pickup status = package is at carrier location, waiting for customer
+  // This is a SUCCESS scenario - package arrived safely
+  if (normalizedType === 'HOLD' && rawStatus === 'pickup') {
+    return { isTerminal: true, isPositive: true, reason: 'held_for_pickup', probability: 1 }
+  }
+
+  // Explicit "available for pickup" patterns (even without normalized type)
+  if (rawDesc.includes('available for pickup') ||
+      rawDesc.includes('ready for pickup') ||
+      rawDesc.includes('awaiting collection') ||
+      (rawDesc.includes('held at') && rawDesc.includes('customer request')) ||
+      (rawDesc.includes('held for pickup') && !rawDesc.includes('exception'))) {
+    return { isTerminal: true, isPositive: true, reason: 'held_for_pickup', probability: 1 }
+  }
+
+  // =========================================================================
+  // NEGATIVE TERMINAL STATES (package won't be delivered as intended)
+  // =========================================================================
+
   // RETURN type = package going back to sender = 0% delivery
+  // This is a terminal state - item will return to warehouse, not a loss claim scenario
   if (normalizedType === 'RETURN') {
-    return { isTerminal: true, reason: 'returned_to_shipper', probability: 0.02 }
+    return { isTerminal: true, isPositive: false, reason: 'returned_to_shipper', probability: 0 }
   }
 
   // Check raw status for return indicators
   if (rawStatus.includes('return') || rawDesc.includes('return to sender') || rawDesc.includes('returned to shipper')) {
-    return { isTerminal: true, reason: 'returned_to_shipper', probability: 0.02 }
+    return { isTerminal: true, isPositive: false, reason: 'returned_to_shipper', probability: 0 }
   }
 
-  // Refused delivery = 0%
+  // Refused delivery = terminal, item will be returned
   if (rawDesc.includes('refused') || rawStatus.includes('refused')) {
-    return { isTerminal: true, reason: 'delivery_refused', probability: 0.02 }
+    return { isTerminal: true, isPositive: false, reason: 'delivery_refused', probability: 0 }
   }
 
-  // Seized/confiscated = 0%
+  // Seized/confiscated = terminal, item is gone
   if (rawDesc.includes('seized') || rawDesc.includes('confiscated') || rawDesc.includes('customs rejected')) {
-    return { isTerminal: true, reason: 'seized_or_confiscated', probability: 0.01 }
+    return { isTerminal: true, isPositive: false, reason: 'seized_or_confiscated', probability: 0 }
   }
+
+  // =========================================================================
+  // NON-TERMINAL RISK FACTORS (still in transit, but with modifiers)
+  // =========================================================================
 
   // Unable to locate with extended delay = very low probability
   if ((rawDesc.includes('unable to locate') || rawDesc.includes('cannot locate')) && checkpoint.sentiment === 'critical') {
-    return { isTerminal: false, reason: 'unable_to_locate', probability: 0.15 }
+    return { isTerminal: false, isPositive: false, reason: 'unable_to_locate', probability: 0.15 }
   }
 
   // On hold at customs for extended period with critical sentiment
   if (normalizedType === 'CUSTOMS' && checkpoint.sentiment === 'critical') {
-    return { isTerminal: false, reason: 'customs_delay', probability: 0.40 }
+    return { isTerminal: false, isPositive: false, reason: 'customs_delay', probability: 0.40 }
   }
 
-  // General EXCEPTION with critical sentiment
-  if (normalizedType === 'EXCEPTION' && checkpoint.sentiment === 'critical') {
-    return { isTerminal: false, reason: 'critical_exception', probability: 0.25 }
-  }
+  // General EXCEPTION - non-descript, don't modify probability
+  // Let the empirical zone-based rate stand on its own
 
-  return { isTerminal: false, reason: null, probability: 1 }
+  return { isTerminal: false, isPositive: false, reason: null, probability: 1 }
 }
 
 /**
@@ -188,16 +241,19 @@ function isTerminalNegativeState(checkpoint: LatestCheckpoint | null): {
  */
 export async function calculateProbabilityForShipment(
   shipment: ShipmentData,
-  latestCheckpoint?: LatestCheckpoint | null
+  latestCheckpoint?: LatestCheckpoint | null,
+  firstTransitCheckpoint?: { checkpoint_date: string } | null
 ): Promise<DeliveryProbabilityResult | null> {
-  // Must have transit start
-  if (!shipment.event_intransit) {
+  // Determine transit start: prefer event_intransit, fall back to first checkpoint
+  const transitStartDate = shipment.event_intransit || firstTransitCheckpoint?.checkpoint_date
+
+  if (!transitStartDate) {
     return null
   }
 
   // If already delivered, probability is 1
   if (shipment.event_delivered) {
-    const transitStart = new Date(shipment.event_intransit)
+    const transitStart = new Date(transitStartDate)
     const delivered = new Date(shipment.event_delivered)
     const daysInTransit = (delivered.getTime() - transitStart.getTime()) / (1000 * 60 * 60 * 24)
 
@@ -220,11 +276,38 @@ export async function calculateProbabilityForShipment(
     }
   }
 
-  // Check for terminal negative states from tracking checkpoints
-  const terminalCheck = isTerminalNegativeState(latestCheckpoint || null)
+  // Check for terminal states from tracking checkpoints (positive or negative)
+  const terminalCheck = getTerminalState(latestCheckpoint || null)
+
+  // POSITIVE TERMINAL STATE: Held for customer pickup = success!
+  // Package is safe at carrier facility, waiting for customer
+  if (terminalCheck.isTerminal && terminalCheck.isPositive) {
+    const transitStart = new Date(transitStartDate)
+    const now = new Date()
+    const daysInTransit = (now.getTime() - transitStart.getTime()) / (1000 * 60 * 60 * 24)
+
+    return {
+      deliveryProbability: 1.0,
+      stillInTransitProbability: 0,
+      daysInTransit: Math.round(daysInTransit * 100) / 100,
+      expectedDeliveryDay: null,
+      riskLevel: 'low',
+      riskFactors: terminalCheck.reason ? [terminalCheck.reason] : [],
+      confidence: 'high',
+      sampleSize: 0,
+      segmentUsed: {
+        carrier: shipment.carrier,
+        service_bucket: getServiceBucket(shipment.carrier_service),
+        zone_bucket: getZoneBucket(shipment.zone_used),
+        season_bucket: 'held_for_pickup',
+      },
+      percentiles: { p50: null, p75: null, p90: null, p95: null },
+      terminalState: terminalCheck,
+    }
+  }
 
   // Calculate days in transit
-  const transitStart = new Date(shipment.event_intransit)
+  const transitStart = new Date(transitStartDate)
   const now = new Date()
   const daysInTransit = (now.getTime() - transitStart.getTime()) / (1000 * 60 * 60 * 24)
 
@@ -377,6 +460,8 @@ export async function calculateProbabilityForShipment(
       p90: curve.p90_days,
       p95: curve.p95_days,
     },
+    // Include terminal state if applicable (for negative terminal states like return, seized)
+    ...(terminalCheck.isTerminal || terminalCheck.probability < 1 ? { terminalState: terminalCheck } : {}),
   }
 }
 
@@ -401,10 +486,15 @@ function getRiskLevel(
   daysInTransit: number,
   riskFactors: string[],
   curve?: SurvivalCurve,
-  terminalCheck?: { isTerminal: boolean; reason: string | null; probability: number }
+  terminalCheck?: { isTerminal: boolean; isPositive: boolean; reason: string | null; probability: number }
 ): 'low' | 'medium' | 'high' | 'critical' {
-  // Terminal states are always critical
-  if (terminalCheck?.isTerminal) {
+  // Positive terminal states (held for pickup) = low risk (success!)
+  if (terminalCheck?.isTerminal && terminalCheck?.isPositive) {
+    return 'low'
+  }
+
+  // Negative terminal states are always critical
+  if (terminalCheck?.isTerminal && !terminalCheck?.isPositive) {
     return 'critical'
   }
 
@@ -533,9 +623,45 @@ export async function calculateBatchProbabilities(
     return results
   }
 
+  // For shipments missing event_intransit, fetch checkpoint fallback data
+  const missingTransitIds = (shipments as ShipmentData[])
+    .filter((s: ShipmentData) => !s.event_intransit)
+    .map((s: ShipmentData) => s.shipment_id)
+
+  const checkpointFallbacks = new Map<string, { checkpoint_date: string }>()
+
+  if (missingTransitIds.length > 0) {
+    // Fetch first transit checkpoint for each shipment missing event_intransit
+    const { data: checkpoints } = await supabase
+      .from('tracking_checkpoints')
+      .select('shipment_id, checkpoint_date')
+      .in('shipment_id', missingTransitIds)
+      .not('raw_description', 'ilike', '%label%created%')
+      .not('raw_description', 'ilike', '%pre-shipment%')
+      .not('raw_description', 'ilike', '%readyforreceive%')
+      .not('raw_description', 'ilike', '%pickupcancelled%')
+      .not('raw_description', 'ilike', '%pickup cancelled%')
+      .not('raw_description', 'ilike', '%pickup%cancel%')
+      .order('checkpoint_date', { ascending: true })
+
+    if (checkpoints) {
+      // Get first checkpoint per shipment
+      for (const cp of checkpoints) {
+        if (!checkpointFallbacks.has(cp.shipment_id)) {
+          checkpointFallbacks.set(cp.shipment_id, { checkpoint_date: cp.checkpoint_date })
+        }
+      }
+    }
+  }
+
   // Calculate for each
-  for (const shipment of shipments) {
-    const result = await calculateProbabilityForShipment(shipment as ShipmentData)
+  for (const shipment of (shipments as ShipmentData[])) {
+    const firstTransit = checkpointFallbacks.get(shipment.shipment_id) || null
+    const result = await calculateProbabilityForShipment(
+      shipment,
+      null, // No latest checkpoint in batch mode (for now)
+      firstTransit
+    )
     if (result) {
       results.set(shipment.shipment_id, result)
     }

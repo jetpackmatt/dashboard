@@ -160,11 +160,22 @@ Benchmarks are calculated daily from the last 90 days of delivered shipments.
 
 ---
 
-## Delivery Intelligence Engine (COMING SOON)
+## Delivery Intelligence Engine (Scout)
 
 ### Overview
 
-The Delivery Intelligence Engine uses **survival analysis**—mathematical modeling of time-to-event data—to predict delivery probability. Instead of simple heuristics, it calculates the actual likelihood a package will be delivered based on patterns from a full year of historical outcomes.
+The Delivery Intelligence Engine ("Scout") uses **survival analysis**—mathematical modeling of time-to-event data—to predict delivery probability. Instead of simple heuristics, it calculates the actual likelihood a package will be delivered based on patterns from a full year of historical outcomes.
+
+### Two-Tier Data Strategy
+
+| Tier | Data Source | Availability | Granularity |
+|------|-------------|--------------|-------------|
+| **Tier 1** | ShipBob `event_*` fields | Always (11 months) | 5-6 state transitions |
+| **Tier 2** | TrackingMore checkpoints (`tracking_checkpoints` table) | **Permanently** stored | 10-30 granular scans |
+
+**When to use each tier:**
+- **Tier 2 (preferred):** Use TrackingMore checkpoints whenever available - this is the granular, per-facility timing data
+- **Tier 1 (fallback only):** For shipments without checkpoint data (older shipments before we started storing, or shipments that were never flagged as at-risk)
 
 ### The Core Insight: Time-in-State Analysis
 
@@ -235,16 +246,63 @@ Captures:
 - **Summer lull:** Weeks 24-32 (lowest hazard)
 - **Back-to-school bump:** Weeks 33-36
 
-### Geographic Segmentation
+### Segmentation Strategy
 
-| Route Type | Typical Transit | Silence Tolerance |
-|------------|-----------------|-------------------|
-| Same-state | 2-3 days | 1 day concerning |
-| Regional | 3-5 days | 2 days acceptable |
-| Cross-country | 5-8 days | 3-4 days normal |
-| Alaska/Hawaii | 7-14 days | 5-7 days normal |
-| Canada | 7-14 days | 5-7 days normal |
-| International | 14-30+ days | 7-10 days normal |
+**Primary segmentation:** `(carrier, carrier_service, zone_bucket, season)`
+
+**CRITICAL: No carrier bucketing.** Each carrier has unique behavior - we model them individually, not grouped into "Other".
+
+**Service-based segmentation using `carrier_service` (NOT `ship_option_name`):**
+| Column | What it is | Example |
+|--------|------------|---------|
+| `ship_option_name` | ShipBob's merchant-facing grouping | "Ground", "ShipBob Economy", "ShipBob2Day" |
+| `carrier_service` | **Actual carrier's service level** | USPS "Ground Advantage", FedEx "2Day®" |
+
+**Service Buckets:**
+```typescript
+function getServiceBucket(carrier_service: string): string {
+  const service = carrier_service?.toLowerCase() || '';
+  if (service.includes('overnight') || service.includes('next day')) return 'express';
+  if (service.includes('2day') || service.includes('2 day')) return '2day';
+  if (service.includes('ground') || service.includes('parcel') || service.includes('standard') ||
+      service.includes('economy') || service.includes('advantage')) return 'ground';
+  if (service.includes('premium')) return 'premium';
+  return 'ground';  // Default to ground
+}
+```
+
+**Zone Buckets:**
+| Zone | Bucket | Description |
+|------|--------|-------------|
+| 1-2 | `local` | Same metro/state |
+| 3-5 | `regional` | Regional delivery |
+| 6-8 | `long_haul` | Cross-country |
+| 9-10 | `extreme` | AK, HI, remote |
+| 11+ | `international` | All international |
+
+**Season Buckets:**
+- `peak`: November - January (holiday + Q4)
+- `normal`: February - October
+
+### Hierarchical Fallback (Service-Preserving)
+
+**CRITICAL:** Never fall back in a way that mixes Express with Ground - they have vastly different expectations.
+
+1. **carrier + service + zone + season** (most specific)
+2. **carrier + service + zone** (ignore season)
+3. **carrier + service_bucket + zone** (broaden service within same tier)
+4. **service_bucket + zone** (all carriers in same service tier)
+5. **zone only** (last resort, same service tier only)
+
+### Geographic Reference
+
+| Zone Bucket | Typical Transit | Silence Tolerance |
+|-------------|-----------------|-------------------|
+| local | 2-3 days | 1 day concerning |
+| regional | 3-5 days | 2 days acceptable |
+| long_haul | 5-8 days | 3-4 days normal |
+| extreme | 7-14 days | 5-7 days normal |
+| international | 14-30+ days | 7-10 days normal |
 
 ### Confidence Thresholds
 
@@ -274,28 +332,61 @@ Captures:
 
 ### New Database Tables (for Intelligence Engine)
 
+**tracking_checkpoints** - Permanent checkpoint storage (Phase 0 - CRITICAL)
+```sql
+CREATE TABLE tracking_checkpoints (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shipment_id TEXT NOT NULL REFERENCES shipments(shipment_id),
+  tracking_number TEXT NOT NULL,
+  carrier TEXT NOT NULL,
+  carrier_code TEXT,  -- TrackingMore carrier code
+
+  -- RAW CHECKPOINT DATA (from TrackingMore)
+  checkpoint_date TIMESTAMP NOT NULL,
+  raw_description TEXT NOT NULL,
+  raw_location TEXT,
+  raw_status TEXT,  -- checkpoint_delivery_status
+  raw_substatus TEXT,  -- checkpoint_delivery_substatus
+
+  -- AI-NORMALIZED FIELDS
+  normalized_type TEXT,  -- 12 types: LABEL, PICKUP, INTRANSIT, HUB, LOCAL, OFD, DELIVERED, ATTEMPT, EXCEPTION, RETURN, CUSTOMS, HOLD
+  display_title TEXT,  -- Clean, human-readable title
+  sentiment TEXT,  -- positive, neutral, concerning, critical
+
+  -- DEDUPLICATION
+  content_hash TEXT UNIQUE,  -- SHA256(carrier + date + description + location)
+
+  -- METADATA
+  source TEXT DEFAULT 'trackingmore',
+  fetched_at TIMESTAMP DEFAULT NOW(),
+  normalized_at TIMESTAMP
+);
+```
+**Key insight:** Store ALL checkpoints permanently. TrackingMore data expires after ~4 months, but we keep our stored data forever.
+
 **delivery_outcomes** - Training data from completed shipments (full year)
-- Outcome (delivered/lost/returned)
-- State durations (time spent at each scan state)
-- Risk factors present
-- Geographic features
-- Seasonality features
+- Outcome (delivered/lost_claim/lost_tracking/lost_exception/lost_timeout)
+- Zone-based features (zone_used, zone_bucket)
+- Carrier and carrier_service for segmentation
+- Seasonality (transit_start_date from `event_intransit`, season_bucket)
+- Time-in-state (total_transit_days, days_to_out_for_delivery, days_last_mile)
+- Risk factors (has_exception, has_delivery_attempt_failed, event_count)
 
 **survival_curves** - Pre-computed Kaplan-Meier curves
-- Keyed by (carrier, scan_state, season_bucket, route_type)
+- Keyed by (carrier, carrier_service, zone_bucket, season_bucket)
 - Curve data points (days → survival probability)
-- Median/p75/p90 survival times
-- Sample size and confidence level
+- Sample size and confidence level (high/medium/low/insufficient)
+- Median survival time
 
 **hazard_factors** - Learned risk coefficients
 - Per-carrier coefficients for each risk factor
 - Hazard ratios (exp(coefficient))
-- Statistical significance (p-value)
+- Sample size
 
 **formatted_tracking_events** - Permanent AI event cache
 - Content-addressed (hash of carrier + date + location + description)
 - AI-formatted display title and body
-- Normalized scan type
+- Normalized scan type (12 types)
 - Sentiment classification
 
 **package_intelligence_cache** - Summary cache
@@ -330,18 +421,24 @@ event_hash = SHA256(carrier + checkpoint_date + location + raw_description)
 4. Return timeline with AI-formatted events
 ```
 
-### Normalized Scan Types
+### Normalized Scan Types (12 Types)
 
-| Type | Example Descriptions |
-|------|---------------------|
-| `LABEL` | "Shipping label created", "Order information received" |
-| `PICKUP` | "Picked up", "Origin scan", "Accepted at facility" |
-| `HUB` | "Arrived at distribution center", "Departed hub" |
-| `LOCAL` | "Arrived at local facility", "At destination sort" |
-| `OFD` | "Out for delivery", "With delivery courier" |
-| `DELIVERED` | "Delivered", "Left with neighbor" |
-| `EXCEPTION` | "Unable to locate", "Address issue" |
-| `RETURN` | "Returning to sender", "Return initiated" |
+AI (Gemini) normalizes raw carrier scan descriptions into standard types:
+
+| Type | Meaning | Example Descriptions |
+|------|---------|---------------------|
+| `LABEL` | Label created | "Shipping label created", "Order information received" |
+| `PICKUP` | Carrier picked up | "Picked up", "Origin scan", "Accepted at facility" |
+| `INTRANSIT` | Moving between facilities | "In transit", "Departed facility", "En route" |
+| `HUB` | Arrived at sorting/distribution facility | "Arrived at distribution center", "Processed through hub" |
+| `LOCAL` | At local delivery facility | "Arrived at local facility", "At destination sort" |
+| `OFD` | Out for delivery | "Out for delivery", "With delivery courier" |
+| `DELIVERED` | Delivered | "Delivered", "Left with neighbor", "Handed to resident" |
+| `ATTEMPT` | Delivery attempt failed | "Delivery attempted", "No access", "Business closed" |
+| `EXCEPTION` | Problem occurred | "Unable to locate", "Address issue", "Damaged" |
+| `RETURN` | Being returned | "Returning to sender", "Return initiated" |
+| `CUSTOMS` | International customs | "Customs clearance", "Import scan" |
+| `HOLD` | Held for pickup/action | "Held at facility", "Available for pickup" |
 
 ---
 
@@ -481,16 +578,20 @@ Shows combined timeline:
 | `lib/trackingmore/at-risk.ts` | At-risk detection logic |
 | `lib/ai/client.ts` | Current AI assessment (Haiku) |
 
-### Future Files (Intelligence Engine)
+### Intelligence Engine Files
 
 | File | Purpose |
 |------|---------|
-| `lib/ai/survival-analysis.ts` | Kaplan-Meier, Cox model |
-| `lib/ai/delivery-probability.ts` | Probability calculation |
-| `lib/ai/feature-extraction.ts` | Extract features from shipments |
-| `lib/ai/format-tracking-events.ts` | AI event formatting |
-| `lib/ai/generate-package-summary.ts` | AI summary generation |
+| `lib/trackingmore/checkpoint-storage.ts` | Store/retrieve checkpoints permanently |
+| `lib/ai/normalize-checkpoint.ts` | Gemini normalization for scan types |
+| `lib/delivery-intelligence/feature-extraction.ts` | Extract features from shipments |
+| `lib/delivery-intelligence/survival-analysis.ts` | Kaplan-Meier, Cox model |
+| `lib/delivery-intelligence/probability.ts` | Real-time probability lookup |
 | `lib/ai/gemini-client.ts` | Gemini API wrapper |
+| `lib/ai/format-tracking-events.ts` | AI event formatting |
+| `lib/ai/delivery-summary.ts` | AI summary generation |
+| `app/api/cron/compute-survival-curves/route.ts` | Daily curve recomputation |
+| `components/lookout/scout-insight-card.tsx` | UI component for Scout |
 
 ---
 
@@ -563,8 +664,9 @@ See [CLAUDE.claims.md](CLAUDE.claims.md) for claim lifecycle details.
 - AI-powered assessment (Haiku-based)
 - Integrated with claims lifecycle
 
-**Coming Soon (Feb 2026):**
-- Delivery Intelligence Engine (survival analysis)
-- AI event formatting with permanent caching
-- Probability scoring with confidence intervals
-- Package summary generation (Gemini)
+**In Progress (Feb 2026):**
+- **Phase 0:** Checkpoint Storage Infrastructure - Store ALL TrackingMore checkpoints permanently in `tracking_checkpoints` table
+- **Phase 1:** Data Foundation - `delivery_outcomes`, `survival_curves`, `hazard_factors` tables
+- **Phase 2:** Survival Analysis Engine - Kaplan-Meier curves with service-preserving fallback
+- **Phase 3:** AI Integration - Gemini event formatting and summary generation
+- **Phase 4:** UI Integration - Scout insight card with probability + AI summary

@@ -44,6 +44,8 @@ import {
   UserPlus,
   Shield,
   ShieldCheck,
+  BarChart3,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -151,6 +153,8 @@ interface Client {
   id: string
   company_name: string
   merchant_id?: string | null
+  eshipper_id?: string | null
+  gofo_id?: string | null
   short_code?: string | null
   has_token?: boolean
   stripe_customer_id?: string | null
@@ -194,7 +198,7 @@ export function AdminContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const validTabs = ['markup', 'invoicing', 'brands', 'disputes', 'sync-health', 'warehouses', 'care-team']
+  const validTabs = ['markup', 'invoicing', 'brands', 'disputes', 'orphans', 'sync-health', 'warehouses', 'care-team']
   const tabFromUrl = searchParams.get('tab')
   const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'markup'
   const [activeTab, setActiveTab] = React.useState(initialTab)
@@ -215,9 +219,18 @@ export function AdminContent() {
           <TabsTrigger value="invoicing">Invoicing</TabsTrigger>
           <TabsTrigger value="brands">Brands</TabsTrigger>
           <TabsTrigger value="disputes">Disputes</TabsTrigger>
+          <TabsTrigger value="orphans">Orphans</TabsTrigger>
           <TabsTrigger value="sync-health">Sync Health</TabsTrigger>
           <TabsTrigger value="warehouses">Warehouses</TabsTrigger>
           <TabsTrigger value="care-team">Care Team</TabsTrigger>
+          <TabsTrigger value="commissions">Commissions</TabsTrigger>
+          <TabsTrigger value="delivery-iq" asChild>
+            <a href="/dashboard/admin/delivery-iq" className="inline-flex items-center gap-1.5">
+              <BarChart3 className="h-4 w-4" />
+              Delivery IQ
+              <ExternalLink className="h-3 w-3 opacity-50" />
+            </a>
+          </TabsTrigger>
         </TabsList>
 
         {/* Markup Tables Tab */}
@@ -240,6 +253,11 @@ export function AdminContent() {
           <DisputesContent />
         </TabsContent>
 
+        {/* Orphans Tab */}
+        <TabsContent value="orphans" className="space-y-6">
+          <OrphansContent clients={clients} />
+        </TabsContent>
+
         {/* Sync Health Tab */}
         <TabsContent value="sync-health" className="space-y-6">
           <SyncHealthContent />
@@ -253,6 +271,11 @@ export function AdminContent() {
         {/* Care Team Tab */}
         <TabsContent value="care-team" className="space-y-6">
           <CareTeamContent />
+        </TabsContent>
+
+        {/* Commissions Tab */}
+        <TabsContent value="commissions" className="space-y-6">
+          <CommissionsContent clients={clients} />
         </TabsContent>
       </Tabs>
     </div>
@@ -5582,5 +5605,1104 @@ function CareTeamContent() {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+// ============================================
+// Orphans Tab Content - Unattributed Transactions
+// ============================================
+
+interface OrphanedTransaction {
+  transaction_id: string
+  reference_id: string | null
+  reference_type: string | null
+  fee_type: string | null
+  cost: number | null
+  charge_date: string | null
+  tracking_id: string | null
+  fulfillment_center: string | null
+  additional_details: Record<string, unknown> | null
+  invoice_id_sb: number | null
+  created_at: string | null
+}
+
+interface OrphansSummary {
+  byFeeType: Record<string, number>
+  byReferenceType: Record<string, number>
+  totalCost: number
+}
+
+function OrphansContent({ clients }: { clients: Client[] }) {
+  const [transactions, setTransactions] = React.useState<OrphanedTransaction[]>([])
+  const [summary, setSummary] = React.useState<OrphansSummary | null>(null)
+  const [total, setTotal] = React.useState(0)
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+  const [feeTypeFilter, setFeeTypeFilter] = React.useState<string>('all')
+  const [refTypeFilter, setRefTypeFilter] = React.useState<string>('all')
+
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+  const [bulkClientId, setBulkClientId] = React.useState<string>('')
+  const [isBulkLinking, setIsBulkLinking] = React.useState(false)
+
+  // Auto-refresh interval
+  const [autoRefresh, setAutoRefresh] = React.useState(true)
+  const [lastRefreshed, setLastRefreshed] = React.useState<Date | null>(null)
+
+  const fetchOrphans = React.useCallback(async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams()
+      if (feeTypeFilter && feeTypeFilter !== 'all') {
+        params.set('feeType', feeTypeFilter)
+      }
+      if (refTypeFilter && refTypeFilter !== 'all') {
+        params.set('referenceType', refTypeFilter)
+      }
+
+      const response = await fetch(`/api/admin/orphans?${params.toString()}`)
+      if (!response.ok) throw new Error('Failed to fetch orphaned transactions')
+      const data = await response.json()
+      setTransactions(data.transactions || [])
+      setSummary(data.summary || null)
+      setTotal(data.total || 0)
+      setLastRefreshed(new Date())
+      // Clear selection when data changes
+      setSelectedIds(new Set())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load orphaned transactions')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [feeTypeFilter, refTypeFilter])
+
+  // Initial fetch and filter change
+  React.useEffect(() => {
+    fetchOrphans()
+  }, [fetchOrphans])
+
+  // Auto-refresh every 30 seconds
+  React.useEffect(() => {
+    if (!autoRefresh) return
+
+    const interval = setInterval(() => {
+      fetchOrphans()
+    }, 30000) // 30 seconds
+
+    return () => clearInterval(interval)
+  }, [autoRefresh, fetchOrphans])
+
+  // Selection helpers
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === transactions.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(transactions.map(t => t.transaction_id)))
+    }
+  }
+
+  // Inline link transaction
+  async function handleInlineLink(transactionId: string, clientId: string) {
+    try {
+      const response = await fetch(`/api/admin/transactions/${transactionId}/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      })
+      if (response.ok) {
+        await fetchOrphans()
+      }
+    } catch (err) {
+      console.error('Failed to link transaction:', err)
+    }
+  }
+
+  // Bulk link transactions
+  async function handleBulkLink() {
+    if (!bulkClientId || selectedIds.size === 0) return
+
+    setIsBulkLinking(true)
+    try {
+      // Link each selected transaction
+      const promises = Array.from(selectedIds).map(transactionId =>
+        fetch(`/api/admin/transactions/${transactionId}/link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId: bulkClientId }),
+        })
+      )
+      await Promise.all(promises)
+      await fetchOrphans()
+      setBulkClientId('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to link transactions')
+    } finally {
+      setIsBulkLinking(false)
+    }
+  }
+
+  const formatCurrency = (amount: number | null) => {
+    if (amount === null || amount === undefined) return '-'
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount)
+  }
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return '-'
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+
+  // Get unique fee types and reference types for filters
+  const feeTypes = summary ? Object.keys(summary.byFeeType).sort() : []
+  const refTypes = summary ? Object.keys(summary.byReferenceType).sort() : []
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Orphaned Transactions
+            </CardTitle>
+            <CardDescription>
+              Transactions missing client attribution that need manual assignment
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {lastRefreshed && (
+                <span>Updated {lastRefreshed.toLocaleTimeString()}</span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                className={cn(autoRefresh && 'text-green-600')}
+              >
+                <Activity className={cn('h-4 w-4', autoRefresh && 'animate-pulse')} />
+              </Button>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchOrphans}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Summary Cards */}
+        {summary && total > 0 && (
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <Card>
+              <CardContent className="pt-4">
+                <div className="text-2xl font-bold text-amber-600">{total}</div>
+                <div className="text-xs text-muted-foreground">Unattributed Transactions</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-4">
+                <div className="text-2xl font-bold">{formatCurrency(summary.totalCost)}</div>
+                <div className="text-xs text-muted-foreground">Total Value</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-4">
+                <div className="text-2xl font-bold">{Object.keys(summary.byFeeType).length}</div>
+                <div className="text-xs text-muted-foreground">Fee Types</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-4">
+                <div className="text-2xl font-bold">{Object.keys(summary.byReferenceType).length}</div>
+                <div className="text-xs text-muted-foreground">Reference Types</div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Filters and Bulk Actions */}
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label className="text-sm">Fee Type:</Label>
+              <Select value={feeTypeFilter} onValueChange={setFeeTypeFilter}>
+                <SelectTrigger className="w-[150px] h-8">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {feeTypes.map(type => (
+                    <SelectItem key={type} value={type}>{type}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm">Reference Type:</Label>
+              <Select value={refTypeFilter} onValueChange={setRefTypeFilter}>
+                <SelectTrigger className="w-[150px] h-8">
+                  <SelectValue placeholder="All Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {refTypes.map(type => (
+                    <SelectItem key={type} value={type}>{type}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Bulk Actions */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-950/30 px-3 py-2 rounded-lg">
+              <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                {selectedIds.size} selected
+              </span>
+              <Select value={bulkClientId} onValueChange={setBulkClientId}>
+                <SelectTrigger className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="Attribute to..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__jetpack_parent__" className="text-xs font-medium text-blue-600">
+                    Jetpack (Parent)
+                  </SelectItem>
+                  <div className="h-px bg-border my-1" />
+                  {clients.map(c => (
+                    <SelectItem key={c.id} value={c.id} className="text-xs">
+                      {c.short_code ? `[${c.short_code}] ` : ''}{c.company_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                onClick={handleBulkLink}
+                disabled={!bulkClientId || isBulkLinking}
+                className="h-8"
+              >
+                {isBulkLinking ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                    Apply
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedIds(new Set())}
+                className="h-8 px-2"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Transactions Table */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : transactions.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <CheckCircle2 className="h-12 w-12 mx-auto mb-4 text-green-500" />
+            <p className="text-lg font-medium">No orphaned transactions!</p>
+            <p className="text-sm">All transactions have been attributed to clients.</p>
+          </div>
+        ) : (
+          <div className="border rounded-lg overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={selectedIds.size === transactions.length && transactions.length > 0}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                  </TableHead>
+                  <TableHead>Fee Type</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Ref Type</TableHead>
+                  <TableHead className="text-right">Cost</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Details</TableHead>
+                  <TableHead>Attribute to</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {transactions.map((tx) => (
+                  <TableRow key={tx.transaction_id} className={selectedIds.has(tx.transaction_id) ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedIds.has(tx.transaction_id)}
+                        onCheckedChange={() => toggleSelected(tx.transaction_id)}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">{tx.fee_type || '-'}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {tx.reference_id || '-'}
+                    </TableCell>
+                    <TableCell className="text-xs">{tx.reference_type || '-'}</TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">
+                      {formatCurrency(tx.cost)}
+                    </TableCell>
+                    <TableCell className="text-xs">{formatDate(tx.charge_date)}</TableCell>
+                    <TableCell className="max-w-[150px]">
+                      {tx.additional_details && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-xs text-muted-foreground truncate block cursor-help">
+                                {tx.additional_details.Comment
+                                  ? String(tx.additional_details.Comment).slice(0, 30)
+                                  : tx.fulfillment_center || '-'}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <pre className="text-xs max-w-md whitespace-pre-wrap">
+                                {JSON.stringify(tx.additional_details, null, 2)}
+                              </pre>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        onValueChange={(clientId) => handleInlineLink(tx.transaction_id, clientId)}
+                      >
+                        <SelectTrigger className="h-7 w-[140px] text-xs">
+                          <SelectValue placeholder="Select client..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__jetpack_parent__" className="text-xs font-medium text-blue-600">
+                            Jetpack (Parent)
+                          </SelectItem>
+                          <div className="h-px bg-border my-1" />
+                          {clients.map(c => (
+                            <SelectItem key={c.id} value={c.id} className="text-xs">
+                              {c.short_code ? `[${c.short_code}] ` : ''}{c.company_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ============================================
+// Commissions Tab Content
+// ============================================
+
+interface CommissionAssignmentRaw {
+  id: string
+  user_id: string
+  start_date: string
+  is_active: boolean
+  commission_type: {
+    id: string
+    name: string
+  } | null
+  clients: Array<{
+    id: string
+    client_id: string
+    client: {
+      id: string
+      company_name: string
+    } | null
+  }>
+}
+
+interface CommissionAssignment {
+  id: string
+  user_id: string
+  commission_type_name: string
+  start_date: string
+  is_active: boolean
+  clients: Array<{
+    client_id: string
+    client_name: string
+  }>
+}
+
+interface CommissionTypeOption {
+  id: string
+  name: string
+  formula_type: string
+  formula_params: { C: number; K: number }
+}
+
+interface EshipperStats {
+  total_shipments: number
+  date_range: {
+    earliest: string
+    latest: string
+  }
+  by_client: Array<{
+    client_name: string
+    shipments: number
+  }>
+  by_month: Array<{
+    month: string
+    year: number
+    monthNum: number
+    total: number
+    byClient: Array<{
+      client_name: string
+      shipments: number
+    }>
+  }>
+}
+
+interface ParentUser {
+  id: string
+  email: string
+  full_name?: string
+  role?: string
+}
+
+function CommissionsContent({ clients }: { clients: Client[] }) {
+  const [assignments, setAssignments] = React.useState<CommissionAssignment[]>([])
+  const [commissionTypes, setCommissionTypes] = React.useState<CommissionTypeOption[]>([])
+  const [parentUsers, setParentUsers] = React.useState<ParentUser[]>([])
+  const [eshipperStats, setEshipperStats] = React.useState<EshipperStats | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [isUploading, setIsUploading] = React.useState(false)
+  const [uploadResult, setUploadResult] = React.useState<{
+    success: boolean
+    message: string
+    details?: Record<string, number>
+  } | null>(null)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Dialog state
+  const [isDialogOpen, setIsDialogOpen] = React.useState(false)
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [dialogError, setDialogError] = React.useState<string | null>(null)
+
+  // Form state
+  const [selectedUserId, setSelectedUserId] = React.useState('')
+  const [selectedCommissionTypeId, setSelectedCommissionTypeId] = React.useState('')
+  const [selectedClientIds, setSelectedClientIds] = React.useState<string[]>([])
+  const [startDate, setStartDate] = React.useState(() => {
+    const today = new Date()
+    return today.toISOString().split('T')[0]
+  })
+
+  // Fetch commission assignments, types, and eShipper stats
+  const fetchData = React.useCallback(async () => {
+    try {
+      setIsLoading(true)
+
+      const [assignmentsRes, typesRes, statsRes, usersRes] = await Promise.all([
+        fetch('/api/admin/user-commissions'),
+        fetch('/api/admin/commission-types'),
+        fetch('/api/admin/eshipper-stats'),
+        fetch('/api/admin/parent-users'),
+      ])
+
+      if (assignmentsRes.ok) {
+        const data = await assignmentsRes.json()
+        // Transform raw data to UI format
+        const rawAssignments: CommissionAssignmentRaw[] = data.data || []
+        const transformed: CommissionAssignment[] = rawAssignments.map(a => ({
+          id: a.id,
+          user_id: a.user_id,
+          commission_type_name: a.commission_type?.name || 'Unknown',
+          start_date: a.start_date,
+          is_active: a.is_active,
+          clients: (a.clients || [])
+            .filter(c => c.client)
+            .map(c => ({
+              client_id: c.client_id,
+              client_name: c.client?.company_name || 'Unknown',
+            })),
+        }))
+        setAssignments(transformed)
+      }
+
+      if (typesRes.ok) {
+        const data = await typesRes.json()
+        setCommissionTypes(data.data || [])
+      }
+
+      if (statsRes.ok) {
+        const data = await statsRes.json()
+        setEshipperStats(data)
+      }
+
+      if (usersRes.ok) {
+        const data = await usersRes.json()
+        setParentUsers(data.data || [])
+      }
+    } catch (err) {
+      console.error('Error fetching commission data:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  // Handle create commission assignment
+  const handleCreateAssignment = async () => {
+    if (!selectedUserId) {
+      setDialogError('Please select a user')
+      return
+    }
+    if (!selectedCommissionTypeId) {
+      setDialogError('Commission type is required')
+      return
+    }
+
+    try {
+      setIsSubmitting(true)
+      setDialogError(null)
+
+      const response = await fetch('/api/admin/user-commissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: selectedUserId.trim(),
+          commission_type_id: selectedCommissionTypeId,
+          start_date: startDate,
+          client_ids: selectedClientIds,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create assignment')
+      }
+
+      // Reset form and close dialog
+      setSelectedUserId('')
+      setSelectedCommissionTypeId('')
+      setSelectedClientIds([])
+      setStartDate(new Date().toISOString().split('T')[0])
+      setIsDialogOpen(false)
+
+      // Refresh data
+      await fetchData()
+    } catch (err) {
+      setDialogError(err instanceof Error ? err.message : 'Failed to create assignment')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Handle delete commission assignment
+  const handleDeleteAssignment = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this commission assignment?')) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/admin/user-commissions?id=${id}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to delete assignment')
+      }
+
+      await fetchData()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete assignment')
+    }
+  }
+
+  // Toggle client selection
+  const toggleClient = (clientId: string) => {
+    setSelectedClientIds(prev =>
+      prev.includes(clientId)
+        ? prev.filter(id => id !== clientId)
+        : [...prev, clientId]
+    )
+  }
+
+  // Handle file upload
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      setIsUploading(true)
+      setUploadResult(null)
+
+      const response = await fetch('/api/admin/eshipper-upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setUploadResult({
+          success: true,
+          message: `Imported ${data.rowsProcessed} shipments from ${file.name}`,
+          details: data.byCompany,
+        })
+        // Refresh stats
+        fetchData()
+      } else {
+        setUploadResult({
+          success: false,
+          message: data.error || 'Upload failed',
+        })
+      }
+    } catch (err) {
+      setUploadResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Upload failed',
+      })
+    } finally {
+      setIsUploading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Commission Assignments Card */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Commission Assignments
+            </CardTitle>
+            <CardDescription>
+              Users with commission structures and their assigned brands
+            </CardDescription>
+          </div>
+          <Button onClick={() => setIsDialogOpen(true)} size="sm">
+            <UserPlus className="h-4 w-4 mr-2" />
+            Add Assignment
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {assignments.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No commission assignments yet. Click &quot;Add Assignment&quot; to create one.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Commission Type</TableHead>
+                  <TableHead>Start Date</TableHead>
+                  <TableHead>Assigned Brands</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assignments.map((assignment) => (
+                  <TableRow key={assignment.id}>
+                    <TableCell>
+                      {(() => {
+                        const user = parentUsers.find(u => u.id === assignment.user_id)
+                        return user ? (
+                          <div className="flex flex-col">
+                            <span className="font-medium">{user.full_name || user.email}</span>
+                            {user.role && (
+                              <span className="text-xs text-muted-foreground">{user.role}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                            {assignment.user_id.slice(0, 8)}...
+                          </code>
+                        )
+                      })()}
+                    </TableCell>
+                    <TableCell>{assignment.commission_type_name}</TableCell>
+                    <TableCell>{assignment.start_date}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {assignment.clients.length === 0 ? (
+                          <span className="text-muted-foreground text-sm">None</span>
+                        ) : (
+                          assignment.clients.map((c) => (
+                            <Badge key={c.client_id} variant="secondary" className="text-xs">
+                              {c.client_name}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={assignment.is_active ? 'default' : 'secondary'}>
+                        {assignment.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteAssignment(assignment.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* eShipper Data Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4" />
+            eShipper Shipment Data
+          </CardTitle>
+          <CardDescription>
+            Upload eShipper export files (CSV or Excel) to import shipment data for commission calculations
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Upload Section */}
+          <div className="flex items-center gap-4">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xls,.xlsx"
+              onChange={handleFileUpload}
+              className="hidden"
+              id="eshipper-upload"
+            />
+            <Button
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Upload eShipper Export
+                </>
+              )}
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Supports .csv, .xls, .xlsx files
+            </span>
+          </div>
+
+          {/* Upload Result */}
+          {uploadResult && (
+            <div
+              className={cn(
+                'p-3 rounded-md text-sm',
+                uploadResult.success
+                  ? 'bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200'
+                  : 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200'
+              )}
+            >
+              <div className="flex items-center gap-2">
+                {uploadResult.success ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <XCircle className="h-4 w-4" />
+                )}
+                {uploadResult.message}
+              </div>
+              {uploadResult.details && (
+                <div className="mt-2 text-xs">
+                  {Object.entries(uploadResult.details).map(([company, count]) => (
+                    <div key={company}>
+                      {company}: {count} shipments
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Monthly Breakdowns */}
+          {eshipperStats && eshipperStats.by_month && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-medium">Monthly Shipments</h4>
+                <Badge variant="outline">
+                  {eshipperStats.total_shipments.toLocaleString()} total
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Data range: {eshipperStats.date_range.earliest} to {eshipperStats.date_range.latest}
+              </p>
+
+              <div className="grid gap-3">
+                {eshipperStats.by_month.map((monthData) => (
+                  <div
+                    key={`${monthData.year}-${monthData.monthNum}`}
+                    className="border rounded-lg p-3"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-medium">
+                        {monthData.month} {monthData.year}
+                      </span>
+                      <Badge variant="secondary">
+                        {monthData.total.toLocaleString()} shipments
+                      </Badge>
+                    </div>
+                    {monthData.byClient.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {monthData.byClient.map((item) => (
+                          <div
+                            key={item.client_name}
+                            className="text-sm bg-muted/50 rounded px-2 py-1"
+                          >
+                            <span className="font-medium">{item.client_name}</span>
+                            <span className="text-muted-foreground ml-1">
+                              ({item.shipments.toLocaleString()})
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No shipments this month</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!eshipperStats && (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No eShipper data imported yet. Upload an export file to get started.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create Assignment Dialog */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Commission Assignment</DialogTitle>
+            <DialogDescription>
+              Assign a user to a commission type and select which brands count toward their commission.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {dialogError && (
+              <div className="p-3 rounded-md bg-red-50 text-red-800 text-sm dark:bg-red-950 dark:text-red-200">
+                {dialogError}
+              </div>
+            )}
+
+            {/* User Selection */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">User</label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {parentUsers.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.full_name || user.email}
+                      {user.role && (
+                        <span className="text-muted-foreground ml-1">
+                          ({user.role})
+                        </span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {parentUsers.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No parent-level users found
+                </p>
+              )}
+            </div>
+
+            {/* Commission Type */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Commission Type</label>
+              <Select value={selectedCommissionTypeId} onValueChange={setSelectedCommissionTypeId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select commission type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {commissionTypes.map((ct) => (
+                    <SelectItem key={ct.id} value={ct.id}>
+                      {ct.name} (${ct.formula_params.C} × n^{ct.formula_params.K})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Start Date */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Start Date</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md text-sm bg-background"
+              />
+            </div>
+
+            {/* Client Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">Assigned Brands</label>
+                {clients.filter(c => c.eshipper_id || c.merchant_id).length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    onClick={() => {
+                      const eligibleClients = clients.filter(c => c.eshipper_id || c.merchant_id)
+                      const allSelected = eligibleClients.every(c => selectedClientIds.includes(c.id))
+                      if (allSelected) {
+                        setSelectedClientIds([])
+                      } else {
+                        setSelectedClientIds(eligibleClients.map(c => c.id))
+                      }
+                    }}
+                  >
+                    {clients.filter(c => c.eshipper_id || c.merchant_id).every(c => selectedClientIds.includes(c.id))
+                      ? 'Deselect All'
+                      : 'Select All'}
+                  </Button>
+                )}
+              </div>
+              <div className="border rounded-md max-h-48 overflow-y-auto">
+                {clients.filter(c => c.eshipper_id || c.merchant_id).length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">
+                    No brands with partner IDs configured
+                  </p>
+                ) : (
+                  clients
+                    .filter(c => c.eshipper_id || c.merchant_id)
+                    .map((client) => (
+                      <div
+                        key={client.id}
+                        className="flex items-center gap-2 p-2 hover:bg-muted/50 cursor-pointer"
+                        onClick={() => toggleClient(client.id)}
+                      >
+                        <Checkbox
+                          checked={selectedClientIds.includes(client.id)}
+                          onCheckedChange={() => toggleClient(client.id)}
+                        />
+                        <span className="text-sm">{client.company_name}</span>
+                        <div className="ml-auto flex gap-1">
+                          {client.merchant_id && (
+                            <Badge variant="outline" className="text-xs">ShipBob</Badge>
+                          )}
+                          {client.eshipper_id && (
+                            <Badge variant="outline" className="text-xs">eShipper</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {selectedClientIds.length} brand(s) selected
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateAssignment} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Assignment'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }

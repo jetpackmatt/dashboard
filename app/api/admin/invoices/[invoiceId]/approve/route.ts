@@ -111,7 +111,75 @@ export async function POST(
       console.log(`  Marked ${shipbobInvoiceIds.length} ShipBob invoices as processed`)
     }
 
-    // Step 3: Update invoice to approved
+    // Step 3: Update care_tickets with credits to "Resolved" status
+    // Find Credit transactions in this invoice and update their associated care_tickets
+    const creditLineItems = lineItems.filter(item => item.feeType === 'Credit')
+    let careTicketsUpdated = 0
+
+    if (creditLineItems.length > 0) {
+      // Get the transaction IDs (billingRecordId) from credit line items
+      const creditTransactionIds = creditLineItems.map(item => item.billingRecordId)
+
+      // Query transactions to get their reference_ids (which are shipment_ids for credits)
+      const { data: creditTransactions } = await adminClient
+        .from('transactions')
+        .select('id, reference_id')
+        .in('id', creditTransactionIds)
+
+      const creditShipmentIds = (creditTransactions || [])
+        .map((tx: { id: string; reference_id: string | null }) => tx.reference_id)
+        .filter((id: string | null): id is string => !!id)
+
+      if (creditShipmentIds.length > 0) {
+        // Find care_tickets that are "Credit Approved" and match these shipment IDs
+        const { data: ticketsToUpdate } = await adminClient
+          .from('care_tickets')
+          .select('id, ticket_number, shipment_id, events, credit_amount')
+          .eq('status', 'Credit Approved')
+          .eq('ticket_type', 'Claim')
+          .in('shipment_id', creditShipmentIds)
+
+        if (ticketsToUpdate && ticketsToUpdate.length > 0) {
+          console.log(`  Updating ${ticketsToUpdate.length} care_tickets to Resolved...`)
+
+          for (const ticket of ticketsToUpdate) {
+            const events = (ticket.events as Array<{ status: string; note: string; createdAt: string; createdBy: string; jetpackInvoiceNumber?: string }>) || []
+
+            // Add Resolved event with invoice link
+            const creditAmount = Math.abs(parseFloat(String(ticket.credit_amount)) || 0)
+            const resolvedEvent = {
+              note: `Your credit of $${creditAmount.toFixed(2)} has been applied to invoice ${invoice.invoice_number}.`,
+              status: 'Resolved',
+              createdAt: new Date().toISOString(),
+              createdBy: user.email || 'Admin',
+              jetpackInvoiceNumber: invoice.invoice_number,
+            }
+
+            const updatedEvents = [...events, resolvedEvent]
+
+            const { error: ticketUpdateError } = await adminClient
+              .from('care_tickets')
+              .update({
+                status: 'Resolved',
+                events: updatedEvents,
+                resolved_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', ticket.id)
+
+            if (ticketUpdateError) {
+              console.warn(`  Failed to update care_ticket #${ticket.ticket_number}:`, ticketUpdateError.message)
+            } else {
+              careTicketsUpdated++
+            }
+          }
+
+          console.log(`  Updated ${careTicketsUpdated} care_tickets to Resolved`)
+        }
+      }
+    }
+
+    // Step 4: Update invoice to approved
     const { data: updatedInvoice, error: updateError } = await adminClient
       .from('invoices_jetpack')
       .update({
@@ -132,7 +200,7 @@ export async function POST(
 
     console.log(`Invoice ${invoice.invoice_number} approved successfully`)
 
-    // Step 4: Auto-charge if client has CC configured and invoice has CC fee
+    // Step 5: Auto-charge if client has CC configured and invoice has CC fee
     let chargeResult: { success: boolean; paymentIntentId?: string; error?: string } | null = null
 
     const hasCcFee = lineItems.some(item => item.feeType === 'Credit Card Processing Fee (3%)')
@@ -199,6 +267,7 @@ export async function POST(
       invoice: updatedInvoice,
       transactionsMarked: markResult.updated,
       shipbobInvoicesMarked: shipbobInvoiceIds.length,
+      careTicketsResolved: careTicketsUpdated,
       autoCharge: chargeResult,
     })
   } catch (error) {

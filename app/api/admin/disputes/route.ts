@@ -256,6 +256,7 @@ export async function GET(request: NextRequest) {
 
       if (jetpackClient) {
         // Get actual credits/refunds - exclude Payment transactions (those are ACH payments to ShipBob)
+        // Include both Jetpack-attributed credits AND unattributed credits (client_id = null)
         const { data: credits } = await adminClient
           .from('transactions')
           .select(`
@@ -271,7 +272,7 @@ export async function GET(request: NextRequest) {
             dispute_status,
             matched_credit_id
           `)
-          .eq('client_id', jetpackClient.id)
+          .or(`client_id.eq.${jetpackClient.id},client_id.is.null`)
           .lt('cost', 0) // Credits are negative
           .neq('fee_type', 'Payment') // Exclude ACH payments to ShipBob
           .is('matched_credit_id', null) // Not yet matched

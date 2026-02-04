@@ -298,7 +298,7 @@ export async function POST(request: NextRequest) {
     if (ticketStatus === 'Under Review' && ticketType === 'Claim') {
       initialEvents.push({
         status: 'Under Review',
-        note: 'Claim details sent to warehouse team for review',
+        note: 'Jetpack team is reviewing your claim request.',
         createdAt: new Date().toISOString(),
         createdBy: 'System',
       })

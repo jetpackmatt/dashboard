@@ -218,15 +218,7 @@ const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Exception', label: 'Exception' },
 ]
 
-// Claims-related status options (separate filter)
-const SHIPMENTS_CLAIMS_OPTIONS: FilterOption[] = [
-  { value: 'At Risk', label: 'At Risk' },
-  { value: 'File a Claim', label: 'File a Claim' },
-  { value: 'Credit Requested', label: 'Credit Requested' },
-  { value: 'Credit Approved', label: 'Credit Approved' },
-  { value: 'Credit Denied', label: 'Credit Denied' },
-  { value: 'Claim Resolved', label: 'Claim Resolved' },
-]
+// Claims filter removed - now handled by Delivery IQ page
 
 // Fee types are now loaded dynamically from the API
 // Status options are inline: pending, invoiced
@@ -436,7 +428,7 @@ export function DataTable({
 
   // Shipments tab filter state - now using arrays for multi-select
   const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>([])
-  const [shipmentsClaimsFilter, setShipmentsClaimsFilter] = React.useState<string[]>([])
+  // Claims filter removed - now handled by Delivery IQ page
   const [shipmentsAgeFilter, setShipmentsAgeFilter] = React.useState<string[]>([])
   const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>([])
   const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>([])
@@ -457,10 +449,8 @@ export function DataTable({
     return getUniqueDisplayCarriers(shipmentsCarriers)
   }, [shipmentsCarriers])
 
-  // Combine status and claims filters for API call
-  const combinedShipmentsStatusFilter = React.useMemo(() => {
-    return [...shipmentsStatusFilter, ...shipmentsClaimsFilter]
-  }, [shipmentsStatusFilter, shipmentsClaimsFilter])
+  // Status filter for API call (claims filter removed - now in Delivery IQ)
+  const combinedShipmentsStatusFilter = shipmentsStatusFilter
 
   // Expand carrier display names back to raw carriers for API call
   // When user selects "DHL Express", we need to filter by both "DHL" and "DHLExpress"
@@ -683,12 +673,12 @@ export function DataTable({
 
   // Shipments tab computed values (now using arrays)
   // Note: Date range is NOT counted as a filter since it has its own indicator
-  const hasShipmentsFilters = shipmentsStatusFilter.length > 0 || shipmentsClaimsFilter.length > 0 ||
+  // Note: Claims filter removed - now handled by Delivery IQ page
+  const hasShipmentsFilters = shipmentsStatusFilter.length > 0 ||
     shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
     shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
-    shipmentsClaimsFilter.length +
     shipmentsAgeFilter.length +
     shipmentsTypeFilter.length +
     shipmentsChannelFilter.length +
@@ -697,7 +687,6 @@ export function DataTable({
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
     setShipmentsStatusFilter([])
-    setShipmentsClaimsFilter([])
     setShipmentsAgeFilter([])
     setShipmentsTypeFilter([])
     setShipmentsChannelFilter([])
@@ -1230,12 +1219,7 @@ export function DataTable({
                       onSelectionChange={setShipmentsStatusFilter}
                       placeholder="Status"
                     />
-                    <MultiSelectFilter
-                      options={SHIPMENTS_CLAIMS_OPTIONS}
-                      selected={shipmentsClaimsFilter}
-                      onSelectionChange={setShipmentsClaimsFilter}
-                      placeholder="Claims"
-                    />
+                    {/* Claims filter removed - now handled by Delivery IQ page */}
                     <MultiSelectFilter
                       options={UNFULFILLED_AGE_OPTIONS}
                       selected={shipmentsAgeFilter}

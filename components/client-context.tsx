@@ -6,6 +6,8 @@ export interface ClientInfo {
   id: string
   company_name: string
   merchant_id: string | null
+  eshipper_id: string | null
+  gofo_id: string | null
   short_code: string | null
   has_token: boolean
 }
