@@ -78,6 +78,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | [CLAUDE.billing.md](CLAUDE.billing.md) | Invoicing, markup rules, SFTP processing |
 | [CLAUDE.claims.md](CLAUDE.claims.md) | Claims, care tickets, credit lifecycle |
 | [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) | Delivery IQ (Lookout), at-risk monitoring, transit benchmarks |
+| [CLAUDE.commissions.md](CLAUDE.commissions.md) | Sales partner commissions, eShipper data, formula calculations |
 | [CLAUDE.schema.md](CLAUDE.schema.md) | Database tables and columns |
 
 ## Active Projects

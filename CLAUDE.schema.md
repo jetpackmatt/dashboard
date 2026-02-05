@@ -26,6 +26,11 @@
 | `care_tickets` | `id` / `ticket_number` | Claims and credit requests |
 | `lost_in_transit_checks` | `id` | Proactive at-risk shipment tracking (Delivery IQ) |
 | `transit_benchmarks` | `id` | Transit time benchmarks by carrier/zone/route |
+| `commission_types` | `id` | Commission formula definitions |
+| `user_commissions` | `id` | User commission assignments |
+| `user_commission_clients` | `id` | Client-to-commission mapping |
+| `commission_snapshots` | `id` | Locked monthly commission records |
+| `eshipper_shipments` | `id` | eShipper shipment records (CSV import) |
 
 ---
 
@@ -549,3 +554,81 @@ See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) for full system documentation.
 - `carrier_service` - Per-carrier averages by zone (e.g., "USPS")
 - `ship_option` - Per ShipBob service level by zone (e.g., "146")
 - `international_route` - Carrier + route (e.g., "DHLExpress:US:AU"), avg stored in zone_1_avg
+
+---
+
+## Commission Tables
+
+**Sales partner commission tracking. See [CLAUDE.commissions.md](CLAUDE.commissions.md) for full system documentation.**
+
+### commission_types
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `name` | text | Display name (e.g., "Volume-Based") |
+| `formula_type` | text | Formula identifier (e.g., "power") |
+| `formula_params` | jsonb | `{"C": 2.5, "K": 0.5}` |
+| `description` | text | Human-readable description |
+| `is_active` | boolean | Default true |
+
+### user_commissions
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `user_id` | uuid | FK to auth.users |
+| `commission_type_id` | uuid | FK to commission_types |
+| `start_date` | date | When tracking begins |
+| `end_date` | date | NULL = ongoing |
+| `is_active` | boolean | Default true |
+
+### user_commission_clients
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `user_commission_id` | uuid | FK to user_commissions |
+| `client_id` | uuid | FK to clients |
+
+### commission_snapshots
+
+Locked monthly records (created on 1st of each month).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `user_commission_id` | uuid | FK to user_commissions |
+| `period_year` | integer | e.g., 2026 |
+| `period_month` | integer | 1-12 |
+| `shipment_count` | integer | Total shipments |
+| `commission_amount` | numeric | Calculated commission |
+| `breakdown` | jsonb | Per-client breakdown |
+| `locked_at` | timestamptz | When snapshot created |
+
+**Unique constraint:** `(user_commission_id, period_year, period_month)`
+
+### eshipper_shipments
+
+Individual eShipper shipment records (imported via CSV).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `client_id` | uuid | FK to clients |
+| `eshipper_company_id` | text | eShipper company identifier |
+| `tracking_number` | text | Unique (used for dedup) |
+| `order_date` | date | When order placed |
+| `ship_date` | date | **Used for counting** |
+| `carrier` | text | Carrier name |
+| `total_charge` | numeric | Total cost |
+| `imported_at` | timestamptz | When imported |
+
+**Key:** Commissions count by `ship_date`, not `order_date`.
+
+### clients (Additional Columns)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `eshipper_id` | text | eShipper company ID (matches eshipper_company_id) |
+| `gofo_id` | text | GOFO partner ID (future) |
