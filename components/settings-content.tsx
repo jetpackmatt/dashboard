@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
+  Bell,
   Building2,
   CheckCircle2,
   AlertCircle,
@@ -73,9 +74,11 @@ export function SettingsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const validTabs = ['profile', 'users', 'dev']
+  const validTabs = ['account', 'notifications', 'users', 'dev']
   const tabFromUrl = searchParams.get('tab')
-  const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'profile'
+  // Map 'profile' to 'account' for backwards compatibility
+  const normalizedTab = tabFromUrl === 'profile' ? 'account' : tabFromUrl
+  const initialTab = normalizedTab && validTabs.includes(normalizedTab) ? normalizedTab : 'account'
   const [activeTab, setActiveTab] = React.useState(initialTab)
 
   // Sync tab to URL when it changes
@@ -355,15 +358,16 @@ export function SettingsContent() {
     <div className="p-4 lg:p-6">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="account">Account</TabsTrigger>
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
           {isDev && (
             <TabsTrigger value="dev">Dev Tools</TabsTrigger>
           )}
         </TabsList>
 
-        {/* Profile Tab - Available to all users */}
-        <TabsContent value="profile" className="space-y-6">
+        {/* Account Tab - Available to all users */}
+        <TabsContent value="account" className="space-y-6">
           {/* Profile Details Card */}
           <Card>
             <CardHeader>
@@ -491,6 +495,31 @@ export function SettingsContent() {
                     </span>
                   )}
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Notifications Tab - Available to all users */}
+        <TabsContent value="notifications" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bell className="h-5 w-5" />
+                Notification Preferences
+              </CardTitle>
+              <CardDescription>
+                Manage how and when you receive notifications
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="py-8 text-center text-muted-foreground">
+                <Bell className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p className="font-medium mb-2">Notification settings coming soon</p>
+                <p className="text-sm">
+                  You&apos;ll be able to configure email notifications for shipment updates,
+                  billing alerts, and more.
+                </p>
               </div>
             </CardContent>
           </Card>

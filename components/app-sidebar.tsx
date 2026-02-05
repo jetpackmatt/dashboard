@@ -77,11 +77,6 @@ const clientOnlyNavItems = [
 ]
 
 const data = {
-  user: {
-    name: "User",
-    email: "user@example.com",
-    avatar: "/avatars/default.jpg",
-  },
   documents: [],
 }
 
@@ -90,6 +85,31 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [hasCommission, setHasCommission] = React.useState(false)
+  const [userData, setUserData] = React.useState({
+    name: "",
+    email: "",
+    avatar: "/avatars/default.jpg",
+  })
+
+  // Fetch user profile data
+  React.useEffect(() => {
+    async function fetchProfile() {
+      try {
+        const response = await fetch('/api/auth/profile')
+        if (response.ok) {
+          const data = await response.json()
+          setUserData({
+            name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0] || "",
+            email: data.user?.email || "",
+            avatar: "/avatars/default.jpg",
+          })
+        }
+      } catch {
+        // Silently fail - will show empty user info
+      }
+    }
+    fetchProfile()
+  }, [])
 
   // Check if user has a commission assignment (for Financials nav visibility)
   React.useEffect(() => {
@@ -205,7 +225,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <NavSecondary items={navSecondaryItems} className="mt-auto" />
         </SidebarContent>
         <SidebarFooter>
-          <NavUser user={data.user} />
+          <NavUser user={userData} />
         </SidebarFooter>
       </Sidebar>
 
