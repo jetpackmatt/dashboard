@@ -228,9 +228,9 @@ export function SettingsContent() {
     }
   }
 
-  // Fetch users (admin only)
+  // Fetch users (admin and care_admin)
   const fetchUsers = React.useCallback(async () => {
-    if (!effectiveIsAdmin) return
+    if (!effectiveIsAdmin && !effectiveIsCareAdmin) return
 
     setIsLoadingUsers(true)
     try {
@@ -244,14 +244,14 @@ export function SettingsContent() {
     } finally {
       setIsLoadingUsers(false)
     }
-  }, [effectiveIsAdmin])
+  }, [effectiveIsAdmin, effectiveIsCareAdmin])
 
-  // Load users when admin
+  // Load users when admin or care_admin
   React.useEffect(() => {
-    if (effectiveIsAdmin) {
+    if (effectiveIsAdmin || effectiveIsCareAdmin) {
       fetchUsers()
     }
-  }, [effectiveIsAdmin, fetchUsers])
+  }, [effectiveIsAdmin, effectiveIsCareAdmin, fetchUsers])
 
   const handleSyncOrders = async () => {
     setIsSyncing(true)
@@ -541,7 +541,7 @@ export function SettingsContent() {
                       : 'Manage team members for your organization'}
                   </CardDescription>
                 </div>
-                {effectiveIsAdmin && (
+                {(effectiveIsAdmin || effectiveIsCareAdmin) && (
                   <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm">
@@ -597,18 +597,24 @@ export function SettingsContent() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="admin">
-                                <span className="flex items-center gap-2">
-                                  <Shield className="h-4 w-4 text-blue-500" />
-                                  Admin (full platform access)
-                                </span>
-                              </SelectItem>
-                              <SelectItem value="care_admin">
-                                <span className="flex items-center gap-2">
-                                  <UserCog className="h-4 w-4 text-purple-500" />
-                                  Care Admin (care team lead)
-                                </span>
-                              </SelectItem>
+                              {/* Admin and Care Admin options only visible to full admins */}
+                              {effectiveIsAdmin && (
+                                <>
+                                  <SelectItem value="admin">
+                                    <span className="flex items-center gap-2">
+                                      <Shield className="h-4 w-4 text-blue-500" />
+                                      Admin (full platform access)
+                                    </span>
+                                  </SelectItem>
+                                  <SelectItem value="care_admin">
+                                    <span className="flex items-center gap-2">
+                                      <UserCog className="h-4 w-4 text-purple-500" />
+                                      Care Admin (care team lead)
+                                    </span>
+                                  </SelectItem>
+                                </>
+                              )}
+                              {/* Care Team and Brand User visible to admins and care_admins */}
                               <SelectItem value="care_team">
                                 <span className="flex items-center gap-2">
                                   <HeartHandshake className="h-4 w-4 text-pink-500" />
@@ -710,7 +716,7 @@ export function SettingsContent() {
               </div>
             </CardHeader>
             <CardContent>
-              {effectiveIsAdmin ? (
+              {(effectiveIsAdmin || effectiveIsCareAdmin) ? (
                 isLoadingUsers ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
