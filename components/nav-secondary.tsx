@@ -20,6 +20,7 @@ export function NavSecondary({
     url: string
     icon: LucideIcon
     onClick?: () => void
+    external?: boolean
   }[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   return (
@@ -35,7 +36,10 @@ export function NavSecondary({
                 </SidebarMenuButton>
               ) : (
                 <SidebarMenuButton asChild>
-                  <a href={item.url}>
+                  <a
+                    href={item.url}
+                    {...(item.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                  >
                     <item.icon />
                     <span>{item.title}</span>
                   </a>

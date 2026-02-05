@@ -3,10 +3,11 @@
 import Link from "next/link"
 import {
   BellIcon,
-  CreditCardIcon,
   LogOutIcon,
   MoreVerticalIcon,
   UserCircleIcon,
+  UsersIcon,
+  WrenchIcon,
 } from "lucide-react"
 
 import {
@@ -30,6 +31,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { createClient } from "@/lib/supabase/client"
+import { useClient } from "@/components/client-context"
+
+const isDev = process.env.NODE_ENV === 'development'
 
 export function NavUser({
   user,
@@ -41,6 +45,7 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
+  const { effectiveIsAdmin, effectiveIsCareAdmin } = useClient()
 
   // Generate initials from name or email
   const getInitials = () => {
@@ -114,17 +119,27 @@ export function NavUser({
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/dashboard/billing">
-                  <CreditCardIcon />
-                  Billing
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
                 <Link href="/dashboard/settings?tab=notifications">
                   <BellIcon />
                   Notifications
                 </Link>
               </DropdownMenuItem>
+              {(effectiveIsAdmin || effectiveIsCareAdmin) && (
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/settings?tab=users">
+                    <UsersIcon />
+                    Users
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {isDev && effectiveIsAdmin && (
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/settings?tab=dev">
+                    <WrenchIcon />
+                    Dev Tools
+                  </Link>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">

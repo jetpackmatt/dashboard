@@ -88,7 +88,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [userData, setUserData] = React.useState({
     name: "",
     email: "",
-    avatar: "/avatars/default.jpg",
+    avatar: "",
   })
 
   // Fetch user profile data
@@ -101,7 +101,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           setUserData({
             name: data.user?.user_metadata?.full_name || data.user?.email?.split('@')[0] || "",
             email: data.user?.email || "",
-            avatar: "/avatars/default.jpg",
+            avatar: data.user?.user_metadata?.avatar_url || "",
           })
         }
       } catch {
@@ -181,8 +181,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     },
     {
       title: "Help",
-      url: "#",
+      url: "https://help.shipwithjetpack.com",
       icon: HelpCircleIcon,
+      external: true,
     },
   ]
 

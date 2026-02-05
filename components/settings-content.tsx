@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   Bell,
   Building2,
+  Camera,
   CheckCircle2,
   AlertCircle,
   Loader2,
@@ -20,6 +21,7 @@ import {
   UserCog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -49,6 +51,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useClient, DevRole } from '@/components/client-context'
+import { AvatarCropper } from '@/components/avatar-cropper'
 
 interface UserWithClients {
   id: string
@@ -92,6 +95,11 @@ export function SettingsContent() {
   // Profile state
   const [profileName, setProfileName] = React.useState('')
   const [profileEmail, setProfileEmail] = React.useState('')
+  const [profileAvatar, setProfileAvatar] = React.useState<string | null>(null)
+  const [isUploadingAvatar, setIsUploadingAvatar] = React.useState(false)
+  const [cropperOpen, setCropperOpen] = React.useState(false)
+  const [cropperImageSrc, setCropperImageSrc] = React.useState<string | null>(null)
+  const [currentPassword, setCurrentPassword] = React.useState('')
   const [newPassword, setNewPassword] = React.useState('')
   const [confirmPassword, setConfirmPassword] = React.useState('')
   const [isLoadingProfile, setIsLoadingProfile] = React.useState(true)
@@ -146,6 +154,7 @@ export function SettingsContent() {
           const data = await response.json()
           setProfileName(data.user?.user_metadata?.full_name || '')
           setProfileEmail(data.user?.email || '')
+          setProfileAvatar(data.user?.user_metadata?.avatar_url || null)
         }
       } catch (error) {
         console.error('Failed to fetch profile:', error)
@@ -191,13 +200,18 @@ export function SettingsContent() {
     setPasswordError(null)
     setPasswordSuccess(null)
 
+    if (!currentPassword) {
+      setPasswordError('Current password is required')
+      return
+    }
+
     if (!newPassword || newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters')
+      setPasswordError('New password must be at least 8 characters')
       return
     }
 
     if (newPassword !== confirmPassword) {
-      setPasswordError('Passwords do not match')
+      setPasswordError('New passwords do not match')
       return
     }
 
@@ -207,7 +221,10 @@ export function SettingsContent() {
       const response = await fetch('/api/auth/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
       })
 
       const data = await response.json()
@@ -218,6 +235,7 @@ export function SettingsContent() {
       }
 
       setPasswordSuccess('Password changed successfully')
+      setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
       setTimeout(() => setPasswordSuccess(null), 3000)
@@ -225,6 +243,71 @@ export function SettingsContent() {
       setPasswordError('Network error')
     } finally {
       setIsChangingPassword(false)
+    }
+  }
+
+  // Handle file selection - opens the cropper
+  const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Reset the input so the same file can be selected again
+    e.target.value = ''
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setProfileError('Please select an image file')
+      return
+    }
+
+    // Validate file size (max 10MB for original, will be compressed after crop)
+    if (file.size > 10 * 1024 * 1024) {
+      setProfileError('Image must be smaller than 10MB')
+      return
+    }
+
+    setProfileError(null)
+
+    // Create object URL for the cropper
+    const imageUrl = URL.createObjectURL(file)
+    setCropperImageSrc(imageUrl)
+    setCropperOpen(true)
+  }
+
+  // Handle cropped image upload
+  const handleCroppedAvatarUpload = async (croppedBlob: Blob) => {
+    setIsUploadingAvatar(true)
+    setProfileError(null)
+
+    // Clean up the object URL
+    if (cropperImageSrc) {
+      URL.revokeObjectURL(cropperImageSrc)
+      setCropperImageSrc(null)
+    }
+
+    try {
+      const formData = new FormData()
+      formData.append('avatar', croppedBlob, 'avatar.jpg')
+
+      const response = await fetch('/api/auth/avatar', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setProfileError(data.error || 'Failed to upload avatar')
+        return
+      }
+
+      setProfileAvatar(data.avatarUrl)
+      setProfileSuccess('Profile photo updated')
+      setTimeout(() => setProfileSuccess(null), 3000)
+    } catch {
+      setProfileError('Failed to upload image')
+    } finally {
+      setIsUploadingAvatar(false)
     }
   }
 
@@ -386,6 +469,49 @@ export function SettingsContent() {
                 </div>
               ) : (
                 <div className="space-y-4 max-w-md">
+                  {/* Profile Photo */}
+                  <div className="space-y-2">
+                    <Label>Profile Photo</Label>
+                    <div className="flex items-center gap-4">
+                      <div className="relative">
+                        <Avatar className="h-20 w-20">
+                          <AvatarImage src={profileAvatar || undefined} alt={profileName || 'Profile'} />
+                          <AvatarFallback className="text-lg">
+                            {profileName
+                              ? profileName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+                              : profileEmail?.slice(0, 2).toUpperCase() || 'U'}
+                          </AvatarFallback>
+                        </Avatar>
+                        <label
+                          htmlFor="avatar-upload"
+                          className={cn(
+                            "absolute -bottom-1 -right-1 rounded-full bg-primary p-1.5 cursor-pointer",
+                            "hover:bg-primary/90 transition-colors",
+                            isUploadingAvatar && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          {isUploadingAvatar ? (
+                            <Loader2 className="h-3.5 w-3.5 text-primary-foreground animate-spin" />
+                          ) : (
+                            <Camera className="h-3.5 w-3.5 text-primary-foreground" />
+                          )}
+                        </label>
+                        <input
+                          id="avatar-upload"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleAvatarSelect}
+                          disabled={isUploadingAvatar}
+                        />
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        <p>Click the camera icon to upload a photo.</p>
+                        <p>You can crop and reposition after selecting.</p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <Label htmlFor="profile_name">Display Name</Label>
                     <Input
@@ -450,6 +576,16 @@ export function SettingsContent() {
             <CardContent>
               <div className="space-y-4 max-w-md">
                 <div className="space-y-2">
+                  <Label htmlFor="current_password">Current Password</Label>
+                  <Input
+                    id="current_password"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                  />
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="new_password">New Password</Label>
                   <Input
                     id="new_password"
@@ -475,7 +611,7 @@ export function SettingsContent() {
                 <div className="flex items-center gap-4">
                   <Button
                     onClick={handleChangePassword}
-                    disabled={isChangingPassword || !newPassword || !confirmPassword}
+                    disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}
                   >
                     {isChangingPassword ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -937,6 +1073,22 @@ export function SettingsContent() {
           </TabsContent>
         )}
       </Tabs>
+
+      {/* Avatar Cropper Dialog */}
+      {cropperImageSrc && (
+        <AvatarCropper
+          open={cropperOpen}
+          onOpenChange={(open) => {
+            setCropperOpen(open)
+            if (!open && cropperImageSrc) {
+              URL.revokeObjectURL(cropperImageSrc)
+              setCropperImageSrc(null)
+            }
+          }}
+          imageSrc={cropperImageSrc}
+          onCropComplete={handleCroppedAvatarUpload}
+        />
+      )}
     </div>
   )
 }

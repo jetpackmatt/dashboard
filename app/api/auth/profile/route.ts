@@ -22,6 +22,7 @@ export async function GET() {
         id: user.id,
         email: user.email,
         user_metadata: user.user_metadata,
+        avatar_url: user.user_metadata?.avatar_url || null,
         created_at: user.created_at,
       },
     })
