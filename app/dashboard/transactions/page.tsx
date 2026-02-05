@@ -49,7 +49,7 @@ function get60DayRange(): { startDate: string; endDate: string } {
 }
 
 export default function TransactionsPage() {
-  const { selectedClientId, isAdmin, isLoading: isClientLoading } = useClient()
+  const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, isLoading: isClientLoading } = useClient()
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
@@ -96,10 +96,10 @@ export default function TransactionsPage() {
   const [returnsTotalCount, setReturnsTotalCount] = React.useState(0)
 
   // Determine which client to fetch data for
-  // For admins: 'all' = all brands, specific ID = single brand
-  // For non-admins: null = let API determine from user's assigned clients
-  const effectiveClientId = isAdmin
-    ? (selectedClientId || 'all')  // null means "All Brands" for admins
+  // For admins/care users: 'all' = all brands, specific ID = single brand
+  // For regular users: null = let API determine from user's assigned clients
+  const effectiveClientId = (effectiveIsAdmin || effectiveIsCareUser)
+    ? (selectedClientId || 'all')  // null means "All Brands" for admins/care users
     : null  // Let API verify user's access and use their assigned client
 
   // Helper to build URL with optional clientId

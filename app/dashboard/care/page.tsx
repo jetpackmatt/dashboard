@@ -354,6 +354,7 @@ export default function CarePage() {
   const [totalCount, setTotalCount] = React.useState(0)
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [createDialogError, setCreateDialogError] = React.useState<string | null>(null)
   const [usingStaticData, setUsingStaticData] = React.useState(false)
 
   // Search state
@@ -702,10 +703,11 @@ export default function CarePage() {
   // Handle create ticket
   const handleCreateTicket = async () => {
     if (!selectedClientId || selectedClientId === 'all') {
-      setError('Please select a client first')
+      setCreateDialogError('Please select a specific brand first. You cannot create a ticket when "All Brands" is selected.')
       return
     }
 
+    setCreateDialogError(null)
     setIsCreating(true)
     try {
       const response = await fetch('/api/data/care-tickets', {
@@ -750,7 +752,7 @@ export default function CarePage() {
       // Refresh tickets
       fetchTickets()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create ticket')
+      setCreateDialogError(err instanceof Error ? err.message : 'Failed to create ticket')
     } finally {
       setIsCreating(false)
     }
@@ -1910,7 +1912,10 @@ export default function CarePage() {
       </Sheet>
 
       {/* Create Ticket Dialog */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <Dialog open={createDialogOpen} onOpenChange={(open) => {
+        setCreateDialogOpen(open)
+        if (!open) setCreateDialogError(null) // Clear error when closing
+      }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create New Ticket</DialogTitle>
@@ -1918,6 +1923,22 @@ export default function CarePage() {
               Create a new care ticket for the selected client.
             </DialogDescription>
           </DialogHeader>
+          {createDialogError && (
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-sm text-red-700 dark:text-red-300">
+              {createDialogError}
+              <button
+                onClick={() => setCreateDialogError(null)}
+                className="ml-2 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {(!selectedClientId || selectedClientId === 'all') && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md text-sm text-amber-700 dark:text-amber-300">
+              Please select a specific brand from the dropdown before creating a ticket.
+            </div>
+          )}
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
