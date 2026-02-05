@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, isCareRole } from '@/lib/supabase/admin'
 
 /**
  * GET /api/invoices
  *
  * Get invoices for the current user.
  * - Admins can see all invoices (or filter by client_id query param)
+ * - Care users (care_admin, care_team) can see all invoices
  * - Regular users can only see invoices for their associated clients
  */
 export async function GET(request: NextRequest) {
@@ -19,9 +20,11 @@ export async function GET(request: NextRequest) {
     }
 
     const adminClient = createAdminClient()
-    const isAdmin = user.user_metadata?.role === 'admin'
+    const userRole = user.user_metadata?.role
+    const isAdmin = userRole === 'admin'
+    const isCareUser = isCareRole(userRole)
 
-    // Get client_id filter from query params (for admin filtering)
+    // Get client_id filter from query params (for admin/care user filtering)
     const clientId = request.nextUrl.searchParams.get('client_id')
 
     let query = adminClient
@@ -49,15 +52,15 @@ export async function GET(request: NextRequest) {
       .order('invoice_date', { ascending: false })
       .order('created_at', { ascending: false })
 
-    if (isAdmin) {
-      // Admin can filter by specific client or see all
+    if (isAdmin || isCareUser) {
+      // Admin and care users can filter by specific client or see all
       if (clientId) {
         query = query.eq('client_id', clientId)
       }
     } else {
-      // Non-admin: get their client memberships first
+      // Non-admin, non-care: get their client memberships first
       const { data: memberships, error: membershipError } = await adminClient
-        .from('client_members')
+        .from('user_clients')
         .select('client_id')
         .eq('user_id', user.id)
 

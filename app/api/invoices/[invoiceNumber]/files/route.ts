@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, isCareRole } from '@/lib/supabase/admin'
 
 /**
  * GET /api/invoices/[invoiceNumber]/files
@@ -9,6 +9,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
  * This is the client-facing endpoint (non-admin).
  *
  * Users can only access invoices for their own clients.
+ * Admins and Care users can access all invoices.
  */
 export async function GET(
   request: Request,
@@ -38,12 +39,15 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
     }
 
-    // For non-admin users, verify they have access to this client
-    const isAdmin = user.user_metadata?.role === 'admin'
-    if (!isAdmin) {
+    // For non-admin, non-care users, verify they have access to this client
+    const userRole = user.user_metadata?.role
+    const isAdmin = userRole === 'admin'
+    const isCareUser = isCareRole(userRole)
+
+    if (!isAdmin && !isCareUser) {
       // Check if user has access to this client
       const { data: membership } = await adminClient
-        .from('client_members')
+        .from('user_clients')
         .select('id')
         .eq('user_id', user.id)
         .eq('client_id', invoice.client_id)
