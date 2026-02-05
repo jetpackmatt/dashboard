@@ -667,7 +667,7 @@ export default function CommissionsPage() {
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-medium">Brand Breakdown</h3>
                 <span className="text-sm text-muted-foreground">
-                  {selectedMonth?.breakdown.length || 0} brands
+                  {selectedMonth?.breakdown.filter(c => c.shipments > 0).length || 0} brands
                 </span>
               </div>
               {selectedMonth && (
@@ -679,7 +679,7 @@ export default function CommissionsPage() {
 
             <ScrollArea className="flex-1 p-6">
               <div className="space-y-4">
-                {selectedMonth?.breakdown.map((client) => {
+                {selectedMonth?.breakdown.filter(c => c.shipments > 0).map((client) => {
                   const barWidth = (client.shipments / maxShipments) * 100
                   const commissionPercent = selectedMonth.commission > 0
                     ? ((client.commission / selectedMonth.commission) * 100).toFixed(0)
@@ -724,7 +724,7 @@ export default function CommissionsPage() {
                   )
                 })}
 
-                {(!selectedMonth || selectedMonth.breakdown.length === 0) && (
+                {(!selectedMonth || selectedMonth.breakdown.filter(c => c.shipments > 0).length === 0) && (
                   <div className="py-8 text-center">
                     <p className="text-sm text-muted-foreground">No brands to display</p>
                   </div>
@@ -950,7 +950,7 @@ export default function CommissionsPage() {
                           <div className="flex items-center justify-between">
                             <h3 className="text-base font-medium">Brand Breakdown</h3>
                             <span className="text-sm text-muted-foreground">
-                              {selectedAggregateMonth?.breakdown.length || 0} brands
+                              {selectedAggregateMonth?.breakdown.filter(c => c.shipments > 0).length || 0} brands
                             </span>
                           </div>
                           <p className="text-sm text-muted-foreground mt-1">
@@ -962,7 +962,8 @@ export default function CommissionsPage() {
                           <div className="space-y-4">
                             {(() => {
                               // Use the selected month's breakdown (from snapshots for historical, current data for this month)
-                              const sortedBrands = selectedAggregateMonth?.breakdown || []
+                              // Filter out clients with 0 shipments
+                              const sortedBrands = (selectedAggregateMonth?.breakdown || []).filter(c => c.shipments > 0)
                               const maxShipmentsAll = Math.max(...sortedBrands.map(c => c.shipments), 1)
                               const totalCommissionAll = sortedBrands.reduce((sum, c) => sum + c.commission, 0)
 
@@ -1009,7 +1010,7 @@ export default function CommissionsPage() {
                               })
                             })()}
 
-                            {(!selectedAggregateMonth?.breakdown || selectedAggregateMonth.breakdown.length === 0) && (
+                            {(!selectedAggregateMonth?.breakdown || selectedAggregateMonth.breakdown.filter(c => c.shipments > 0).length === 0) && (
                               <div className="py-8 text-center">
                                 <p className="text-sm text-muted-foreground">No brands to display</p>
                               </div>
