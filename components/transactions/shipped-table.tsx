@@ -350,7 +350,7 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} className="text-xs">
+                    <TableHead key={header.id} className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                       {header.isPlaceholder
                         ? null
                         : flexRender(

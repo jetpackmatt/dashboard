@@ -39,6 +39,13 @@ export async function GET(request: NextRequest) {
   // Age filter - comma-separated age ranges like "0-1,1-2,7+"
   const ageFilter = searchParams.get('age')?.split(',').filter(Boolean) || []
 
+  // Sort params - defaults to event_labeled descending
+  const allowedSortFields = ['recipient_name', 'carrier', 'event_labeled', 'transit_time_days']
+  const rawSortField = searchParams.get('sortField') || 'event_labeled'
+  const sortField = allowedSortFields.includes(rawSortField) ? rawSortField : 'event_labeled'
+  const sortDirection = searchParams.get('sortDirection') === 'asc' ? 'asc' : 'desc'
+  const sortAscending = sortDirection === 'asc'
+
   try {
     // Check if we need to filter by order fields (requires JOIN)
     // Search also requires JOIN to search across order fields like store_order_id
@@ -153,13 +160,16 @@ export async function GET(request: NextRequest) {
       s.toLowerCase() === 'credit denied' ||
       s.toLowerCase() === 'claim resolved'
     )
+    // Check for simple "Claim" filter - matches ANY shipment with a claim filed
+    const hasClaimFilter = statusFilter.some(s => s.toLowerCase() === 'claim')
     const regularStatusFilters = statusFilter.filter(s =>
       s.toLowerCase() !== 'at risk' &&
       s.toLowerCase() !== 'file a claim' &&
       s.toLowerCase() !== 'credit requested' &&
       s.toLowerCase() !== 'credit approved' &&
       s.toLowerCase() !== 'credit denied' &&
-      s.toLowerCase() !== 'claim resolved'
+      s.toLowerCase() !== 'claim resolved' &&
+      s.toLowerCase() !== 'claim'
     )
 
     // Handle claim eligibility status filters
@@ -235,11 +245,28 @@ export async function GET(request: NextRequest) {
       claimTicketShipmentIds = (ticketData || []).map((t: { shipment_id: string }) => t.shipment_id)
     }
 
-    // Combine claim filter shipment IDs (union of eligibility and ticket filters)
-    const allClaimShipmentIds = [...new Set([...claimFilterShipmentIds, ...claimTicketShipmentIds])]
+    // Handle simple "Claim" filter - matches ANY shipment with a claim filed (any status)
+    let anyClaimShipmentIds: string[] = []
+    if (hasClaimFilter) {
+      let anyClaimQuery = supabase
+        .from('care_tickets')
+        .select('shipment_id')
+        .eq('ticket_type', 'Claim')
+        .not('shipment_id', 'is', null)
+
+      if (clientId) {
+        anyClaimQuery = anyClaimQuery.eq('client_id', clientId)
+      }
+
+      const { data: anyClaimData } = await anyClaimQuery
+      anyClaimShipmentIds = (anyClaimData || []).map((t: { shipment_id: string }) => t.shipment_id)
+    }
+
+    // Combine claim filter shipment IDs (union of eligibility, ticket, and any claim filters)
+    const allClaimShipmentIds = [...new Set([...claimFilterShipmentIds, ...claimTicketShipmentIds, ...anyClaimShipmentIds])]
 
     // If we have claim filters but no matching shipments, and no regular filters, return empty
-    if ((claimEligibilityFilters.length > 0 || claimTicketFilters.length > 0) &&
+    if ((claimEligibilityFilters.length > 0 || claimTicketFilters.length > 0 || hasClaimFilter) &&
         allClaimShipmentIds.length === 0 && regularStatusFilters.length === 0) {
       return NextResponse.json({
         data: [],
@@ -514,7 +541,7 @@ export async function GET(request: NextRequest) {
           for (let batchNum = i; batchNum < endBatch; batchNum++) {
             const batchOffset = batchNum * BATCH_SIZE
             const batchQuery = buildBatchQuery()
-              .order('event_labeled', { ascending: false })
+              .order(sortField, { ascending: sortAscending })
               .range(batchOffset, batchOffset + BATCH_SIZE - 1)
 
             batchPromises.push(batchQuery)
@@ -573,7 +600,7 @@ export async function GET(request: NextRequest) {
 
     // Execute main query
     let { data: shipmentsData, error: shipmentsError, count } = await query
-      .order('event_labeled', { ascending: false })
+      .order(sortField, { ascending: sortAscending })
       .range(matchingShipmentIds ? 0 : offset, matchingShipmentIds ? matchingShipmentIds.length - 1 : offset + limit - 1)
 
     // If full-text search failed (column doesn't exist), retry with ILIKE
@@ -621,7 +648,7 @@ export async function GET(request: NextRequest) {
       )
 
       const fallbackResult = await fallbackQuery
-        .order('event_labeled', { ascending: false })
+        .order(sortField, { ascending: sortAscending })
         .range(offset, offset + limit - 1)
 
       shipmentsData = fallbackResult.data

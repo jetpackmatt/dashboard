@@ -18,13 +18,16 @@ const DEFAULT_PAGE_SIZE = 50
 
 interface TablePreferences {
   columnVisibility: Record<string, boolean>
+  columnOrder: string[]
   pageSize: number
 }
 
 interface UseTablePreferencesReturn {
   columnVisibility: Record<string, boolean>
+  columnOrder: string[]
   pageSize: number
   setColumnVisibility: (visibility: Record<string, boolean>) => void
+  setColumnOrder: (order: string[]) => void
   setPageSize: (size: number) => void
   resetPreferences: () => void
   isLoaded: boolean
@@ -87,6 +90,7 @@ export function useTablePreferences(
 ): UseTablePreferencesReturn {
   const [isLoaded, setIsLoaded] = useState(false)
   const [columnVisibility, setColumnVisibilityState] = useState<Record<string, boolean>>({})
+  const [columnOrder, setColumnOrderState] = useState<string[]>([])
   const [pageSize, setPageSizeState] = useState<number>(defaultPageSize)
 
   // Load preferences on mount (client-side only)
@@ -95,6 +99,9 @@ export function useTablePreferences(
     if (stored) {
       if (stored.columnVisibility) {
         setColumnVisibilityState(stored.columnVisibility)
+      }
+      if (stored.columnOrder) {
+        setColumnOrderState(stored.columnOrder)
       }
       if (stored.pageSize) {
         setPageSizeState(stored.pageSize)
@@ -111,6 +118,14 @@ export function useTablePreferences(
     }
   }, [tableId])
 
+  // Save column order when it changes
+  const setColumnOrder = useCallback((order: string[]) => {
+    setColumnOrderState(order)
+    if (order.length > 0) {
+      savePreferences(tableId, { columnOrder: order })
+    }
+  }, [tableId])
+
   // Save page size when it changes
   const setPageSize = useCallback((size: number) => {
     setPageSizeState(size)
@@ -121,13 +136,16 @@ export function useTablePreferences(
   const resetPreferences = useCallback(() => {
     clearPreferences(tableId)
     setColumnVisibilityState({})
+    setColumnOrderState([])
     setPageSizeState(defaultPageSize)
   }, [tableId, defaultPageSize])
 
   return {
     columnVisibility,
+    columnOrder,
     pageSize,
     setColumnVisibility,
+    setColumnOrder,
     setPageSize,
     resetPreferences,
     isLoaded,

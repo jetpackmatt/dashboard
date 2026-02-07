@@ -57,8 +57,7 @@ export function MultiSelectFilter({
           role="combobox"
           aria-expanded={open}
           className={cn(
-            "h-[30px] justify-between text-sm font-normal text-muted-foreground whitespace-nowrap",
-            selected.length > 0 && "text-foreground",
+            "h-[30px] justify-between text-xs font-normal text-foreground whitespace-nowrap",
             className
           )}
         >
@@ -72,7 +71,7 @@ export function MultiSelectFilter({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[200px] p-0"
+        className="w-[200px] p-0 font-inter text-xs"
         align="start"
         onInteractOutside={() => setOpen(false)}
       >

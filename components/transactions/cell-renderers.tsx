@@ -105,13 +105,13 @@ function formatAge(days: number): string {
 function getAgeColor(days: number): string {
   if (days >= 5) return "text-red-500 font-medium"
   if (days >= 3) return "text-amber-500 font-medium"
-  return "text-muted-foreground"
+  return ""
 }
 
 // Get age color for shipments - only black to red (at 8+ days)
 function getShipmentsAgeColor(days: number): string {
   if (days >= 8) return "text-red-500 font-medium"
-  return "text-muted-foreground"
+  return ""
 }
 
 // Status badge colors for unfulfilled orders - Complete processing status hierarchy
@@ -252,12 +252,12 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
       toast.success("Order ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Order ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -275,12 +275,12 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
       toast.success("Shipment ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono truncate">{row.shipmentId || "-"}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
             title="Copy Shipment ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -291,7 +291,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   },
 
   storeOrderId: (row) => (
-    <div className="text-muted-foreground text-sm truncate">
+    <div className="text-muted-foreground truncate">
       {row.storeOrderId || "-"}
     </div>
   ),
@@ -299,7 +299,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   status: (row) => (
     <Badge
       variant="outline"
-      className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getUnfulfilledStatusColors(row.status)}`}
+      className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${getUnfulfilledStatusColors(row.status)}`}
     >
       {getUnfulfilledStatusIcon(row.status)}
       {row.status}
@@ -316,7 +316,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     <div className="flex justify-center">
       {row.channelName ? (
         <ChannelIcon channelName={row.channelName} />
-      ) : <span>-</span>}
+      ) : <span className="text-muted-foreground">-</span>}
     </div>
   ),
 
@@ -325,13 +325,13 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   ),
 
   orderType: (row) => (
-    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
+    <Badge variant="outline" className="px-1.5 text-[11px] whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
       {row.orderType}
     </Badge>
   ),
 
   age: (row) => {
-    if (!row.orderDate) return <span>-</span>
+    if (!row.orderDate) return <span className="text-muted-foreground">-</span>
     const age = calculateAge(row.orderDate)
     return (
       <span className={`whitespace-nowrap ${getAgeColor(age)}`}>
@@ -341,20 +341,20 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   },
 
   orderDate: (row) => {
-    if (!row.orderDate) return <span>-</span>
+    if (!row.orderDate) return <span className="text-muted-foreground">-</span>
     return (
-      <span className="whitespace-nowrap text-sm">
+      <span className="whitespace-nowrap">
         {formatTransactionDate(row.orderDate)}
       </span>
     )
   },
 
   slaDate: (row) => {
-    if (!row.slaDate) return <span>-</span>
+    if (!row.slaDate) return <span className="text-muted-foreground">-</span>
     const slaDate = new Date(row.slaDate)
     const isOverdue = slaDate < new Date()
     return (
-      <span className={`whitespace-nowrap text-sm ${isOverdue ? "text-red-500 font-medium" : ""}`}>
+      <span className={`whitespace-nowrap ${isOverdue ? "text-red-500 font-medium" : ""}`}>
         {formatTransactionDate(row.slaDate)}
       </span>
     )
@@ -366,11 +366,11 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   ),
 
   destCountry: (row) => (
-    <div className="truncate text-sm">{row.destCountry || "-"}</div>
+    <div className="truncate">{row.destCountry || "-"}</div>
   ),
 
   shipOption: (row) => (
-    <div className="truncate text-sm">{row.shipOption || "-"}</div>
+    <div className="truncate">{row.shipOption || "-"}</div>
   ),
 }
 
@@ -654,6 +654,10 @@ function getShipmentStatusColors(status: string) {
     case "Out of Stock":
       return "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-500 dark:border-amber-800/20"
 
+    // CLAIM (red - has a care ticket claim)
+    case "Claim":
+      return "bg-red-100/50 text-red-900 border-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+
     default:
       return "bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30"
   }
@@ -720,6 +724,10 @@ function getShipmentStatusIcon(status: string) {
     case "Out of Stock":
       return <AlertCircleIcon />
 
+    // CLAIM
+    case "Claim":
+      return <FileTextIcon />
+
     default:
       return <LoaderIcon />
   }
@@ -735,12 +743,12 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       toast.success("Order ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Order ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -758,12 +766,12 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       toast.success("Shipment ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono truncate">{row.shipmentId || "-"}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
             title="Copy Shipment ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -779,98 +787,44 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       return <VoidedBadge />
     }
 
-    // Priority 1: Show claim ticket status if a claim has been filed
+    // Priority 1: Show "Claim" status if a claim has been filed
     // This takes precedence over eligibility status since the claim is in progress
     if (row.claimTicketStatus) {
       const ticketStatus = row.claimTicketStatus
       const ticketNumber = row.claimTicketNumber
 
-      // Map care_tickets status to display badge
-      switch (ticketStatus) {
-        case 'Credit Approved':
-        case 'Resolved':
-          return (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-emerald-100/50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30"
-                  >
-                    <CheckCircle2Icon className="h-3.5 w-3.5" />
-                    Credit Approved
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
-                  <p className="text-sm">
-                    Ticket #{ticketNumber} - {row.claimCreditAmount ? `$${row.claimCreditAmount.toFixed(2)} credited` : 'Credit applied'}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )
-
-        case 'Credit Requested':
-          return (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
-                  >
-                    <ClockIcon className="h-3.5 w-3.5" />
-                    Credit Requested
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
-                  <p className="text-sm">Ticket #{ticketNumber} - Awaiting approval</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )
-
-        case 'Credit Denied':
-          return (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-slate-100/50 text-slate-700 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800/30"
-                  >
-                    <XCircleIcon className="h-3.5 w-3.5" />
-                    Credit Denied
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
-                  <p className="text-sm">Ticket #{ticketNumber} - Claim denied</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )
-
-        default:
-          // Input Required, Under Review, etc. - show as "Claim Filed"
-          return (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-blue-100/50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30"
-                  >
-                    <FileTextIcon className="h-3.5 w-3.5" />
-                    Claim Filed
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
-                  <p className="text-sm">Ticket #{ticketNumber} - {ticketStatus}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )
+      // Build tooltip text based on status
+      let tooltipText = `Ticket #${ticketNumber}`
+      if (ticketStatus === 'Credit Approved' || ticketStatus === 'Resolved') {
+        tooltipText = row.claimCreditAmount
+          ? `Ticket #${ticketNumber} - $${row.claimCreditAmount.toFixed(2)} credited`
+          : `Ticket #${ticketNumber} - Credit applied`
+      } else if (ticketStatus === 'Credit Requested') {
+        tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
+      } else if (ticketStatus === 'Credit Denied') {
+        tooltipText = `Ticket #${ticketNumber} - Claim denied`
+      } else {
+        tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
       }
+
+      return (
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <Badge
+                variant="outline"
+                className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+              >
+                <FileTextIcon className="h-3.5 w-3.5" />
+                Claim
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+              <p className="text-sm">{tooltipText}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )
     }
 
     // Priority 2: Show claim eligibility badges before normal status
@@ -894,7 +848,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                  className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${colors}`}
                 >
                   {icon}
                   {displayName}
@@ -916,7 +870,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       return (
         <Badge
           variant="outline"
-          className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+          className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
         >
           <AlertCircleIcon className="h-3.5 w-3.5" />
           File a Claim
@@ -943,7 +897,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                  className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${colors}`}
                 >
                   {icon}
                   {displayName}
@@ -971,7 +925,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
             <TooltipTrigger asChild>
               <Badge
                 variant="outline"
-                className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+                className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
               >
                 <ClockIcon className="h-3.5 w-3.5" />
                 At Risk
@@ -992,7 +946,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     return (
       <Badge
         variant="outline"
-        className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
+        className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
       >
         {getShipmentStatusIcon(row.status)}
         {row.status}
@@ -1007,7 +961,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   ),
 
   charge: (row) => (
-    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+    <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
   ),
 
   qty: (row) => (
@@ -1015,7 +969,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   ),
 
   orderType: (row) => (
-    <Badge variant="outline" className="px-1.5 font-medium whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
+    <Badge variant="outline" className="px-1.5 text-[11px] whitespace-nowrap bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-800/20 dark:text-slate-400 dark:border-slate-700/30">
       {row.orderType}
     </Badge>
   ),
@@ -1028,7 +982,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     // If delivered and we have stored transit time, use it
     if (row.deliveredDate && row.transitTimeDays != null) {
       return (
-        <span className="whitespace-nowrap text-muted-foreground">
+        <span className="whitespace-nowrap">
           {row.transitTimeDays.toFixed(1)}d
         </span>
       )
@@ -1051,7 +1005,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
 
     return (
-      <span className="whitespace-nowrap text-muted-foreground">
+      <span className="whitespace-nowrap">
         {days.toFixed(1)}d
       </span>
     )
@@ -1060,7 +1014,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   importDate: (row) => {
     if (!row.importDate) return <span className="text-muted-foreground">-</span>
     return (
-      <span className="whitespace-nowrap text-sm">
+      <span className="whitespace-nowrap">
         {formatTransactionDate(row.importDate)}
       </span>
     )
@@ -1069,7 +1023,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   labelCreated: (row) => {
     if (!row.labelCreated) return <span className="text-muted-foreground">-</span>
     return (
-      <span className="whitespace-nowrap text-sm">
+      <span className="whitespace-nowrap">
         {formatTransactionDate(row.labelCreated)}
       </span>
     )
@@ -1085,22 +1039,22 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
     if (!row.trackingId) return <span className="text-muted-foreground">-</span>
     return (
-      <div className="flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5">
         {trackingUrl ? (
           <a
             href={trackingUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-mono truncate"
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 truncate"
           >
             {row.trackingId}
           </a>
         ) : (
-          <span className="text-xs font-mono truncate">{row.trackingId}</span>
+          <span className="truncate">{row.trackingId}</span>
         )}
         <button
           onClick={handleCopy}
-          className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+          className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
           title="Copy Tracking ID"
         >
           <CopyIcon className="h-3.5 w-3.5" />
@@ -1113,10 +1067,10 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     const deliveredDate = row.deliveredDate
     const slaDate = row.slaDate
     const dateStr = deliveredDate || slaDate
-    if (!dateStr) return <span>-</span>
+    if (!dateStr) return <span className="text-muted-foreground">-</span>
     const isDelivered = !!deliveredDate
     return (
-      <span className={`whitespace-nowrap text-sm ${isDelivered ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+      <span className={`whitespace-nowrap ${isDelivered ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
         {formatTransactionDate(dateStr)}
       </span>
     )
@@ -1124,7 +1078,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   // New columns
   age: (row) => {
-    if (!row.labelCreated) return <span>-</span>
+    if (!row.labelCreated) return <span className="text-muted-foreground">-</span>
     // Calculate age from label creation (event_labeled) to delivered date (or now if not delivered)
     const startDate = new Date(row.labelCreated)
     const endDate = row.deliveredDate ? new Date(row.deliveredDate) : new Date()
@@ -1138,49 +1092,49 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   },
 
   carrier: (row) => (
-    <div className="font-medium truncate">{getCarrierDisplayName(row.carrier)}</div>
+    <div className="truncate">{getCarrierDisplayName(row.carrier)}</div>
   ),
 
   channelName: (row) => (
     <div className="flex justify-center">
       {row.channelName ? (
         <ChannelIcon channelName={row.channelName} />
-      ) : <span>-</span>}
+      ) : <span className="text-muted-foreground">-</span>}
     </div>
   ),
 
   destCountry: (row) => (
-    <div className="truncate text-sm">{row.destCountry || "-"}</div>
+    <div className="truncate">{row.destCountry || "-"}</div>
   ),
 
   orderDate: (row) => {
-    if (!row.orderDate) return <span>-</span>
+    if (!row.orderDate) return <span className="text-muted-foreground">-</span>
     return (
-      <span className="whitespace-nowrap text-sm">
+      <span className="whitespace-nowrap">
         {formatTransactionDate(row.orderDate)}
       </span>
     )
   },
 
   fcName: (row) => (
-    <div className="truncate text-sm">{row.fcName || "-"}</div>
+    <div className="truncate">{row.fcName || "-"}</div>
   ),
 
   shipOption: (row) => (
-    <div className="truncate text-sm">{row.shipOption || "-"}</div>
+    <div className="truncate">{row.shipOption || "-"}</div>
   ),
 
   deliveredDate: (row) => {
-    if (!row.deliveredDate) return <span>-</span>
+    if (!row.deliveredDate) return <span className="text-muted-foreground">-</span>
     return (
-      <span className="whitespace-nowrap text-sm text-emerald-600 dark:text-emerald-400">
+      <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">
         {formatTransactionDate(row.deliveredDate)}
       </span>
     )
   },
 
   storeOrderId: (row) => (
-    <div className="text-muted-foreground text-sm truncate">
+    <div className="text-muted-foreground truncate">
       {row.storeOrderId || "-"}
     </div>
   ),
@@ -1202,7 +1156,47 @@ export function createShipmentCellRenderers(options?: {
         return <VoidedBadge />
       }
 
-      // Priority: Show claim eligibility badges before normal status
+      // Priority 1: Show "Claim" status if a claim has been filed
+      // This takes precedence over eligibility status since the claim is in progress
+      if (row.claimTicketStatus) {
+        const ticketStatus = row.claimTicketStatus
+        const ticketNumber = row.claimTicketNumber
+
+        // Build tooltip text based on status
+        let tooltipText = `Ticket #${ticketNumber}`
+        if (ticketStatus === 'Credit Approved' || ticketStatus === 'Resolved') {
+          tooltipText = row.claimCreditAmount
+            ? `Ticket #${ticketNumber} - $${row.claimCreditAmount.toFixed(2)} credited`
+            : `Ticket #${ticketNumber} - Credit applied`
+        } else if (ticketStatus === 'Credit Requested') {
+          tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
+        } else if (ticketStatus === 'Credit Denied') {
+          tooltipText = `Ticket #${ticketNumber} - Claim denied`
+        } else {
+          tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
+        }
+
+        return (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="outline"
+                  className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+                >
+                  <FileTextIcon className="h-3.5 w-3.5" />
+                  Claim
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
+                <p className="text-sm">{tooltipText}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )
+      }
+
+      // Priority 2: Show claim eligibility badges before normal status
       // "File a Claim" - eligible for Lost in Transit claim (clickable)
       // Show specific substatus with stronger language since claim threshold is met
       if (row.claimEligibilityStatus === 'eligible') {
@@ -1222,7 +1216,7 @@ export function createShipmentCellRenderers(options?: {
                 <TooltipTrigger asChild>
                   <Badge
                     variant="outline"
-                    className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap cursor-pointer hover:opacity-80 ${colors}`}
+                    className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap cursor-pointer hover:opacity-80 ${colors}`}
                     onClick={(e) => {
                       e.stopPropagation()
                       options?.onFileClaimClick?.(row.shipmentId)
@@ -1248,7 +1242,7 @@ export function createShipmentCellRenderers(options?: {
         return (
           <Badge
             variant="outline"
-            className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap cursor-pointer bg-red-100/50 text-red-700 border-red-200 hover:bg-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30 dark:hover:bg-red-900/30"
+            className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap cursor-pointer bg-red-100/50 text-red-700 border-red-200 hover:bg-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30 dark:hover:bg-red-900/30"
             onClick={(e) => {
               e.stopPropagation()
               options?.onFileClaimClick?.(row.shipmentId)
@@ -1279,7 +1273,7 @@ export function createShipmentCellRenderers(options?: {
                 <TooltipTrigger asChild>
                   <Badge
                     variant="outline"
-                    className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${colors}`}
+                    className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${colors}`}
                   >
                     {icon}
                     {displayName}
@@ -1307,7 +1301,7 @@ export function createShipmentCellRenderers(options?: {
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className="gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+                  className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
                 >
                   <ClockIcon className="h-3.5 w-3.5" />
                   At Risk
@@ -1328,7 +1322,7 @@ export function createShipmentCellRenderers(options?: {
       return (
         <Badge
           variant="outline"
-          className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
+          className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${getShipmentStatusColors(row.status)}`}
         >
           {getShipmentStatusIcon(row.status)}
           {row.status}
@@ -1441,7 +1435,7 @@ function PendingBadge() {
   return (
     <Badge
       variant="outline"
-      className="px-1.5 font-medium whitespace-nowrap bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
+      className="px-1.5 text-[11px] whitespace-nowrap bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
     >
       Pending
     </Badge>
@@ -1457,7 +1451,7 @@ function VoidedBadge() {
   return (
     <Badge
       variant="outline"
-      className="px-1.5 font-medium whitespace-nowrap bg-gray-100/50 text-gray-600 border-gray-200/50 dark:bg-gray-900/20 dark:text-gray-400 dark:border-gray-800/30"
+      className="px-1.5 text-[11px] whitespace-nowrap bg-gray-100/50 text-gray-600 border-gray-200/50 dark:bg-gray-900/20 dark:text-gray-400 dark:border-gray-800/30"
     >
       Voided
     </Badge>
@@ -1566,12 +1560,12 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
       toast.success("Reference ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.referenceId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.referenceId || '-'}</span>
         {row.referenceId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Reference ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -1584,13 +1578,13 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
     <div className="truncate">{getFeeTypeDisplayName(row.feeType) || '-'}</div>
   ),
   charge: (row) => (
-    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+    <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
   ),
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
+    <span className="whitespace-nowrap">{formatTransactionDate(row.transactionDate)}</span>
   ),
   status: (row) => (
-    <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
+    <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
       {formatBillingStatus(row.status)}
     </Badge>
   ),
@@ -1599,7 +1593,7 @@ export const additionalServicesCellRenderers: Record<string, CellRenderer<Additi
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+      <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
 }
@@ -1649,12 +1643,12 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       toast.success("Return ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.returnId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.returnId || '-'}</span>
         {row.returnId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Return ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -1671,20 +1665,20 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       toast.success("Shipment ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5">
         {row.originalShipmentId ? (
           <>
-            <span className="text-xs font-mono truncate">{row.originalShipmentId}</span>
+            <span className="truncate">{row.originalShipmentId}</span>
             <button
               onClick={handleCopy}
-              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
               title="Copy Shipment ID"
             >
               <CopyIcon className="h-3.5 w-3.5" />
             </button>
           </>
         ) : (
-          <span>-</span>
+          <span className="text-muted-foreground">-</span>
         )}
       </div>
     )
@@ -1697,45 +1691,45 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       toast.success("Tracking # copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5">
         {row.trackingNumber ? (
           <>
             <span className="text-muted-foreground truncate">{row.trackingNumber}</span>
             <button
               onClick={handleCopy}
-              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors"
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
               title="Copy Tracking #"
             >
               <CopyIcon className="h-3.5 w-3.5" />
             </button>
           </>
         ) : (
-          <span>-</span>
+          <span className="text-muted-foreground">-</span>
         )}
       </div>
     )
   },
   returnStatus: (row) => (
     row.returnStatus ? (
-      <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getReturnStatusColors(row.returnStatus)}`}>
+      <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getReturnStatusColors(row.returnStatus)}`}>
         {row.returnStatus}
       </Badge>
-    ) : <span>-</span>
+    ) : <span className="text-muted-foreground">-</span>
   ),
   returnType: (row) => (
     <div className="truncate">{row.returnType || '-'}</div>
   ),
   returnCreationDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.returnCreationDate)}</span>
+    <span className="whitespace-nowrap">{formatTransactionDate(row.returnCreationDate)}</span>
   ),
   fcName: (row) => (
     <div className="truncate">{row.fcName || '-'}</div>
   ),
   charge: (row) => (
-    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+    <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
   ),
   status: (row) => (
-    <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
+    <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
       {formatBillingStatus(row.status)}
     </Badge>
   ),
@@ -1744,7 +1738,7 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+      <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
 }
@@ -1798,7 +1792,7 @@ function formatReceivingStatus(status: string): string {
 
 export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
+    <span className="whitespace-nowrap">{formatTransactionDate(row.transactionDate)}</span>
   ),
   wroId: (row) => {
     const handleCopy = (e: React.MouseEvent) => {
@@ -1808,12 +1802,12 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
       toast.success("WRO ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.wroId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.wroId || '-'}</span>
         {row.wroId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy WRO ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -1824,10 +1818,10 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
   },
   receivingStatus: (row) => (
     row.receivingStatus ? (
-      <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getReceivingStatusColors(row.receivingStatus)}`}>
+      <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getReceivingStatusColors(row.receivingStatus)}`}>
         {formatReceivingStatus(row.receivingStatus)}
       </Badge>
-    ) : <span>-</span>
+    ) : <span className="text-muted-foreground">-</span>
   ),
   contents: (row) => {
     const contents = row.contents || '-'
@@ -1856,7 +1850,7 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
     row.isPending ? (
       <PendingBadge />
     ) : (
-      <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+      <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
     )
   ),
   invoiceNumber: (row) => (
@@ -1864,7 +1858,7 @@ export const receivingCellRenderers: Record<string, CellRenderer<Receiving>> = {
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+      <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
 }
@@ -1899,12 +1893,12 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
       toast.success("Inventory ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.inventoryId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.inventoryId || '-'}</span>
         {row.inventoryId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Inventory ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -1920,13 +1914,13 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
     <div className="truncate">{row.locationType || '-'}</div>
   ),
   chargeStartDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.chargeStartDate)}</span>
+    <span className="whitespace-nowrap">{formatTransactionDate(row.chargeStartDate)}</span>
   ),
   charge: (row) => (
-    <div className="font-medium">{row.charge != null ? `$${row.charge.toFixed(2)}` : '-'}</div>
+    <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
   ),
   status: (row) => (
-    <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
+    <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
       {formatBillingStatus(row.status)}
     </Badge>
   ),
@@ -1935,7 +1929,7 @@ export const storageCellRenderers: Record<string, CellRenderer<Storage>> = {
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+      <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
   comment: (row) => (
@@ -1970,12 +1964,12 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
       toast.success("Reference ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground">{row.referenceId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span>{row.referenceId || '-'}</span>
         {row.referenceId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Reference ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -1992,12 +1986,12 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
       toast.success("Ticket # copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5">
         <span>{row.sbTicketReference || '-'}</span>
         {row.sbTicketReference && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Ticket #"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -2010,15 +2004,15 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
     <div className="truncate">{row.creditReason || '-'}</div>
   ),
   creditAmount: (row) => (
-    <div className="font-medium text-emerald-600 dark:text-emerald-400">
-      {row.creditAmount != null ? `$${row.creditAmount.toFixed(2)}` : '-'}
+    <div className="text-emerald-600 dark:text-emerald-400">
+      {row.creditAmount != null ? `$${row.creditAmount.toFixed(2)}` : <span className="text-muted-foreground">-</span>}
     </div>
   ),
   transactionDate: (row) => (
-    <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.transactionDate)}</span>
+    <span className="whitespace-nowrap">{formatTransactionDate(row.transactionDate)}</span>
   ),
   status: (row) => (
-    <Badge variant="outline" className={`px-1.5 font-medium whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
+    <Badge variant="outline" className={`px-1.5 text-[11px] whitespace-nowrap ${getBillingStatusColors(row.status)}`}>
       {formatBillingStatus(row.status)}
     </Badge>
   ),
@@ -2027,7 +2021,7 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
   ),
   invoiceDate: (row) => (
     row.invoiceDate ? (
-      <span className="whitespace-nowrap text-sm">{formatDateFixed(row.invoiceDate)}</span>
+      <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
 }
@@ -2142,12 +2136,12 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
       toast.success("Order ID copied")
     }
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-mono text-foreground truncate">{row.orderId || '-'}</span>
+      <div className="group/cell flex items-center gap-1.5">
+        <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
             onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
             title="Copy Order ID"
           >
             <CopyIcon className="h-3.5 w-3.5" />
@@ -2157,20 +2151,20 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
     )
   },
   storeOrderId: (row) => (
-    <div className="text-muted-foreground text-sm truncate">{row.storeOrderId || "-"}</div>
+    <div className="text-muted-foreground truncate">{row.storeOrderId || "-"}</div>
   ),
   customerName: (row) => (
     <div className="truncate">{row.customerName}</div>
   ),
   status: (row) => (
-    <Badge variant="outline" className={`gap-1 px-1.5 font-medium [&_svg]:size-3 whitespace-nowrap ${getShippedStatusColors(row.status)}`}>
+    <Badge variant="outline" className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${getShippedStatusColors(row.status)}`}>
       {getShipmentStatusIcon(row.status)}
       {row.status}
     </Badge>
   ),
   carrier: (row) => (
     <div>
-      <div className="font-medium truncate">{getCarrierDisplayName(row.carrier)}</div>
+      <div className="truncate">{getCarrierDisplayName(row.carrier)}</div>
       {row.carrierService && (
         <div className="text-xs text-muted-foreground truncate">{getCarrierServiceDisplay(row.carrierService, row.carrier)}</div>
       )}
@@ -2178,34 +2172,34 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
   ),
   trackingId: (row) => {
     const trackingUrl = getTrackingUrl(row.carrier, row.trackingId)
-    if (!row.trackingId) return <span>-</span>
+    if (!row.trackingId) return <span className="text-muted-foreground">-</span>
     return trackingUrl ? (
       <a
         href={trackingUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-mono truncate block"
+        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 truncate block"
       >
         {row.trackingId}
       </a>
     ) : (
-      <span className="text-xs font-mono truncate block">{row.trackingId}</span>
+      <span className="truncate block">{row.trackingId}</span>
     )
   },
   shippedDate: (row) => (
     row.shippedDate ? (
-      <span className="whitespace-nowrap text-sm">{formatTransactionDate(row.shippedDate)}</span>
-    ) : <span>-</span>
+      <span className="whitespace-nowrap">{formatTransactionDate(row.shippedDate)}</span>
+    ) : <span className="text-muted-foreground">-</span>
   ),
   deliveredDate: (row) => (
     row.deliveredDate ? (
-      <span className="whitespace-nowrap text-sm text-emerald-600 dark:text-emerald-400">{formatTransactionDate(row.deliveredDate)}</span>
-    ) : <span>-</span>
+      <span className="whitespace-nowrap text-emerald-600 dark:text-emerald-400">{formatTransactionDate(row.deliveredDate)}</span>
+    ) : <span className="text-muted-foreground">-</span>
   ),
   itemCount: (row) => (
     <div className="text-center">{row.itemCount}</div>
   ),
   charge: (row) => (
-    row.charge ? <div className="font-medium">${row.charge.toFixed(2)}</div> : <span>-</span>
+    row.charge ? <div>${row.charge.toFixed(2)}</div> : <span className="text-muted-foreground">-</span>
   ),
 }

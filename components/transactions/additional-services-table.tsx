@@ -21,6 +21,8 @@ interface AdditionalServicesTableProps {
   dateRange?: DateRange
   searchQuery?: string
   userColumnVisibility?: Record<string, boolean>
+  columnOrder?: string[]
+  onColumnOrderChange?: (order: string[]) => void
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
@@ -39,6 +41,8 @@ export function AdditionalServicesTable({
   dateRange,
   searchQuery = "",
   userColumnVisibility = {},
+  columnOrder,
+  onColumnOrderChange,
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
   initialData,
@@ -227,6 +231,8 @@ export function AdditionalServicesTable({
       pageSize={pageSize}
       onPageChange={handlePageChange}
       userColumnVisibility={userColumnVisibility}
+      columnOrder={columnOrder}
+      onColumnOrderChange={onColumnOrderChange}
       emptyMessage="No additional services found."
       itemName="services"
       integratedHeader={true}

@@ -17,6 +17,8 @@ interface StorageTableProps {
   locationTypeFilter?: string
   searchQuery?: string
   userColumnVisibility?: Record<string, boolean>
+  columnOrder?: string[]
+  onColumnOrderChange?: (order: string[]) => void
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
@@ -30,6 +32,8 @@ export function StorageTable({
   locationTypeFilter,
   searchQuery = "",
   userColumnVisibility = {},
+  columnOrder,
+  onColumnOrderChange,
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
   onExportTriggerReady,
@@ -182,6 +186,8 @@ export function StorageTable({
       pageSize={pageSize}
       onPageChange={handlePageChange}
       userColumnVisibility={userColumnVisibility}
+      columnOrder={columnOrder}
+      onColumnOrderChange={onColumnOrderChange}
       emptyMessage="No storage records found."
       itemName="items"
       integratedHeader={true}

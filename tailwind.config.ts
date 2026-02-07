@@ -82,6 +82,11 @@ const config: Config = {
   				'system-ui',
   				'sans-serif'
   			],
+  			inter: [
+  				'var(--font-inter)',
+  				'system-ui',
+  				'sans-serif'
+  			],
   			thicccboi: [
   				'var(--font-thicccboi)',
   				'system-ui',

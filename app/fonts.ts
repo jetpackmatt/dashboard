@@ -1,7 +1,7 @@
 // Font configuration for the dashboard application
-import { Outfit } from 'next/font/google'
+import { Outfit, Inter } from 'next/font/google'
 
-// Google Fonts - Outfit (always available)
+// Google Fonts - Outfit (display/headings)
 export const outfit = Outfit({
   subsets: ['latin'],
   weight: ['200', '300', '400', '600', '700'],
@@ -9,8 +9,12 @@ export const outfit = Outfit({
   display: 'swap',
 })
 
-// Note: THICCCBOI font configuration is preserved in tailwind.config.ts
-// for future use, but not loaded here to avoid build errors
+// Google Fonts - Inter (data tables, body text)
+export const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+  display: 'swap',
+})
 
 // Export font class names for use in layout
-export const fontVariables = outfit.variable
+export const fontVariables = `${outfit.variable} ${inter.variable}`

@@ -35,6 +35,9 @@ interface UnfulfilledTableProps {
   onLoadingChange?: (isLoading: boolean) => void
   // Column visibility from column selector
   userColumnVisibility?: Record<string, boolean>
+  // Column order from drag-to-reorder
+  columnOrder?: string[]
+  onColumnOrderChange?: (order: string[]) => void
   // Pre-fetched data for instant initial render
   initialData?: UnfulfilledOrder[]
   initialTotalCount?: number
@@ -56,6 +59,8 @@ export function UnfulfilledTable({
   onChannelsChange,
   onLoadingChange,
   userColumnVisibility = {},
+  columnOrder,
+  onColumnOrderChange,
   // Pre-fetched data for instant initial render
   initialData,
   initialTotalCount = 0,
@@ -345,6 +350,8 @@ export function UnfulfilledTable({
         pageSize={pageSize}
         onPageChange={handlePageChange}
         userColumnVisibility={userColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={onColumnOrderChange}
         emptyMessage="No unfulfilled orders found."
         itemName="orders"
         integratedHeader={true}

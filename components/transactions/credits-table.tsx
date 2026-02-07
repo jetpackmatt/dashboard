@@ -18,6 +18,8 @@ interface CreditsTableProps {
   dateRange?: DateRange
   searchQuery?: string
   userColumnVisibility?: Record<string, boolean>
+  columnOrder?: string[]
+  onColumnOrderChange?: (order: string[]) => void
   // Page size persistence
   initialPageSize?: number
   onPageSizeChange?: (pageSize: number) => void
@@ -31,6 +33,8 @@ export function CreditsTable({
   dateRange,
   searchQuery = "",
   userColumnVisibility = {},
+  columnOrder,
+  onColumnOrderChange,
   initialPageSize = DEFAULT_PAGE_SIZE,
   onPageSizeChange,
   onExportTriggerReady,
@@ -186,6 +190,8 @@ export function CreditsTable({
       pageSize={pageSize}
       onPageChange={handlePageChange}
       userColumnVisibility={userColumnVisibility}
+      columnOrder={columnOrder}
+      onColumnOrderChange={onColumnOrderChange}
       emptyMessage="No credits found."
       itemName="credits"
       integratedHeader={true}

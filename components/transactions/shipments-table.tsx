@@ -17,6 +17,9 @@ interface ShipmentsTableProps {
   clientId: string
   // Column visibility from column selector
   userColumnVisibility?: Record<string, boolean>
+  // Column order from drag-to-reorder
+  columnOrder?: string[]
+  onColumnOrderChange?: (order: string[]) => void
   // Filter state from parent (DataTable) - arrays for multi-select
   statusFilter?: string[]
   ageFilter?: string[]
@@ -45,6 +48,8 @@ interface ShipmentsTableProps {
 export function ShipmentsTable({
   clientId,
   userColumnVisibility = {},
+  columnOrder,
+  onColumnOrderChange,
   statusFilter = [],
   ageFilter = [],
   typeFilter = [],
@@ -99,6 +104,10 @@ export function ShipmentsTable({
   // Pagination state - use initialPageSize from props for persistence
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Sorting state - default to label created descending (newest first)
+  const [sortField, setSortField] = React.useState<string>('labelCreated')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Wrap setPageSize to notify parent for persistence
   const setPageSize = React.useCallback((size: number) => {
@@ -192,6 +201,18 @@ export function ShipmentsTable({
         params.set('search', searchQuery)
       }
 
+      // Add sort params - map column ID to database column via sortKey
+      if (sortField) {
+        const sortColumn = SHIPMENTS_TABLE_CONFIG.columns.find(c => c.id === sortField)
+        const dbSortKey = sortColumn?.sortKey || sortField
+        params.set('sortField', dbSortKey)
+        // Age is inverted: ascending age (youngest) = descending event_labeled (newest dates)
+        const effectiveDirection = sortField === 'age'
+          ? (sortDirection === 'asc' ? 'desc' : 'asc')
+          : sortDirection
+        params.set('sortDirection', effectiveDirection)
+      }
+
       const response = await fetch(`/api/data/shipments?${params.toString()}`)
 
       if (!response.ok) {
@@ -237,7 +258,7 @@ export function ShipmentsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, onChannelsChange, onCarriersChange])
+  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange, onCarriersChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
@@ -247,12 +268,12 @@ export function ShipmentsTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset page when filter changes
+  // Reset page when filter or sort changes
   React.useEffect(() => {
     setPageIndex(0)
-  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery])
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection])
 
   // Handle page changes
   const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {
@@ -268,6 +289,12 @@ export function ShipmentsTable({
   const handleRowClick = React.useCallback((row: Shipment) => {
     setSelectedShipmentId(row.shipmentId)
     setDrawerOpen(true)
+  }, [])
+
+  // Handle sort changes
+  const handleSortChange = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    setSortField(field)
+    setSortDirection(direction)
   }, [])
 
   // Export handler - fetches all data when scope is 'all', uses current data for 'current'
@@ -354,11 +381,16 @@ export function ShipmentsTable({
         pageSize={pageSize}
         onPageChange={handlePageChange}
         userColumnVisibility={userColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={onColumnOrderChange}
         emptyMessage="No shipments found."
         itemName="shipments"
         integratedHeader={true}
         onRowClick={handleRowClick}
         prefixColumn={clientBadgePrefixColumn}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
       />
       <ShipmentDetailsDrawer
         shipmentId={selectedShipmentId}

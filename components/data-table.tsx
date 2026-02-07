@@ -216,6 +216,7 @@ const SHIPMENTS_STATUS_OPTIONS: FilterOption[] = [
   { value: 'Out for Delivery', label: 'Out for Delivery' },
   { value: 'Delivered', label: 'Delivered' },
   { value: 'Exception', label: 'Exception' },
+  { value: 'Claim', label: 'Claim' },
 ]
 
 // Claims filter removed - now handled by Delivery IQ page
@@ -975,9 +976,9 @@ export function DataTable({
       onValueChange={handleTabChange}
     >
         {/* Sticky header with controls */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-inter text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + Export + Columns (right) */}
-          <div className="px-4 lg:px-6 py-4 flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               <div className="relative w-48 2xl:w-64">
@@ -989,7 +990,7 @@ export function DataTable({
                     setSearchInput(e.target.value)
                     debouncedSearch(e.target.value)
                   }}
-                  className="h-[30px] pl-9 text-sm bg-background border-border text-muted-foreground placeholder:text-muted-foreground/60"
+                  className="h-[30px] pl-9 text-xs bg-background border-border placeholder:text-muted-foreground/60"
                 />
                 {searchInput && (
                   <button
@@ -1016,14 +1017,14 @@ export function DataTable({
                       }
                     }}
                   >
-                    <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
+                    <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                       <SelectValue placeholder="Custom">
                         {currentTabDateState.preset === 'custom'
                           ? 'Custom'
                           : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent align="start">
+                    <SelectContent align="start" className="font-inter text-xs">
                       {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
@@ -1116,7 +1117,7 @@ export function DataTable({
                           <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuContent align="end" className="w-56 font-inter text-xs">
                         {/* Column limit message with Reset link */}
                         <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
                           <span>
@@ -1251,7 +1252,7 @@ export function DataTable({
                 {currentTab === "additional-services" && (
                   <>
                     <Select value={additionalServicesTypeFilter} onValueChange={setAdditionalServicesTypeFilter}>
-                      <SelectTrigger className="h-[30px] w-[180px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[180px] text-xs text-foreground">
                         <SelectValue placeholder="Fee Type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1262,7 +1263,7 @@ export function DataTable({
                       </SelectContent>
                     </Select>
                     <Select value={additionalServicesStatusFilter} onValueChange={setAdditionalServicesStatusFilter}>
-                      <SelectTrigger className="h-[30px] w-[130px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[130px] text-xs text-foreground">
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1278,7 +1279,7 @@ export function DataTable({
                 {currentTab === "returns" && (
                   <>
                     <Select value={returnStatusFilter} onValueChange={setReturnStatusFilter}>
-                      <SelectTrigger className="h-[30px] w-[150px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[150px] text-xs text-foreground">
                         <SelectValue placeholder="Return Status" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1289,7 +1290,7 @@ export function DataTable({
                       </SelectContent>
                     </Select>
                     <Select value={returnTypeFilter} onValueChange={setReturnTypeFilter}>
-                      <SelectTrigger className="h-[30px] w-[150px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[150px] text-xs text-foreground">
                         <SelectValue placeholder="Return Type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1305,7 +1306,7 @@ export function DataTable({
                 {/* RECEIVING TAB FILTERS */}
                 {currentTab === "receiving" && (
                   <Select value={receivingStatusFilter} onValueChange={setReceivingStatusFilter}>
-                    <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                    <SelectTrigger className="h-[30px] w-[160px] text-xs text-foreground">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1321,7 +1322,7 @@ export function DataTable({
                 {currentTab === "storage" && (
                   <>
                     <Select value={storageFcFilter} onValueChange={setStorageFcFilter}>
-                      <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[160px] text-xs text-foreground">
                         <SelectValue placeholder="FC" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1332,7 +1333,7 @@ export function DataTable({
                       </SelectContent>
                     </Select>
                     <Select value={storageLocationTypeFilter} onValueChange={setStorageLocationTypeFilter}>
-                      <SelectTrigger className="h-[30px] w-[160px] text-sm">
+                      <SelectTrigger className="h-[30px] w-[160px] text-xs text-foreground">
                         <SelectValue placeholder="Location Type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1348,7 +1349,7 @@ export function DataTable({
                 {/* CREDITS TAB FILTERS */}
                 {currentTab === "credits" && (
                   <Select value={creditsReasonFilter} onValueChange={setCreditsReasonFilter}>
-                    <SelectTrigger className="h-[30px] w-[180px] text-sm">
+                    <SelectTrigger className="h-[30px] w-[180px] text-xs text-foreground">
                       <SelectValue placeholder="Reason" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1382,6 +1383,8 @@ export function DataTable({
             onChannelsChange={setAvailableChannels}
             onLoadingChange={setIsUnfulfilledLoading}
             userColumnVisibility={unfulfilledPrefs.columnVisibility}
+            columnOrder={unfulfilledPrefs.columnOrder}
+            onColumnOrderChange={unfulfilledPrefs.setColumnOrder}
             // Page size persistence
             initialPageSize={unfulfilledPrefs.pageSize}
             onPageSizeChange={unfulfilledPrefs.setPageSize}
@@ -1406,6 +1409,8 @@ export function DataTable({
           <ShipmentsTable
             clientId={clientId}
             userColumnVisibility={shipmentsPrefs.columnVisibility}
+            columnOrder={shipmentsPrefs.columnOrder}
+            onColumnOrderChange={shipmentsPrefs.setColumnOrder}
             statusFilter={debouncedShipmentsFilters.statusFilter}
             ageFilter={debouncedShipmentsFilters.ageFilter}
             typeFilter={debouncedShipmentsFilters.typeFilter}
@@ -1443,6 +1448,8 @@ export function DataTable({
           feeTypeFilter={additionalServicesTypeFilter}
           searchQuery={searchQuery}
           userColumnVisibility={additionalServicesPrefs.columnVisibility}
+          columnOrder={additionalServicesPrefs.columnOrder}
+          onColumnOrderChange={additionalServicesPrefs.setColumnOrder}
           initialPageSize={additionalServicesPrefs.pageSize}
           onPageSizeChange={additionalServicesPrefs.setPageSize}
           // Pre-fetched data for instant initial render
@@ -1468,6 +1475,8 @@ export function DataTable({
           returnTypeFilter={returnTypeFilter}
           searchQuery={searchQuery}
           userColumnVisibility={returnsPrefs.columnVisibility}
+          columnOrder={returnsPrefs.columnOrder}
+          onColumnOrderChange={returnsPrefs.setColumnOrder}
           initialPageSize={returnsPrefs.pageSize}
           onPageSizeChange={returnsPrefs.setPageSize}
           onExportTriggerReady={(trigger) => {
@@ -1488,6 +1497,8 @@ export function DataTable({
           statusFilter={receivingStatusFilter}
           searchQuery={searchQuery}
           userColumnVisibility={receivingPrefs.columnVisibility}
+          columnOrder={receivingPrefs.columnOrder}
+          onColumnOrderChange={receivingPrefs.setColumnOrder}
           initialPageSize={receivingPrefs.pageSize}
           onPageSizeChange={receivingPrefs.setPageSize}
           onExportTriggerReady={(trigger) => {
@@ -1508,6 +1519,8 @@ export function DataTable({
           locationTypeFilter={storageLocationTypeFilter}
           searchQuery={searchQuery}
           userColumnVisibility={storagePrefs.columnVisibility}
+          columnOrder={storagePrefs.columnOrder}
+          onColumnOrderChange={storagePrefs.setColumnOrder}
           initialPageSize={storagePrefs.pageSize}
           onPageSizeChange={storagePrefs.setPageSize}
           onExportTriggerReady={(trigger) => {
@@ -1528,6 +1541,8 @@ export function DataTable({
           creditReasonFilter={creditsReasonFilter}
           searchQuery={searchQuery}
           userColumnVisibility={creditsPrefs.columnVisibility}
+          columnOrder={creditsPrefs.columnOrder}
+          onColumnOrderChange={creditsPrefs.setColumnOrder}
           initialPageSize={creditsPrefs.pageSize}
           onPageSizeChange={creditsPrefs.setPageSize}
           onExportTriggerReady={(trigger) => {

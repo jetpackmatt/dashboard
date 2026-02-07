@@ -51,9 +51,9 @@ export function InlineDateRangePicker({
       <PopoverTrigger asChild disabled={disabled}>
         <button
           className={cn(
-            "h-[30px] flex items-center gap-1 px-2 rounded-md border border-input bg-background text-sm",
+            "h-[30px] flex items-center gap-1 px-2 rounded-md border border-input bg-background text-xs",
             "hover:bg-accent hover:text-accent-foreground transition-colors",
-            "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             disabled && "opacity-50 cursor-not-allowed",
             className
           )}

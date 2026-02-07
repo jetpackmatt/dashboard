@@ -10,6 +10,8 @@ export interface ColumnConfig {
   align?: 'left' | 'center' | 'right'  // Text alignment (default: left)
   dividerAfter?: boolean  // Show vertical divider after this column
   extraPaddingLeft?: boolean  // Add extra padding on the left (useful after dividers)
+  sortable?: boolean   // Whether this column supports sorting
+  sortKey?: string     // Database column name for sorting (defaults to id)
 }
 
 export interface TableConfig {
@@ -64,17 +66,17 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
 export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
   columns: [
     // Default visible columns (display order)
-    { id: 'orderId',      header: 'Order ID',      width: 9,  priority: 1 },
-    { id: 'shipmentId',   header: 'Shipment ID',   width: 11, priority: 12 },
+    { id: 'orderId',      header: 'Order ID',      width: 10, priority: 1 },
+    { id: 'shipmentId',   header: 'Shipment ID',   width: 10, priority: 12 },
     { id: 'status',       header: 'Status',        width: 12, priority: 2 },
-    { id: 'customerName', header: 'Customer',      width: 11, priority: 5 },
-    { id: 'charge',       header: 'Charge',        width: 7,  priority: 4, align: 'center' },
-    { id: 'qty',          header: 'Items',         width: 5,  priority: 8, align: 'center' },
-    { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9 },
+    { id: 'customerName', header: 'Customer',      width: 11, priority: 5, sortable: true, sortKey: 'recipient_name' },
+    { id: 'charge',       header: 'Charge',        width: 6,  priority: 4, align: 'center' },
+    { id: 'qty',          header: 'Qty',           width: 5,  priority: 8, align: 'center' },
+    { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9, sortable: true, sortKey: 'carrier' },
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
-    { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center' },
-    { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center' },
-    { id: 'labelCreated', header: 'Label Created', width: 13, priority: 10 },
+    { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center', sortable: true, sortKey: 'transit_time_days' },
+    { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center', sortable: true, sortKey: 'event_labeled' },
+    { id: 'labelCreated', header: 'Label Created', width: 12, priority: 10, sortable: true, sortKey: 'event_labeled' },
     // Optional columns (not visible by default) - priority 13+
     { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
     { id: 'channelName',  header: 'Channel',       width: 5,  priority: 14, defaultVisible: false },
