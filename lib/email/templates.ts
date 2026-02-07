@@ -61,11 +61,15 @@ export function generateClaimEmail(data: ClaimEmailData): ClaimEmailResult {
   const subject = `${data.merchantName} - ${data.shipmentId} - ${displayName} Claim`
 
   const text = getEmailBody(data)
-  // Convert to HTML with proper line breaks
+  // Convert to HTML with proper line breaks and bold headers
   const html = text
     .replace(/\n/g, '<br>\n')
     .replace(/^(Hello,)$/m, '<strong>$1</strong>')
     .replace(/(Thank you for your help,)$/m, '<strong>$1</strong>')
+    // Bold the issue description header
+    .replace(/(Shipment \d+ has the following issues:)/g, '<strong>$1</strong>')
+    // Bold the action items header
+    .replace(/(Action items:)/g, '<strong>$1</strong>')
 
   return { subject, text, html }
 }

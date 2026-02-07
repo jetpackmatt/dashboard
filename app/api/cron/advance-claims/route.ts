@@ -8,7 +8,7 @@ import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/tem
  *
  * Part 1: Advances claims from "Under Review" to "Credit Requested"
  * - Creates the appearance of a review process
- * - Automatically advances claims 15 minutes after submission
+ * - Automatically advances claims 5 minutes after submission
  *
  * Part 2: Syncs care ticket status to lost_in_transit_checks
  * - When care ticket is "Resolved" → claim_eligibility_status = 'approved'
@@ -35,9 +35,9 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createAdminClient()
 
-    // Find claims that are Under Review and were created 15+ minutes ago
-    const fifteenMinutesAgo = new Date()
-    fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15)
+    // Find claims that are Under Review and were created 5+ minutes ago
+    const fiveMinutesAgo = new Date()
+    fiveMinutesAgo.setMinutes(fiveMinutesAgo.getMinutes() - 5)
 
     const { data: claimsToAdvance, error: fetchError } = await supabase
       .from('care_tickets')
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
       `)
       .eq('ticket_type', 'Claim')
       .eq('status', 'Under Review')
-      .lte('created_at', fifteenMinutesAgo.toISOString())
+      .lte('created_at', fiveMinutesAgo.toISOString())
 
     if (fetchError) {
       console.error('[Cron AdvanceClaims] Error fetching claims:', fetchError.message)

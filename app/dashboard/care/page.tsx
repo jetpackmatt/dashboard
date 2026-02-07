@@ -21,6 +21,7 @@ import {
   FileTextIcon,
   ImageIcon,
   FileIcon,
+  FileSpreadsheetIcon,
 } from "lucide-react"
 import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
@@ -292,6 +293,41 @@ function getStatusColors(status: string) {
   }
 }
 
+// Helper function to get type badge colors - Claim uses Jetpack blue (#328bcb)
+function getTypeColors(type: string) {
+  switch (type) {
+    case "Claim":
+      // Jetpack blue - stands out as the primary action type
+      return "font-medium bg-[#328bcb]/15 text-[#2a7ab8] border-[#328bcb]/30 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:border-[#328bcb]/40"
+    case "Track":
+      return "font-medium bg-violet-100/50 text-violet-700 border-violet-200/50 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/50"
+    case "Work Order":
+      return "font-medium bg-teal-100/50 text-teal-700 border-teal-200/50 dark:bg-teal-900/20 dark:text-teal-300 dark:border-teal-800/50"
+    case "Technical":
+      return "font-medium bg-orange-100/50 text-orange-700 border-orange-200/50 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800/50"
+    case "Inquiry":
+      return "font-medium bg-cyan-100/50 text-cyan-700 border-cyan-200/50 dark:bg-cyan-900/20 dark:text-cyan-300 dark:border-cyan-800/50"
+    default:
+      return "font-medium bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
+  }
+}
+
+// Helper function to get issue badge colors
+function getIssueColors(issue: string) {
+  switch (issue) {
+    case "Loss":
+      return "font-medium bg-red-100/50 text-red-700 border-red-200/50 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800/50"
+    case "Damage":
+      return "font-medium bg-orange-100/50 text-orange-700 border-orange-200/50 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800/50"
+    case "Pick Error":
+      return "font-medium bg-purple-100/50 text-purple-700 border-purple-200/50 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800/50"
+    case "Short Ship":
+      return "font-medium bg-amber-100/50 text-amber-700 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/50"
+    default:
+      return "font-medium bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
+  }
+}
+
 // Helper function to get status text color for timeline (no background)
 // Only "Input Required" gets colored text (red) to draw customer attention
 function getStatusTextColor(status: string) {
@@ -321,14 +357,37 @@ function getStatusDotColor(status: string) {
   }
 }
 
-// Helper function to get file type icon based on extension
-function getFileIcon(fileType: string) {
+// Helper function to get file type icon based on MIME type or extension
+function getFileIcon(fileType: string, fileName?: string) {
   const type = fileType.toLowerCase()
-  if (type === 'pdf') {
+
+  // Check MIME types first
+  if (type === 'application/pdf' || type === 'pdf') {
     return <FileTextIcon className="h-4 w-4 text-red-500 shrink-0" />
-  } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(type)) {
+  } else if (type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(type)) {
     return <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+  } else if (
+    type === 'application/vnd.ms-excel' ||
+    type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    type === 'text/csv' ||
+    ['xls', 'xlsx', 'csv'].includes(type)
+  ) {
+    return <FileSpreadsheetIcon className="h-4 w-4 text-green-600 shrink-0" />
+  } else if (
+    type === 'application/msword' ||
+    type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    ['doc', 'docx'].includes(type)
+  ) {
+    return <FileTextIcon className="h-4 w-4 text-blue-600 shrink-0" />
   } else {
+    // Fallback: try to detect from filename extension
+    if (fileName) {
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      if (ext === 'pdf') return <FileTextIcon className="h-4 w-4 text-red-500 shrink-0" />
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) return <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+      if (['xls', 'xlsx', 'csv'].includes(ext || '')) return <FileSpreadsheetIcon className="h-4 w-4 text-green-600 shrink-0" />
+      if (['doc', 'docx'].includes(ext || '')) return <FileTextIcon className="h-4 w-4 text-blue-600 shrink-0" />
+    }
     return <FileIcon className="h-4 w-4 text-slate-500 shrink-0" />
   }
 }
@@ -431,6 +490,22 @@ export default function CarePage() {
     latestNotes: true,
   })
 
+  // Sorting state - defaults to Date column, newest first
+  const [sortColumn, setSortColumn] = React.useState<'date' | 'age'>('date')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
+
+  // Handle column sort click
+  const handleSort = (column: 'date' | 'age') => {
+    if (sortColumn === column) {
+      // Toggle direction if same column
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      // New column, default to desc
+      setSortColumn(column)
+      setSortDirection('desc')
+    }
+  }
+
   // Get the most relevant reference ID for a ticket based on its type
   const getReferenceId = (ticket: Ticket): string | null => {
     // For Claims and Track tickets, prioritize shipment ID, then order ID
@@ -526,6 +601,7 @@ export default function CarePage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [deletingTicket, setDeletingTicket] = React.useState<Ticket | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const [deleteType, setDeleteType] = React.useState<'archive' | 'permanent'>('archive')
 
   // Status update state
   const [statusDialogOpen, setStatusDialogOpen] = React.useState(false)
@@ -695,10 +771,8 @@ export default function CarePage() {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return '-'
     const date = new Date(dateString)
-    // Short format: MM/DD (no year to save space)
-    const month = (date.getMonth() + 1).toString()
-    const day = date.getDate().toString()
-    return `${month}/${day}`
+    // Short format: Feb 7 (month name + day)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
   const formatTimeOnly = (dateString: string | null) => {
@@ -740,19 +814,46 @@ export default function CarePage() {
     const endDate = resolvedAt ? new Date(resolvedAt) : new Date()
     const diffMs = endDate.getTime() - startDate.getTime()
     const days = diffMs / (1000 * 60 * 60 * 24)
-    return `${days.toFixed(1)}d`
+
+    if (days < 1) return 'Today'
+    return `${Math.round(days)}d`
   }
 
 
   // Sort tickets by date (most recent first) - for static data
   const sortedTickets = React.useMemo(() => {
-    if (!usingStaticData) return tickets
-    return [...tickets].sort((a, b) => {
-      const dateA = new Date(a.createdAt).getTime()
-      const dateB = new Date(b.createdAt).getTime()
-      return dateB - dateA
-    })
-  }, [tickets, usingStaticData])
+    const ticketsToSort = [...tickets]
+
+    // Calculate age in ms for sorting
+    const getAgeMs = (ticket: Ticket) => {
+      const startDate = new Date(ticket.createdAt)
+      const endDate = ticket.resolvedAt ? new Date(ticket.resolvedAt) : new Date()
+      return endDate.getTime() - startDate.getTime()
+    }
+
+    if (sortColumn === 'date') {
+      ticketsToSort.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime()
+        const dateB = new Date(b.createdAt).getTime()
+        return sortDirection === 'asc' ? dateA - dateB : dateB - dateA
+      })
+    } else if (sortColumn === 'age') {
+      ticketsToSort.sort((a, b) => {
+        const ageA = getAgeMs(a)
+        const ageB = getAgeMs(b)
+        return sortDirection === 'asc' ? ageA - ageB : ageB - ageA
+      })
+    } else {
+      // Default: newest first
+      ticketsToSort.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime()
+        const dateB = new Date(b.createdAt).getTime()
+        return dateB - dateA
+      })
+    }
+
+    return ticketsToSort
+  }, [tickets, sortColumn, sortDirection])
 
   // Pagination for static data (API handles its own pagination)
   const displayedTickets = React.useMemo(() => {
@@ -925,19 +1026,18 @@ export default function CarePage() {
     setDeleteDialogOpen(true)
   }
 
-  // Handle soft delete ticket (set status to 'Deleted')
+  // Handle delete ticket (archive or permanent)
   const handleDeleteTicket = async () => {
     if (!deletingTicket) return
 
     setIsDeleting(true)
     try {
-      const response = await fetch(`/api/data/care-tickets/${deletingTicket.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'Deleted',
-          eventNote: 'Ticket deleted',
-        }),
+      const url = deleteType === 'permanent'
+        ? `/api/data/care-tickets/${deletingTicket.id}?permanent=true`
+        : `/api/data/care-tickets/${deletingTicket.id}`
+
+      const response = await fetch(url, {
+        method: 'DELETE',
       })
 
       if (!response.ok) {
@@ -948,6 +1048,7 @@ export default function CarePage() {
       // Close dialog and refresh
       setDeleteDialogOpen(false)
       setDeletingTicket(null)
+      setDeleteType('archive') // Reset to default
       setExpandedRowId(null) // Collapse the row
       fetchTickets()
     } catch (err) {
@@ -1373,9 +1474,9 @@ export default function CarePage() {
                       <col style={{ width: '36px' }} />
                     )}
                     {/* When client column is hidden, dateCreated needs extra width for left padding */}
-                    {columnVisibility.dateCreated && <col style={{ width: (isAdmin && !selectedClientId) ? '60px' : '84px' }} />}
-                    {columnVisibility.lastUpdated && <col style={{ width: '50px' }} />}
-                    {columnVisibility.reference && <col style={{ width: '110px' }} />}
+                    {columnVisibility.dateCreated && <col style={{ width: (isAdmin && !selectedClientId) ? '65px' : '89px' }} />}
+                    {columnVisibility.reference && <col style={{ width: '95px' }} />}
+                    {columnVisibility.lastUpdated && <col style={{ width: '70px' }} />}
                     {columnVisibility.type && <col style={{ width: '95px' }} />}
                     {columnVisibility.issue && <col style={{ width: '95px' }} />}
                     {columnVisibility.status && <col style={{ width: '138px' }} />}
@@ -1392,13 +1493,33 @@ export default function CarePage() {
                         <th className="text-left align-middle text-xs font-medium text-muted-foreground"></th>
                       )}
                       {columnVisibility.dateCreated && (
-                        <th className={`text-left align-middle text-xs font-medium text-muted-foreground ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}>Created</th>
-                      )}
-                      {columnVisibility.lastUpdated && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Age</th>
+                        <th
+                          className={`text-left align-middle text-xs font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}
+                          onClick={() => handleSort('date')}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            Date
+                            {sortColumn === 'date' && (
+                              sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                            )}
+                          </span>
+                        </th>
                       )}
                       {columnVisibility.reference && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Reference #</th>
+                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Reference ID</th>
+                      )}
+                      {columnVisibility.lastUpdated && (
+                        <th
+                          className="text-left align-middle text-xs font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors"
+                          onClick={() => handleSort('age')}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            Age
+                            {sortColumn === 'age' && (
+                              sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                            )}
+                          </span>
+                        </th>
                       )}
                       {columnVisibility.type && (
                         <th className="text-left align-middle text-xs font-medium text-muted-foreground">Type</th>
@@ -1479,11 +1600,6 @@ export default function CarePage() {
                                 {formatDate(ticket.createdAt)}
                               </td>
                             )}
-                            {columnVisibility.lastUpdated && (
-                              <td className="align-middle text-sm text-muted-foreground whitespace-nowrap">
-                                {formatAge(ticket.createdAt, ticket.resolvedAt)}
-                              </td>
-                            )}
                             {columnVisibility.reference && (
                               <td className="align-middle font-mono text-xs text-muted-foreground">
                                 {ticket.shipmentId ? (
@@ -1502,16 +1618,21 @@ export default function CarePage() {
                                 )}
                               </td>
                             )}
+                            {columnVisibility.lastUpdated && (
+                              <td className="align-middle text-sm text-muted-foreground whitespace-nowrap">
+                                {formatAge(ticket.createdAt, ticket.resolvedAt)}
+                              </td>
+                            )}
                             {columnVisibility.type && (
                               <td className="align-middle">
-                                <Badge variant="outline" className="whitespace-nowrap font-medium bg-slate-200/60 text-slate-700 border-slate-300/60 dark:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600/50">
+                                <Badge variant="outline" className={cn("whitespace-nowrap min-w-[72px] justify-center", getTypeColors(ticket.ticketType))}>
                                   {ticket.ticketType === 'Work Order' ? 'Request' : ticket.ticketType}
                                 </Badge>
                               </td>
                             )}
                             {columnVisibility.issue && (
                               <td className="align-middle">
-                                <Badge variant="outline" className="whitespace-nowrap font-medium bg-slate-200/60 text-slate-700 border-slate-300/60 dark:bg-slate-700/40 dark:text-slate-200 dark:border-slate-600/50">
+                                <Badge variant="outline" className={cn("whitespace-nowrap min-w-[72px] justify-center", getIssueColors(ticket.issueType || ''))}>
                                   {ticket.issueType || 'N/A'}
                                 </Badge>
                               </td>
@@ -1520,7 +1641,7 @@ export default function CarePage() {
                               <td className="align-middle">
                                 <Badge
                                   variant="outline"
-                                  className={cn("whitespace-nowrap", getStatusColors(ticket.status))}
+                                  className={cn("whitespace-nowrap min-w-[72px] justify-center", getStatusColors(ticket.status))}
                                 >
                                   {ticket.status}
                                 </Badge>
@@ -1556,7 +1677,7 @@ export default function CarePage() {
                                   <div className="pt-3 pb-5">
                                     <div className="flex items-start pl-4 lg:pl-6 pr-4">
                                       {/* Left Column: Credit/Buttons only */}
-                                      <div className="flex-shrink-0 pr-[18px] w-[120px]">
+                                      <div className="flex-shrink-0 pr-[18px] w-[143px]">
                                           {/* Credit Card - contextual based on state */}
                                           {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
                                             <div className={cn(
@@ -1644,7 +1765,7 @@ export default function CarePage() {
                                                     rel="noopener noreferrer"
                                                     className="flex items-center gap-2 px-2 py-1.5 text-[11px] font-medium bg-white dark:bg-slate-600/50 rounded border border-slate-200/60 dark:border-slate-500/40 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
                                                   >
-                                                    {getFileIcon(file.type)}
+                                                    {getFileIcon(file.type, file.name)}
                                                     <span className="truncate">{file.name}</span>
                                                   </a>
                                                 ))}
@@ -1654,7 +1775,7 @@ export default function CarePage() {
                                         </div>
 
                                       {/* Center column: Details Card + Internal Notes (stacked) */}
-                                      <div className="flex flex-col w-[477px] flex-shrink-0">
+                                      <div className="flex flex-col w-[484px] flex-shrink-0">
                                         {/* Details Card - no min-height, flows naturally */}
                                         <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-4">
                                           {/* Row 1: Ticket #, Carrier, Tracking # */}
@@ -2504,30 +2625,89 @@ export default function CarePage() {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+        setDeleteDialogOpen(open)
+        if (!open) setDeleteType('archive') // Reset when closing
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Delete Ticket</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this ticket? This action will hide the ticket from the main view but it can be recovered later.
+              Choose how you want to delete this ticket.
             </DialogDescription>
           </DialogHeader>
           {deletingTicket && (
-            <div className="py-4">
-              <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-4 space-y-2">
+            <div className="py-4 space-y-4">
+              {/* Ticket info */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50 p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-red-900 dark:text-red-100">
+                  <span className="text-sm font-medium">
                     Ticket #{deletingTicket.ticketNumber}
                   </span>
-                  <Badge variant="outline" className="text-red-700 border-red-300 dark:text-red-300 dark:border-red-700">
+                  <Badge variant="outline">
                     {deletingTicket.ticketType}
                   </Badge>
                 </div>
                 {deletingTicket.description && (
-                  <p className="text-sm text-red-700 dark:text-red-300 line-clamp-2">
+                  <p className="text-sm text-muted-foreground line-clamp-2">
                     {deletingTicket.description}
                   </p>
                 )}
+              </div>
+
+              {/* Delete type selection */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteType('archive')}
+                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                    deleteType === 'archive'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      deleteType === 'archive' ? 'border-amber-500' : 'border-slate-400'
+                    }`}>
+                      {deleteType === 'archive' && (
+                        <div className="w-2 h-2 rounded-full bg-amber-500" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">Archive</p>
+                      <p className="text-xs text-muted-foreground">
+                        Hide from view but keep data. Can be recovered later.
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDeleteType('permanent')}
+                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                    deleteType === 'permanent'
+                      ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      deleteType === 'permanent' ? 'border-red-500' : 'border-slate-400'
+                    }`}>
+                      {deleteType === 'permanent' && (
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm text-red-600 dark:text-red-400">Permanently Delete</p>
+                      <p className="text-xs text-muted-foreground">
+                        Remove ticket and all attached files forever. Cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                </button>
               </div>
             </div>
           )}
@@ -2536,17 +2716,18 @@ export default function CarePage() {
               Cancel
             </Button>
             <Button
-              variant="destructive"
+              variant={deleteType === 'permanent' ? 'destructive' : 'default'}
               onClick={handleDeleteTicket}
               disabled={isDeleting}
+              className={deleteType === 'archive' ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}
             >
               {isDeleting ? (
                 <>
                   <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
-                  Deleting...
+                  {deleteType === 'permanent' ? 'Deleting...' : 'Archiving...'}
                 </>
               ) : (
-                'Delete Ticket'
+                deleteType === 'permanent' ? 'Permanently Delete' : 'Archive Ticket'
               )}
             </Button>
           </DialogFooter>
