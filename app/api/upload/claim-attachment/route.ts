@@ -2,13 +2,18 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+const MAX_FILE_SIZE = 15 * 1024 * 1024 // 15MB
 const ALLOWED_TYPES = [
   'image/jpeg',
   'image/png',
   'image/gif',
   'image/webp',
   'application/pdf',
+  'application/vnd.ms-excel',                                              // .xls
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',    // .xlsx
+  'text/csv',                                                              // .csv
+  'application/msword',                                                    // .doc
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
 ]
 
 /**
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
     // Validate file type
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { error: 'Invalid file type. Allowed: JPEG, PNG, GIF, WebP, PDF' },
+        { error: 'Invalid file type. Allowed: PNG, JPG, PDF, XLS, CSV, or DOC' },
         { status: 400 }
       )
     }
@@ -46,7 +51,7 @@ export async function POST(request: NextRequest) {
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        { error: 'File too large. Maximum size: 10MB' },
+        { error: 'File too large. Maximum size: 15MB' },
         { status: 400 }
       )
     }
@@ -72,21 +77,32 @@ export async function POST(request: NextRequest) {
       })
 
     if (uploadError) {
-      console.error('Upload error:', uploadError)
+      console.error('Upload error:', uploadError.message, uploadError)
       return NextResponse.json(
-        { error: 'Failed to upload file' },
+        { error: uploadError.message || 'Failed to upload file' },
         { status: 500 }
       )
     }
 
-    // Get the public URL (or signed URL if bucket is private)
-    const { data: urlData } = supabase.storage
+    // Get a signed URL (private bucket - URL expires after 1 hour)
+    // We store the path in the database, and generate fresh signed URLs when needed
+    const { data: urlData, error: urlError } = await supabase.storage
       .from('claim-attachments')
-      .getPublicUrl(data.path)
+      .createSignedUrl(data.path, 3600) // 1 hour expiry
+
+    if (urlError) {
+      console.error('Signed URL error:', urlError.message)
+      // File was uploaded successfully, just return the path
+      return NextResponse.json({
+        success: true,
+        url: null,
+        path: data.path,
+      })
+    }
 
     return NextResponse.json({
       success: true,
-      url: urlData.publicUrl,
+      url: urlData.signedUrl,
       path: data.path,
     })
   } catch (err) {

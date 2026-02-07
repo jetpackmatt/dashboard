@@ -5,9 +5,10 @@ import { Upload, X, File, Image, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-interface UploadedFile {
+export interface UploadedFile {
   name: string
   url: string
+  path?: string  // Storage path for generating fresh signed URLs (optional for backwards compat)
   size: number
   type: string
 }
@@ -21,6 +22,10 @@ interface FileUploadProps {
   disabled?: boolean
   required?: boolean
   className?: string
+  singleFile?: boolean  // When true, replaces drop zone with uploaded file
+  // For shared budget across multiple upload fields:
+  totalBudgetMb?: number    // Total MB budget across all upload fields
+  usedBudgetBytes?: number  // Bytes already used by OTHER upload fields
 }
 
 const ALLOWED_TYPES = [
@@ -29,9 +34,14 @@ const ALLOWED_TYPES = [
   'image/gif',
   'image/webp',
   'application/pdf',
+  'application/vnd.ms-excel',                                              // .xls
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',    // .xlsx
+  'text/csv',                                                              // .csv
+  'application/msword',                                                    // .doc
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
 ]
 
-const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf']
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.xls', '.xlsx', '.csv', '.doc', '.docx']
 
 export function FileUpload({
   value,
@@ -42,7 +52,19 @@ export function FileUpload({
   disabled = false,
   required = false,
   className,
+  singleFile = false,
+  totalBudgetMb,
+  usedBudgetBytes = 0,
 }: FileUploadProps) {
+  // In single file mode, enforce maxFiles = 1
+  const effectiveMaxFiles = singleFile ? 1 : maxFiles
+
+  // Calculate remaining budget if using shared budget
+  const currentFieldBytes = value.reduce((sum, f) => sum + f.size, 0)
+  const totalUsedBytes = usedBudgetBytes + currentFieldBytes
+  const remainingBudgetBytes = totalBudgetMb
+    ? (totalBudgetMb * 1024 * 1024) - totalUsedBytes
+    : null
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -68,10 +90,16 @@ export function FileUpload({
       return `Invalid file type. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`
     }
 
-    // Check file size
+    // Check file size against per-file limit
     const sizeMb = file.size / (1024 * 1024)
     if (sizeMb > maxSizeMb) {
       return `File too large. Maximum size: ${maxSizeMb}MB`
+    }
+
+    // Check against shared budget if specified
+    if (remainingBudgetBytes !== null && file.size > remainingBudgetBytes) {
+      const remainingMb = (remainingBudgetBytes / (1024 * 1024)).toFixed(1)
+      return `File exceeds remaining budget. Only ${remainingMb}MB left of ${totalBudgetMb}MB total.`
     }
 
     return null
@@ -104,6 +132,7 @@ export function FileUpload({
       return {
         name: file.name,
         url: data.url,
+        path: data.path,  // Store path for generating fresh signed URLs later
         size: file.size,
         type: file.type,
       }
@@ -121,8 +150,8 @@ export function FileUpload({
     const fileArray = Array.from(files)
 
     // Check if we'd exceed max files
-    if (value.length + fileArray.length > maxFiles) {
-      setError(`Maximum ${maxFiles} files allowed`)
+    if (value.length + fileArray.length > effectiveMaxFiles) {
+      setError(`Maximum ${effectiveMaxFiles} file${effectiveMaxFiles > 1 ? 's' : ''} allowed`)
       return
     }
 
@@ -152,7 +181,7 @@ export function FileUpload({
     if (files.length > 0) {
       handleFiles(files)
     }
-  }, [disabled, value, maxFiles]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [disabled, value, effectiveMaxFiles]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -184,50 +213,86 @@ export function FileUpload({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  return (
-    <div className={cn("space-y-3", className)}>
-      {/* Drop zone */}
-      <div
-        className={cn(
-          "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors",
-          isDragging && "border-primary bg-primary/5",
-          disabled && "opacity-50 cursor-not-allowed",
-          !isDragging && !disabled && "border-muted-foreground/25 hover:border-muted-foreground/50"
-        )}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={() => !disabled && inputRef.current?.click()}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          className="hidden"
-          accept={accept}
-          multiple
-          onChange={handleInputChange}
-          disabled={disabled}
-        />
+  // Single file mode: show uploaded file instead of drop zone
+  const hasSingleFileUploaded = singleFile && value.length > 0
+  const showDropZone = !hasSingleFileUploaded
 
-        {isUploading ? (
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Uploading...</p>
+  return (
+    <div className={cn("space-y-2", className)}>
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        accept={accept}
+        multiple={!singleFile}
+        onChange={handleInputChange}
+        disabled={disabled}
+      />
+
+      {/* Single file mode: show file in place of drop zone */}
+      {hasSingleFileUploaded && (
+        <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+          {getFileIcon(value[0].type)}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium truncate">{value[0].name}</p>
+            <p className="text-xs text-muted-foreground">
+              {formatFileSize(value[0].size)}
+            </p>
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            <Upload className="h-8 w-8 text-muted-foreground" />
-            <div>
-              <p className="text-sm font-medium">
-                Drop files here or click to browse
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Images and PDFs up to {maxSizeMb}MB ({maxFiles} files max)
-              </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleRemove(0)
+            }}
+            disabled={disabled}
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">Remove</span>
+          </Button>
+        </div>
+      )}
+
+      {/* Drop zone - hidden in single file mode when file is uploaded */}
+      {showDropZone && (
+        <div
+          className={cn(
+            "border-2 border-dashed rounded-lg text-center cursor-pointer transition-colors",
+            singleFile ? "p-4" : "p-6",  // Smaller padding for single file mode
+            isDragging && "border-primary bg-primary/5",
+            disabled && "opacity-50 cursor-not-allowed",
+            !isDragging && !disabled && "border-muted-foreground/25 hover:border-muted-foreground/50"
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => !disabled && inputRef.current?.click()}
+        >
+          {isUploading ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className={cn("animate-spin text-muted-foreground", singleFile ? "h-6 w-6" : "h-8 w-8")} />
+              <p className="text-sm text-muted-foreground">Uploading...</p>
             </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className={cn("flex items-center gap-3", singleFile ? "flex-row justify-center" : "flex-col")}>
+              <Upload className={cn("text-muted-foreground", singleFile ? "h-5 w-5" : "h-8 w-8")} />
+              <div className={singleFile ? "" : "text-center"}>
+                <p className="text-sm font-medium">
+                  {singleFile ? "Drop file or click to browse" : "Drop files here or click to browse"}
+                </p>
+                {!singleFile && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Up to {maxSizeMb}MB per file ({effectiveMaxFiles} files max)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error message */}
       {error && (
@@ -241,8 +306,8 @@ export function FileUpload({
         </p>
       )}
 
-      {/* File list */}
-      {value.length > 0 && (
+      {/* File list - only shown in multi-file mode */}
+      {!singleFile && value.length > 0 && (
         <div className="space-y-2">
           {value.map((file, index) => (
             <div

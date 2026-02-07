@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { sendClaimEmail, fetchAttachmentBuffers } from '@/lib/email/client'
+import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/templates'
 
 /**
  * Cron endpoint to advance claims and sync claim statuses
@@ -39,7 +41,23 @@ export async function GET(request: NextRequest) {
 
     const { data: claimsToAdvance, error: fetchError } = await supabase
       .from('care_tickets')
-      .select('id, ticket_number, events, created_at')
+      .select(`
+        id,
+        ticket_number,
+        events,
+        created_at,
+        shipment_id,
+        issue_type,
+        description,
+        compensation_request,
+        reshipment_status,
+        reshipment_id,
+        attachments,
+        client:clients!care_tickets_client_id_fkey (
+          company_name,
+          merchant_id
+        )
+      `)
       .eq('ticket_type', 'Claim')
       .eq('status', 'Under Review')
       .lte('created_at', fifteenMinutesAgo.toISOString())
@@ -51,6 +69,8 @@ export async function GET(request: NextRequest) {
 
     let advanced = 0
     let errors = 0
+    let emailsSent = 0
+    let emailErrors = 0
 
     if (!claimsToAdvance || claimsToAdvance.length === 0) {
       console.log('[Cron AdvanceClaims] No claims to advance')
@@ -86,6 +106,55 @@ export async function GET(request: NextRequest) {
         } else {
           console.log(`[Cron AdvanceClaims] Advanced ticket #${claim.ticket_number} to Credit Requested`)
           advanced++
+
+          // Send email notification to ShipBob
+          try {
+            const clientData = claim.client as { company_name: string; merchant_id: string } | null
+            if (!clientData?.merchant_id) {
+              console.warn(`[Cron AdvanceClaims] Skipping email for ticket #${claim.ticket_number} - no merchant ID`)
+            } else {
+              // Generate email content using template
+              const emailData = generateClaimEmail({
+                merchantName: clientData.company_name,
+                merchantId: clientData.merchant_id,
+                shipmentId: claim.shipment_id || '',
+                issueType: claim.issue_type as IssueType,
+                description: claim.description as string | null,
+                compensationRequest: claim.compensation_request as string | null,
+                reshipmentStatus: claim.reshipment_status as ReshipmentStatus | null,
+                reshipmentId: claim.reshipment_id as string | null,
+              })
+
+              // Fetch attachments if any (path is used to generate fresh signed URLs)
+              const attachmentsData = claim.attachments as Array<{ name: string; url: string; path?: string }> | null
+              let attachmentBuffers: Array<{ filename: string; content: Buffer }> = []
+              if (attachmentsData && attachmentsData.length > 0) {
+                try {
+                  attachmentBuffers = await fetchAttachmentBuffers(attachmentsData)
+                } catch (attachmentError) {
+                  console.warn(`[Cron AdvanceClaims] Failed to fetch attachments for ticket #${claim.ticket_number}:`, attachmentError)
+                  // Continue without attachments
+                }
+              }
+
+              // Send the email
+              await sendClaimEmail({
+                to: ['support@shipbob.com'],
+                cc: ['support@shipwithjetpack.com', 'matt@shipwithjetpack.com'],
+                subject: emailData.subject,
+                html: emailData.html,
+                text: emailData.text,
+                attachments: attachmentBuffers.length > 0 ? attachmentBuffers : undefined,
+              })
+
+              console.log(`[Cron AdvanceClaims] Sent email for ticket #${claim.ticket_number}`)
+              emailsSent++
+            }
+          } catch (emailError) {
+            console.error(`[Cron AdvanceClaims] Email failed for ticket #${claim.ticket_number}:`, emailError)
+            emailErrors++
+            // Don't block advancement - log and continue
+          }
         }
       }
     }
@@ -137,12 +206,14 @@ export async function GET(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime
-    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${synced} synced, ${errors + syncErrors} errors`)
+    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${synced} synced, ${errors + syncErrors + emailErrors} errors`)
 
     return NextResponse.json({
       success: errors === 0 && syncErrors === 0,
       duration: `${duration}ms`,
       claimsAdvanced: advanced,
+      emailsSent,
+      emailErrors,
       claimsSynced: synced,
       errors: errors + syncErrors,
     })

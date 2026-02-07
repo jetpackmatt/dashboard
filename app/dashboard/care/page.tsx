@@ -73,8 +73,35 @@ import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-fi
 import { cn } from "@/lib/utils"
 import { useClient } from "@/components/client-context"
 import { ClientBadge } from "@/components/transactions/client-badge"
-import { getTrackingUrl } from "@/components/transactions/cell-renderers"
+import { getTrackingUrl, getCarrierDisplayName } from "@/components/transactions/cell-renderers"
+
+// Carrier options for the dropdown (consolidated display names)
+const CARRIER_OPTIONS = [
+  'Amazon',
+  'APC',
+  'BetterTrucks',
+  'Canada Post',
+  'Cirro',
+  'DHL Ecom',
+  'DHL Express',
+  'FedEx',
+  'GoFo Express',
+  'LaserShip',
+  'OnTrac',
+  'OSM',
+  'Passport',
+  'Prepaid',
+  'ShipBob',
+  'TForce',
+  'UniUni',
+  'UPS',
+  'UPS MI',
+  'USPS',
+  'Veho',
+]
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
+import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
+import { FileUpload } from "@/components/claims/file-upload"
 
 // Import static data as fallback
 import careDataStatic from "../care-data.json"
@@ -298,11 +325,11 @@ function getStatusDotColor(status: string) {
 function getFileIcon(fileType: string) {
   const type = fileType.toLowerCase()
   if (type === 'pdf') {
-    return <FileTextIcon className="h-3.5 w-3.5 text-red-500" />
+    return <FileTextIcon className="h-4 w-4 text-red-500 shrink-0" />
   } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(type)) {
-    return <ImageIcon className="h-3.5 w-3.5 text-blue-500" />
+    return <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
   } else {
-    return <FileIcon className="h-3.5 w-3.5 text-slate-500" />
+    return <FileIcon className="h-4 w-4 text-slate-500 shrink-0" />
   }
 }
 
@@ -345,9 +372,10 @@ function staticToApiTicket(s: StaticTicket): Ticket {
 }
 
 export default function CarePage() {
-  const { selectedClientId, isAdmin } = useClient()
+  const { selectedClientId, isAdmin, clients } = useClient()
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
+  const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
 
   // Data state
   const [tickets, setTickets] = React.useState<Ticket[]>([])
@@ -419,19 +447,54 @@ export default function CarePage() {
 
   // Create ticket form state
   const [createForm, setCreateForm] = React.useState({
-    ticketType: 'Claim',
-    issueType: '',
-    orderId: '',
+    ticketType: 'Track',
+    shipmentId: '',
+    clientId: '', // For admin/care team to select brand
     carrier: '',
     trackingNumber: '',
     description: '',
-    reshipmentStatus: '',
-    whatToReship: '',
-    compensationRequest: '',
-    creditAmount: '',
-    currency: 'USD',
+    attachments: [] as { name: string; url: string; size: number; type: string }[],
   })
   const [isCreating, setIsCreating] = React.useState(false)
+
+  // Shipment lookup state for auto-populate
+  const [isLookingUpShipment, setIsLookingUpShipment] = React.useState(false)
+  const [shipmentLookupError, setShipmentLookupError] = React.useState<string | null>(null)
+
+  // Debounced shipment lookup to auto-populate carrier, tracking, and client
+  const lookupShipment = useDebouncedCallback(async (shipmentId: string) => {
+    if (!shipmentId || shipmentId.length < 5) {
+      return
+    }
+
+    setIsLookingUpShipment(true)
+    setShipmentLookupError(null)
+
+    try {
+      const response = await fetch(`/api/data/shipments/${shipmentId}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.shipment) {
+          setCreateForm(prev => ({
+            ...prev,
+            carrier: data.shipment.carrier ? getCarrierDisplayName(data.shipment.carrier) : '',
+            trackingNumber: data.shipment.tracking_id || '',
+            // Auto-populate client if shipment has one
+            clientId: data.shipment.client_id || prev.clientId,
+          }))
+        }
+      } else if (response.status === 404) {
+        // Shipment not found - that's okay, user might be typing a new one
+        setShipmentLookupError(null)
+      } else {
+        setShipmentLookupError('Failed to lookup shipment')
+      }
+    } catch {
+      setShipmentLookupError('Failed to lookup shipment')
+    } finally {
+      setIsLookingUpShipment(false)
+    }
+  }, 500)
 
   // Edit ticket state
   const [editDialogOpen, setEditDialogOpen] = React.useState(false)
@@ -702,9 +765,38 @@ export default function CarePage() {
 
   // Handle create ticket
   const handleCreateTicket = async () => {
-    if (!selectedClientId || selectedClientId === 'all') {
-      setCreateDialogError('Please select a specific brand first. You cannot create a ticket when "All Brands" is selected.')
+    // Determine the effective client ID
+    // For admins with no specific client selected, use the form's clientId
+    // For brand users, use their selectedClientId
+    const effectiveClientId = (selectedClientId && selectedClientId !== 'all')
+      ? selectedClientId
+      : createForm.clientId
+
+    if (!effectiveClientId) {
+      setCreateDialogError('Please select a brand.')
       return
+    }
+
+    // Validate required fields
+    if (!createForm.description.trim()) {
+      setCreateDialogError('Description is required.')
+      return
+    }
+
+    // For Track type, shipment fields are required
+    if (createForm.ticketType === 'Track') {
+      if (!createForm.shipmentId.trim()) {
+        setCreateDialogError('Shipment ID is required for Track tickets.')
+        return
+      }
+      if (!createForm.carrier.trim()) {
+        setCreateDialogError('Carrier is required for Track tickets.')
+        return
+      }
+      if (!createForm.trackingNumber.trim()) {
+        setCreateDialogError('Tracking Number is required for Track tickets.')
+        return
+      }
     }
 
     setCreateDialogError(null)
@@ -714,18 +806,13 @@ export default function CarePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clientId: selectedClientId,
+          clientId: effectiveClientId,
           ticketType: createForm.ticketType,
-          issueType: createForm.issueType || null,
-          orderId: createForm.orderId || null,
+          shipmentId: createForm.shipmentId || null,
           carrier: createForm.carrier || null,
           trackingNumber: createForm.trackingNumber || null,
           description: createForm.description || null,
-          reshipmentStatus: createForm.reshipmentStatus || null,
-          whatToReship: createForm.whatToReship || null,
-          compensationRequest: createForm.compensationRequest || null,
-          creditAmount: createForm.creditAmount ? parseFloat(createForm.creditAmount) : 0,
-          currency: createForm.currency,
+          attachments: createForm.attachments.length > 0 ? createForm.attachments : null,
         }),
       })
 
@@ -736,18 +823,15 @@ export default function CarePage() {
 
       // Reset form and close dialog
       setCreateForm({
-        ticketType: 'Claim',
-        issueType: '',
-        orderId: '',
+        ticketType: 'Track',
+        shipmentId: '',
+        clientId: '',
         carrier: '',
         trackingNumber: '',
         description: '',
-        reshipmentStatus: '',
-        whatToReship: '',
-        compensationRequest: '',
-        creditAmount: '',
-        currency: 'USD',
+        attachments: [],
       })
+      setShipmentLookupError(null)
       setCreateDialogOpen(false)
       // Refresh tickets
       fetchTickets()
@@ -1132,9 +1216,17 @@ export default function CarePage() {
                 )}
               </Button>
 
+              {/* Submit a Claim Button - only show if using real data */}
+              {!usingStaticData && (
+                <Button size="sm" className="h-[30px] bg-[#328bcb] hover:bg-[#2a7ab5] text-white" onClick={() => setClaimDialogOpen(true)}>
+                  <PlusIcon className="h-4 w-4 mr-1" />
+                  <span className="hidden lg:inline">Submit a Claim</span>
+                </Button>
+              )}
+
               {/* New Ticket Button - only show if using real data */}
               {!usingStaticData && (
-                <Button size="sm" className="h-[30px]" onClick={() => setCreateDialogOpen(true)}>
+                <Button size="sm" className="h-[30px] bg-[#328bcb] hover:bg-[#2a7ab5] text-white" onClick={() => setCreateDialogOpen(true)}>
                   <PlusIcon className="h-4 w-4 mr-1" />
                   <span className="hidden lg:inline">New Ticket</span>
                 </Button>
@@ -1914,44 +2006,50 @@ export default function CarePage() {
       {/* Create Ticket Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={(open) => {
         setCreateDialogOpen(open)
-        if (!open) setCreateDialogError(null) // Clear error when closing
+        if (!open) {
+          setCreateDialogError(null)
+          setShipmentLookupError(null)
+        }
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Create New Ticket</DialogTitle>
+            <DialogTitle className="text-xl">Create New Ticket</DialogTitle>
             <DialogDescription>
-              Create a new care ticket for the selected client.
+              Create a support ticket for tracking, work orders, technical issues, or general inquiries.
             </DialogDescription>
           </DialogHeader>
+
+          {/* Error messages */}
           {createDialogError && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-sm text-red-700 dark:text-red-300">
-              {createDialogError}
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300 flex items-center justify-between">
+              <span>{createDialogError}</span>
               <button
                 onClick={() => setCreateDialogError(null)}
-                className="ml-2 underline"
+                className="text-red-500 hover:text-red-700 dark:hover:text-red-300"
               >
-                Dismiss
+                <XIcon className="h-4 w-4" />
               </button>
             </div>
           )}
-          {(!selectedClientId || selectedClientId === 'all') && (
-            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md text-sm text-amber-700 dark:text-amber-300">
-              Please select a specific brand from the dropdown before creating a ticket.
-            </div>
-          )}
-          <div className="grid gap-4 py-4">
+
+          <div className="space-y-5 py-2">
+            {/* Row 1: Ticket Type + Shipment ID */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="ticketType">Ticket Type *</Label>
+                <Label htmlFor="ticketType" className="text-sm font-medium">
+                  Ticket Type <span className="text-red-500">*</span>
+                </Label>
                 <Select
                   value={createForm.ticketType}
-                  onValueChange={(value) => setCreateForm({ ...createForm, ticketType: value })}
+                  onValueChange={(value) => {
+                    setCreateForm({ ...createForm, ticketType: value })
+                    setCreateDialogError(null)
+                  }}
                 >
-                  <SelectTrigger id="ticketType">
+                  <SelectTrigger id="ticketType" className="h-10">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Claim">Claim</SelectItem>
                     <SelectItem value="Track">Track</SelectItem>
                     <SelectItem value="Work Order">Work Order</SelectItem>
                     <SelectItem value="Technical">Technical</SelectItem>
@@ -1960,150 +2058,151 @@ export default function CarePage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="issueType">Issue Type</Label>
+                <Label htmlFor="shipmentId" className="text-sm font-medium">
+                  Shipment ID {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="shipmentId"
+                    value={createForm.shipmentId}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setCreateForm({ ...createForm, shipmentId: value })
+                      lookupShipment(value)
+                    }}
+                    placeholder="e.g., 330867617"
+                    className="h-10 pr-8"
+                  />
+                  {isLookingUpShipment && (
+                    <Loader2Icon className="h-4 w-4 animate-spin absolute right-3 top-3 text-muted-foreground" />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2: Brand (for admins) + Carrier + Tracking */}
+            <div className={`grid gap-4 ${isAdmin && (!selectedClientId || selectedClientId === 'all') ? 'grid-cols-3' : 'grid-cols-2'}`}>
+              {/* Brand selector - only shown for admins when no specific client is selected */}
+              {isAdmin && (!selectedClientId || selectedClientId === 'all') && (
+                <div className="space-y-2">
+                  <Label htmlFor="clientId" className="text-sm font-medium">
+                    Brand <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={createForm.clientId}
+                    onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                  >
+                    <SelectTrigger id="clientId" className="h-10">
+                      <SelectValue placeholder="Select brand..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.filter(client => client.merchant_id).map((client) => (
+                        <SelectItem key={client.id} value={client.id}>
+                          {client.company_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="carrier" className="text-sm font-medium">
+                  Carrier {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
+                </Label>
                 <Select
-                  value={createForm.issueType}
-                  onValueChange={(value) => setCreateForm({ ...createForm, issueType: value })}
+                  value={createForm.carrier}
+                  onValueChange={(value) => setCreateForm({ ...createForm, carrier: value })}
+                  disabled={isLookingUpShipment}
                 >
-                  <SelectTrigger id="issueType">
-                    <SelectValue placeholder="Select issue type" />
+                  <SelectTrigger id="carrier" className="h-10">
+                    <SelectValue placeholder={isLookingUpShipment ? "..." : "Select carrier..."} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Loss">Loss</SelectItem>
-                    <SelectItem value="Damage">Damage</SelectItem>
-                    <SelectItem value="Pick Error">Pick Error</SelectItem>
-                    <SelectItem value="Short Ship">Short Ship</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
+                    {CARRIER_OPTIONS.map((carrier) => (
+                      <SelectItem key={carrier} value={carrier}>
+                        {carrier}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="orderId">Order ID</Label>
+                <Label htmlFor="trackingNumber" className="text-sm font-medium">
+                  Tracking {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
+                </Label>
                 <Input
-                  id="orderId"
-                  value={createForm.orderId}
-                  onChange={(e) => setCreateForm({ ...createForm, orderId: e.target.value })}
-                  placeholder="e.g., 1847362"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="carrier">Carrier</Label>
-                <Input
-                  id="carrier"
-                  value={createForm.carrier}
-                  onChange={(e) => setCreateForm({ ...createForm, carrier: e.target.value })}
-                  placeholder="e.g., FedEx, UPS"
+                  id="trackingNumber"
+                  value={createForm.trackingNumber}
+                  onChange={(e) => setCreateForm({ ...createForm, trackingNumber: e.target.value })}
+                  placeholder={isLookingUpShipment ? "Loading..." : "e.g., 773892456821"}
+                  className="h-10"
+                  disabled={isLookingUpShipment}
                 />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="trackingNumber">Tracking Number</Label>
-              <Input
-                id="trackingNumber"
-                value={createForm.trackingNumber}
-                onChange={(e) => setCreateForm({ ...createForm, trackingNumber: e.target.value })}
-                placeholder="e.g., 773892456821"
-              />
-            </div>
-
-            {createForm.ticketType === 'Claim' && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="reshipmentStatus">Reshipment Status</Label>
-                    <Select
-                      value={createForm.reshipmentStatus}
-                      onValueChange={(value) => setCreateForm({ ...createForm, reshipmentStatus: value })}
-                    >
-                      <SelectTrigger id="reshipmentStatus">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Please reship for me">Please reship for me</SelectItem>
-                        <SelectItem value="I've already reshipped">I&apos;ve already reshipped</SelectItem>
-                        <SelectItem value="Don't reship">Don&apos;t reship</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="compensationRequest">Compensation Request</Label>
-                    <Select
-                      value={createForm.compensationRequest}
-                      onValueChange={(value) => setCreateForm({ ...createForm, compensationRequest: value })}
-                    >
-                      <SelectTrigger id="compensationRequest">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Credit to account">Credit to account</SelectItem>
-                        <SelectItem value="Free replacement">Free replacement</SelectItem>
-                        <SelectItem value="Refund to payment method">Refund to payment method</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="whatToReship">What to Reship</Label>
-                  <Input
-                    id="whatToReship"
-                    value={createForm.whatToReship}
-                    onChange={(e) => setCreateForm({ ...createForm, whatToReship: e.target.value })}
-                    placeholder="e.g., 2x Vitamin D3 5000IU"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="creditAmount">Credit Amount</Label>
-                    <Input
-                      id="creditAmount"
-                      type="number"
-                      step="0.01"
-                      value={createForm.creditAmount}
-                      onChange={(e) => setCreateForm({ ...createForm, creditAmount: e.target.value })}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="currency">Currency</Label>
-                    <Select
-                      value={createForm.currency}
-                      onValueChange={(value) => setCreateForm({ ...createForm, currency: value })}
-                    >
-                      <SelectTrigger id="currency">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="USD">USD</SelectItem>
-                        <SelectItem value="CAD">CAD</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </>
+            {/* Shipment lookup error */}
+            {shipmentLookupError && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 -mt-2">
+                {shipmentLookupError}
+              </p>
             )}
 
+            {/* Description */}
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description" className="text-sm font-medium">
+                Description <span className="text-red-500">*</span>
+              </Label>
               <Textarea
                 id="description"
                 value={createForm.description}
                 onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
-                placeholder="Describe the issue..."
+                placeholder="Describe the issue or request in detail..."
                 rows={4}
+                className="resize-none"
               />
             </div>
+
+            {/* File Upload */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                Attachments <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <FileUpload
+                value={createForm.attachments}
+                onChange={(files) => setCreateForm({ ...createForm, attachments: files })}
+                maxFiles={10}
+                maxSizeMb={15}
+                accept="image/png,image/jpeg,.pdf,.xls,.xlsx,.csv,.doc,.docx"
+              />
+              <p className="text-xs text-muted-foreground">
+                Accepted: PNG, JPG, PDF, XLS, CSV, DOC (max 15MB each)
+              </p>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCreateDialogOpen(false)
+                setCreateForm({
+                  ticketType: 'Track',
+                  shipmentId: '',
+                  clientId: '',
+                  carrier: '',
+                  trackingNumber: '',
+                  description: '',
+                  attachments: [],
+                })
+              }}
+            >
               Cancel
             </Button>
-            <Button onClick={handleCreateTicket} disabled={isCreating}>
+            <Button
+              onClick={handleCreateTicket}
+              disabled={isCreating}
+            >
               {isCreating ? (
                 <>
                   <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
@@ -2516,6 +2615,16 @@ export default function CarePage() {
         shipmentId={selectedShipmentId}
         open={shipmentDrawerOpen}
         onOpenChange={setShipmentDrawerOpen}
+      />
+
+      {/* Claim Submission Dialog */}
+      <ClaimSubmissionDialog
+        open={claimDialogOpen}
+        onOpenChange={setClaimDialogOpen}
+        onSuccess={() => {
+          // Refresh the tickets list after successful claim submission
+          fetchTickets()
+        }}
       />
     </>
   )

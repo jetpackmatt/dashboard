@@ -191,6 +191,12 @@ interface ShipmentDetails {
     resolvedAt: string | null
     reshipmentStatus: string | null
     reshipmentId: string | null
+    events: Array<{
+      status: string
+      note: string
+      createdAt: string
+      createdBy: string
+    }>
     jetpackInvoiceNumber: string | null
   } | null
   // Lookout IQ AI Assessment
@@ -957,77 +963,109 @@ export function ShipmentDetailsDrawer({
                 {/* Issue Alert - shows for problematic statuses */}
                 <IssueAlert data={data} />
 
-                {/* Claim Status Alert - shows when a claim is filed */}
+                {/* Claim Status Card - shows when a claim is filed */}
                 {data.claimTicket && (
                   <div className={`rounded-lg p-4 ${
                     data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
-                      ? 'bg-emerald-500/10 dark:bg-emerald-500/5'
+                      ? 'bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-800/30'
                       : data.claimTicket.status === 'Credit Denied'
-                        ? 'bg-red-500/10 dark:bg-red-500/5'
-                        : 'bg-rose-500/10 dark:bg-rose-500/5'
+                        ? 'bg-red-500/10 dark:bg-red-500/5 border border-red-200/50 dark:border-red-800/30'
+                        : 'bg-amber-500/10 dark:bg-amber-500/5 border border-amber-200/50 dark:border-amber-800/30'
                   }`}>
-                    <div className="flex gap-3">
-                      <div className={`h-5 w-5 shrink-0 ${
-                        data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
-                          ? 'text-emerald-500'
-                          : data.claimTicket.status === 'Credit Denied'
-                            ? 'text-red-500'
-                            : 'text-rose-500'
-                      }`}>
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <p className={`text-sm font-semibold ${
-                            data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : data.claimTicket.status === 'Credit Denied'
-                                ? 'text-red-700 dark:text-red-400'
-                                : 'text-rose-700 dark:text-rose-400'
-                          }`}>
-                            Claim #{data.claimTicket.ticketNumber} - {data.claimTicket.status}
+                    {/* Two-column layout: Info on left, Timeline on right */}
+                    <div className="flex gap-6">
+                      {/* Left side: Header and details */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold ${
+                          data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
+                            ? 'text-emerald-700 dark:text-emerald-400'
+                            : data.claimTicket.status === 'Credit Denied'
+                              ? 'text-red-700 dark:text-red-400'
+                              : 'text-amber-700 dark:text-amber-400'
+                        }`}>
+                          A {data.claimTicket.issueType || 'Claim'} Claim has been filed
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Claim #{data.claimTicket.ticketNumber}
+                        </p>
+                        {data.claimTicket.creditAmount != null && data.claimTicket.creditAmount > 0 && (
+                          <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mt-2">
+                            Credit: ${data.claimTicket.creditAmount.toFixed(2)} {data.claimTicket.currency}
                           </p>
-                          {data.claimTicket.creditAmount && data.claimTicket.creditAmount > 0 && (
-                            <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
-                              ${data.claimTicket.creditAmount.toFixed(2)} {data.claimTicket.currency}
-                            </span>
-                          )}
-                        </div>
-                        {(data.claimTicket.issueType || (data.claimTicket.status === 'Resolved' && data.claimTicket.jetpackInvoiceNumber)) && (
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm text-muted-foreground">
-                              {data.claimTicket.issueType}
-                            </p>
-                            {data.claimTicket.status === 'Resolved' && data.claimTicket.jetpackInvoiceNumber && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation()
-                                  try {
-                                    const res = await fetch(`/api/invoices/${data.claimTicket!.jetpackInvoiceNumber}/files?type=pdf`)
-                                    const responseData = await res.json()
-                                    if (responseData.pdfUrl) {
-                                      window.open(responseData.pdfUrl, '_blank')
-                                    }
-                                  } catch (err) {
-                                    console.error('Failed to get invoice PDF:', err)
-                                  }
-                                }}
-                                className="text-sm text-blue-600 dark:text-blue-400 hover:underline shrink-0"
-                              >
-                                View Invoice <ExternalLinkIcon className="inline h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
+                        )}
+                        {data.claimTicket.status === 'Resolved' && data.claimTicket.jetpackInvoiceNumber && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              try {
+                                const res = await fetch(`/api/invoices/${data.claimTicket!.jetpackInvoiceNumber}/files?type=pdf`)
+                                const responseData = await res.json()
+                                if (responseData.pdfUrl) {
+                                  window.open(responseData.pdfUrl, '_blank')
+                                }
+                              } catch (err) {
+                                console.error('Failed to get invoice PDF:', err)
+                              }
+                            }}
+                            className="text-xs text-blue-600 dark:text-blue-400 hover:underline mt-2 block"
+                          >
+                            View Invoice <ExternalLinkIcon className="inline h-3 w-3" />
+                          </button>
                         )}
                         {data.claimTicket.reshipmentStatus && (
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground mt-2">
                             Reshipment: {data.claimTicket.reshipmentStatus}
                             {data.claimTicket.reshipmentId && ` (#${data.claimTicket.reshipmentId})`}
                           </p>
                         )}
                       </div>
+
+                      {/* Right side: Mini Timeline */}
+                      {data.claimTicket.events && data.claimTicket.events.length > 0 && (
+                        <div className="w-56 shrink-0">
+                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Activity</div>
+                          <div className="relative pl-3 border-l-2 border-slate-200 dark:border-slate-700 space-y-2.5">
+                            {data.claimTicket.events.slice(0, 4).map((event, idx) => {
+                              const dotColor = event.status === 'Resolved' || event.status === 'Credit Approved'
+                                ? 'bg-emerald-500 border-emerald-500'
+                                : event.status === 'Credit Denied'
+                                  ? 'bg-red-500 border-red-500'
+                                  : event.status === 'Credit Requested'
+                                    ? 'bg-amber-400 border-amber-400'
+                                    : event.status === 'Under Review'
+                                      ? 'bg-blue-500 border-blue-500'
+                                      : event.status === 'Input Required'
+                                        ? 'bg-red-500 border-red-500'
+                                        : 'bg-slate-400 border-slate-400'
+                              return (
+                                <div key={idx} className="relative">
+                                  {/* Timeline dot */}
+                                  <div className={`absolute -left-[15px] top-0.5 w-2 h-2 rounded-full border-2 ${
+                                    idx === 0 ? dotColor : 'bg-background border-slate-300 dark:border-slate-600'
+                                  }`} />
+                                  <div>
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <span className={`text-[11px] font-medium ${
+                                        idx === 0 ? 'text-foreground' : 'text-muted-foreground/70'
+                                      }`}>
+                                        {event.status}
+                                      </span>
+                                      <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+                                        {new Date(event.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                      </span>
+                                    </div>
+                                    {event.note && (
+                                      <p className="text-[10px] text-muted-foreground/70 mt-0.5 leading-tight line-clamp-2">
+                                        {event.note}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

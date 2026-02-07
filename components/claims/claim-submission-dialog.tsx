@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, Loader2, Package } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Loader2, Package } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { FileUpload } from "./file-upload"
-import { useClient } from "@/components/client-context"
+// Note: Client ID comes from shipment data (shipmentSummary.clientId), not client context
 import {
   ClaimType,
   ClaimEligibilityResult,
@@ -26,13 +26,21 @@ import { VerifyLostInTransitResponse } from "@/app/api/data/shipments/[id]/verif
 import { cn } from "@/lib/utils"
 
 type ReshipmentOption = "Please reship for me" | "I've already reshipped" | "Don't reship"
-type CompensationOption = "Credit me the item's manufacturing cost" | "Create a return label for me" | "Other"
+type CompensationOption = "Credit me the item's manufacturing cost" | "Create a return label for me"
 
 interface UploadedFile {
   name: string
   url: string
+  path?: string  // Storage path for generating fresh signed URLs
   size: number
   type: string
+}
+
+// Structured attachments for documentation step
+interface DocumentationAttachments {
+  photo: UploadedFile[]          // Required for Damage, Pick Error, Short Ship
+  customerComplaint: UploadedFile[]  // Required for Damage, Pick Error, Short Ship
+  otherDocs: UploadedFile[]      // Optional
 }
 
 interface ClaimFormData {
@@ -42,11 +50,12 @@ interface ClaimFormData {
   reshipmentStatus: ReshipmentOption | null
   reshipmentId: string
   compensationRequest: CompensationOption | null
-  attachments: UploadedFile[]
+  attachments: DocumentationAttachments
 }
 
 interface ShipmentSummary {
   shipmentId: string
+  clientId: string  // Needed for claim submission
   orderId: string
   trackingId: string
   carrier: string
@@ -88,7 +97,6 @@ export function ClaimSubmissionDialog({
   preselectedClaimType,
   onSuccess,
 }: ClaimSubmissionDialogProps) {
-  const { selectedClientId } = useClient()
   const [currentStep, setCurrentStep] = React.useState(0)
   const [isLoading, setIsLoading] = React.useState(false)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -104,7 +112,11 @@ export function ClaimSubmissionDialog({
     reshipmentStatus: null,
     reshipmentId: "",
     compensationRequest: null,
-    attachments: [],
+    attachments: {
+      photo: [],
+      customerComplaint: [],
+      otherDocs: [],
+    },
   })
 
   // Shipment data from lookup
@@ -165,7 +177,11 @@ export function ClaimSubmissionDialog({
         reshipmentStatus: null,
         reshipmentId: "",
         compensationRequest: null,
-        attachments: [],
+        attachments: {
+          photo: [],
+          customerComplaint: [],
+          otherDocs: [],
+        },
       })
       setShipmentSummary(null)
       setEligibility(null)
@@ -228,6 +244,7 @@ export function ClaimSubmissionDialog({
 
       setShipmentSummary({
         shipmentId: shipmentData.shipmentId,
+        clientId: shipmentData.clientId,
         orderId: shipmentData.orderId,
         trackingId: shipmentData.trackingId || "—",
         carrier: shipmentData.shipping?.carrier || "—",
@@ -297,6 +314,7 @@ export function ClaimSubmissionDialog({
 
       setShipmentSummary({
         shipmentId: shipmentData.shipmentId,
+        clientId: shipmentData.clientId,
         orderId: shipmentData.orderId,
         trackingId: shipmentData.trackingId || "—",
         carrier: shipmentData.shipping?.carrier || "—",
@@ -492,7 +510,11 @@ export function ClaimSubmissionDialog({
         // Auto-advances when verified - but allow manual proceed if eligible
         return litVerification?.eligible === true
       case "description":
-        // Description is now optional
+        // Description is REQUIRED for Incorrect Items and Incorrect Quantity
+        if (formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity") {
+          return formData.description.trim().length > 0
+        }
+        // Loss and Damage - description is optional
         return true
       case "reshipping":
         if (!formData.reshipmentStatus) return false
@@ -504,8 +526,10 @@ export function ClaimSubmissionDialog({
       case "compensation":
         return !!formData.compensationRequest
       case "documentation":
-        // Documentation is optional for all claim types now (required only for damage in old flow)
-        return true
+        // All claim types with documentation step require photo + customer complaint
+        const hasPhoto = formData.attachments.photo && formData.attachments.photo.length > 0
+        const hasComplaint = formData.attachments.customerComplaint && formData.attachments.customerComplaint.length > 0
+        return hasPhoto && hasComplaint
       default:
         return false
     }
@@ -528,8 +552,16 @@ export function ClaimSubmissionDialog({
 
   // Submit the claim
   const handleSubmit = async () => {
-    if (!selectedClientId || !shipmentSummary || !formData.claimType) {
-      setError("Missing required data")
+    if (!shipmentSummary) {
+      setError("Shipment data not loaded")
+      return
+    }
+    if (!shipmentSummary.clientId) {
+      setError("Shipment has no client ID")
+      return
+    }
+    if (!formData.claimType) {
+      setError("No claim type selected")
       return
     }
 
@@ -541,7 +573,7 @@ export function ClaimSubmissionDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clientId: selectedClientId,
+          clientId: shipmentSummary.clientId,
           ticketType: "Claim",
           issueType: claimTypeToIssueType(formData.claimType),
           status: "Under Review", // Claims start with Under Review status
@@ -554,8 +586,13 @@ export function ClaimSubmissionDialog({
           reshipmentStatus: formData.reshipmentStatus,
           reshipmentId: formData.reshipmentId || null,
           compensationRequest: formData.compensationRequest,
-          attachments: formData.attachments.map(f => ({ name: f.name, url: f.url, type: f.type })),
-          eligibilityMetadata: eligibility,
+          // Flatten structured attachments into array for API
+          // Include path for generating fresh signed URLs when sending emails
+          attachments: [
+            ...formData.attachments.photo.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'photo' })),
+            ...formData.attachments.customerComplaint.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'customerComplaint' })),
+            ...formData.attachments.otherDocs.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'otherDocs' })),
+          ],
         }),
       })
 
@@ -660,32 +697,55 @@ export function ClaimSubmissionDialog({
               </div>
             )}
 
-            {/* Claim type options */}
-            <p className="text-muted-foreground">What seems to be the trouble?</p>
-            <div className="grid gap-2">
-              {(["lostInTransit", "damage", "incorrectItems", "incorrectQuantity"] as ClaimType[]).map((type) => {
-                const typeEligibility = eligibility?.eligibility[type]
-                const isEligible = typeEligibility?.eligible ?? false
+            {/* Check if any claim types are eligible */}
+            {(() => {
+              const allClaimTypes: ClaimType[] = ["lostInTransit", "damage", "incorrectItems", "incorrectQuantity"]
+              const hasAnyEligible = allClaimTypes.some(type => eligibility?.eligibility[type]?.eligible)
 
+              if (!hasAnyEligible && eligibility) {
+                // No claim types eligible - show friendly message
                 return (
-                  <button
-                    key={type}
-                    className={cn(
-                      "flex items-center justify-between p-4 rounded-lg border text-left transition-colors",
-                      formData.claimType === type && "border-primary bg-primary/5",
-                      !isEligible && "opacity-60",
-                      isEligible && formData.claimType !== type && "hover:border-muted-foreground/50"
-                    )}
-                    onClick={() => handleClaimTypeSelect(type)}
-                  >
-                    <span className="font-medium">{getClaimTypeLabel(type)}</span>
-                    {!isEligible && (
-                      <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </button>
+                  <div className="rounded-lg border border-muted bg-muted/30 p-6 text-center">
+                    <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">
+                      This shipment is still on its way and is not eligible for any types of claim filing.
+                      Let&apos;s keep an eye on it!
+                    </p>
+                  </div>
                 )
-              })}
-            </div>
+              }
+
+              // At least one claim type is eligible - show options
+              return (
+                <>
+                  <p className="text-muted-foreground">What seems to be the trouble?</p>
+                  <div className="grid gap-2">
+                    {allClaimTypes.map((type) => {
+                      const typeEligibility = eligibility?.eligibility[type]
+                      const isEligible = typeEligibility?.eligible ?? false
+
+                      return (
+                        <button
+                          key={type}
+                          className={cn(
+                            "flex items-center justify-between p-4 rounded-lg border text-left transition-colors",
+                            formData.claimType === type && "border-primary bg-primary/5",
+                            !isEligible && "opacity-60",
+                            isEligible && formData.claimType !== type && "hover:border-muted-foreground/50"
+                          )}
+                          onClick={() => handleClaimTypeSelect(type)}
+                        >
+                          <span className="font-medium">{getClaimTypeLabel(type)}</span>
+                          {!isEligible && (
+                            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )
+            })()}
           </div>
         )
 
@@ -806,10 +866,15 @@ export function ClaimSubmissionDialog({
         )
 
       case "description":
+        const isPickOrShortShip = formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity"
         return (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="description">Enter any additional details we should know: (optional)</Label>
+              <Label htmlFor="description">
+                {isPickOrShortShip
+                  ? "Describe what was wrong with this shipment:"
+                  : "Enter any additional details we should know: (optional)"}
+              </Label>
               <Textarea
                 id="description"
                 placeholder="Include relevant context, descriptions, or communications with customer."
@@ -887,7 +952,7 @@ export function ClaimSubmissionDialog({
           <div className="space-y-4">
             <p className="text-muted-foreground">How should we compensate you?</p>
             <div className="grid gap-2">
-              {(["Credit me the item's manufacturing cost", "Create a return label for me", "Other"] as CompensationOption[]).map((option) => (
+              {(["Credit me the item's manufacturing cost", "Create a return label for me"] as CompensationOption[]).map((option) => (
                 <button
                   key={option}
                   className={cn(
@@ -905,19 +970,82 @@ export function ClaimSubmissionDialog({
         )
 
       case "documentation":
+        const isDamage = formData.claimType === "damage"
+        const photoLabel = isDamage
+          ? "Photo Showing Damaged Item(s)"
+          : "Photo Showing Incorrect Item(s)"
+
+        // Calculate bytes used by each attachment category for shared 15MB budget
+        const TOTAL_BUDGET_MB = 15
+        const photoBytes = formData.attachments.photo.reduce((sum, f) => sum + f.size, 0)
+        const complaintBytes = formData.attachments.customerComplaint.reduce((sum, f) => sum + f.size, 0)
+        const otherBytes = formData.attachments.otherDocs.reduce((sum, f) => sum + f.size, 0)
+
         return (
-          <div className="space-y-4">
+          <div className="space-y-5">
+            {/* Field 1: Photo - REQUIRED (single file) */}
             <div className="space-y-2">
-              <Label>Supporting Documentation</Label>
-              <p className="text-sm text-muted-foreground">
-                Photos/screenshots required for Damage claims. Examples: damaged shipment photos, customer messages, PDFs.
-              </p>
+              <Label className="flex items-center gap-2">
+                {photoLabel}
+                {formData.attachments.photo.length > 0 ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                ) : (
+                  <span className="text-destructive">*</span>
+                )}
+              </Label>
+              <FileUpload
+                value={formData.attachments.photo}
+                onChange={(files) => setFormData(prev => ({
+                  ...prev,
+                  attachments: { ...prev.attachments, photo: files }
+                }))}
+                accept="image/png,image/jpeg"
+                maxSizeMb={TOTAL_BUDGET_MB}
+                singleFile
+                totalBudgetMb={TOTAL_BUDGET_MB}
+                usedBudgetBytes={complaintBytes + otherBytes}
+              />
             </div>
-            <FileUpload
-              value={formData.attachments}
-              onChange={(files) => setFormData(prev => ({ ...prev, attachments: files }))}
-              required={formData.claimType === "damage"}
-            />
+
+            {/* Field 2: Customer Complaint - REQUIRED (single file) */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                Screenshot of Customer Complaint
+                {formData.attachments.customerComplaint.length > 0 ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                ) : (
+                  <span className="text-destructive">*</span>
+                )}
+              </Label>
+              <FileUpload
+                value={formData.attachments.customerComplaint}
+                onChange={(files) => setFormData(prev => ({
+                  ...prev,
+                  attachments: { ...prev.attachments, customerComplaint: files }
+                }))}
+                accept="image/png,image/jpeg"
+                maxSizeMb={TOTAL_BUDGET_MB}
+                singleFile
+                totalBudgetMb={TOTAL_BUDGET_MB}
+                usedBudgetBytes={photoBytes + otherBytes}
+              />
+            </div>
+
+            {/* Field 3: Other Docs - OPTIONAL */}
+            <div className="space-y-2">
+              <Label>Any Other Documentation <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+              <FileUpload
+                value={formData.attachments.otherDocs}
+                onChange={(files) => setFormData(prev => ({
+                  ...prev,
+                  attachments: { ...prev.attachments, otherDocs: files }
+                }))}
+                accept="image/png,image/jpeg,application/pdf,.xlsx,.xls,.csv"
+                maxSizeMb={TOTAL_BUDGET_MB}
+                totalBudgetMb={TOTAL_BUDGET_MB}
+                usedBudgetBytes={photoBytes + complaintBytes}
+              />
+            </div>
           </div>
         )
 
@@ -940,12 +1068,19 @@ export function ClaimSubmissionDialog({
       <DialogContent className="sm:max-w-[540px]">
         <DialogHeader>
           <DialogTitle>Submit a Claim</DialogTitle>
-          <DialogDescription>
-            {!submitSuccess && applicableSteps[currentStep] && (
-              <span>
-                Step {currentStep + 1} of {displayStepCount}: {applicableSteps[currentStep].title}
-              </span>
-            )}
+          <DialogDescription asChild>
+            <div className="flex items-center justify-between">
+              {!submitSuccess && applicableSteps[currentStep] && (
+                <span>
+                  Step {currentStep + 1} of {displayStepCount}: {applicableSteps[currentStep].title}
+                </span>
+              )}
+              {!submitSuccess && applicableSteps[currentStep]?.id === "documentation" && (
+                <span className="text-xs">
+                  15MB max ({((formData.attachments.photo.reduce((s, f) => s + f.size, 0) + formData.attachments.customerComplaint.reduce((s, f) => s + f.size, 0) + formData.attachments.otherDocs.reduce((s, f) => s + f.size, 0)) / (1024 * 1024)).toFixed(1)}MB used)
+                </span>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 

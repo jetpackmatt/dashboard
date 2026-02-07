@@ -413,6 +413,7 @@ export async function GET(
       // Basic shipment info
       id: shipment.id,
       shipmentId: shipment.shipment_id,
+      clientId: shipment.client_id,  // Needed for claim submission
       status: isRefunded ? 'Refunded' : status,
       trackingId: shipment.tracking_id,
       trackingUrl: shipment.tracking_url,
@@ -637,6 +638,8 @@ export async function GET(
         resolvedAt: careTicket.resolved_at,
         reshipmentStatus: careTicket.reshipment_status,
         reshipmentId: careTicket.reshipment_id,
+        // Events timeline for mini-timeline display
+        events: (careTicket.events as ClaimTicketEvent[] | null) || [],
         // Extract jetpackInvoiceNumber from the Resolved event for View Invoice link
         jetpackInvoiceNumber: (careTicket.events as ClaimTicketEvent[] | null)
           ?.find(e => e.status === 'Resolved')?.jetpackInvoiceNumber || null,

@@ -254,7 +254,6 @@ export async function POST(request: NextRequest) {
       description,
       internalNotes,
       attachments,
-      eligibilityMetadata,
     } = body
 
     // Validate required fields
@@ -329,7 +328,6 @@ export async function POST(request: NextRequest) {
         description: description || null,
         internal_notes: internalNotes || null,
         attachments: attachments || [],
-        eligibility_metadata: eligibilityMetadata || null,
         events: initialEvents.length > 0 ? initialEvents : [],
       })
       .select()
