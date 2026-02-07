@@ -1020,49 +1020,59 @@ export function ShipmentDetailsDrawer({
                         )}
                       </div>
 
-                      {/* Right side: Mini Timeline */}
+                      {/* Right side: Timeline (matches care page styling) */}
                       {data.claimTicket.events && data.claimTicket.events.length > 0 && (
-                        <div className="w-56 shrink-0">
-                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Activity</div>
-                          <div className="relative pl-3 border-l-2 border-slate-200 dark:border-slate-700 space-y-2.5">
-                            {data.claimTicket.events.slice(0, 4).map((event, idx) => {
-                              const dotColor = event.status === 'Resolved' || event.status === 'Credit Approved'
-                                ? 'bg-emerald-500 border-emerald-500'
-                                : event.status === 'Credit Denied'
-                                  ? 'bg-red-500 border-red-500'
-                                  : event.status === 'Credit Requested'
-                                    ? 'bg-amber-400 border-amber-400'
-                                    : event.status === 'Under Review'
-                                      ? 'bg-blue-500 border-blue-500'
-                                      : event.status === 'Input Required'
-                                        ? 'bg-red-500 border-red-500'
-                                        : 'bg-slate-400 border-slate-400'
-                              return (
-                                <div key={idx} className="relative">
-                                  {/* Timeline dot */}
-                                  <div className={`absolute -left-[15px] top-0.5 w-2 h-2 rounded-full border-2 ${
-                                    idx === 0 ? dotColor : 'bg-background border-slate-300 dark:border-slate-600'
-                                  }`} />
-                                  <div>
-                                    <div className="flex items-baseline justify-between gap-2">
-                                      <span className={`text-[11px] font-medium ${
-                                        idx === 0 ? 'text-foreground' : 'text-muted-foreground/70'
-                                      }`}>
-                                        {event.status}
-                                      </span>
-                                      <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
-                                        {new Date(event.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                      </span>
+                        <div className="flex-1">
+                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Activity</div>
+                          <div className="relative">
+                            {/* Vertical line */}
+                            <div className="absolute left-[5px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/40 via-slate-300 to-slate-200 dark:via-slate-600 dark:to-slate-700" />
+
+                            <div className="space-y-4">
+                              {data.claimTicket.events.slice(0, 4).map((event, idx) => {
+                                const dotColor = event.status === 'Resolved' || event.status === 'Credit Approved'
+                                  ? 'bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30'
+                                  : event.status === 'Credit Denied'
+                                    ? 'bg-red-500 border-red-500 shadow-sm shadow-red-500/30'
+                                    : event.status === 'Credit Requested'
+                                      ? 'bg-amber-400 border-amber-400 shadow-sm shadow-amber-400/30'
+                                      : event.status === 'Under Review'
+                                        ? 'bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30'
+                                        : event.status === 'Input Required'
+                                          ? 'bg-red-500 border-red-500 shadow-sm shadow-red-500/30'
+                                          : 'bg-slate-400 border-slate-400'
+                                return (
+                                  <div key={idx} className="relative flex gap-4 pl-6">
+                                    {/* Timeline dot */}
+                                    <div className={`absolute left-0 top-0.5 w-[11px] h-[11px] rounded-full border-2 ${
+                                      idx === 0 ? dotColor : 'bg-background border-slate-300 dark:border-slate-600'
+                                    }`} />
+
+                                    <div className="flex-1 min-w-0 pb-1">
+                                      <div className="flex items-baseline justify-between gap-2 mb-1">
+                                        <span className={`text-sm font-semibold ${
+                                          event.status === 'Input Required'
+                                            ? 'text-red-600 dark:text-red-400'
+                                            : idx === 0 ? 'text-foreground' : 'text-muted-foreground/70'
+                                        }`}>
+                                          {event.status}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+                                          {new Date(event.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        </span>
+                                      </div>
+                                      {event.note && (
+                                        <p className={`text-xs leading-relaxed ${
+                                          idx === 0 ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                                        }`}>
+                                          {event.note}
+                                        </p>
+                                      )}
                                     </div>
-                                    {event.note && (
-                                      <p className="text-[10px] text-muted-foreground/70 mt-0.5 leading-tight line-clamp-2">
-                                        {event.note}
-                                      </p>
-                                    )}
                                   </div>
-                                </div>
-                              )
-                            })}
+                                )
+                              })}
+                            </div>
                           </div>
                         </div>
                       )}
