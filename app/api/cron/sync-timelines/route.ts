@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAllUndeliveredTimelines } from '@/lib/shipbob/sync'
+import { acquireCronLock, releaseCronLock } from '@/lib/cron-lock'
 
 /**
  * Dedicated cron endpoint for timeline event sync
@@ -25,6 +26,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // CRITICAL: Prevent overlapping executions (connection pool exhaustion fix)
+  const lockAcquired = await acquireCronLock('sync-timelines', 330)
+  if (!lockAcquired) {
+    console.log('[Cron Timeline] Another instance is already running, skipping this execution')
+    return NextResponse.json({
+      success: true,
+      skipped: true,
+      reason: 'Another instance is already running',
+      duration: '0ms',
+    })
+  }
+
   console.log('[Cron Timeline] Starting timeline sync...')
   const startTime = Date.now()
 
@@ -40,6 +53,9 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron Timeline] Completed in ${duration}ms`)
     console.log(`[Cron Timeline] Checked: ${result.totalShipments}, Updated: ${result.updated}, Skipped: ${result.skipped}`)
 
+    // Release lock
+    await releaseCronLock('sync-timelines')
+
     return NextResponse.json({
       success: result.success,
       duration: `${duration}ms`,
@@ -53,6 +69,10 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('[Cron Timeline] Error:', error)
+
+    // Release lock even on error
+    await releaseCronLock('sync-timelines')
+
     return NextResponse.json(
       {
         success: false,

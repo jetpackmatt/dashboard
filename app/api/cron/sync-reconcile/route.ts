@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAll, syncAllTransactions, syncBillingAwareTimelines, syncMissingShipmentItems, reconcileTrackingIds, reconcileVoidedShippingTransactions } from '@/lib/shipbob/sync'
+import { acquireCronLock, releaseCronLock } from '@/lib/cron-lock'
 
 // Allow up to 5 minutes for reconciliation (45-day lookback + transactions)
 export const maxDuration = 300
@@ -25,6 +26,18 @@ export async function GET(request: NextRequest) {
   // 2. Authorization header matches
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // CRITICAL: Prevent overlapping executions (connection pool exhaustion fix)
+  const lockAcquired = await acquireCronLock('sync-reconcile', 330)
+  if (!lockAcquired) {
+    console.log('[Cron Reconcile] Another instance is already running, skipping this execution')
+    return NextResponse.json({
+      success: true,
+      skipped: true,
+      reason: 'Another instance is already running',
+      duration: '0ms',
+    })
   }
 
   console.log('[Cron Reconcile] Starting hourly reconciliation sync...')
@@ -105,6 +118,9 @@ export async function GET(request: NextRequest) {
       duration: `${c.duration}ms`,
     }))
 
+    // Release lock
+    await releaseCronLock('sync-reconcile')
+
     return NextResponse.json({
       success: results.success && txResult.success,
       type: 'reconciliation',
@@ -126,6 +142,10 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('[Cron Reconcile] Error:', error)
+
+    // Release lock even on error
+    await releaseCronLock('sync-reconcile')
+
     return NextResponse.json(
       {
         success: false,

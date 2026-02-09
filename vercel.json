@@ -6,11 +6,11 @@
     },
     {
       "path": "/api/cron/sync-timelines",
-      "schedule": "* * * * *"
+      "schedule": "*/3 * * * *"
     },
     {
       "path": "/api/cron/sync-transactions",
-      "schedule": "* * * * *"
+      "schedule": "*/2 * * * *"
     },
     {
       "path": "/api/cron/sync-reconcile",

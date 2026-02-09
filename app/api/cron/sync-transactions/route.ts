@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAllTransactions } from '@/lib/shipbob/sync'
+import { acquireCronLock, releaseCronLock } from '@/lib/cron-lock'
 
 // Allow up to 5 minutes for tracking backfill which processes ALL missing transactions
 export const maxDuration = 300
@@ -15,7 +16,7 @@ export const maxDuration = 300
  * - Credits/adjustments (Default, TicketNumber)
  * - All other reference types
  *
- * Runs every 1 minute, syncing last 3 minutes of transactions.
+ * Runs every 2 minutes, syncing last 3 minutes of transactions.
  * Near real-time billing data capture.
  */
 export async function GET(request: NextRequest) {
@@ -28,6 +29,18 @@ export async function GET(request: NextRequest) {
   // 2. Authorization header matches
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // CRITICAL: Prevent overlapping executions (connection pool exhaustion fix)
+  const lockAcquired = await acquireCronLock('sync-transactions', 330)
+  if (!lockAcquired) {
+    console.log('[Cron TransactionSync] Another instance is already running, skipping this execution')
+    return NextResponse.json({
+      success: true,
+      skipped: true,
+      reason: 'Another instance is already running',
+      duration: '0ms',
+    })
   }
 
   console.log('[Cron TransactionSync] Starting transaction sync...')
@@ -48,6 +61,9 @@ export async function GET(request: NextRequest) {
       `[Cron TransactionSync] ${result.transactionsFetched} fetched, ${result.transactionsUpserted} upserted`
     )
 
+    // Release lock
+    await releaseCronLock('sync-transactions')
+
     return NextResponse.json({
       success: result.success,
       duration: `${duration}ms`,
@@ -60,6 +76,10 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('[Cron TransactionSync] Error:', error)
+
+    // Release lock even on error
+    await releaseCronLock('sync-transactions')
+
     return NextResponse.json(
       {
         success: false,
