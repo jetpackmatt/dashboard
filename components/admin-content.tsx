@@ -112,6 +112,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { toast } from 'sonner'
 import { useClient } from '@/components/client-context'
 import { FEE_TYPE_CATEGORIES, WEIGHT_BRACKETS } from '@/lib/billing/types'
 import type { MarkupRuleFormData } from '@/lib/billing/types'
@@ -2331,42 +2332,19 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                           </DropdownMenu>
                         </TableCell>
                         <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-0.5">
+                          <div className={`flex items-center justify-center ${invoice.email_sent_at || invoice.email_error ? '-space-x-2' : ''}`}>
                             {invoice.email_sent_at ? (
-                              <>
-                                <Tooltip>
-                                  <TooltipTrigger>
-                                    <Badge variant="outline" className="text-emerald-600 border-emerald-600">
-                                      <Mail className="mr-1 h-3 w-3" />
-                                      Sent
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>Sent {new Date(invoice.email_sent_at).toLocaleString()}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-blue-600 border-blue-600 cursor-pointer hover:bg-blue-50 transition-colors"
-                                      onClick={() => {
-                                        setSelectedInvoiceId(invoice.id)
-                                        setResendDialogOpen(true)
-                                      }}
-                                    >
-                                      {isResending === invoice.id ? (
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                      ) : (
-                                        <Send className="h-3 w-3" />
-                                      )}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>Resend invoice email</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Badge variant="outline" className="text-emerald-600 border-emerald-600">
+                                    <Mail className="mr-1 h-3 w-3" />
+                                    Sent
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Sent {new Date(invoice.email_sent_at).toLocaleString()}</p>
+                                </TooltipContent>
+                              </Tooltip>
                             ) : invoice.email_error ? (
                               <Tooltip>
                                 <TooltipTrigger>
@@ -2379,11 +2357,28 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   <p className="text-sm">{invoice.email_error}</p>
                                 </TooltipContent>
                               </Tooltip>
-                            ) : (
-                              <Badge variant="outline" className="text-muted-foreground">
-                                Not sent
-                              </Badge>
-                            )}
+                            ) : null}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  variant="outline"
+                                  className="text-blue-600 border-blue-600 cursor-pointer hover:bg-blue-50 transition-colors"
+                                  onClick={() => {
+                                    setSelectedInvoiceId(invoice.id)
+                                    setResendDialogOpen(true)
+                                  }}
+                                >
+                                  {isResending === invoice.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Send className="h-3 w-3" />
+                                  )}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Resend invoice email</p>
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
