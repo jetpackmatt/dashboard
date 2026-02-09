@@ -417,31 +417,11 @@ npm run lint         # ESLint
 
 Claude manages the dev server. Follow these rules to avoid crashes:
 
-### CRITICAL: Dropbox Sync Interaction
-
-This project is stored in Dropbox (`/Users/mattmcleod/Dropbox/gits/dashboard`). Dropbox sync can interfere with file system events and crash the Next.js dev server:
-
-**Problem:** When files are modified, Dropbox also syncs/updates them, causing multiple conflicting file events that crash the hot-reloader.
-
-**Commands That Crash the Server:**
-- `git checkout <file>` - Git writes file, Dropbox syncs it, Next.js crashes
-- `git stash pop` - Same issue
-- `git reset --hard` - Same issue
-- Any git command that modifies files in the working directory
-
-**Mitigation Applied (Jan 2025):**
-```bash
-# These directories are now ignored by Dropbox (reduces sync noise):
-xattr -w com.dropbox.ignored 1 /Users/mattmcleod/Dropbox/gits/dashboard/.next
-xattr -w com.dropbox.ignored 1 /Users/mattmcleod/Dropbox/gits/dashboard/node_modules
-```
-
-**Safe Approach:**
-1. **NEVER use `git checkout` to revert files** - Instead, use the Edit tool to manually restore changes
+**Safe File Editing Practices:**
+1. **NEVER use `git checkout` or `git stash` to revert files while dev server is running** - These operations can cause file system events that crash the hot-reloader. Instead, use the Edit tool to manually restore changes.
 2. **Make smaller, incremental edits** - Don't do large sweeping changes
 3. **Always verify the server after edits** - Check it's still running with `lsof -i :3000 | grep LISTEN`
 4. **If server crashes, restart it immediately** before proceeding
-5. **Run the ignore commands above** if `.next` or `node_modules` show as syncing in Dropbox
 
 ### File Editing Rules
 - **NEVER use `sed` for file modifications** - it rewrites files in-place, causing the dev server to see incomplete files and crash

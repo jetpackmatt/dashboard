@@ -176,6 +176,8 @@ interface JetpackInvoice {
   generated_at: string
   approved_at: string | null
   version: number
+  email_sent_at: string | null
+  email_error: string | null
   client?: Client
   line_items_json?: Array<{ feeType?: string; [key: string]: unknown }>
 }
@@ -1174,10 +1176,12 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   const [approveAllDialogOpen, setApproveAllDialogOpen] = React.useState(false)
   const [regenerateDialogOpen, setRegenerateDialogOpen] = React.useState(false)
   const [regenerateAllDialogOpen, setRegenerateAllDialogOpen] = React.useState(false)
+  const [resendDialogOpen, setResendDialogOpen] = React.useState(false)
   const [selectedInvoiceId, setSelectedInvoiceId] = React.useState<string | null>(null)
   const [isRegenerating, setIsRegenerating] = React.useState<string | null>(null)
   const [isRegeneratingAll, setIsRegeneratingAll] = React.useState(false)
   const [isApproving, setIsApproving] = React.useState<string | null>(null)
+  const [isResending, setIsResending] = React.useState<string | null>(null)
 
   // CC charge state
   const [chargeCcDialogOpen, setChargeCcDialogOpen] = React.useState(false)
@@ -1401,6 +1405,31 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
       setError(err instanceof Error ? err.message : 'Failed to charge invoice')
     } finally {
       setIsChargingCc(false)
+    }
+  }
+
+  async function handleResendInvoice(invoiceId: string) {
+    setIsResending(invoiceId)
+    setError(null)
+    setResendDialogOpen(false)
+
+    try {
+      const response = await fetch(`/api/admin/invoices/${invoiceId}/resend`, {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to resend invoice email')
+      }
+
+      // Refresh invoices to show updated email_sent_at
+      await fetchInvoices()
+    } catch (err) {
+      console.error('Error resending invoice:', err)
+      setError(err instanceof Error ? err.message : 'Failed to resend invoice email')
+    } finally {
+      setIsResending(null)
     }
   }
 
@@ -2227,6 +2256,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                     <TableHead className="w-[100px] text-center">Total</TableHead>
                     <TableHead className="w-[90px] text-center">Status</TableHead>
                     <TableHead className="w-[90px] text-center">Paid</TableHead>
+                    <TableHead className="w-[90px] text-center">Email</TableHead>
                     <TableHead className="w-[60px] text-center">View</TableHead>
                     <TableHead className="w-[60px] text-center">Download</TableHead>
                   </TableRow>
@@ -2301,6 +2331,62 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                           </DropdownMenu>
                         </TableCell>
                         <TableCell className="text-center">
+                          <div className="flex items-center justify-center gap-0.5">
+                            {invoice.email_sent_at ? (
+                              <>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Badge variant="outline" className="text-emerald-600 border-emerald-600">
+                                      <Mail className="mr-1 h-3 w-3" />
+                                      Sent
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Sent {new Date(invoice.email_sent_at).toLocaleString()}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-blue-600 border-blue-600 cursor-pointer hover:bg-blue-50 transition-colors"
+                                      onClick={() => {
+                                        setSelectedInvoiceId(invoice.id)
+                                        setResendDialogOpen(true)
+                                      }}
+                                    >
+                                      {isResending === invoice.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Send className="h-3 w-3" />
+                                      )}
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Resend invoice email</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </>
+                            ) : invoice.email_error ? (
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Badge variant="outline" className="text-red-600 border-red-600">
+                                    <AlertCircle className="mr-1 h-3 w-3" />
+                                    Failed
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-sm">{invoice.email_error}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <Badge variant="outline" className="text-muted-foreground">
+                                Not sent
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-center">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon">
@@ -2334,6 +2420,13 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                               <DropdownMenuItem onClick={() => handleForceDownloadFile(invoice.id, 'xlsx', invoice.invoice_number)}>
                                 <FileSpreadsheet className="h-4 w-4 mr-2" />
                                 Download XLSX
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleResendInvoice(invoice.id)}
+                                disabled={isResending === invoice.id}
+                              >
+                                <Mail className="h-4 w-4 mr-2" />
+                                {isResending === invoice.id ? 'Sending...' : 'Resend Invoice'}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -2498,6 +2591,27 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 Yes, Regenerate Invoice
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Resend Invoice Confirmation Dialog */}
+        <AlertDialog open={resendDialogOpen} onOpenChange={setResendDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Resend Invoice Email?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will resend the invoice email to the client with the same PDF and XLSX attachments. The email_sent_at timestamp will be updated to the current time.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setSelectedInvoiceId(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedInvoiceId && handleResendInvoice(selectedInvoiceId)}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Yes, Resend Email
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -4153,22 +4267,39 @@ function BrandsContent({ clients }: { clients: Client[] }) {
     }
   }
 
-  const openManageDialog = (client: ClientForManage) => {
-    setManagingClient(client)
-    setEditCompanyName(client.company_name)
-    setEditShipBobUserId(client.merchant_id || '')
-    setEditShortCode(client.short_code || '')
-    setEditToken('')
-    // Initialize billing address fields
-    setEditBillingStreet(client.billing_address?.street || '')
-    setEditBillingCity(client.billing_address?.city || '')
-    setEditBillingRegion(client.billing_address?.region || '')
-    setEditBillingPostalCode(client.billing_address?.postalCode || '')
-    setEditBillingCountry(client.billing_address?.country || '')
-    // Initialize contact fields
-    setEditBillingEmails(client.billing_emails || [])
-    setEditBillingPhone(client.billing_phone || '')
-    setEditBillingContactName(client.billing_contact_name || '')
+  const openManageDialog = async (client: ClientForManage) => {
+    // Always fetch fresh client data from API before opening dialog
+    try {
+      const response = await fetch(`/api/admin/clients/${client.id}`)
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch client: ${response.status}`)
+      }
+
+      const freshClient = await response.json()
+
+      setManagingClient(freshClient)
+      setEditCompanyName(freshClient.company_name || '')
+      setEditShipBobUserId(freshClient.merchant_id || '')
+      setEditShortCode(freshClient.short_code || '')
+      setEditToken('')
+      // Initialize billing address fields
+      setEditBillingStreet(freshClient.billing_address?.street || '')
+      setEditBillingCity(freshClient.billing_address?.city || '')
+      setEditBillingRegion(freshClient.billing_address?.region || '')
+      setEditBillingPostalCode(freshClient.billing_address?.postalCode || '')
+      setEditBillingCountry(freshClient.billing_address?.country || '')
+      // Initialize contact fields with fresh data
+      setEditBillingEmails(freshClient.billing_emails || [])
+      setEditBillingPhone(freshClient.billing_phone || '')
+      setEditBillingContactName(freshClient.billing_contact_name || '')
+    } catch (error) {
+      console.error('Error fetching fresh client data:', error)
+      toast.error('Failed to load client data. Please try again.')
+      // Don't open dialog if we can't fetch data
+      return
+    }
+
     setNewEmailInput('')
     setManageError(null)
     setManageSuccess(null)
@@ -4711,7 +4842,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Invoice Emails</Label>
+                      <Label className="text-xs">Billing Emails</Label>
                       <div className="flex flex-wrap gap-1 min-h-[24px] p-1.5 border rounded-md bg-muted/30">
                         {editBillingEmails.length === 0 && (
                           <span className="text-xs text-muted-foreground">No emails added</span>
