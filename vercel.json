@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/sync-transactions",
-      "schedule": "*/2 * * * *"
+      "schedule": "*/3 * * * *"
     },
     {
       "path": "/api/cron/sync-reconcile",
