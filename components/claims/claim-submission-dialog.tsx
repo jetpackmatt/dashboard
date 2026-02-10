@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Loader2, Package } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Package } from "lucide-react"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Dialog,
   DialogContent,
@@ -764,7 +765,7 @@ export function ClaimSubmissionDialog({
                 <div className="flex flex-col items-center gap-4">
                   <div className="relative">
                     <div className="w-16 h-16 rounded-full border-4 border-muted animate-pulse" />
-                    <Loader2 className="absolute inset-0 m-auto h-8 w-8 animate-spin text-primary" />
+                    <JetpackLoader size="lg" className="absolute inset-0 m-auto" />
                   </div>
                   <div className="text-center">
                     <p className="font-medium">Checking Carrier Records</p>
@@ -925,7 +926,7 @@ export function ClaimSubmissionDialog({
                   />
                   {isValidatingReshipment && (
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <JetpackLoader size="sm" />
                     </div>
                   )}
                   {!isValidatingReshipment && reshipmentValid && (
@@ -1131,7 +1132,7 @@ export function ClaimSubmissionDialog({
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <JetpackLoader size="sm" className="mr-2" />
                     Submitting...
                   </>
                 ) : (
@@ -1142,7 +1143,7 @@ export function ClaimSubmissionDialog({
               // Verification step - show Continue when eligible, Close when not eligible
               isVerifyingLIT || isLoading ? (
                 <Button disabled>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader size="sm" className="mr-2" />
                   Verifying...
                 </Button>
               ) : litVerification?.eligible ? (
@@ -1167,7 +1168,7 @@ export function ClaimSubmissionDialog({
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <JetpackLoader size="sm" className="mr-2" />
                     Loading...
                   </>
                 ) : (

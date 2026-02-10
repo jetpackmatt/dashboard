@@ -8,7 +8,6 @@ import {
   Camera,
   CheckCircle2,
   AlertCircle,
-  Loader2,
   RefreshCw,
   User,
   Users,
@@ -20,6 +19,7 @@ import {
   HeartHandshake,
   UserCog,
 } from 'lucide-react'
+import { JetpackLoader } from '@/components/jetpack-loader'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -432,7 +432,7 @@ export function SettingsContent() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -465,7 +465,7 @@ export function SettingsContent() {
             <CardContent>
               {isLoadingProfile ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <JetpackLoader size="md" />
                 </div>
               ) : (
                 <div className="space-y-4 max-w-md">
@@ -491,7 +491,7 @@ export function SettingsContent() {
                           )}
                         >
                           {isUploadingAvatar ? (
-                            <Loader2 className="h-3.5 w-3.5 text-primary-foreground animate-spin" />
+                            <JetpackLoader size="sm" />
                           ) : (
                             <Camera className="h-3.5 w-3.5 text-primary-foreground" />
                           )}
@@ -540,7 +540,7 @@ export function SettingsContent() {
                       disabled={isSavingProfile}
                     >
                       {isSavingProfile ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <JetpackLoader size="sm" className="mr-2" />
                       ) : null}
                       Save Changes
                     </Button>
@@ -614,7 +614,7 @@ export function SettingsContent() {
                     disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}
                   >
                     {isChangingPassword ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <JetpackLoader size="sm" className="mr-2" />
                     ) : null}
                     Change Password
                   </Button>
@@ -835,7 +835,7 @@ export function SettingsContent() {
                         >
                           {isInviting ? (
                             <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              <JetpackLoader size="sm" className="mr-2" />
                               Sending...
                             </>
                           ) : (
@@ -855,7 +855,7 @@ export function SettingsContent() {
               {(effectiveIsAdmin || effectiveIsCareAdmin) ? (
                 isLoadingUsers ? (
                   <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <JetpackLoader size="md" />
                   </div>
                 ) : users.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
@@ -1017,7 +1017,7 @@ export function SettingsContent() {
                     >
                       {isSyncing ? (
                         <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          <JetpackLoader size="sm" className="mr-2" />
                           Syncing...
                         </>
                       ) : (

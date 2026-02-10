@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import {
-  Loader2Icon,
   CheckCircle2Icon,
   PackageCheckIcon,
   RotateCcwIcon,
@@ -10,6 +9,7 @@ import {
   XCircleIcon,
   MapPinIcon,
 } from "lucide-react"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { cn } from "@/lib/utils"
 
 // Types matching the API response
@@ -145,7 +145,7 @@ export function ScoutInsightCard({
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="flex items-center justify-center gap-2 text-gray-400">
-          <Loader2Icon className="h-4 w-4 animate-spin" />
+          <JetpackLoader size="sm" />
           <span className="text-sm">Analyzing...</span>
         </div>
       </div>

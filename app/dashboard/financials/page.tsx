@@ -3,7 +3,8 @@
 import * as React from "react"
 import { SiteHeader } from "@/components/site-header"
 import { useClient } from "@/components/client-context"
-import { Loader2, Eye, Users, TrendingUp, Activity } from "lucide-react"
+import { Eye, Users, TrendingUp, Activity } from "lucide-react"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -419,7 +420,7 @@ export default function CommissionsPage() {
       <>
         <SiteHeader sectionName="Financials" />
         <div className="flex flex-1 items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <JetpackLoader size="lg" />
         </div>
       </>
     )
@@ -808,7 +809,7 @@ export default function CommissionsPage() {
                 // "All" view - show aggregate data
                 (isLoadingUsers || isLoadingAll) ? (
                   <div className="flex items-center justify-center py-16">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <JetpackLoader size="lg" />
                   </div>
                 ) : (commissionUsers.length > 0 && allUsersData.length > 0) ? (
                   <div className="flex flex-col gap-6">

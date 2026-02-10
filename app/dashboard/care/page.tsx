@@ -3,7 +3,6 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
-  FilterIcon,
   ColumnsIcon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -12,10 +11,8 @@ import {
   ChevronsLeftIcon,
   ChevronsRightIcon,
   PlusIcon,
-  Loader2Icon,
   PencilIcon,
   SearchIcon,
-  CalendarIcon,
   XIcon,
   DownloadIcon,
   FileTextIcon,
@@ -23,28 +20,34 @@ import {
   FileIcon,
   FileSpreadsheetIcon,
 } from "lucide-react"
-import { format } from "date-fns"
 import { DateRange } from "react-day-picker"
 import { useDebouncedCallback } from "use-debounce"
 
 import { SiteHeader } from "@/components/site-header"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { toast } from "sonner"
+import { CARE_TABLE_CONFIG, getRedistributedWidths } from "@/lib/table-config"
 import {
   Dialog,
   DialogContent,
@@ -68,13 +71,31 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
+import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
 import { cn } from "@/lib/utils"
 import { useClient } from "@/components/client-context"
-import { ClientBadge } from "@/components/transactions/client-badge"
+import { ClientBadge, JETPACK_INTERNAL_ID } from "@/components/transactions/client-badge"
 import { getTrackingUrl, getCarrierDisplayName } from "@/components/transactions/cell-renderers"
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable"
+import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { useColumnOrder } from "@/hooks/use-responsive-table"
 
 // Carrier options for the dropdown (consolidated display names)
 const CARRIER_OPTIONS = [
@@ -208,6 +229,7 @@ const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
   { value: 'mtd', label: 'MTD' },
   { value: 'ytd', label: 'YTD' },
   { value: 'all', label: 'All' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date } | null {
@@ -253,20 +275,18 @@ const STATUS_OPTIONS: FilterOption[] = [
   { value: 'Resolved', label: 'Resolved' },
 ]
 
-const TYPE_OPTIONS: FilterOption[] = [
-  { value: 'Claim', label: 'Claim' },
-  { value: 'Track', label: 'Track' },
-  { value: 'Work Order', label: 'Request' },
-  { value: 'Technical', label: 'Technical' },
-  { value: 'Inquiry', label: 'Inquiry' },
-]
 
-const ISSUE_OPTIONS: FilterOption[] = [
-  { value: 'Loss', label: 'Loss' },
-  { value: 'Damage', label: 'Damage' },
-  { value: 'Pick Error', label: 'Pick Error' },
-  { value: 'Short Ship', label: 'Short Ship' },
-  { value: 'Other', label: 'Other' },
+// Ticket type filter options — non-claim types first, then claim issues
+const ISSUE_TYPE_OPTIONS: FilterOption[] = [
+  { value: 'type:Track', label: 'Track' },
+  { value: 'type:Work Order', label: 'Request' },
+  { value: 'type:Technical', label: 'Technical' },
+  { value: 'type:Inquiry', label: 'Inquiry' },
+  { value: 'issue:Loss', label: 'Lost in Transit' },
+  { value: 'issue:Damage', label: 'Damage' },
+  { value: 'issue:Pick Error', label: 'Incorrect Items' },
+  { value: 'issue:Short Ship', label: 'Incorrect Quantity' },
+  { value: 'issue:Other', label: 'Other' },
 ]
 
 // All possible statuses - defined at module level to avoid recreating on each render
@@ -279,53 +299,59 @@ const DEFAULT_STATUSES = ALL_STATUSES.filter(s => s !== "Resolved")
 function getStatusColors(status: string) {
   switch (status) {
     case "Resolved":
-      return "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+      return "bg-emerald-100/50 text-emerald-700 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/50"
     case "Credit Approved":
-      return "font-medium bg-emerald-100/50 text-slate-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-slate-100 dark:border-emerald-800/50"
+      return "bg-emerald-100/50 text-emerald-700 border-emerald-200/50 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800/50"
     case "Credit Requested":
-      return "font-medium bg-amber-100/50 text-slate-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-slate-100 dark:border-amber-800/50"
+      return "bg-orange-100/50 text-orange-700 border-orange-200/50 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800/50"
     case "Under Review":
-      return "font-medium bg-blue-100/50 text-slate-900 border-blue-200/50 dark:bg-blue-900/15 dark:text-slate-100 dark:border-blue-800/50"
+      return "bg-blue-100/50 text-blue-700 border-blue-200/50 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800/50"
     case "Input Required":
-      return "font-medium bg-red-100/50 text-slate-900 border-red-200/50 dark:bg-red-900/15 dark:text-slate-100 dark:border-red-800/50"
+      return "bg-red-100/50 text-red-700 border-red-200/50 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800/50"
     default:
-      return "font-medium bg-slate-100/50 text-slate-900 border-slate-200/50 dark:bg-slate-900/15 dark:text-slate-100 dark:border-slate-800/50"
+      return "bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
   }
 }
 
-// Helper function to get type badge colors - Claim uses Jetpack blue (#328bcb)
-function getTypeColors(type: string) {
-  switch (type) {
-    case "Claim":
-      // Jetpack blue - stands out as the primary action type
-      return "font-medium bg-[#328bcb]/15 text-[#2a7ab8] border-[#328bcb]/30 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:border-[#328bcb]/40"
+// Helper function to get ticket type badge colors
+// Claims (warm red family) vs non-claims (cool colors) for instant scanning
+function getTicketTypeColors(ticketType: string, issueType?: string) {
+  // For claims, color by the claim family (all same warm red)
+  if (ticketType === 'Claim') {
+    return "bg-red-100/40 text-red-600 border-red-200/40 dark:bg-red-900/15 dark:text-red-400 dark:border-red-800/40"
+  }
+  // Non-claim types get cool colors
+  switch (ticketType) {
     case "Track":
-      return "font-medium bg-violet-100/50 text-violet-700 border-violet-200/50 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/50"
+      return "bg-violet-100/50 text-violet-700 border-violet-200/50 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800/50"
     case "Work Order":
-      return "font-medium bg-teal-100/50 text-teal-700 border-teal-200/50 dark:bg-teal-900/20 dark:text-teal-300 dark:border-teal-800/50"
+      return "bg-teal-100/50 text-teal-700 border-teal-200/50 dark:bg-teal-900/20 dark:text-teal-300 dark:border-teal-800/50"
     case "Technical":
-      return "font-medium bg-orange-100/50 text-orange-700 border-orange-200/50 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800/50"
+      return "bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
     case "Inquiry":
-      return "font-medium bg-cyan-100/50 text-cyan-700 border-cyan-200/50 dark:bg-cyan-900/20 dark:text-cyan-300 dark:border-cyan-800/50"
+      return "bg-cyan-100/50 text-cyan-700 border-cyan-200/50 dark:bg-cyan-900/20 dark:text-cyan-300 dark:border-cyan-800/50"
     default:
-      return "font-medium bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
+      return "bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
   }
 }
 
-// Helper function to get issue badge colors
-function getIssueColors(issue: string) {
-  switch (issue) {
-    case "Loss":
-      return "font-medium bg-red-100/50 text-red-700 border-red-200/50 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800/50"
-    case "Damage":
-      return "font-medium bg-orange-100/50 text-orange-700 border-orange-200/50 dark:bg-orange-900/20 dark:text-orange-300 dark:border-orange-800/50"
-    case "Pick Error":
-      return "font-medium bg-purple-100/50 text-purple-700 border-purple-200/50 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800/50"
-    case "Short Ship":
-      return "font-medium bg-amber-100/50 text-amber-700 border-amber-200/50 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800/50"
-    default:
-      return "font-medium bg-slate-100/50 text-slate-700 border-slate-200/50 dark:bg-slate-900/20 dark:text-slate-300 dark:border-slate-800/50"
+// Get display label for unified ticket type column
+// Claims show their issue type, non-claims show their ticket type
+function getTicketTypeLabel(ticketType: string, issueType?: string) {
+  if (ticketType === 'Claim') {
+    // Map database issue types to user-friendly labels
+    switch (issueType) {
+      case 'Loss':
+        return 'Lost in Transit'
+      case 'Short Ship':
+        return 'Incorrect Quantity'
+      case 'Pick Error':
+        return 'Incorrect Items'
+      default:
+        return issueType || 'Claim'
+    }
   }
+  return ticketType === 'Work Order' ? 'Request' : ticketType
 }
 
 // Helper function to get status text color for timeline (no background)
@@ -347,7 +373,7 @@ function getStatusDotColor(status: string) {
     case "Credit Approved":
       return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Requested":
-      return "bg-amber-400 border-amber-400 shadow-sm shadow-amber-400/30"
+      return "bg-orange-400 border-orange-400 shadow-sm shadow-orange-400/30"
     case "Under Review":
       return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
     case "Input Required":
@@ -430,9 +456,38 @@ function staticToApiTicket(s: StaticTicket): Ticket {
   }
 }
 
+// SortableHeader component for drag-to-reorder columns
+interface SortableHeaderProps {
+  columnId: string
+  children: React.ReactNode
+  className?: string
+  onClick?: () => void
+}
+
+function SortableHeader({ columnId, children, className, onClick }: SortableHeaderProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    isDragging,
+  } = useSortable({ id: columnId })
+
+  return (
+    <th
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn(className, "cursor-grab active:cursor-grabbing")}
+      style={{ opacity: isDragging ? 0.4 : 1 }}
+      onClick={onClick}
+    >
+      {children}
+    </th>
+  )
+}
+
 export default function CarePage() {
-  const { selectedClientId, isAdmin, clients } = useClient()
-  const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
+  const { selectedClientId, isAdmin, effectiveIsCareAdmin, clients } = useClient()
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
 
@@ -456,14 +511,16 @@ export default function CarePage() {
   // Date range state
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined)
   const [datePreset, setDatePreset] = React.useState<DateRangePreset | undefined>('all')
-  const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
-  const [isAwaitingEndDate, setIsAwaitingEndDate] = React.useState(false)
 
   // Filter state - multi-select arrays
   const [statusFilter, setStatusFilter] = React.useState<string[]>([])
   const [typeFilter, setTypeFilter] = React.useState<string[]>([])
   const [issueFilter, setIssueFilter] = React.useState<string[]>([])
-  const [filtersExpanded, setFiltersExpanded] = React.useState(false)
+  // Combined issue/type selection (prefixed values like "type:Claim", "issue:Loss")
+  const issueTypeSelection = React.useMemo(() => [
+    ...typeFilter.map(v => `type:${v}`),
+    ...issueFilter.map(v => `issue:${v}`),
+  ], [typeFilter, issueFilter])
 
   // Memoize selected statuses to prevent infinite loops in useCallback dependencies
   const selectedStatuses = React.useMemo(() => {
@@ -477,25 +534,136 @@ export default function CarePage() {
   // Expanded row state
   const [expandedRowId, setExpandedRowId] = React.useState<string | null>(null)
 
+  // Client attribution state (admin/care_admin only)
+  const [confirmAttribution, setConfirmAttribution] = React.useState<{ticketId: string, clientId: string, clientName: string} | null>(null)
+  const [isAttributing, setIsAttributing] = React.useState(false)
+
+  // Handle attributing a ticket to a client
+  async function handleAttributeClient(ticketId: string, clientId: string, clientName: string) {
+    setIsAttributing(true)
+    try {
+      const res = await fetch(`/api/data/care-tickets/${ticketId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      })
+      if (res.ok) {
+        toast.success(`Ticket attributed to ${clientName}`)
+        fetchTickets()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || 'Failed to attribute ticket')
+      }
+    } catch {
+      toast.error('Failed to attribute ticket')
+    }
+    setIsAttributing(false)
+    setConfirmAttribution(null)
+  }
+
   // Column visibility state
-  // Order: Client, Created, Reference, Type, Issue, Status, Updated, Description
+  // Order: Client, Created, Reference, Credit, Type, Status, Updated, Description
+  const DEFAULT_CARE_COLUMNS = React.useMemo(() => ({
+    client: true,
+    dateCreated: true,
+    reference: true,
+    credit: true,
+    type: true,
+    status: true,
+    lastUpdated: true,
+    latestNotes: true,
+  }), [])
   const [columnVisibility, setColumnVisibility] = React.useState({
     client: true,
     dateCreated: true,
     reference: true,
+    credit: true,
     type: true,
-    issue: true,
     status: true,
     lastUpdated: true,
     latestNotes: true,
   })
 
+  // Column selector quota (excludes 'client' which is auto-managed by admin/brand context)
+  const toggleableColumnKeys = ['dateCreated', 'reference', 'credit', 'type', 'status', 'lastUpdated', 'latestNotes'] as const
+  const enabledColumnCount = toggleableColumnKeys.filter(k => columnVisibility[k]).length
+  const totalColumnCount = toggleableColumnKeys.length
+  const hasColumnCustomizations = toggleableColumnKeys.some(k => columnVisibility[k] !== DEFAULT_CARE_COLUMNS[k])
+
+  // Load preferences from localStorage (column visibility, column order, page size)
+  const carePrefs = useTablePreferences('care', 30)
+
+  // Define which columns are draggable (exclude client/partner - they stay fixed)
+  // Default order: Date, Reference ID, Type, Status, Age, Credit, Description
+  const draggableColumnIds = ['dateCreated', 'reference', 'type', 'status', 'lastUpdated', 'credit', 'latestNotes']
+  const draggableColumns = CARE_TABLE_CONFIG.columns.filter(c => draggableColumnIds.includes(c.id))
+
+  // Apply user's drag order to draggable columns
+  const orderedDraggableColumns = useColumnOrder(
+    CARE_TABLE_CONFIG,
+    draggableColumns,
+    carePrefs.columnOrder
+  )
+
+  // DnD state
+  const [activeColumnId, setActiveColumnId] = React.useState<string | null>(null)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+  const activeColumn = activeColumnId
+    ? CARE_TABLE_CONFIG.columns.find(c => c.id === activeColumnId)
+    : null
+
+  // Drag handlers
+  const handleDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveColumnId(event.active.id as string)
+  }, [])
+
+  const handleDragEnd = React.useCallback((event: DragEndEvent) => {
+    setActiveColumnId(null)
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      const currentIds = orderedDraggableColumns.map(c => c.id)
+      const oldIndex = currentIds.indexOf(active.id as string)
+      const newIndex = currentIds.indexOf(over.id as string)
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        carePrefs.setColumnOrder(arrayMove(currentIds, oldIndex, newIndex))
+      }
+    }
+  }, [orderedDraggableColumns, carePrefs])
+
+  // Calculate column widths from config (using ordered draggable columns)
+  const columnWidths = React.useMemo(() => {
+    // Build list of visible column configs IN DISPLAY ORDER
+    // Fixed columns first (client, partner), then ordered draggable columns
+    const visibleConfigs = [
+      ...(isAdmin && !selectedClientId && columnVisibility.client
+        ? [CARE_TABLE_CONFIG.columns.find(c => c.id === 'client')!]
+        : []),
+      ...(isAdmin && !selectedClientId
+        ? [CARE_TABLE_CONFIG.columns.find(c => c.id === 'partner')!]
+        : []),
+      ...orderedDraggableColumns.filter(col =>
+        col.id in columnVisibility && columnVisibility[col.id as keyof typeof columnVisibility]
+      ),
+    ].filter(Boolean)
+
+    const redistributed = getRedistributedWidths(visibleConfigs)
+    const widths: Record<string, string> = {}
+    for (const [id, w] of Object.entries(redistributed)) {
+      widths[id] = `${w}%`
+    }
+    return widths
+  }, [orderedDraggableColumns, columnVisibility, isAdmin, selectedClientId])
+
   // Sorting state - defaults to Date column, newest first
-  const [sortColumn, setSortColumn] = React.useState<'date' | 'age'>('date')
+  const [sortColumn, setSortColumn] = React.useState<'date' | 'age' | 'credit'>('date')
   const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Handle column sort click
-  const handleSort = (column: 'date' | 'age') => {
+  const handleSort = (column: 'date' | 'age' | 'credit') => {
     if (sortColumn === column) {
       // Toggle direction if same column
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
@@ -617,6 +785,9 @@ export default function CarePage() {
   // Add internal note state
   const [addNoteOpenForTicket, setAddNoteOpenForTicket] = React.useState<string | null>(null)
   const [newNoteText, setNewNoteText] = React.useState('')
+  const [addReshipmentIdOpenForTicket, setAddReshipmentIdOpenForTicket] = React.useState<string | null>(null)
+  const [newReshipmentId, setNewReshipmentId] = React.useState('')
+  const [isSavingReshipmentId, setIsSavingReshipmentId] = React.useState(false)
   const [isAddingNote, setIsAddingNote] = React.useState(false)
 
   // Compute filter counts
@@ -629,11 +800,17 @@ export default function CarePage() {
     (isAdmin && !selectedClientId ? 1 : 0) + // Partner column
     (columnVisibility.dateCreated ? 1 : 0) +
     (columnVisibility.reference ? 1 : 0) +
+    (columnVisibility.credit ? 1 : 0) +
     (columnVisibility.type ? 1 : 0) +
-    (columnVisibility.issue ? 1 : 0) +
     (columnVisibility.status ? 1 : 0) +
     (columnVisibility.lastUpdated ? 1 : 0) +
     (columnVisibility.latestNotes ? 1 : 0)
+
+  const handleIssueTypeChange = (values: string[]) => {
+    setTypeFilter(values.filter(v => v.startsWith('type:')).map(v => v.slice(5)))
+    setIssueFilter(values.filter(v => v.startsWith('issue:')).map(v => v.slice(6)))
+    setCurrentPage(1)
+  }
 
   const clearFilters = () => {
     setStatusFilter([])
@@ -648,50 +825,17 @@ export default function CarePage() {
   const handleDatePresetChange = (preset: DateRangePreset) => {
     setDatePreset(preset)
     if (preset === 'custom') {
-      setIsCustomRangeOpen(true)
+      setDateRange(undefined)
     } else if (preset === 'all') {
       setDateRange(undefined)
-      setIsCustomRangeOpen(false)
     } else {
       const range = getDateRangeFromPreset(preset)
       if (range) {
         setDateRange({ from: range.from, to: range.to })
       }
-      setIsCustomRangeOpen(false)
     }
     setCurrentPage(1)
   }
-
-  // Handle custom range selection
-  const handleCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
-    if (!isAwaitingEndDate) {
-      const clickedDate = range.from || range.to
-      if (clickedDate) {
-        setDateRange({ from: clickedDate, to: undefined })
-        setIsAwaitingEndDate(true)
-      }
-      return
-    }
-    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
-      setDateRange(range)
-      setDatePreset('custom')
-      setIsCustomRangeOpen(false)
-      setIsAwaitingEndDate(false)
-      setCurrentPage(1)
-    } else if (range.from && range.to) {
-      setDateRange(range)
-    } else {
-      setDateRange(range)
-    }
-  }
-
-  // Format custom range display
-  const customRangeLabel = React.useMemo(() => {
-    if (dateRange?.from && dateRange?.to) {
-      return `${format(dateRange.from, 'MMM d')} - ${format(dateRange.to, 'MMM d')}`
-    }
-    return 'Custom'
-  }, [dateRange])
 
   // Fetch tickets from API
   const fetchTickets = React.useCallback(async () => {
@@ -768,15 +912,15 @@ export default function CarePage() {
     return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return '-'
+  const formatDate = (dateString: string | null): React.ReactNode => {
+    if (!dateString) return <span className="text-muted-foreground">-</span>
     const date = new Date(dateString)
     // Short format: Feb 7 (month name + day)
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
-  const formatTimeOnly = (dateString: string | null) => {
-    if (!dateString) return '-'
+  const formatTimeOnly = (dateString: string | null): React.ReactNode => {
+    if (!dateString) return <span className="text-muted-foreground">-</span>
     const date = new Date(dateString)
     // Format: H:MM AM/PM
     let hours = date.getHours()
@@ -787,8 +931,8 @@ export default function CarePage() {
     return `${hours}:${minutes} ${ampm}`
   }
 
-  const formatDateTime = (dateString: string | null, createdBy?: string | null) => {
-    if (!dateString) return '-'
+  const formatDateTime = (dateString: string | null, createdBy?: string | null): React.ReactNode => {
+    if (!dateString) return <span className="text-muted-foreground">-</span>
     const date = new Date(dateString)
     // Format: MM/DD/YY at H:MM AM/PM by FirstName
     const month = (date.getMonth() + 1).toString()
@@ -842,6 +986,10 @@ export default function CarePage() {
         const ageA = getAgeMs(a)
         const ageB = getAgeMs(b)
         return sortDirection === 'asc' ? ageA - ageB : ageB - ageA
+      })
+    } else if (sortColumn === 'credit') {
+      ticketsToSort.sort((a, b) => {
+        return sortDirection === 'asc' ? a.creditAmount - b.creditAmount : b.creditAmount - a.creditAmount
       })
     } else {
       // Default: newest first
@@ -1130,10 +1278,50 @@ export default function CarePage() {
     }
   }
 
+  // Handle add reshipment ID
+  const handleAddReshipmentId = async (ticketId: string) => {
+    if (!newReshipmentId.trim()) return
+
+    setIsSavingReshipmentId(true)
+    try {
+      const response = await fetch(`/api/data/care-tickets/${ticketId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reshipmentId: newReshipmentId.trim(),
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to save reshipment ID')
+      }
+
+      // Close popover and refresh
+      setAddReshipmentIdOpenForTicket(null)
+      setNewReshipmentId('')
+      fetchTickets()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save reshipment ID')
+    } finally {
+      setIsSavingReshipmentId(false)
+    }
+  }
+
+  // Get short compensation alias for display
+  const getShortCompensation = (compensation: string | null): string => {
+    if (!compensation) return '-'
+    if (compensation.toLowerCase().includes('manufacturing cost')) return 'Credit Mfg Cost'
+    if (compensation.toLowerCase().includes('return label')) return 'Return Label'
+    if (compensation.toLowerCase().includes('credit')) return 'Credit'
+    return compensation
+  }
+
   return (
     <>
       <SiteHeader sectionName="Jetpack Care" />
-      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl h-[calc(100vh-64px)] px-4 lg:px-6">
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
+        <div className="flex flex-col w-full h-[calc(100vh-64px)] px-4 lg:px-6">
         {/* Error message */}
         {error && (
           <div className="p-3 mt-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-sm text-red-700 dark:text-red-300">
@@ -1148,9 +1336,9 @@ export default function CarePage() {
         )}
 
         {/* Sticky header with filter bar */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-inter text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + New Ticket + Columns (right) */}
-          <div className="px-4 lg:px-6 py-4 flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               {/* Search Input */}
@@ -1178,109 +1366,46 @@ export default function CarePage() {
                 )}
               </div>
 
-              {/* Date Range Dropdown */}
-              <Popover
-                open={isCustomRangeOpen}
-                onOpenChange={(open) => {
-                  if (open) {
-                    setIsCustomRangeOpen(true)
-                    setIsAwaitingEndDate(false)
-                  } else {
-                    setIsCustomRangeOpen(false)
-                  }
-                }}
-                modal={false}
-              >
-                <div className="flex items-center gap-1">
-                  <Select
-                    value={datePreset === 'custom' ? 'custom' : (datePreset || 'all')}
-                    onValueChange={(value) => {
-                      if (value === 'custom') {
-                        setIsCustomRangeOpen(true)
-                      } else {
-                        handleDatePresetChange(value as DateRangePreset)
-                        setIsCustomRangeOpen(false)
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
-                      <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <SelectValue>
-                        {datePreset === 'custom'
-                          ? customRangeLabel
-                          : DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      {DATE_RANGE_PRESETS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="custom">Custom Range...</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <PopoverContent
-                  className="w-auto p-3"
-                  align="start"
-                  onInteractOutside={(e) => e.preventDefault()}
-                  onPointerDownOutside={(e) => e.preventDefault()}
-                  onFocusOutside={(e) => e.preventDefault()}
+              {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
+              <div className="flex items-center gap-1.5">
+                <Select
+                  value={datePreset || 'all'}
+                  onValueChange={(value) => {
+                    if (value) {
+                      handleDatePresetChange(value as DateRangePreset)
+                    }
+                  }}
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Select Date Range</span>
-                    </div>
-                    {(dateRange?.from || dateRange?.to) && (
-                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                        <div className="flex-1 text-xs">
-                          <span className="text-muted-foreground">From: </span>
-                          <span className="font-medium">
-                            {dateRange?.from ? format(dateRange.from, 'MMM d, yyyy') : '—'}
-                          </span>
-                        </div>
-                        <div className="flex-1 text-xs">
-                          <span className="text-muted-foreground">To: </span>
-                          <span className="font-medium">
-                            {dateRange?.to ? format(dateRange.to, 'MMM d, yyyy') : '—'}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setDateRange(undefined)
-                            setDatePreset('all')
-                            setIsCustomRangeOpen(false)
-                            setIsAwaitingEndDate(false)
-                          }}
-                          className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          Reset
-                        </button>
-                      </div>
-                    )}
-                    <div className="text-[11px] text-muted-foreground px-1">
-                      {isAwaitingEndDate
-                        ? "Click a date to select end date"
-                        : "Click a date to select start date"}
-                    </div>
-                    <Calendar
-                      mode="range"
-                      selected={{
-                        from: dateRange?.from,
-                        to: dateRange?.to,
-                      }}
-                      onSelect={(range) => handleCustomRangeSelect({ from: range?.from, to: range?.to })}
-                      numberOfMonths={2}
-                    />
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                    <SelectValue>
+                      {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="start" className="font-inter text-xs">
+                    {DATE_RANGE_PRESETS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {datePreset === 'custom' && (
+                  <InlineDateRangePicker
+                    dateRange={dateRange}
+                    onDateRangeChange={(range) => {
+                      setDateRange(range)
+                      setCurrentPage(1)
+                    }}
+                    autoOpen
+                  />
+                )}
+              </div>
 
               {/* Loading indicator */}
               {isLoading && (
                 <div className="flex items-center gap-1.5">
-                  <Loader2Icon className="h-4 w-4 animate-spin text-muted-foreground" />
+                  <JetpackLoader size="sm" />
                   <span className="text-xs text-muted-foreground">Loading</span>
                 </div>
               )}
@@ -1291,44 +1416,52 @@ export default function CarePage() {
               )}
             </div>
 
-            {/* RIGHT SIDE: Filters toggle + New Ticket + Columns */}
+            {/* RIGHT SIDE: Status + Ticket Type filters + New Ticket + Columns */}
             <div className="flex items-center gap-2">
-              {/* Filters button with badge */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setFiltersExpanded(!filtersExpanded)}
-                className={cn(
-                  "h-[30px] flex-shrink-0 gap-1.5 text-muted-foreground",
-                  filtersExpanded && "bg-accent text-accent-foreground"
-                )}
-              >
-                <FilterIcon className="h-4 w-4" />
-                <span className="hidden lg:inline">Filters</span>
-                {hasFilters && (
-                  <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-medium rounded-full bg-muted text-muted-foreground">
-                    {filterCount}
-                  </span>
-                )}
-                {filtersExpanded ? (
-                  <ChevronUpIcon className="h-3.5 w-3.5 ml-0.5" />
-                ) : (
-                  <ChevronDownIcon className="h-3.5 w-3.5 ml-0.5" />
-                )}
-              </Button>
+              {/* Status Filter */}
+              <MultiSelectFilter
+                options={STATUS_OPTIONS}
+                selected={statusFilter}
+                onSelectionChange={(values) => {
+                  setStatusFilter(values)
+                  setCurrentPage(1)
+                }}
+                placeholder="Status"
+                className="w-[120px]"
+              />
+
+              {/* Ticket Type Filter */}
+              <MultiSelectFilter
+                options={ISSUE_TYPE_OPTIONS}
+                selected={issueTypeSelection}
+                onSelectionChange={handleIssueTypeChange}
+                placeholder="Ticket Type"
+                className="w-[140px]"
+              />
+
+              {/* Clear filters */}
+              {hasFilters && (
+                <button
+                  onClick={clearFilters}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Clear filters"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
 
               {/* Submit a Claim Button - only show if using real data */}
               {!usingStaticData && (
-                <Button size="sm" className="h-[30px] bg-[#328bcb] hover:bg-[#2a7ab5] text-white" onClick={() => setClaimDialogOpen(true)}>
-                  <PlusIcon className="h-4 w-4 mr-1" />
+                <Button size="sm" variant="outline" className="h-[30px] bg-red-100/50 text-red-700 border-red-200 hover:bg-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30 dark:hover:bg-red-900/30" onClick={() => setClaimDialogOpen(true)}>
+                  <PlusIcon className="h-4 w-4 mr-1 text-red-700 dark:text-red-400" />
                   <span className="hidden lg:inline">Submit a Claim</span>
                 </Button>
               )}
 
               {/* New Ticket Button - only show if using real data */}
               {!usingStaticData && (
-                <Button size="sm" className="h-[30px] bg-[#328bcb] hover:bg-[#2a7ab5] text-white" onClick={() => setCreateDialogOpen(true)}>
-                  <PlusIcon className="h-4 w-4 mr-1" />
+                <Button size="sm" variant="outline" className="h-[30px] bg-[#328bcb]/15 text-[#1a5f96] border-[#328bcb]/30 hover:bg-[#328bcb]/25 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:border-[#328bcb]/40 dark:hover:bg-[#328bcb]/30" onClick={() => setCreateDialogOpen(true)}>
+                  <PlusIcon className="h-4 w-4 mr-1 text-[#1a5f96] dark:text-[#5aa8dc]" />
                   <span className="hidden lg:inline">New Ticket</span>
                 </Button>
               )}
@@ -1336,12 +1469,26 @@ export default function CarePage() {
               {/* Columns button */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 text-muted-foreground">
+                  <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center text-muted-foreground">
                     <ColumnsIcon className="h-4 w-4" />
+                    <span className="ml-[3px] text-xs hidden lg:inline leading-none">
+                      ({enabledColumnCount}/{totalColumnCount})
+                    </span>
                     <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
+                    <span>{enabledColumnCount} of {totalColumnCount} columns</span>
+                    {hasColumnCustomizations && (
+                      <button
+                        onClick={() => setColumnVisibility(DEFAULT_CARE_COLUMNS)}
+                        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                   <DropdownMenuCheckboxItem
                     checked={columnVisibility.dateCreated}
                     onCheckedChange={(value) =>
@@ -1359,20 +1506,20 @@ export default function CarePage() {
                     Reference #
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
+                    checked={columnVisibility.credit}
+                    onCheckedChange={(value) =>
+                      setColumnVisibility({ ...columnVisibility, credit: value })
+                    }
+                  >
+                    Credit
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
                     checked={columnVisibility.type}
                     onCheckedChange={(value) =>
                       setColumnVisibility({ ...columnVisibility, type: value })
                     }
                   >
                     Type
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={columnVisibility.issue}
-                    onCheckedChange={(value) =>
-                      setColumnVisibility({ ...columnVisibility, issue: value })
-                    }
-                  >
-                    Issue
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={columnVisibility.status}
@@ -1403,137 +1550,194 @@ export default function CarePage() {
             </div>
           </div>
 
-          {/* Expandable Filter Bar */}
-          {filtersExpanded && (
-            <div className="px-4 lg:px-6 pt-0 pb-4 flex items-center justify-end gap-4 animate-in slide-in-from-top-2 duration-200">
-              <div className="flex items-center gap-2">
-                {/* Clear Filters - show first, only when filters are active */}
-                {hasFilters && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearFilters}
-                    className="h-[30px] px-2 gap-1 text-muted-foreground hover:text-foreground"
-                  >
-                    <XIcon className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Clear</span>
-                  </Button>
-                )}
-
-                {/* Status Filter */}
-                <MultiSelectFilter
-                  options={STATUS_OPTIONS}
-                  selected={statusFilter}
-                  onSelectionChange={(values) => {
-                    setStatusFilter(values)
-                    setCurrentPage(1)
-                  }}
-                  placeholder="Status"
-                  className="w-[140px]"
-                />
-
-                {/* Type Filter */}
-                <MultiSelectFilter
-                  options={TYPE_OPTIONS}
-                  selected={typeFilter}
-                  onSelectionChange={(values) => {
-                    setTypeFilter(values)
-                    setCurrentPage(1)
-                  }}
-                  placeholder="Type"
-                  className="w-[120px]"
-                />
-
-                {/* Issue Filter */}
-                <MultiSelectFilter
-                  options={ISSUE_OPTIONS}
-                  selected={issueFilter}
-                  onSelectionChange={(values) => {
-                    setIssueFilter(values)
-                    setCurrentPage(1)
-                  }}
-                  placeholder="Issue"
-                  className="w-[120px]"
-                />
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Care Tickets Table */}
-        <div className="flex-1 overflow-auto -mx-4 lg:-mx-6">
-          <div style={{ width: '100%' }}>
-            <TooltipProvider>
-              <table className="w-full text-sm" style={{ tableLayout: 'fixed' }}>
+        <div className="relative flex flex-col flex-1 min-h-0 overflow-y-auto -mx-4 lg:-mx-6">
+          <TooltipProvider>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <table className="w-full text-xs font-inter" style={{ tableLayout: 'fixed' }}>
                   <colgroup>
-                    {columnVisibility.client && isAdmin && !selectedClientId && (
-                      <col style={{ width: '68px' }} />
+                    {/* Fixed columns */}
+                    {columnVisibility.client && isAdmin && !selectedClientId && columnWidths.client && (
+                      <col style={{ width: columnWidths.client }} />
                     )}
-                    {/* Partner column - same width as client badge */}
-                    {isAdmin && !selectedClientId && (
-                      <col style={{ width: '36px' }} />
+                    {isAdmin && !selectedClientId && columnWidths.partner && (
+                      <col style={{ width: columnWidths.partner }} />
                     )}
-                    {/* When client column is hidden, dateCreated needs extra width for left padding */}
-                    {columnVisibility.dateCreated && <col style={{ width: (isAdmin && !selectedClientId) ? '65px' : '89px' }} />}
-                    {columnVisibility.reference && <col style={{ width: '95px' }} />}
-                    {columnVisibility.lastUpdated && <col style={{ width: '70px' }} />}
-                    {columnVisibility.type && <col style={{ width: '95px' }} />}
-                    {columnVisibility.issue && <col style={{ width: '95px' }} />}
-                    {columnVisibility.status && <col style={{ width: '138px' }} />}
-                    {columnVisibility.latestNotes && <col style={{ width: 'auto' }} />}
+                    {/* Draggable columns in orderedDraggableColumns order */}
+                    {orderedDraggableColumns.map(col => {
+                      if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                      if (!columnWidths[col.id]) return null
+                      return <col key={col.id} style={{ width: columnWidths[col.id] }} />
+                    })}
                   </colgroup>
-                  <thead className="sticky top-0 z-10 bg-[#fcfcfc] dark:bg-zinc-900">
-                    <tr className="h-11">
-                      {/* Client column - only visible for admins viewing all clients */}
-                      {columnVisibility.client && isAdmin && !selectedClientId && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground pl-4 lg:pl-6 pr-2"></th>
-                      )}
-                      {/* Partner column - only visible for admins viewing all clients */}
-                      {isAdmin && !selectedClientId && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground"></th>
-                      )}
-                      {columnVisibility.dateCreated && (
-                        <th
-                          className={`text-left align-middle text-xs font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}
-                          onClick={() => handleSort('date')}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            Date
-                            {sortColumn === 'date' && (
-                              sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                            )}
-                          </span>
-                        </th>
-                      )}
-                      {columnVisibility.reference && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Reference ID</th>
-                      )}
-                      {columnVisibility.lastUpdated && (
-                        <th
-                          className="text-left align-middle text-xs font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors"
-                          onClick={() => handleSort('age')}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            Age
-                            {sortColumn === 'age' && (
-                              sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                            )}
-                          </span>
-                        </th>
-                      )}
-                      {columnVisibility.type && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Type</th>
-                      )}
-                      {columnVisibility.issue && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Issue</th>
-                      )}
-                      {columnVisibility.status && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground">Status</th>
-                      )}
-                      {columnVisibility.latestNotes && (
-                        <th className="text-left align-middle text-xs font-medium text-muted-foreground hidden lg:table-cell pr-4 lg:pr-6">Description</th>
-                      )}
-                    </tr>
+                  <thead className="sticky top-0 z-10 bg-surface dark:bg-zinc-900">
+                    <SortableContext
+                      items={orderedDraggableColumns.map(c => c.id)}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      <tr className="h-11">
+                        {/* Fixed columns - NOT wrapped in SortableHeader */}
+                        {/* Client column - only visible for admins viewing all clients */}
+                        {columnVisibility.client && isAdmin && !selectedClientId && (
+                          <th className="text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide pl-4 lg:pl-6 pr-2"></th>
+                        )}
+                        {/* Partner column - only visible for admins viewing all clients */}
+                        {isAdmin && !selectedClientId && (
+                          <th className="text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide"></th>
+                        )}
+
+                        {/* Draggable columns - render in orderedDraggableColumns order */}
+                        {(() => {
+                          // Find the first visible column ID
+                          const firstVisibleColId = orderedDraggableColumns.find(c =>
+                            columnVisibility[c.id as keyof typeof columnVisibility]
+                          )?.id
+
+                          return orderedDraggableColumns.map(col => {
+                            if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+
+                            // Determine if fixed columns are showing
+                            const hasFixedColumns = (columnVisibility.client && isAdmin && !selectedClientId) ||
+                                                   (isAdmin && !selectedClientId)
+                            // Only apply left padding to the FIRST visible column when no fixed columns
+                            const isFirstVisibleColumn = !hasFixedColumns && col.id === firstVisibleColId
+
+                          if (col.id === 'dateCreated') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide select-none hover:text-foreground transition-colors",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                                onClick={() => handleSort('date')}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  Date
+                                  {sortColumn === 'date' && (
+                                    sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                                  )}
+                                </span>
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'reference') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                              >
+                                Reference ID
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'lastUpdated') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide select-none hover:text-foreground transition-colors",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                                onClick={() => handleSort('age')}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  Age
+                                  {sortColumn === 'age' && (
+                                    sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                                  )}
+                                </span>
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'type') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                              >
+                                Type
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'status') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                              >
+                                Status
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'credit') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide select-none hover:text-foreground transition-colors",
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                                onClick={() => handleSort('credit')}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  Credit
+                                  {sortColumn === 'credit' && (
+                                    sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                                  )}
+                                </span>
+                              </SortableHeader>
+                            )
+                          }
+
+                          if (col.id === 'latestNotes') {
+                            return (
+                              <SortableHeader
+                                key={col.id}
+                                columnId={col.id}
+                                className={cn(
+                                  "text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide hidden lg:table-cell pr-4 lg:pr-6 transition-opacity duration-200",
+                                  expandedRowId ? 'opacity-0' : 'opacity-100',
+                                  isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                )}
+                              >
+                                Description
+                              </SortableHeader>
+                            )
+                          }
+
+                          return null
+                          })
+                        })()}
+                      </tr>
+                    </SortableContext>
                   </thead>
                   <tbody>
                     {isLoading ? (
@@ -1543,7 +1747,7 @@ export default function CarePage() {
                           className="h-32 text-center align-middle"
                         >
                           <div className="flex items-center justify-center gap-2">
-                            <Loader2Icon className="h-5 w-5 animate-spin text-muted-foreground" />
+                            <JetpackLoader size="md" />
                             <span className="text-muted-foreground">Loading tickets...</span>
                           </div>
                         </td>
@@ -1562,10 +1766,10 @@ export default function CarePage() {
                         <React.Fragment key={ticket.id}>
                           <tr
                             className={cn(
-                              "h-12 cursor-pointer transition-all duration-200 border-b border-border",
+                              "h-10 cursor-pointer transition-all duration-200",
                               expandedRowId === ticket.id
-                                ? "bg-accent dark:bg-accent/70 border-b-0"
-                                : "hover:bg-accent/20 dark:hover:bg-accent/10",
+                                ? "bg-muted/50 dark:bg-muted/50"
+                                : "hover:bg-muted/50 border-b border-border",
                               // Dim other rows when one is expanded
                               expandedRowId && expandedRowId !== ticket.id && "opacity-40"
                             )}
@@ -1574,7 +1778,40 @@ export default function CarePage() {
                             {/* Client badge - only visible for admins viewing all clients */}
                             {columnVisibility.client && isAdmin && !selectedClientId && (
                               <td className="align-middle pl-4 lg:pl-6 pr-8">
-                                <ClientBadge clientId={ticket.clientId} />
+                                {ticket.clientId ? (
+                                  <ClientBadge clientId={ticket.clientId} />
+                                ) : (isAdmin || effectiveIsCareAdmin) ? (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button
+                                        className="inline-flex items-center justify-center w-6 h-5 text-[10px] rounded bg-zinc-200/60 dark:bg-zinc-700/60 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-300/80 dark:hover:bg-zinc-600/80 transition-colors"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <PlusIcon className="h-3 w-3" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+                                      <DropdownMenuLabel>Attribute to Brand</DropdownMenuLabel>
+                                      <DropdownMenuSeparator />
+                                      {clients.filter(c => c.merchant_id).map(client => (
+                                        <DropdownMenuItem
+                                          key={client.id}
+                                          onClick={() => setConfirmAttribution({ ticketId: ticket.id, clientId: client.id, clientName: client.company_name })}
+                                        >
+                                          {client.company_name}
+                                        </DropdownMenuItem>
+                                      ))}
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={() => setConfirmAttribution({ ticketId: ticket.id, clientId: JETPACK_INTERNAL_ID, clientName: 'Jetpack (Parent)' })}
+                                      >
+                                        <span className="text-orange-600 dark:text-orange-400 font-medium">Jetpack (Parent)</span>
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
                               </td>
                             )}
                             {/* Partner badge - only visible for admins viewing all clients */}
@@ -1595,68 +1832,142 @@ export default function CarePage() {
                                 </Tooltip>
                               </td>
                             )}
-                            {columnVisibility.dateCreated && (
-                              <td className={`align-middle text-sm text-muted-foreground whitespace-nowrap ${!(columnVisibility.client && isAdmin && !selectedClientId) ? 'pl-4 lg:pl-6' : ''}`}>
-                                {formatDate(ticket.createdAt)}
-                              </td>
-                            )}
-                            {columnVisibility.reference && (
-                              <td className="align-middle font-mono text-xs text-muted-foreground">
-                                {ticket.shipmentId ? (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setSelectedShipmentId(ticket.shipmentId as string)
-                                      setShipmentDrawerOpen(true)
-                                    }}
-                                    className="text-primary hover:underline cursor-pointer"
-                                  >
-                                    {ticket.shipmentId}
-                                  </button>
-                                ) : (
-                                  getReferenceId(ticket) || '-'
-                                )}
-                              </td>
-                            )}
-                            {columnVisibility.lastUpdated && (
-                              <td className="align-middle text-sm text-muted-foreground whitespace-nowrap">
-                                {formatAge(ticket.createdAt, ticket.resolvedAt)}
-                              </td>
-                            )}
-                            {columnVisibility.type && (
-                              <td className="align-middle">
-                                <Badge variant="outline" className={cn("whitespace-nowrap min-w-[72px] justify-center", getTypeColors(ticket.ticketType))}>
-                                  {ticket.ticketType === 'Work Order' ? 'Request' : ticket.ticketType}
-                                </Badge>
-                              </td>
-                            )}
-                            {columnVisibility.issue && (
-                              <td className="align-middle">
-                                <Badge variant="outline" className={cn("whitespace-nowrap min-w-[72px] justify-center", getIssueColors(ticket.issueType || ''))}>
-                                  {ticket.issueType || 'N/A'}
-                                </Badge>
-                              </td>
-                            )}
-                            {columnVisibility.status && (
-                              <td className="align-middle">
-                                <Badge
-                                  variant="outline"
-                                  className={cn("whitespace-nowrap min-w-[72px] justify-center", getStatusColors(ticket.status))}
-                                >
-                                  {ticket.status}
-                                </Badge>
-                              </td>
-                            )}
-                            {columnVisibility.latestNotes && (
-                              <td className="align-middle hidden lg:table-cell pr-4 lg:pr-6">
-                                {/* Hide truncated text when expanded - the expanded panel shows full text */}
-                                {expandedRowId !== ticket.id && (
-                                  <p className="text-sm text-muted-foreground truncate">
-                                    {ticket.description || '-'}
-                                  </p>
-                                )}
-                              </td>
-                            )}
+
+                            {/* Draggable columns in orderedDraggableColumns order */}
+                            {(() => {
+                              // Find the first visible column ID
+                              const firstVisibleColId = orderedDraggableColumns.find(c =>
+                                columnVisibility[c.id as keyof typeof columnVisibility]
+                              )?.id
+
+                              return orderedDraggableColumns.map(col => {
+                                if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+
+                                // Determine if fixed columns are showing
+                                const hasFixedColumns = (columnVisibility.client && isAdmin && !selectedClientId) ||
+                                                       (isAdmin && !selectedClientId)
+                                // Only apply left padding to the FIRST visible column when no fixed columns
+                                const isFirstVisibleColumn = !hasFixedColumns && col.id === firstVisibleColId
+
+                              if (col.id === 'dateCreated') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle text-muted-foreground whitespace-nowrap",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    {formatDate(ticket.createdAt)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'reference') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle font-mono text-muted-foreground",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    {ticket.shipmentId ? (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setSelectedShipmentId(ticket.shipmentId as string)
+                                          setShipmentDrawerOpen(true)
+                                        }}
+                                        className="text-primary hover:underline cursor-pointer"
+                                      >
+                                        {ticket.shipmentId}
+                                      </button>
+                                    ) : (
+                                      getReferenceId(ticket) || <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'lastUpdated') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle text-muted-foreground whitespace-nowrap",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    {formatAge(ticket.createdAt, ticket.resolvedAt)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'type') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    <Badge variant="outline" className={cn("whitespace-nowrap min-w-[72px] justify-center text-[11px]", getTicketTypeColors(ticket.ticketType, ticket.issueType || undefined))}>
+                                      {getTicketTypeLabel(ticket.ticketType, ticket.issueType || undefined)}
+                                    </Badge>
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'status') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    <Badge
+                                      variant="outline"
+                                      className={cn("whitespace-nowrap min-w-[72px] justify-center text-[11px]", getStatusColors(ticket.status))}
+                                    >
+                                      {ticket.status}
+                                    </Badge>
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'credit') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle whitespace-nowrap",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    {ticket.creditAmount > 0 ? (
+                                      <span className="text-foreground">{formatCurrency(ticket.creditAmount)}</span>
+                                    ) : (
+                                      <span className="text-muted-foreground/40">-</span>
+                                    )}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'latestNotes') {
+                                return (
+                                  <td key={col.id} className={cn(
+                                    "align-middle hidden lg:table-cell",
+                                    isFirstVisibleColumn && 'pl-4 lg:pl-6'
+                                  )}>
+                                    {expandedRowId !== ticket.id && (
+                                      <p className="text-muted-foreground truncate pr-4 lg:pr-6">
+                                        {ticket.description || <span className="text-muted-foreground">-</span>}
+                                      </p>
+                                    )}
+                                    {expandedRowId === ticket.id && (
+                                      <div className="flex justify-end pr-3">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setExpandedRowId(null) }}
+                                          className="p-1 rounded-md text-muted-foreground/50 hover:text-foreground transition-colors"
+                                          aria-label="Collapse ticket"
+                                        >
+                                          <XIcon className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                )
+                              }
+
+                              return null
+                              })
+                            })()}
                           </tr>
                           <AnimatePresence>
                           {expandedRowId === ticket.id && (
@@ -1666,7 +1977,7 @@ export default function CarePage() {
                               {/* Full-width expanded panel */}
                               <td
                                 colSpan={actualColumnCount}
-                                className="p-0 border-t-0 bg-accent dark:bg-accent/70"
+                                className="p-0 border-t-0 bg-muted/50 dark:bg-muted/50"
                               >
                                 <motion.div
                                   initial={{ height: 0, opacity: 0 }}
@@ -1674,37 +1985,37 @@ export default function CarePage() {
                                   exit={{ height: 0, opacity: 0 }}
                                   transition={{ duration: 0.2, ease: "easeOut" }}
                                 >
-                                  <div className="pt-3 pb-5">
+                                  <div className="pt-3 pb-5 font-outfit">
                                     <div className="flex items-start pl-4 lg:pl-6 pr-4">
                                       {/* Left Column: Credit/Buttons only */}
                                       <div className="flex-shrink-0 pr-[18px] w-[143px]">
                                           {/* Credit Card - contextual based on state */}
                                           {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
                                             <div className={cn(
-                                              "rounded-xl px-3 py-2 border",
+                                              "rounded-xl px-3 py-2",
                                               ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
-                                                ? "bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-950/20 border-emerald-200/50 dark:border-emerald-800/50"
+                                                ? "bg-emerald-50 dark:bg-emerald-900/40"
                                                 : ticket.status === 'Credit Requested'
-                                                  ? "bg-gradient-to-br from-amber-50 to-amber-100/50 dark:from-amber-900/30 dark:to-amber-950/20 border-amber-200/50 dark:border-amber-800/50"
-                                                  : "bg-gradient-to-br from-slate-50 to-slate-100/50 dark:from-slate-800/50 dark:to-slate-900/30 border-slate-200/50 dark:border-slate-700/50"
+                                                  ? "bg-orange-50 dark:bg-orange-900/40"
+                                                  : "bg-card"
                                             )}>
                                               <div className={cn(
                                                 "text-[9px] font-medium uppercase tracking-wider mb-0.5 whitespace-nowrap",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-600 dark:text-emerald-400"
                                                   : ticket.status === 'Credit Requested'
-                                                    ? "text-black dark:text-amber-300"
-                                                    : "text-slate-500 dark:text-slate-400"
+                                                    ? "text-orange-700 dark:text-orange-300"
+                                                    : "text-muted-foreground"
                                               )}>
                                                 {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
                                               </div>
                                               <div className={cn(
-                                                "text-lg font-bold",
+                                                "text-lg font-semibold",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-700 dark:text-emerald-300"
                                                   : ticket.status === 'Credit Requested'
-                                                    ? "text-black dark:text-amber-200"
-                                                    : "text-slate-900 dark:text-slate-100"
+                                                    ? "text-foreground"
+                                                    : "text-foreground"
                                               )}>
                                                 {ticket.creditAmount > 0 ? formatCurrency(ticket.creditAmount) : 'TBD'}
                                               </div>
@@ -1730,21 +2041,21 @@ export default function CarePage() {
 
                                           {/* Action Buttons */}
                                           {!usingStaticData && (
-                                            <div className="flex flex-col gap-[5px] w-full mt-2.5">
+                                            <div className="flex flex-col gap-1.5 w-full mt-2.5">
                                               <button
-                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50 transition-colors"
+                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-border bg-background text-foreground hover:bg-muted/50 transition-colors"
                                                 onClick={(e) => openStatusDialog(ticket, e)}
                                               >
                                                 Update Status
                                               </button>
                                               <button
-                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50 transition-colors"
+                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-border bg-background text-foreground hover:bg-muted/50 transition-colors"
                                                 onClick={(e) => openEditDialog(ticket, e)}
                                               >
                                                 Edit Ticket
                                               </button>
                                               <button
-                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 transition-colors"
+                                                className="w-full px-3 py-1.5 text-[11px] font-medium rounded-md border border-border bg-background text-muted-foreground hover:bg-muted/50 transition-colors"
                                                 onClick={(e) => openDeleteDialog(ticket, e)}
                                               >
                                                 Delete Ticket
@@ -1754,8 +2065,8 @@ export default function CarePage() {
 
                                           {/* Files Card - below buttons */}
                                           {ticket.attachments && ticket.attachments.length > 0 && (
-                                            <div className="mt-3 bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-3">
-                                              <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Files</div>
+                                            <div className="mt-3 bg-card rounded-xl p-3">
+                                              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Files</div>
                                               <div className="flex flex-col gap-1.5">
                                                 {ticket.attachments.map((file, idx) => (
                                                   <a
@@ -1763,7 +2074,7 @@ export default function CarePage() {
                                                     href={file.url}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="flex items-center gap-2 px-2 py-1.5 text-[11px] font-medium bg-white dark:bg-slate-600/50 rounded border border-slate-200/60 dark:border-slate-500/40 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                                                    className="flex items-center gap-2 px-2 py-1.5 text-[11px] font-medium bg-background rounded-md border border-border/50 hover:bg-muted/50 transition-colors"
                                                   >
                                                     {getFileIcon(file.type, file.name)}
                                                     <span className="truncate">{file.name}</span>
@@ -1777,7 +2088,7 @@ export default function CarePage() {
                                       {/* Center column: Details Card + Internal Notes (stacked) */}
                                       <div className="flex flex-col w-[484px] flex-shrink-0">
                                         {/* Details Card - no min-height, flows naturally */}
-                                        <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl border border-slate-200/30 dark:border-slate-600/30 p-4">
+                                        <div className="bg-card rounded-xl p-4">
                                           {/* Row 1: Ticket #, Carrier, Tracking # */}
                                           <div className="grid grid-cols-3 gap-x-6 mb-3">
                                             <div>
@@ -1815,28 +2126,92 @@ export default function CarePage() {
                                           {/* Claim-specific rows - varies by issue type */}
                                           {ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' ? (
                                             <>
-                                              <hr className="border-slate-200/50 dark:border-slate-600/50 my-3" />
+                                              <hr className="border-border/50 my-3" />
                                               <div className="grid grid-cols-3 gap-x-6">
                                                 <div>
                                                   <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment</div>
                                                   <div className="text-xs font-medium truncate">
                                                     {ticket.reshipmentStatus === "Please reship for me" ? "Reship for me" :
+                                                     ticket.reshipmentStatus === "I've already reshipped" ? "Already reshipped" :
                                                      ticket.reshipmentStatus || "-"}
                                                   </div>
                                                 </div>
-                                                <div>
-                                                  <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment ID</div>
-                                                  <div className="text-xs font-mono truncate">{ticket.reshipmentId || '-'}</div>
-                                                </div>
-                                                <div>
-                                                  <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">What to Reship</div>
-                                                  <div className="text-xs truncate">{ticket.whatToReship || '-'}</div>
-                                                </div>
-                                              </div>
-                                              <hr className="border-slate-200/50 dark:border-slate-600/50 my-3" />
-                                              <div>
-                                                <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Compensation</div>
-                                                <div className="text-xs truncate">{ticket.compensationRequest || '-'}</div>
+                                                {/* Only show Reshipment ID column if not "Don't reship" */}
+                                                {ticket.reshipmentStatus !== "Don't reship" && (
+                                                  <div>
+                                                    <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Reshipment ID</div>
+                                                    {ticket.reshipmentId ? (
+                                                      <button
+                                                        className="text-xs font-mono truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-left"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation()
+                                                          setSelectedShipmentId(ticket.reshipmentId)
+                                                          setShipmentDrawerOpen(true)
+                                                        }}
+                                                      >
+                                                        {ticket.reshipmentId}
+                                                      </button>
+                                                    ) : ticket.reshipmentStatus === "Please reship for me" ? (
+                                                      <Popover open={addReshipmentIdOpenForTicket === ticket.id} onOpenChange={(open) => {
+                                                        setAddReshipmentIdOpenForTicket(open ? ticket.id : null)
+                                                        if (!open) setNewReshipmentId('')
+                                                      }}>
+                                                        <PopoverTrigger asChild>
+                                                          <button className="text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 flex items-center gap-1">
+                                                            <PlusIcon className="h-3 w-3" />
+                                                            Add
+                                                          </button>
+                                                        </PopoverTrigger>
+                                                        <PopoverContent className="w-56 p-3" align="start">
+                                                          <div className="space-y-2">
+                                                            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Reshipment ID</div>
+                                                            <Input
+                                                              placeholder="Enter ID..."
+                                                              value={newReshipmentId}
+                                                              onChange={(e) => setNewReshipmentId(e.target.value)}
+                                                              className="h-8 text-sm"
+                                                              autoFocus
+                                                            />
+                                                            <div className="flex justify-end gap-2">
+                                                              <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                onClick={() => {
+                                                                  setAddReshipmentIdOpenForTicket(null)
+                                                                  setNewReshipmentId('')
+                                                                }}
+                                                              >
+                                                                Cancel
+                                                              </Button>
+                                                              <Button
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                onClick={() => handleAddReshipmentId(ticket.id)}
+                                                                disabled={!newReshipmentId.trim() || isSavingReshipmentId}
+                                                              >
+                                                                {isSavingReshipmentId ? (
+                                                                  <JetpackLoader size="sm" />
+                                                                ) : (
+                                                                  'Save'
+                                                                )}
+                                                              </Button>
+                                                            </div>
+                                                          </div>
+                                                        </PopoverContent>
+                                                      </Popover>
+                                                    ) : (
+                                                      <div className="text-xs font-mono truncate">-</div>
+                                                    )}
+                                                  </div>
+                                                )}
+                                                {/* Compensation - only for Pick Error */}
+                                                {ticket.issueType === 'Pick Error' && (
+                                                  <div>
+                                                    <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Compensation</div>
+                                                    <div className="text-xs font-medium truncate">{getShortCompensation(ticket.compensationRequest)}</div>
+                                                  </div>
+                                                )}
                                               </div>
                                             </>
                                           ) : (
@@ -1847,21 +2222,21 @@ export default function CarePage() {
                                         {/* Internal Notes - directly under details card */}
                                         {isAdmin && (
                                           <div className="mt-3">
-                                            <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl p-3 border border-slate-200/30 dark:border-slate-600/30">
+                                            <div className="bg-card rounded-xl p-3">
                                               <div className="flex items-center justify-between mb-2">
-                                                <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Internal Notes</div>
+                                                <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Internal Notes</div>
                                                 <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
                                                   setAddNoteOpenForTicket(open ? ticket.id : null)
                                                   if (!open) setNewNoteText('')
                                                 }}>
                                                   <PopoverTrigger asChild>
-                                                    <button className="flex items-center justify-center w-5 h-5 text-slate-500 dark:text-slate-400 bg-slate-100/50 dark:bg-slate-700/30 hover:bg-slate-200/60 dark:hover:bg-slate-600/40 rounded-md transition-colors border border-slate-300/40 dark:border-slate-500/40">
+                                                    <button className="flex items-center justify-center w-5 h-5 text-muted-foreground bg-muted/50 hover:bg-muted rounded-md transition-colors border border-border/50">
                                                       <PlusIcon className="h-3 w-3" />
                                                     </button>
                                                   </PopoverTrigger>
                                                   <PopoverContent className="w-72 p-3" align="end">
                                                     <div className="space-y-2">
-                                                      <div className="text-xs font-medium text-muted-foreground">Add Internal Note</div>
+                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Add Internal Note</div>
                                                       <Textarea
                                                         placeholder="Type your note..."
                                                         value={newNoteText}
@@ -1883,12 +2258,12 @@ export default function CarePage() {
                                                         </Button>
                                                         <Button
                                                           size="sm"
-                                                          className="h-7 text-xs bg-amber-600 hover:bg-amber-700"
+                                                          className="h-7 text-xs"
                                                           onClick={() => handleAddInternalNote(ticket.id)}
                                                           disabled={!newNoteText.trim() || isAddingNote}
                                                         >
                                                           {isAddingNote ? (
-                                                            <Loader2Icon className="h-3 w-3 animate-spin" />
+                                                            <JetpackLoader size="sm" />
                                                           ) : (
                                                             'Save'
                                                           )}
@@ -1899,11 +2274,11 @@ export default function CarePage() {
                                                 </Popover>
                                               </div>
                                               {ticket.internalNotes && ticket.internalNotes.length > 0 && (
-                                                <div className="divide-y divide-amber-300/40 dark:divide-amber-700/40">
+                                                <div className="divide-y divide-border/50">
                                                   {ticket.internalNotes.map((note, idx) => (
                                                     <div key={idx} className="py-2 first:pt-0 last:pb-0">
                                                       <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{note.note}</p>
-                                                      <div className="flex items-center gap-2 mt-1 text-[10px] text-amber-600/80 dark:text-amber-400/70">
+                                                      <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground/60">
                                                         <span className="font-semibold">{note.createdBy}</span>
                                                         <span>•</span>
                                                         <span>{new Date(note.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
@@ -1918,13 +2293,13 @@ export default function CarePage() {
                                       </div>
 
                                       {/* Right section: Description and Activity card */}
-                                      <div className="flex-1 ml-3 flex flex-col">
+                                      <div className="flex-1 ml-4 flex flex-col">
                                         {/* Combined Description & Activity card */}
-                                        <div className="bg-gradient-to-b from-white/80 to-white/50 dark:from-slate-600/40 dark:to-slate-700/20 rounded-xl p-4 border border-slate-200/30 dark:border-slate-600/30 flex-1">
+                                        <div className="bg-card rounded-xl px-5 py-4 flex-1">
                                               {/* Description section */}
                                               {ticket.description && (
-                                                <div className="mb-6">
-                                                  <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Description</div>
+                                                <div className="mb-8">
+                                                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2.5">Description</div>
                                                   <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
                                                     {ticket.description}
                                                   </p>
@@ -1934,12 +2309,12 @@ export default function CarePage() {
                                               {/* Activity section */}
                                               {ticket.events && ticket.events.length > 0 && (
                                                 <>
-                                                  <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Activity</div>
+                                                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-3.5">Activity</div>
                                                   <div className="relative">
                                                     {/* Vertical line */}
-                                                    <div className="absolute left-[5px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/40 via-slate-300 to-slate-200 dark:via-slate-600 dark:to-slate-700" />
+                                                    <div className="absolute left-[5px] top-2 bottom-2 w-px bg-border" />
 
-                                                    <div className="space-y-4">
+                                                    <div className="space-y-5">
                                                       {ticket.events.map((event, idx) => (
                                                         <div key={idx} className="relative flex gap-4 pl-6">
                                                           {/* Timeline dot */}
@@ -1947,7 +2322,7 @@ export default function CarePage() {
                                                             "absolute left-0 top-0.5 w-[11px] h-[11px] rounded-full border-2",
                                                             idx === 0
                                                               ? getStatusDotColor(event.status)
-                                                              : "bg-background border-slate-300 dark:border-slate-600"
+                                                              : "bg-background border-border"
                                                           )} />
 
                                                           <div className="flex-1 min-w-0 pb-1">
@@ -1991,138 +2366,97 @@ export default function CarePage() {
                     )}
                   </tbody>
                 </table>
-              </TooltipProvider>
+
+                {/* Drag overlay - ghost header during drag */}
+                <DragOverlay dropAnimation={null}>
+                  {activeColumn ? (
+                    <div className="px-2 py-2 text-[10px] font-medium text-zinc-500 uppercase tracking-wide bg-surface border rounded shadow-md">
+                      {activeColumn.header}
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
+          </TooltipProvider>
+          {/* Pagination Controls - Sticky at bottom */}
+          <div className="sticky bottom-0 bg-background px-4 lg:px-6 py-3 flex items-center justify-between border-t border-border/40">
+            <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
+              {totalCount} total ticket(s)
+            </div>
+            <div className="flex w-full items-center gap-8 lg:w-fit">
+              <div className="hidden items-center gap-2 lg:flex">
+                <Label htmlFor="rows-per-page" className="text-sm font-medium">
+                  Rows per page
+                </Label>
+                <Select
+                  value={`${itemsPerPage}`}
+                  onValueChange={(value) => {
+                    setItemsPerPage(Number(value))
+                    setCurrentPage(1) // Reset to first page when changing page size
+                  }}
+                >
+                  <SelectTrigger className="w-20" id="rows-per-page">
+                    <SelectValue placeholder={itemsPerPage} />
+                  </SelectTrigger>
+                  <SelectContent side="top">
+                    {[30, 50, 100, 200].map((pageSize) => (
+                      <SelectItem key={pageSize} value={`${pageSize}`}>
+                        {pageSize}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex w-fit items-center justify-center text-sm font-medium">
+                Page {currentPage} of {totalPages || 1}
+              </div>
+              <div className="ml-auto flex items-center gap-2 lg:ml-0">
+                <Button
+                  variant="outline"
+                  className="hidden h-8 w-8 p-0 lg:flex"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                >
+                  <span className="sr-only">Go to first page</span>
+                  <ChevronsLeftIcon />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="size-8"
+                  size="icon"
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  <span className="sr-only">Go to previous page</span>
+                  <ChevronLeftIcon />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="size-8"
+                  size="icon"
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage >= totalPages}
+                >
+                  <span className="sr-only">Go to next page</span>
+                  <ChevronRightIcon />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="hidden size-8 lg:flex"
+                  size="icon"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage >= totalPages}
+                >
+                  <span className="sr-only">Go to last page</span>
+                  <ChevronsRightIcon />
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* Pagination Controls - Fixed at bottom */}
-        <div className="flex items-center justify-between py-4">
-          <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-            {totalCount} total ticket(s)
-          </div>
-          <div className="flex w-full items-center gap-8 lg:w-fit">
-            <div className="hidden items-center gap-2 lg:flex">
-              <Label htmlFor="rows-per-page" className="text-sm font-medium">
-                Rows per page
-              </Label>
-              <Select
-                value={`${itemsPerPage}`}
-                onValueChange={(value) => {
-                  setItemsPerPage(Number(value))
-                  setCurrentPage(1) // Reset to first page when changing page size
-                }}
-              >
-                <SelectTrigger className="w-20" id="rows-per-page">
-                  <SelectValue placeholder={itemsPerPage} />
-                </SelectTrigger>
-                <SelectContent side="top">
-                  {[30, 50, 100, 200].map((pageSize) => (
-                    <SelectItem key={pageSize} value={`${pageSize}`}>
-                      {pageSize}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex w-fit items-center justify-center text-sm font-medium">
-              Page {currentPage} of {totalPages || 1}
-            </div>
-            <div className="ml-auto flex items-center gap-2 lg:ml-0">
-              <Button
-                variant="outline"
-                className="hidden h-8 w-8 p-0 lg:flex"
-                onClick={() => setCurrentPage(1)}
-                disabled={currentPage === 1}
-              >
-                <span className="sr-only">Go to first page</span>
-                <ChevronsLeftIcon />
-              </Button>
-              <Button
-                variant="outline"
-                className="size-8"
-                size="icon"
-                onClick={() => setCurrentPage(currentPage - 1)}
-                disabled={currentPage === 1}
-              >
-                <span className="sr-only">Go to previous page</span>
-                <ChevronLeftIcon />
-              </Button>
-              <Button
-                variant="outline"
-                className="size-8"
-                size="icon"
-                onClick={() => setCurrentPage(currentPage + 1)}
-                disabled={currentPage >= totalPages}
-              >
-                <span className="sr-only">Go to next page</span>
-                <ChevronRightIcon />
-              </Button>
-              <Button
-                variant="outline"
-                className="hidden size-8 lg:flex"
-                size="icon"
-                onClick={() => setCurrentPage(totalPages)}
-                disabled={currentPage >= totalPages}
-              >
-                <span className="sr-only">Go to last page</span>
-                <ChevronsRightIcon />
-              </Button>
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* Filters Sheet */}
-      <Sheet open={filtersSheetOpen} onOpenChange={setFiltersSheetOpen}>
-        <SheetContent>
-          <SheetHeader>
-            <SheetTitle>Filter Tickets</SheetTitle>
-            <SheetDescription>
-              Apply filters to narrow down your ticket list
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-col gap-6 py-6">
-            <div className="flex flex-col gap-2">
-              <Label>Status</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="under-review">Under Review</SelectItem>
-                  <SelectItem value="credit-requested">Credit Requested</SelectItem>
-                  <SelectItem value="credit-approved">Credit Approved</SelectItem>
-                  <SelectItem value="input-required">Input Required</SelectItem>
-                  <SelectItem value="resolved">Resolved</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label>Issue Type</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="All types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All types</SelectItem>
-                  <SelectItem value="loss">Loss</SelectItem>
-                  <SelectItem value="damage">Damage</SelectItem>
-                  <SelectItem value="pick-error">Pick Error</SelectItem>
-                  <SelectItem value="short-ship">Short Ship</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <SheetFooter>
-            <SheetClose asChild>
-              <Button variant="outline">Clear Filters</Button>
-            </SheetClose>
-            <Button>Apply Filters</Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+
 
       {/* Create Ticket Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={(open) => {
@@ -2195,7 +2529,7 @@ export default function CarePage() {
                     className="h-10 pr-8"
                   />
                   {isLookingUpShipment && (
-                    <Loader2Icon className="h-4 w-4 animate-spin absolute right-3 top-3 text-muted-foreground" />
+                    <JetpackLoader size="sm" className="absolute right-3 top-3" />
                   )}
                 </div>
               </div>
@@ -2326,7 +2660,7 @@ export default function CarePage() {
             >
               {isCreating ? (
                 <>
-                  <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
                   Creating...
                 </>
               ) : (
@@ -2613,7 +2947,7 @@ export default function CarePage() {
             <Button onClick={handleUpdateTicket} disabled={isUpdating}>
               {isUpdating ? (
                 <>
-                  <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
                   Saving...
                 </>
               ) : (
@@ -2723,7 +3057,7 @@ export default function CarePage() {
             >
               {isDeleting ? (
                 <>
-                  <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
                   {deleteType === 'permanent' ? 'Deleting...' : 'Archiving...'}
                 </>
               ) : (
@@ -2780,7 +3114,7 @@ export default function CarePage() {
             >
               {isUpdatingStatus ? (
                 <>
-                  <Loader2Icon className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
                   Updating...
                 </>
               ) : (
@@ -2797,6 +3131,33 @@ export default function CarePage() {
         open={shipmentDrawerOpen}
         onOpenChange={setShipmentDrawerOpen}
       />
+
+      {/* Client Attribution Confirmation Dialog */}
+      <AlertDialog open={!!confirmAttribution} onOpenChange={(open) => { if (!open) setConfirmAttribution(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Attribute Ticket</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to attribute this ticket to <strong>{confirmAttribution?.clientName}</strong>?
+              {confirmAttribution?.clientId === JETPACK_INTERNAL_ID &&
+                " This will mark it as a parent credit — a cost Jetpack absorbed that was not passed on to any client."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isAttributing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isAttributing}
+              onClick={() => {
+                if (confirmAttribution) {
+                  handleAttributeClient(confirmAttribution.ticketId, confirmAttribution.clientId, confirmAttribution.clientName)
+                }
+              }}
+            >
+              {isAttributing ? 'Attributing...' : 'Attribute'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Claim Submission Dialog */}
       <ClaimSubmissionDialog

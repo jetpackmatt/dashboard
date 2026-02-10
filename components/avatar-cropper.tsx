@@ -3,7 +3,8 @@
 import * as React from 'react'
 import Cropper from 'react-easy-crop'
 import type { Area, Point } from 'react-easy-crop'
-import { Loader2, ZoomIn, ZoomOut } from 'lucide-react'
+import { ZoomIn, ZoomOut } from 'lucide-react'
+import { JetpackLoader } from '@/components/jetpack-loader'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -179,7 +180,7 @@ export function AvatarCropper({
           <Button onClick={handleSave} disabled={isProcessing}>
             {isProcessing ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <JetpackLoader size="sm" className="mr-2" />
                 Processing...
               </>
             ) : (

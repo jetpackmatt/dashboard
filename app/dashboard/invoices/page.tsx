@@ -4,19 +4,18 @@ import * as React from "react"
 import {
   FileTextIcon,
   FileSpreadsheetIcon,
-  FilterIcon,
   ColumnsIcon,
   ChevronDownIcon,
-  CalendarIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
-  Loader2,
   Download,
+  XIcon,
 } from "lucide-react"
 
 import { SiteHeader } from "@/components/site-header"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,17 +25,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
+import { MultiSelectFilter } from "@/components/ui/multi-select-filter"
 import {
   Select,
   SelectContent,
@@ -44,27 +34,47 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { format } from "date-fns"
+import { INVOICES_TABLE_CONFIG, getRedistributedWidths } from "@/lib/table-config"
 import { useClient } from "@/components/client-context"
-import { X } from "lucide-react"
+import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
+import { DateRange } from "react-day-picker"
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable"
+import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { useColumnOrder } from "@/hooks/use-responsive-table"
 
-// Date range preset types
-type DateRangePreset = '30d' | '90d' | 'mtd' | 'ytd' | 'all' | 'custom'
+// Date range preset types - matches Transactions page
+type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'
 
 const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: '7D' },
   { value: '30d', label: '30D' },
-  { value: '90d', label: '90D' },
+  { value: '60d', label: '60D' },
   { value: 'mtd', label: 'MTD' },
   { value: 'ytd', label: 'YTD' },
   { value: 'all', label: 'All' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date } | null {
@@ -72,20 +82,31 @@ function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
   switch (preset) {
-    case '30d':
+    case 'today':
+      return { from: today, to: today }
+    case '7d': {
+      const sevenDaysAgo = new Date(today)
+      sevenDaysAgo.setDate(today.getDate() - 6)
+      return { from: sevenDaysAgo, to: today }
+    }
+    case '30d': {
       const thirtyDaysAgo = new Date(today)
       thirtyDaysAgo.setDate(today.getDate() - 29)
       return { from: thirtyDaysAgo, to: today }
-    case '90d':
-      const ninetyDaysAgo = new Date(today)
-      ninetyDaysAgo.setDate(today.getDate() - 89)
-      return { from: ninetyDaysAgo, to: today }
-    case 'mtd':
+    }
+    case '60d': {
+      const sixtyDaysAgo = new Date(today)
+      sixtyDaysAgo.setDate(today.getDate() - 59)
+      return { from: sixtyDaysAgo, to: today }
+    }
+    case 'mtd': {
       const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
       return { from: monthStart, to: today }
-    case 'ytd':
+    }
+    case 'ytd': {
       const yearStart = new Date(today.getFullYear(), 0, 1)
       return { from: yearStart, to: today }
+    }
     case 'all':
       return null
     case 'custom':
@@ -118,31 +139,84 @@ interface Invoice {
   version: number
   pdf_path: string | null
   xlsx_path: string | null
+  shipment_count?: number | null
+  transaction_count?: number | null
   client?: Client
 }
 
 /**
  * Format a date string as a fixed date without timezone conversion.
  */
-function formatDateFixed(dateStr: string): string {
-  if (!dateStr) return '-'
+function formatDateFixed(dateStr: string): React.ReactNode {
+  if (!dateStr) return <span className="text-muted-foreground">-</span>
   const datePart = dateStr.split('T')[0]
   const [year, month, day] = datePart.split('-')
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`
 }
 
+/**
+ * Format billing period as a compact range.
+ * Same month: "Jan 6 – 12"
+ * Different months: "Jan 6 – Feb 12"
+ */
+function formatBillingPeriod(start: string, end: string): React.ReactNode {
+  if (!start || !end) return <span className="text-muted-foreground">-</span>
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const [sYear, sMonth, sDay] = start.split('T')[0].split('-')
+  const [eYear, eMonth, eDay] = end.split('T')[0].split('-')
+  const sM = months[parseInt(sMonth) - 1]
+  const eM = months[parseInt(eMonth) - 1]
+  const sD = parseInt(sDay)
+  const eD = parseInt(eDay)
+
+  if (sYear === eYear && sMonth === eMonth) {
+    return `${sM} ${sD} – ${sM} ${eD}`
+  }
+  return `${sM} ${sD} – ${eM} ${eD}`
+}
+
 // Color schemes for client badges - matches ClientBadge component
 const colorSchemes = [
-  { badge: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/20", tooltip: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 border-blue-200 dark:border-blue-800" },
-  { badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20", tooltip: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 border-amber-200 dark:border-amber-800" },
-  { badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20", tooltip: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800" },
-  { badge: "bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/20", tooltip: "bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-300 border-rose-200 dark:border-rose-800" },
-  { badge: "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/20", tooltip: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300 border-purple-200 dark:border-purple-800" },
-  { badge: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border-cyan-500/20", tooltip: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800" },
-  { badge: "bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/20", tooltip: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 border-orange-200 dark:border-orange-800" },
-  { badge: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border-indigo-500/20", tooltip: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800" },
+  { badge: "bg-blue-500/15 text-blue-700 dark:text-blue-400", tooltip: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 border-blue-200 dark:border-blue-800" },
+  { badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400", tooltip: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 border-amber-200 dark:border-amber-800" },
+  { badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400", tooltip: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800" },
+  { badge: "bg-rose-500/15 text-rose-700 dark:text-rose-400", tooltip: "bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-300 border-rose-200 dark:border-rose-800" },
+  { badge: "bg-purple-500/15 text-purple-700 dark:text-purple-400", tooltip: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300 border-purple-200 dark:border-purple-800" },
+  { badge: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-400", tooltip: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800" },
+  { badge: "bg-orange-500/15 text-orange-700 dark:text-orange-400", tooltip: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 border-orange-200 dark:border-orange-800" },
+  { badge: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400", tooltip: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800" },
 ]
+
+// SortableHeader component for drag-to-reorder columns
+interface SortableHeaderProps {
+  columnId: string
+  children: React.ReactNode
+  className?: string
+  onClick?: () => void
+}
+
+function SortableHeader({ columnId, children, className, onClick }: SortableHeaderProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    isDragging,
+  } = useSortable({ id: columnId })
+
+  return (
+    <th
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn(className, "cursor-grab active:cursor-grabbing")}
+      style={{ opacity: isDragging ? 0.4 : 1 }}
+      onClick={onClick}
+    >
+      {children}
+    </th>
+  )
+}
 
 export default function InvoicesPage() {
   const { selectedClientId, effectiveIsAdmin, clients } = useClient()
@@ -151,33 +225,84 @@ export default function InvoicesPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
 
-  const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
-  const [dateRange, setDateRange] = React.useState<{
-    from: Date | undefined
-    to: Date | undefined
-  }>({
-    from: undefined,
-    to: undefined,
-  })
+  const [statusFilter, setStatusFilter] = React.useState<string[]>([])
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined)
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')
-  const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
-  const [isAwaitingEndDate, setIsAwaitingEndDate] = React.useState(false)
 
   // Pagination state
   const [currentPage, setCurrentPage] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(50)
 
   // Column visibility state
-  const [columnVisibility, setColumnVisibility] = React.useState({
+  const DEFAULT_INVOICE_COLUMNS = React.useMemo(() => ({
     client: true,
-    invoiceDate: true,
     invoiceNumber: true,
+    billingPeriod: true,
+    invoiceDate: true,
     cost: true,
     profit: true,
+    shipments: true,
+    transactions: false,
+    amount: true,
+    status: true,
+    download: true,
+  }), [])
+  const [columnVisibility, setColumnVisibility] = React.useState({
+    client: true,
+    invoiceNumber: true,
+    billingPeriod: true,
+    invoiceDate: true,
+    cost: true,
+    profit: true,
+    shipments: true,
+    transactions: false,
     amount: true,
     status: true,
     download: true,
   })
+
+  // Load preferences from localStorage (column visibility, column order, page size)
+  const invoicesPrefs = useTablePreferences('invoices', 50)
+
+  // Define which columns are draggable (exclude client/download - they stay fixed)
+  const draggableColumnIds = ['invoiceNumber', 'billingPeriod', 'invoiceDate', 'cost', 'profit', 'shipments', 'transactions', 'amount', 'status']
+  const draggableColumns = INVOICES_TABLE_CONFIG.columns.filter(c => draggableColumnIds.includes(c.id))
+
+  // Apply user's drag order to draggable columns
+  const orderedDraggableColumns = useColumnOrder(
+    INVOICES_TABLE_CONFIG,
+    draggableColumns,
+    invoicesPrefs.columnOrder
+  )
+
+  // DnD state
+  const [activeColumnId, setActiveColumnId] = React.useState<string | null>(null)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+  const activeColumn = activeColumnId
+    ? INVOICES_TABLE_CONFIG.columns.find(c => c.id === activeColumnId)
+    : null
+
+  // Drag handlers
+  const handleDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveColumnId(event.active.id as string)
+  }, [])
+
+  const handleDragEnd = React.useCallback((event: DragEndEvent) => {
+    setActiveColumnId(null)
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      const currentIds = orderedDraggableColumns.map(c => c.id)
+      const oldIndex = currentIds.indexOf(active.id as string)
+      const newIndex = currentIds.indexOf(over.id as string)
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        invoicesPrefs.setColumnOrder(arrayMove(currentIds, oldIndex, newIndex))
+      }
+    }
+  }, [orderedDraggableColumns, invoicesPrefs])
 
   // Fetch invoices
   React.useEffect(() => {
@@ -229,17 +354,20 @@ export default function InvoicesPage() {
     }
   }
 
-  // Filter invoices by date range
+  // Filter invoices by date range and status
   const filteredInvoices = React.useMemo(() => {
-    if (!dateRange.from && !dateRange.to) return invoices
-
     return invoices.filter(invoice => {
-      const invoiceDate = new Date(invoice.invoice_date.split('T')[0])
-      if (dateRange.from && invoiceDate < dateRange.from) return false
-      if (dateRange.to && invoiceDate > dateRange.to) return false
+      // Date range filter
+      if (dateRange?.from || dateRange?.to) {
+        const invoiceDate = new Date(invoice.invoice_date.split('T')[0])
+        if (dateRange?.from && invoiceDate < dateRange.from) return false
+        if (dateRange?.to && invoiceDate > dateRange.to) return false
+      }
+      // Status filter
+      if (statusFilter.length > 0 && !statusFilter.includes(invoice.paid_status)) return false
       return true
     })
-  }, [invoices, dateRange])
+  }, [invoices, dateRange, statusFilter])
 
   // Pagination logic
   const totalCount = filteredInvoices.length
@@ -254,6 +382,50 @@ export default function InvoicesPage() {
   // Determine if we should show cost/profit breakdown (admin only)
   const showCostBreakdown = effectiveIsAdmin
 
+  // Column selector quota — only count columns that appear in the dropdown
+  const invoiceToggleableKeys = React.useMemo(() => {
+    const keys: (keyof typeof columnVisibility)[] = []
+    if (showClientColumn) keys.push('client')
+    keys.push('invoiceNumber', 'billingPeriod', 'invoiceDate')
+    if (showCostBreakdown) keys.push('cost', 'profit')
+    keys.push('shipments', 'transactions', 'amount', 'status', 'download')
+    return keys
+  }, [showClientColumn, showCostBreakdown])
+  const enabledInvoiceColumnCount = invoiceToggleableKeys.filter(k => columnVisibility[k]).length
+  const totalInvoiceColumnCount = invoiceToggleableKeys.length
+  const hasInvoiceColumnCustomizations = invoiceToggleableKeys.some(k => columnVisibility[k] !== DEFAULT_INVOICE_COLUMNS[k])
+
+  // Calculate column widths using the standardized config system (with ordered draggable columns)
+  const columnWidths = React.useMemo(() => {
+    // Build list of visible column configs IN DISPLAY ORDER
+    // Fixed client column first, then ordered draggable columns, then fixed download column
+    const visibleColumns = [
+      // Fixed client column (left side)
+      ...(showClientColumn && columnVisibility.client
+        ? [INVOICES_TABLE_CONFIG.columns.find(c => c.id === 'client')!]
+        : []),
+      // Ordered draggable columns (middle)
+      ...orderedDraggableColumns.filter(col => {
+        // Check visibility and admin-only constraints
+        if (col.id === 'cost' || col.id === 'profit') {
+          return showCostBreakdown && columnVisibility[col.id as keyof typeof columnVisibility]
+        }
+        return columnVisibility[col.id as keyof typeof columnVisibility]
+      }),
+      // Fixed download column (right side)
+      ...(columnVisibility.download
+        ? [INVOICES_TABLE_CONFIG.columns.find(c => c.id === 'download')!]
+        : []),
+    ].filter(Boolean)
+
+    const redistributed = getRedistributedWidths(visibleColumns)
+    const widths: Record<string, string> = {}
+    for (const [id, width] of Object.entries(redistributed)) {
+      widths[id] = `${width}%`
+    }
+    return widths
+  }, [orderedDraggableColumns, showClientColumn, showCostBreakdown, columnVisibility])
+
   // Helper to get client badge color based on client index
   const getClientBadgeColor = (clientId: string) => {
     const clientIndex = clients.findIndex(c => c.id === clientId)
@@ -261,50 +433,13 @@ export default function InvoicesPage() {
     return colorSchemes[clientIndex % colorSchemes.length]
   }
 
-  // Calculate column widths - redistribute proportionally to always sum to 100%
-  const columnWidths = React.useMemo(() => {
-    // Base widths (relative values, not percentages)
-    // With center alignment, widths can be more uniform
-    const baseWidths: Record<string, number> = {
-      client: 5,        // Client badge - narrow
-      invoiceNumber: 16, // Invoice # - left-aligned (first column)
-      invoiceDate: 12,   // Date - center
-      cost: 12,          // Cost - center
-      profit: 12,        // Profit - center
-      amount: 12,        // Amount - center
-      status: 12,        // Status - center
-      download: 6,       // Download icon - center
-    }
-
-    // Calculate which columns are visible
-    const visibleCols: string[] = []
-    if (showClientColumn && columnVisibility.client) visibleCols.push('client')
-    if (columnVisibility.invoiceNumber) visibleCols.push('invoiceNumber')
-    if (columnVisibility.invoiceDate) visibleCols.push('invoiceDate')
-    if (showCostBreakdown && columnVisibility.cost) visibleCols.push('cost')
-    if (showCostBreakdown && columnVisibility.profit) visibleCols.push('profit')
-    if (columnVisibility.amount) visibleCols.push('amount')
-    if (columnVisibility.status) visibleCols.push('status')
-    if (columnVisibility.download) visibleCols.push('download')
-
-    // Sum total base width of visible columns
-    const totalBase = visibleCols.reduce((sum, col) => sum + baseWidths[col], 0)
-
-    // Redistribute to percentages
-    const widths: Record<string, string> = {}
-    visibleCols.forEach(col => {
-      widths[col] = `${(baseWidths[col] / totalBase) * 100}%`
-    })
-
-    return widths
-  }, [showClientColumn, showCostBreakdown, columnVisibility])
 
   if (isLoading) {
     return (
       <>
         <SiteHeader sectionName="Invoices" />
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <JetpackLoader size="lg" />
         </div>
       </>
     )
@@ -316,8 +451,8 @@ export default function InvoicesPage() {
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-col w-full h-[calc(100vh-64px)] px-6 lg:px-8">
           {/* Sticky header with filters */}
-          <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl">
-            <div className="px-6 lg:px-8 py-4 flex flex-col gap-4">
+          <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-inter text-xs">
+            <div className="px-6 lg:px-8 py-3 flex flex-col gap-4">
               {error && (
                 <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md">
                   {error}
@@ -334,151 +469,100 @@ export default function InvoicesPage() {
 
               {/* Date Range Filter and Action Buttons */}
               <div className="flex items-center justify-between gap-4">
-              {/* Date Range Picker - Select with presets */}
-              <Popover
-                open={isCustomRangeOpen}
-                onOpenChange={(open) => {
-                  if (!open) {
-                    setIsCustomRangeOpen(false)
-                  }
-                }}
-                modal={false}
-              >
-                <div className="flex items-center gap-1">
-                  <Select
-                    value={datePreset === 'custom' ? 'custom' : datePreset}
-                    onValueChange={(value) => {
-                      if (value === 'custom') {
-                        setDatePreset('custom')
-                        setIsCustomRangeOpen(true)
+              {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
+              <div className="flex items-center gap-1.5">
+                <Select
+                  value={datePreset || 'all'}
+                  onValueChange={(value) => {
+                    if (value) {
+                      const preset = value as DateRangePreset
+                      setDatePreset(preset)
+                      if (preset === 'custom') {
+                        setDateRange(undefined)
                       } else {
-                        const preset = value as DateRangePreset
-                        setDatePreset(preset)
                         const range = getDateRangeFromPreset(preset)
                         if (range) {
                           setDateRange({ from: range.from, to: range.to })
                         } else {
-                          setDateRange({ from: undefined, to: undefined })
+                          setDateRange(undefined)
                         }
-                        setIsCustomRangeOpen(false)
-                        setCurrentPage(0)
                       }
-                    }}
-                  >
-                    <SelectTrigger className="h-[30px] w-auto gap-1.5 text-sm bg-background">
-                      <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                      <SelectValue>
-                        {datePreset === 'custom' && dateRange.from && dateRange.to
-                          ? `${format(dateRange.from, 'MMM d')} - ${format(dateRange.to, 'MMM d')}`
-                          : DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      {DATE_RANGE_PRESETS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <PopoverTrigger asChild>
-                    <span />
-                  </PopoverTrigger>
-                </div>
-                <PopoverContent
-                  className="w-auto p-4"
-                  align="start"
-                  onInteractOutside={(e) => e.preventDefault()}
-                  onPointerDownOutside={(e) => e.preventDefault()}
-                  onFocusOutside={(e) => e.preventDefault()}
+                      setCurrentPage(0)
+                    }
+                  }}
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Select Date Range</span>
-                    </div>
-                    {(dateRange.from || dateRange.to) && (
-                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                        <div className="flex-1 text-xs">
-                          <span className="text-muted-foreground">From: </span>
-                          <span className="font-medium">
-                            {dateRange.from ? format(dateRange.from, 'MMM d, yyyy') : '—'}
-                          </span>
-                        </div>
-                        <div className="flex-1 text-xs">
-                          <span className="text-muted-foreground">To: </span>
-                          <span className="font-medium">
-                            {dateRange.to ? format(dateRange.to, 'MMM d, yyyy') : '—'}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setDateRange({ from: undefined, to: undefined })
-                            setDatePreset('all')
-                            setIsCustomRangeOpen(false)
-                            setIsAwaitingEndDate(false)
-                            setCurrentPage(0)
-                          }}
-                          className="p-1 hover:bg-muted rounded"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    )}
-                    <div className="text-[11px] text-muted-foreground px-1">
-                      {isAwaitingEndDate
-                        ? "Click a date to select end date"
-                        : "Click a date to select start date"}
-                    </div>
-                    <Calendar
-                      mode="range"
-                      selected={{
-                        from: dateRange.from,
-                        to: dateRange.to,
-                      }}
-                      onSelect={(range) => {
-                        if (!range?.from) {
-                          setDateRange({ from: undefined, to: undefined })
-                          setIsAwaitingEndDate(false)
-                        } else if (!range?.to) {
-                          setDateRange({ from: range.from, to: undefined })
-                          setIsAwaitingEndDate(true)
-                        } else {
-                          setDateRange({ from: range.from, to: range.to })
-                          setIsAwaitingEndDate(false)
-                          setIsCustomRangeOpen(false)
-                          setCurrentPage(0)
-                        }
-                      }}
-                      numberOfMonths={2}
-                    />
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                    <SelectValue>
+                      {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent align="start" className="font-inter text-xs">
+                    {DATE_RANGE_PRESETS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-              {/* Action buttons */}
+                {datePreset === 'custom' && (
+                  <InlineDateRangePicker
+                    dateRange={dateRange}
+                    onDateRangeChange={(range) => {
+                      setDateRange(range)
+                      setCurrentPage(0)
+                    }}
+                    autoOpen
+                  />
+                )}
+              </div>
+
+              {/* Filters + Action buttons */}
               <div className="flex items-center gap-1.5 md:gap-2">
-                {/* Filters button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFiltersSheetOpen(true)}
-                  className="flex-shrink-0"
-                >
-                  <FilterIcon className="h-4 w-4" />
-                  <span className="ml-2 hidden 2xl:inline">Filters</span>
-                </Button>
+                <MultiSelectFilter
+                  options={[
+                    { value: 'paid', label: 'Paid' },
+                    { value: 'unpaid', label: 'Unpaid' },
+                  ]}
+                  selected={statusFilter}
+                  onSelectionChange={(values) => { setStatusFilter(values); setCurrentPage(0) }}
+                  placeholder="Status"
+                  className="w-[110px]"
+                />
+
+                {statusFilter.length > 0 && (
+                  <button
+                    onClick={() => { setStatusFilter([]); setCurrentPage(0) }}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Clear filters"
+                  >
+                    <XIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
 
                 {/* Columns button */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="flex-shrink-0">
+                    <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center text-muted-foreground">
                       <ColumnsIcon className="h-4 w-4" />
-                      <span className="ml-2 hidden 2xl:inline">Columns</span>
-                      <ChevronDownIcon className="h-4 w-4 2xl:ml-2" />
+                      <span className="ml-[3px] text-xs hidden lg:inline leading-none">
+                        ({enabledInvoiceColumnCount}/{totalInvoiceColumnCount})
+                      </span>
+                      <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
+                      <span>{enabledInvoiceColumnCount} of {totalInvoiceColumnCount} columns</span>
+                      {hasInvoiceColumnCustomizations && (
+                        <button
+                          onClick={() => setColumnVisibility(DEFAULT_INVOICE_COLUMNS)}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
                     {showClientColumn && (
                       <DropdownMenuCheckboxItem
                         checked={columnVisibility.client}
@@ -496,6 +580,14 @@ export default function InvoicesPage() {
                       }
                     >
                       Invoice #
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.billingPeriod}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, billingPeriod: value })
+                      }
+                    >
+                      Period
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
                       checked={columnVisibility.invoiceDate}
@@ -525,6 +617,22 @@ export default function InvoicesPage() {
                         </DropdownMenuCheckboxItem>
                       </>
                     )}
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.shipments}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, shipments: value })
+                      }
+                    >
+                      Shipments
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.transactions}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, transactions: value })
+                      }
+                    >
+                      Transactions
+                    </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
                       checked={columnVisibility.amount}
                       onCheckedChange={(value) =>
@@ -558,74 +666,78 @@ export default function InvoicesPage() {
 
           {/* Scrollable table area */}
           <div className="relative flex flex-col flex-1 min-h-0 overflow-y-auto -mx-6 lg:-mx-8">
-            {/* Table header row - sticky within scroll area */}
-            <div className="sticky top-0 z-10 bg-muted dark:bg-zinc-900">
-              <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
-                <colgroup>
-                  {showClientColumn && columnVisibility.client && <col style={{ width: columnWidths.client }} />}
-                  {columnVisibility.invoiceNumber && <col style={{ width: columnWidths.invoiceNumber }} />}
-                  {columnVisibility.invoiceDate && <col style={{ width: columnWidths.invoiceDate }} />}
-                  {showCostBreakdown && columnVisibility.cost && <col style={{ width: columnWidths.cost }} />}
-                  {showCostBreakdown && columnVisibility.profit && <col style={{ width: columnWidths.profit }} />}
-                  {columnVisibility.amount && <col style={{ width: columnWidths.amount }} />}
-                  {columnVisibility.status && <col style={{ width: columnWidths.status }} />}
-                  {columnVisibility.download && <col style={{ width: columnWidths.download }} />}
-                </colgroup>
-                <thead>
-                  <tr className="h-11">
-                    {showClientColumn && columnVisibility.client && (
-                      <th className="pl-6 lg:pl-8 pr-2 text-left align-middle text-xs font-medium text-muted-foreground" />
-                    )}
-                    {columnVisibility.invoiceNumber && (
-                      <th className={`${showClientColumn && columnVisibility.client ? 'px-2' : 'pl-6 lg:pl-8 pr-2'} text-left align-middle text-xs font-medium text-muted-foreground`}>
-                        Invoice #
-                      </th>
-                    )}
-                    {columnVisibility.invoiceDate && (
-                      <th className="px-2 text-center align-middle text-xs font-medium text-muted-foreground">
-                        Invoice Date
-                      </th>
-                    )}
-                    {showCostBreakdown && columnVisibility.cost && (
-                      <th className="px-2 text-center align-middle text-xs font-medium text-muted-foreground">
-                        Cost
-                      </th>
-                    )}
-                    {showCostBreakdown && columnVisibility.profit && (
-                      <th className="px-2 text-center align-middle text-xs font-medium text-muted-foreground">
-                        Profit
-                      </th>
-                    )}
-                    {columnVisibility.amount && (
-                      <th className="px-2 text-center align-middle text-xs font-medium text-muted-foreground">
-                        Total
-                      </th>
-                    )}
-                    {columnVisibility.status && (
-                      <th className="px-2 text-center align-middle text-xs font-medium text-muted-foreground">
-                        Status
-                      </th>
-                    )}
-                    {columnVisibility.download && (
-                      <th className="px-2 pr-6 lg:pr-8 text-center align-middle text-xs font-medium text-muted-foreground" />
-                    )}
-                  </tr>
-                </thead>
-              </table>
-            </div>
-
-            {/* Table body */}
-            <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-xs font-inter">
               <colgroup>
+                {/* Fixed client column */}
                 {showClientColumn && columnVisibility.client && <col style={{ width: columnWidths.client }} />}
-                {columnVisibility.invoiceNumber && <col style={{ width: columnWidths.invoiceNumber }} />}
-                {columnVisibility.invoiceDate && <col style={{ width: columnWidths.invoiceDate }} />}
-                {showCostBreakdown && columnVisibility.cost && <col style={{ width: columnWidths.cost }} />}
-                {showCostBreakdown && columnVisibility.profit && <col style={{ width: columnWidths.profit }} />}
-                {columnVisibility.amount && <col style={{ width: columnWidths.amount }} />}
-                {columnVisibility.status && <col style={{ width: columnWidths.status }} />}
+                {/* Draggable columns in orderedDraggableColumns order */}
+                {orderedDraggableColumns.map(col => {
+                  // Check visibility and admin-only constraints
+                  if (col.id === 'cost' || col.id === 'profit') {
+                    if (!showCostBreakdown || !columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                  } else {
+                    if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                  }
+                  if (!columnWidths[col.id]) return null
+                  return <col key={col.id} style={{ width: columnWidths[col.id] }} />
+                })}
+                {/* Fixed download column */}
                 {columnVisibility.download && <col style={{ width: columnWidths.download }} />}
               </colgroup>
+              <thead className="sticky top-0 z-10 bg-surface dark:bg-zinc-900">
+                <SortableContext
+                  items={orderedDraggableColumns.map(c => c.id)}
+                  strategy={horizontalListSortingStrategy}
+                >
+                  <tr className="h-11">
+                    {/* Fixed client column - NOT wrapped in SortableHeader */}
+                    {showClientColumn && columnVisibility.client && (
+                      <th className="pl-6 lg:pl-8 pr-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide" />
+                    )}
+
+                    {/* Draggable columns - render in orderedDraggableColumns order */}
+                    {orderedDraggableColumns.map(col => {
+                      // Check visibility and admin-only constraints
+                      if (col.id === 'cost' || col.id === 'profit') {
+                        if (!showCostBreakdown || !columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                      } else {
+                        if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                      }
+
+                      // Determine if this is first column for padding
+                      const isFirstColumn = !(showClientColumn && columnVisibility.client)
+
+                      // Get alignment from config
+                      const align = col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
+
+                      return (
+                        <SortableHeader
+                          key={col.id}
+                          columnId={col.id}
+                          className={cn(
+                            "align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide",
+                            align,
+                            isFirstColumn && col.id === orderedDraggableColumns[0].id ? 'pl-6 lg:pl-8 pr-2' : 'px-2'
+                          )}
+                        >
+                          {col.header}
+                        </SortableHeader>
+                      )
+                    })}
+
+                    {/* Fixed download column - NOT wrapped in SortableHeader */}
+                    {columnVisibility.download && (
+                      <th className="px-2 pr-6 lg:pr-8 text-center align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide" />
+                    )}
+                  </tr>
+                </SortableContext>
+              </thead>
               <tbody>
                     {paginatedInvoices.length === 0 ? (
                       <tr>
@@ -644,7 +756,7 @@ export default function InvoicesPage() {
                         return (
                           <tr
                             key={invoice.id}
-                            className="h-12 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30"
+                            className="h-10 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/50"
                           >
                             {showClientColumn && columnVisibility.client && (
                               <td className="pl-6 lg:pl-8 pr-2 align-middle">
@@ -652,7 +764,7 @@ export default function InvoicesPage() {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <span
-                                        className={`inline-flex items-center justify-center w-6 h-5 text-[10px] font-semibold rounded border ${colors.badge} cursor-default shrink-0`}
+                                        className={`inline-flex items-center justify-center w-6 h-5 text-[10px] font-semibold rounded ${colors.badge} cursor-default shrink-0`}
                                       >
                                         {shortCode}
                                       </span>
@@ -664,48 +776,109 @@ export default function InvoicesPage() {
                                 </TooltipProvider>
                               </td>
                             )}
-                            {columnVisibility.invoiceNumber && (
-                              <td className={`${showClientColumn && columnVisibility.client ? 'px-2' : 'pl-6 lg:pl-8 pr-2'} align-middle`}>
-                                {invoice.invoice_number}
-                                {effectiveIsAdmin && invoice.version > 1 && (
-                                  <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0">v{invoice.version}</Badge>
-                                )}
-                              </td>
-                            )}
-                            {columnVisibility.invoiceDate && (
-                              <td className="px-2 text-center align-middle">
-                                {formatDateFixed(invoice.invoice_date)}
-                              </td>
-                            )}
-                            {showCostBreakdown && columnVisibility.cost && (
-                              <td className="px-2 text-center align-middle tabular-nums">
-                                {formatCurrency(invoice.subtotal)}
-                              </td>
-                            )}
-                            {showCostBreakdown && columnVisibility.profit && (
-                              <td className="px-2 text-center align-middle tabular-nums text-emerald-600 dark:text-emerald-500">
-                                +{formatCurrency(invoice.total_markup)}
-                              </td>
-                            )}
-                            {columnVisibility.amount && (
-                              <td className="px-2 text-center align-middle tabular-nums font-semibold">
-                                {formatCurrency(invoice.total_amount)}
-                              </td>
-                            )}
-                            {columnVisibility.status && (
-                              <td className="px-2 text-center align-middle">
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    invoice.paid_status === "paid"
-                                      ? "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-emerald-500 dark:border-emerald-800/20"
-                                      : "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-500 dark:border-amber-800/20"
-                                  }
-                                >
-                                  {invoice.paid_status === 'paid' ? 'Paid' : 'Unpaid'}
-                                </Badge>
-                              </td>
-                            )}
+
+                            {/* Draggable columns in orderedDraggableColumns order */}
+                            {orderedDraggableColumns.map(col => {
+                              // Check visibility and admin-only constraints
+                              if (col.id === 'cost' || col.id === 'profit') {
+                                if (!showCostBreakdown || !columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                              } else {
+                                if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
+                              }
+
+                              const isFirstColumn = !(showClientColumn && columnVisibility.client)
+                              const align = col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
+
+                              if (col.id === 'invoiceNumber') {
+                                return (
+                                  <td key={col.id} className={`${isFirstColumn && col.id === orderedDraggableColumns[0].id ? 'pl-6 lg:pl-8 pr-2' : 'px-2'} align-middle`}>
+                                    {invoice.invoice_number}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'billingPeriod') {
+                                return (
+                                  <td key={col.id} className="px-2 text-left align-middle whitespace-nowrap">
+                                    {formatBillingPeriod(invoice.period_start, invoice.period_end)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'invoiceDate') {
+                                return (
+                                  <td key={col.id} className="px-2 text-left align-middle whitespace-nowrap">
+                                    {formatDateFixed(invoice.invoice_date)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'cost') {
+                                return (
+                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap">
+                                    {formatCurrency(invoice.subtotal)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'profit') {
+                                return (
+                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-emerald-600 dark:text-emerald-500">
+                                    +{formatCurrency(invoice.total_markup)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'shipments') {
+                                return (
+                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-muted-foreground">
+                                    {invoice.shipment_count != null
+                                      ? invoice.shipment_count.toLocaleString()
+                                      : <span className="text-muted-foreground">-</span>
+                                    }
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'transactions') {
+                                return (
+                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-muted-foreground">
+                                    {invoice.transaction_count != null
+                                      ? invoice.transaction_count.toLocaleString()
+                                      : <span className="text-muted-foreground">-</span>
+                                    }
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'amount') {
+                                return (
+                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap font-semibold">
+                                    {formatCurrency(invoice.total_amount)}
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'status') {
+                                return (
+                                  <td key={col.id} className="px-2 text-center align-middle">
+                                    <Badge
+                                      variant="outline"
+                                      className={cn(
+                                        "text-[11px]",
+                                        invoice.paid_status === "paid"
+                                          ? "bg-emerald-100/50 text-emerald-900 border-emerald-200/50 dark:bg-emerald-900/15 dark:text-emerald-500 dark:border-emerald-800/20"
+                                          : "bg-amber-100/50 text-amber-900 border-amber-200/50 dark:bg-amber-900/15 dark:text-amber-500 dark:border-amber-800/20"
+                                      )}
+                                    >
+                                      {invoice.paid_status === 'paid' ? 'Paid' : 'Unpaid'}
+                                    </Badge>
+                                  </td>
+                                )
+                              }
+
+                              return null
+                            })}
                             {columnVisibility.download && (
                               <td className="px-2 pr-6 lg:pr-8 text-center align-middle">
                                 <DropdownMenu>
@@ -738,6 +911,16 @@ export default function InvoicesPage() {
                     )}
                   </tbody>
                 </table>
+
+                {/* Drag overlay - ghost header during drag */}
+                <DragOverlay dropAnimation={null}>
+                  {activeColumn ? (
+                    <div className="px-2 py-2 text-[10px] font-medium text-zinc-500 uppercase tracking-wide bg-surface border rounded shadow-md">
+                      {activeColumn.header}
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
 
             {/* Pagination - sticky at bottom of scroll area */}
             <div className="sticky bottom-0 bg-background px-6 lg:px-8 py-3 flex items-center justify-between border-t border-border/40">
@@ -820,45 +1003,6 @@ export default function InvoicesPage() {
       </div>
     </div>
 
-      {/* Filters Sheet */}
-      <Sheet open={filtersSheetOpen} onOpenChange={setFiltersSheetOpen}>
-        <SheetContent>
-          <SheetHeader>
-            <SheetTitle>Filter Invoices</SheetTitle>
-            <SheetDescription>
-              Apply filters to narrow down your invoice list
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-col gap-6 py-6">
-            <div className="flex flex-col gap-2">
-              <Label>Payment Status</Label>
-              <Select>
-                <SelectTrigger>
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="unpaid">Unpaid</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label>Amount Range</Label>
-              <div className="flex gap-2">
-                <Input type="number" placeholder="Min" />
-                <Input type="number" placeholder="Max" />
-              </div>
-            </div>
-          </div>
-          <SheetFooter>
-            <SheetClose asChild>
-              <Button variant="outline">Clear Filters</Button>
-            </SheetClose>
-            <Button>Apply Filters</Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
     </>
   )
 }

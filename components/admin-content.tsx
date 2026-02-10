@@ -15,7 +15,6 @@ import {
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
-  Loader2,
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
@@ -47,6 +46,7 @@ import {
   BarChart3,
   ExternalLink,
 } from 'lucide-react'
+import { JetpackLoader } from '@/components/jetpack-loader'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -442,7 +442,7 @@ function MarkupTablesContent({ clients }: { clients: Client[] }) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -1084,7 +1084,7 @@ function MarkupRuleDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isSaving}>
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isSaving && <JetpackLoader size="sm" className="mr-2" />}
               {isNew ? 'Create Rule' : 'Save Changes'}
             </Button>
           </DialogFooter>
@@ -1610,7 +1610,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -1639,7 +1639,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
             </Button>
             <Button onClick={handleGenerateInvoices} disabled={isGenerating} className="gap-2">
               {isGenerating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <JetpackLoader size="sm" />
               ) : (
                 <FileText className="h-4 w-4" />
               )}
@@ -1680,7 +1680,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                     <div>
                       <CardTitle className="text-base flex items-center gap-2">
                         Pre-flight Validation
-                        {isLoadingPreflight && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {isLoadingPreflight && <JetpackLoader size="sm" />}
                       </CardTitle>
                       <CardDescription>
                         Data quality checks before invoice generation
@@ -2049,7 +2049,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                     disabled={isRegeneratingAll}
                   >
                     {isRegeneratingAll ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <JetpackLoader size="sm" />
                     ) : (
                       <RotateCcw className="h-4 w-4" />
                     )}
@@ -2144,7 +2144,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   }}
                                 >
                                   {isRegenerating === invoice.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <JetpackLoader size="sm" />
                                   ) : (
                                     <RotateCcw className="h-4 w-4 text-blue-600" />
                                   )}
@@ -2166,7 +2166,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   }}
                                 >
                                   {isApproving === invoice.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <JetpackLoader size="sm" />
                                   ) : (
                                     <CheckCircle2 className="h-4 w-4 text-green-600" />
                                   )}
@@ -2369,7 +2369,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                                   }}
                                 >
                                   {isResending === invoice.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <JetpackLoader size="sm" />
                                   ) : (
                                     <Send className="h-3 w-3" />
                                   )}
@@ -2767,7 +2767,7 @@ function MarkupHistoryDialog({
 
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <JetpackLoader size="lg" />
           </div>
         ) : history.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -3215,7 +3215,7 @@ function DisputesContent() {
     return (
       <Card>
         <CardContent className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <JetpackLoader size="lg" />
         </CardContent>
       </Card>
     )
@@ -3756,7 +3756,7 @@ function DisputesContent() {
             >
               {isBulkProcessing ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  <JetpackLoader size="sm" className="mr-1" />
                   Processing...
                 </>
               ) : (
@@ -3842,7 +3842,7 @@ function DisputesContent() {
             >
               {isBulkProcessing ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  <JetpackLoader size="sm" className="mr-1" />
                   Processing...
                 </>
               ) : (
@@ -3905,7 +3905,7 @@ function SyncHealthContent() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -4563,7 +4563,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                     >
                       {isAddingClient ? (
                         <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          <JetpackLoader size="sm" className="mr-2" />
                           Adding...
                         </>
                       ) : (
@@ -4675,7 +4675,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                       >
                         {testResult?.status === 'testing' ? (
                           <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            <JetpackLoader size="sm" className="mr-2" />
                             Testing...
                           </>
                         ) : (
@@ -4934,7 +4934,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                           className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                         >
                           {isDeletingToken ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <JetpackLoader size="sm" />
                           ) : (
                             <Trash2 className="h-3 w-3" />
                           )}
@@ -4962,7 +4962,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                         disabled={isSavingToken || !editToken.trim()}
                       >
                         {isSavingToken ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <JetpackLoader size="sm" />
                         ) : (
                           <Key className="h-3 w-3" />
                         )}
@@ -4980,7 +4980,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                   className="w-full"
                 >
                   {isSaving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <JetpackLoader size="sm" className="mr-2" />
                   ) : null}
                   Save All Changes
                 </Button>
@@ -5179,7 +5179,7 @@ function WarehousesContent() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -5215,7 +5215,7 @@ function WarehousesContent() {
           <Button onClick={handleScan} disabled={isScanning}>
             {isScanning ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <JetpackLoader size="sm" className="mr-2" />
                 Scanning...
               </>
             ) : (
@@ -5368,7 +5368,7 @@ function WarehousesContent() {
                           disabled={isSaving}
                         >
                           {isSaving ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <JetpackLoader size="sm" />
                           ) : (
                             <>
                               <Save className="h-4 w-4 mr-1" />
@@ -5569,7 +5569,7 @@ function CareTeamContent() {
 
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <JetpackLoader size="md" />
             </div>
           ) : (
             <Table>
@@ -5738,7 +5738,7 @@ function CareTeamContent() {
             <Button onClick={handleCreateUser} disabled={isSubmitting}>
               {isSubmitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader size="sm" className="mr-2" />
                   Creating...
                 </>
               ) : (
@@ -5954,7 +5954,7 @@ function OrphansContent({ clients }: { clients: Client[] }) {
               disabled={isLoading}
             >
               {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <JetpackLoader size="sm" />
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
@@ -6061,7 +6061,7 @@ function OrphansContent({ clients }: { clients: Client[] }) {
                 className="h-8"
               >
                 {isBulkLinking ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <JetpackLoader size="sm" />
                 ) : (
                   <>
                     <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
@@ -6084,7 +6084,7 @@ function OrphansContent({ clients }: { clients: Client[] }) {
         {/* Transactions Table */}
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <JetpackLoader size="lg" />
           </div>
         ) : transactions.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
@@ -6468,7 +6468,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <JetpackLoader size="lg" />
       </div>
     )
   }
@@ -6595,7 +6595,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
             >
               {isUploading ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader size="sm" className="mr-2" />
                   Uploading...
                 </>
               ) : (
@@ -6840,7 +6840,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
             <Button onClick={handleCreateAssignment} disabled={isSubmitting}>
               {isSubmitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <JetpackLoader size="sm" className="mr-2" />
                   Creating...
                 </>
               ) : (

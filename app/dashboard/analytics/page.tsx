@@ -10,8 +10,8 @@ import {
   CalendarIcon,
   DownloadIcon,
   ChevronDownIcon,
-  Loader2,
 } from "lucide-react"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Area,
   AreaChart,
@@ -1818,7 +1818,7 @@ export default function AnalyticsPage() {
                         {!isVolumeDataCurrent && (
                           <div className="absolute inset-0 bg-background/50 flex items-center justify-center">
                             <div className="flex items-center gap-2 text-sm text-muted-foreground bg-background/80 px-3 py-2 rounded-md">
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <JetpackLoader size="sm" />
                               <span>Updating map...</span>
                             </div>
                           </div>

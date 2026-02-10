@@ -1,7 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import { Building2, Check, ChevronDown, Loader2, Users } from 'lucide-react'
+import { Building2, Check, ChevronDown, Users } from 'lucide-react'
+import { JetpackLoader } from '@/components/jetpack-loader'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -26,26 +27,29 @@ export function ClientSelector() {
     effectiveIsCareUser,
   } = useClient()
 
+  // Filter to only ShipBob partners (those with merchant_id)
+  const shipbobClients = clients.filter(c => c.merchant_id)
+
   // When simulating client role (not admin or care), auto-select first client if "All Brands" is selected
   // Care users CAN see "All Brands" just like admins
   React.useEffect(() => {
-    if (!effectiveIsAdmin && !effectiveIsCareUser && selectedClientId === null && clients.length > 0) {
-      setSelectedClientId(clients[0].id)
+    if (!effectiveIsAdmin && !effectiveIsCareUser && selectedClientId === null && shipbobClients.length > 0) {
+      setSelectedClientId(shipbobClients[0].id)
     }
-  }, [effectiveIsAdmin, effectiveIsCareUser, selectedClientId, clients, setSelectedClientId])
+  }, [effectiveIsAdmin, effectiveIsCareUser, selectedClientId, shipbobClients, setSelectedClientId])
 
   // Don't render if not admin (real or effective) or still loading
   if (isLoading) {
     return (
       <Button variant="ghost" size="sm" disabled className="gap-2">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <JetpackLoader size="sm" />
         <span className="hidden sm:inline">Loading...</span>
       </Button>
     )
   }
 
   // Need real admin or care user to have loaded clients
-  if ((!isAdmin && !isCareUser) || clients.length === 0) {
+  if ((!isAdmin && !isCareUser) || shipbobClients.length === 0) {
     return null
   }
 
@@ -91,8 +95,8 @@ export function ClientSelector() {
           </>
         )}
 
-        {/* Individual brands */}
-        {clients.map((client) => (
+        {/* Individual brands - only show ShipBob partners (those with merchant_id) */}
+        {shipbobClients.map((client) => (
           <DropdownMenuItem
             key={client.id}
             onClick={() => setSelectedClientId(client.id)}

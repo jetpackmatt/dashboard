@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Upload, X, File, Image, Loader2 } from "lucide-react"
+import { Upload, X, File, Image } from "lucide-react"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -273,7 +274,7 @@ export function FileUpload({
         >
           {isUploading ? (
             <div className="flex flex-col items-center gap-2">
-              <Loader2 className={cn("animate-spin text-muted-foreground", singleFile ? "h-6 w-6" : "h-8 w-8")} />
+              <JetpackLoader size={singleFile ? "md" : "lg"} />
               <p className="text-sm text-muted-foreground">Uploading...</p>
             </div>
           ) : (
