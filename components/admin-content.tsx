@@ -4120,6 +4120,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
   const [addClientOpen, setAddClientOpen] = React.useState(false)
   const [newClientName, setNewClientName] = React.useState('')
   const [newShipBobUserId, setNewShipBobUserId] = React.useState('')
+  const [newShipBobToken, setNewShipBobToken] = React.useState('')
   const [newShortCode, setNewShortCode] = React.useState('')
   const [isAddingClient, setIsAddingClient] = React.useState(false)
   const [addClientError, setAddClientError] = React.useState<string | null>(null)
@@ -4221,6 +4222,11 @@ function BrandsContent({ clients }: { clients: Client[] }) {
       return
     }
 
+    if (!newShipBobToken.trim()) {
+      setAddClientError('ShipBob Token is required')
+      return
+    }
+
     setIsAddingClient(true)
     setAddClientError(null)
 
@@ -4238,6 +4244,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
         body: JSON.stringify({
           company_name: newClientName.trim(),
           merchant_id: newShipBobUserId.trim() || null,
+          shipbob_token: newShipBobToken.trim(),
           short_code: trimmedShortCode || null,
         }),
       })
@@ -4253,6 +4260,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
       setAddClientOpen(false)
       setNewClientName('')
       setNewShipBobUserId('')
+      setNewShipBobToken('')
       setNewShortCode('')
       await refreshClients()
     } catch {
@@ -4498,6 +4506,19 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                       />
                     </div>
                     <div className="space-y-2">
+                      <Label htmlFor="shipbob_token">ShipBob Token *</Label>
+                      <Input
+                        id="shipbob_token"
+                        type="password"
+                        placeholder="ShipBob API Token"
+                        value={newShipBobToken}
+                        onChange={(e) => setNewShipBobToken(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        The ShipBob API token for this brand (required for sync).
+                      </p>
+                    </div>
+                    <div className="space-y-2">
                       <Label htmlFor="shipbob_user_id">ShipBob User ID</Label>
                       <Input
                         id="shipbob_user_id"
@@ -4506,7 +4527,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                         onChange={(e) => setNewShipBobUserId(e.target.value)}
                       />
                       <p className="text-xs text-muted-foreground">
-                        The ShipBob user ID for API authentication. Can be added later.
+                        The ShipBob merchant/user ID. Can be added later.
                       </p>
                     </div>
                     <div className="space-y-2">

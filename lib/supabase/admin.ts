@@ -388,6 +388,7 @@ export async function hasClientToken(
 export async function createNewClient(data: {
   company_name: string
   merchant_id?: string | null
+  shipbob_token: string
   short_code?: string | null
 }): Promise<Client> {
   const supabase = createAdminClient()
@@ -406,6 +407,22 @@ export async function createNewClient(data: {
   if (error) {
     console.error('Failed to create client:', error)
     throw new Error('Failed to create client')
+  }
+
+  // Create the ShipBob API credential for this client
+  const { error: credError } = await supabase
+    .from('client_api_credentials')
+    .insert({
+      client_id: client.id,
+      provider: 'shipbob',
+      api_token: data.shipbob_token,
+    })
+
+  if (credError) {
+    console.error('Failed to create client credentials:', credError)
+    // Clean up the client record since we couldn't create credentials
+    await supabase.from('clients').delete().eq('id', client.id)
+    throw new Error('Failed to create client credentials')
   }
 
   return client
@@ -486,10 +503,13 @@ export async function getClientsWithTokenStatus(): Promise<
 
   const clientsWithTokens = new Set(credentials?.map((c: { client_id: string }) => c.client_id) || [])
 
-  return (clients || []).map((client: Client) => ({
-    ...client,
-    has_token: clientsWithTokens.has(client.id),
-  }))
+  // Only return clients that have ShipBob tokens
+  return (clients || [])
+    .map((client: Client) => ({
+      ...client,
+      has_token: clientsWithTokens.has(client.id),
+    }))
+    .filter((client) => client.has_token)
 }
 
 // ============================================================================

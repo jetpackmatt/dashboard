@@ -69,11 +69,18 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { company_name, merchant_id, short_code } = body
+    const { company_name, merchant_id, shipbob_token, short_code } = body
 
     if (!company_name || typeof company_name !== 'string') {
       return NextResponse.json(
         { error: 'Company name is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!shipbob_token || typeof shipbob_token !== 'string') {
+      return NextResponse.json(
+        { error: 'ShipBob Token is required' },
         { status: 400 }
       )
     }
@@ -90,6 +97,7 @@ export async function POST(request: Request) {
     const client = await createNewClient({
       company_name: company_name.trim(),
       merchant_id: merchant_id?.trim() || null,
+      shipbob_token: shipbob_token.trim(),
       short_code: trimmedShortCode,
     })
 
