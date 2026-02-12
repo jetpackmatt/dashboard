@@ -44,6 +44,73 @@ const ALLOWED_TYPES = [
 
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.xls', '.xlsx', '.csv', '.doc', '.docx']
 
+// Max dimension (px) for the longest side when compressing images
+const MAX_IMAGE_DIMENSION = 2000
+const JPEG_QUALITY = 0.8
+
+/**
+ * Compress an image file using Canvas API.
+ * Resizes to max 2000px on longest side and converts to JPEG at 80% quality.
+ * Returns original file if it's not an image or if compression fails.
+ */
+async function compressImage(file: File): Promise<File> {
+  // Only compress raster images (not PDFs, docs, etc.)
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') {
+    return file
+  }
+
+  return new Promise<File>((resolve) => {
+    const img = new window.Image()
+    img.onload = () => {
+      URL.revokeObjectURL(img.src)
+
+      let { width, height } = img
+
+      // Only resize if image exceeds max dimension
+      if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+        if (width > height) {
+          height = Math.round(height * (MAX_IMAGE_DIMENSION / width))
+          width = MAX_IMAGE_DIMENSION
+        } else {
+          width = Math.round(width * (MAX_IMAGE_DIMENSION / height))
+          height = MAX_IMAGE_DIMENSION
+        }
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve(file); return }
+
+      ctx.drawImage(img, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob || blob.size >= file.size) {
+            // Compressed is bigger or failed — use original
+            resolve(file)
+            return
+          }
+          // Create a new File from the blob
+          const compressedName = file.name.replace(/\.\w+$/, '.jpg')
+          const compressed = new window.File([blob], compressedName, {
+            type: 'image/jpeg',
+          })
+          resolve(compressed)
+        },
+        'image/jpeg',
+        JPEG_QUALITY,
+      )
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src)
+      resolve(file) // fallback to original
+    }
+    img.src = URL.createObjectURL(file)
+  })
+}
+
 export function FileUpload({
   value,
   onChange,
@@ -171,7 +238,9 @@ export function FileUpload({
     setIsUploading(true)
 
     try {
-      const uploadPromises = fileArray.map(uploadFile)
+      // Compress images before upload (transparent to user)
+      const processedFiles = await Promise.all(fileArray.map(compressImage))
+      const uploadPromises = processedFiles.map(uploadFile)
       const results = await Promise.all(uploadPromises)
       const successfulUploads = results.filter((r): r is UploadedFile => r !== null)
 

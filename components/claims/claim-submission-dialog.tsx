@@ -992,7 +992,7 @@ export function ClaimSubmissionDialog({
           ? "Photo Showing Damaged Item(s)"
           : "Photo Showing Incorrect Item(s)"
 
-        const MAX_PER_FILE_MB = 20
+        const MAX_PER_FILE_MB = 50
 
         return (
           <div className="space-y-5">
@@ -1086,7 +1086,7 @@ export function ClaimSubmissionDialog({
               )}
               {!submitSuccess && applicableSteps[currentStep]?.id === "documentation" && (
                 <span className="text-xs">
-                  20MB max per file
+                  50MB max per file
                 </span>
               )}
             </div>
