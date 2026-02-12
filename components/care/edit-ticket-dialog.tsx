@@ -21,6 +21,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { JetpackLoader } from "@/components/jetpack-loader"
+import { CARRIER_OPTIONS } from "@/lib/care/constants"
+import { cn } from "@/lib/utils"
 import type { Ticket } from "@/lib/care/types"
 
 interface EditTicketDialogProps {
@@ -51,6 +53,8 @@ interface EditForm {
   workOrderId: string
   inventoryId: string
 }
+
+const labelClass = "text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider"
 
 export function EditTicketDialog({
   open,
@@ -107,6 +111,13 @@ export function EditTicketDialog({
       })
     }
   }, [ticket, open])
+
+  // Derived booleans for conditional field display
+  const isClaim = editForm.ticketType === 'Claim'
+  const isShipmentInquiry = editForm.ticketType === 'Shipment Inquiry'
+  const isRequest = editForm.ticketType === 'Request'
+  const hasShipmentFields = isClaim || isShipmentInquiry
+  const hasIssueType = isClaim
 
   const handleUpdate = async () => {
     if (!ticket) return
@@ -165,15 +176,17 @@ export function EditTicketDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
-          {/* Status and Type Row */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-status">Status *</Label>
+          {/* Row 1: Status + Type + Issue Type (Claims only) */}
+          <div className={cn("grid gap-4", hasIssueType ? "grid-cols-3" : "grid-cols-2")}>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-status" className={labelClass}>
+                Status <span className="text-red-500">*</span>
+              </Label>
               <Select
                 value={editForm.status}
                 onValueChange={(value) => setEditForm({ ...editForm, status: value })}
               >
-                <SelectTrigger id="edit-status">
+                <SelectTrigger id="edit-status" className="h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -181,17 +194,20 @@ export function EditTicketDialog({
                   <SelectItem value="Under Review">Under Review</SelectItem>
                   <SelectItem value="Credit Requested">Credit Requested</SelectItem>
                   <SelectItem value="Credit Approved">Credit Approved</SelectItem>
+                  <SelectItem value="Credit Denied">Credit Denied</SelectItem>
                   <SelectItem value="Resolved">Resolved</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-ticketType">Ticket Type *</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-ticketType" className={labelClass}>
+                Ticket Type <span className="text-red-500">*</span>
+              </Label>
               <Select
                 value={editForm.ticketType}
                 onValueChange={(value) => setEditForm({ ...editForm, ticketType: value })}
               >
-                <SelectTrigger id="edit-ticketType">
+                <SelectTrigger id="edit-ticketType" className="h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -203,100 +219,121 @@ export function EditTicketDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-issueType">Issue Type</Label>
-              <Select
-                value={editForm.issueType}
-                onValueChange={(value) => setEditForm({ ...editForm, issueType: value })}
-              >
-                <SelectTrigger id="edit-issueType">
-                  <SelectValue placeholder="Select issue type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Loss">Loss</SelectItem>
-                  <SelectItem value="Damage">Damage</SelectItem>
-                  <SelectItem value="Pick Error">Pick Error</SelectItem>
-                  <SelectItem value="Short Ship">Short Ship</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {hasIssueType && (
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-issueType" className={labelClass}>Issue Type</Label>
+                <Select
+                  value={editForm.issueType}
+                  onValueChange={(value) => setEditForm({ ...editForm, issueType: value })}
+                >
+                  <SelectTrigger id="edit-issueType" className={cn("h-9", editForm.issueType ? "text-foreground" : "text-muted-foreground/40")}>
+                    <SelectValue placeholder="Select issue type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Loss">Loss</SelectItem>
+                    <SelectItem value="Damage">Damage</SelectItem>
+                    <SelectItem value="Pick Error">Pick Error</SelectItem>
+                    <SelectItem value="Short Ship">Short Ship</SelectItem>
+                    <SelectItem value="Incorrect Delivery">Incorrect Delivery</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           {/* Manager */}
-          <div className="space-y-2">
-            <Label htmlFor="edit-manager">Assigned Manager</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-manager" className={labelClass}>Assigned Manager</Label>
             <Input
               id="edit-manager"
               value={editForm.manager}
               onChange={(e) => setEditForm({ ...editForm, manager: e.target.value })}
               placeholder="Manager name"
+              className="h-9 placeholder:text-muted-foreground/40"
             />
           </div>
 
-          {/* Order/Shipment Details */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-orderId">Order ID</Label>
-              <Input
-                id="edit-orderId"
-                value={editForm.orderId}
-                onChange={(e) => setEditForm({ ...editForm, orderId: e.target.value })}
-                placeholder="e.g., 1847362"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-shipmentId">Shipment ID</Label>
-              <Input
-                id="edit-shipmentId"
-                value={editForm.shipmentId}
-                onChange={(e) => setEditForm({ ...editForm, shipmentId: e.target.value })}
-                placeholder="e.g., 330867617"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-shipDate">Ship Date</Label>
-              <Input
-                id="edit-shipDate"
-                type="date"
-                value={editForm.shipDate}
-                onChange={(e) => setEditForm({ ...editForm, shipDate: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-carrier">Carrier</Label>
-              <Input
-                id="edit-carrier"
-                value={editForm.carrier}
-                onChange={(e) => setEditForm({ ...editForm, carrier: e.target.value })}
-                placeholder="e.g., FedEx"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-trackingNumber">Tracking Number</Label>
-              <Input
-                id="edit-trackingNumber"
-                value={editForm.trackingNumber}
-                onChange={(e) => setEditForm({ ...editForm, trackingNumber: e.target.value })}
-                placeholder="e.g., 773892456821"
-              />
-            </div>
-          </div>
-
-          {/* Claim-specific fields */}
-          {editForm.ticketType === 'Claim' && (
+          {/* Order/Shipment Details - Claim + Shipment Inquiry */}
+          {hasShipmentFields && (
             <>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-reshipmentStatus">Reshipment Status</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-shipmentId" className={labelClass}>Shipment ID</Label>
+                  <Input
+                    id="edit-shipmentId"
+                    value={editForm.shipmentId}
+                    onChange={(e) => setEditForm({ ...editForm, shipmentId: e.target.value })}
+                    placeholder="e.g., 330867617"
+                    className="h-9 placeholder:text-muted-foreground/40"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-orderId" className={labelClass}>Order ID</Label>
+                  <Input
+                    id="edit-orderId"
+                    value={editForm.orderId}
+                    onChange={(e) => setEditForm({ ...editForm, orderId: e.target.value })}
+                    placeholder="e.g., 1847362"
+                    className="h-9 placeholder:text-muted-foreground/40"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-carrier" className={labelClass}>Carrier</Label>
+                  <Select
+                    value={editForm.carrier}
+                    onValueChange={(value) => setEditForm({ ...editForm, carrier: value })}
+                  >
+                    <SelectTrigger id="edit-carrier" className={cn("h-9", editForm.carrier ? "text-foreground" : "text-muted-foreground/40")}>
+                      <SelectValue placeholder="Select carrier..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CARRIER_OPTIONS.map((carrier) => (
+                        <SelectItem key={carrier} value={carrier}>
+                          {carrier}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-trackingNumber" className={labelClass}>Tracking Number</Label>
+                  <Input
+                    id="edit-trackingNumber"
+                    value={editForm.trackingNumber}
+                    onChange={(e) => setEditForm({ ...editForm, trackingNumber: e.target.value })}
+                    placeholder="e.g., 773892456821"
+                    className="h-9 placeholder:text-muted-foreground/40"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-shipDate" className={labelClass}>Ship Date</Label>
+                  <Input
+                    id="edit-shipDate"
+                    type="date"
+                    value={editForm.shipDate}
+                    onChange={(e) => setEditForm({ ...editForm, shipDate: e.target.value })}
+                    className="h-9"
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Claim-specific fields */}
+          {isClaim && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-reshipmentStatus" className={labelClass}>Reshipment Status</Label>
                   <Select
                     value={editForm.reshipmentStatus}
                     onValueChange={(value) => setEditForm({ ...editForm, reshipmentStatus: value })}
                   >
-                    <SelectTrigger id="edit-reshipmentStatus">
+                    <SelectTrigger id="edit-reshipmentStatus" className={cn("h-9", editForm.reshipmentStatus ? "text-foreground" : "text-muted-foreground/40")}>
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -306,48 +343,49 @@ export function EditTicketDialog({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-compensationRequest">Compensation Request</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-compensationRequest" className={labelClass}>Compensation Request</Label>
                   <Select
                     value={editForm.compensationRequest}
                     onValueChange={(value) => setEditForm({ ...editForm, compensationRequest: value })}
                   >
-                    <SelectTrigger id="edit-compensationRequest">
+                    <SelectTrigger id="edit-compensationRequest" className={cn("h-9", editForm.compensationRequest ? "text-foreground" : "text-muted-foreground/40")}>
                       <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Credit to account">Credit to account</SelectItem>
-                      <SelectItem value="Free replacement">Free replacement</SelectItem>
-                      <SelectItem value="Refund to payment method">Refund to payment method</SelectItem>
+                      <SelectItem value="Credit me the item's manufacturing cost">Credit to account</SelectItem>
+                      <SelectItem value="Create a return label for me">Return label</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-whatToReship">What to Reship</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-whatToReship" className={labelClass}>What to Reship</Label>
                   <Input
                     id="edit-whatToReship"
                     value={editForm.whatToReship}
                     onChange={(e) => setEditForm({ ...editForm, whatToReship: e.target.value })}
                     placeholder="e.g., 2x Vitamin D3 5000IU"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-reshipmentId">Reshipment ID</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-reshipmentId" className={labelClass}>Reshipment ID</Label>
                   <Input
                     id="edit-reshipmentId"
                     value={editForm.reshipmentId}
                     onChange={(e) => setEditForm({ ...editForm, reshipmentId: e.target.value })}
                     placeholder="e.g., 12345"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-creditAmount">Credit Amount</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-creditAmount" className={labelClass}>Credit Amount</Label>
                   <Input
                     id="edit-creditAmount"
                     type="number"
@@ -355,15 +393,16 @@ export function EditTicketDialog({
                     value={editForm.creditAmount}
                     onChange={(e) => setEditForm({ ...editForm, creditAmount: e.target.value })}
                     placeholder="0.00"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-currency">Currency</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-currency" className={labelClass}>Currency</Label>
                   <Select
                     value={editForm.currency}
                     onValueChange={(value) => setEditForm({ ...editForm, currency: value })}
                   >
-                    <SelectTrigger id="edit-currency">
+                    <SelectTrigger id="edit-currency" className="h-9">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -376,51 +415,57 @@ export function EditTicketDialog({
             </>
           )}
 
-          {/* Work Order specific fields */}
-          {(editForm.ticketType === 'Request' || editForm.ticketType === 'Technical' || editForm.ticketType === 'Inquiry') && (
+          {/* Request-specific fields */}
+          {isRequest && (
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-workOrderId">Work Order ID</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-workOrderId" className={labelClass}>Work Order ID</Label>
                 <Input
                   id="edit-workOrderId"
                   value={editForm.workOrderId}
                   onChange={(e) => setEditForm({ ...editForm, workOrderId: e.target.value })}
                   placeholder="e.g., WO-12345"
+                  className="h-9 placeholder:text-muted-foreground/40"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-inventoryId">Inventory ID</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-inventoryId" className={labelClass}>Inventory ID</Label>
                 <Input
                   id="edit-inventoryId"
                   value={editForm.inventoryId}
                   onChange={(e) => setEditForm({ ...editForm, inventoryId: e.target.value })}
                   placeholder="e.g., INV-67890"
+                  className="h-9 placeholder:text-muted-foreground/40"
                 />
               </div>
             </div>
           )}
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label htmlFor="edit-description">Description</Label>
+          {/* Description - always shown */}
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-description" className={labelClass}>Description</Label>
             <Textarea
               id="edit-description"
               value={editForm.description}
               onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
               placeholder="Describe the issue..."
               rows={3}
+              className="placeholder:text-muted-foreground/40"
             />
           </div>
 
-          {/* Add Internal Note */}
-          <div className="space-y-2">
-            <Label htmlFor="edit-internalNote">Add Internal Note (Admin/Care only)</Label>
+          {/* Add Internal Note - always shown */}
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-internalNote" className={labelClass}>
+              Add Internal Note <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(admin/care only)</span>
+            </Label>
             <Textarea
               id="edit-internalNote"
               value={editForm.internalNote}
               onChange={(e) => setEditForm({ ...editForm, internalNote: e.target.value })}
               placeholder="Add a new internal note..."
               rows={2}
+              className="placeholder:text-muted-foreground/40"
             />
           </div>
         </div>
