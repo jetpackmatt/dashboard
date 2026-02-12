@@ -2236,7 +2236,7 @@ export async function syncAllTransactions(
               createdBy: 'System',
             }
 
-            const updatedEvents = [...events, approvedEvent]
+            const updatedEvents = [approvedEvent, ...events]
 
             const { error: updateError } = await supabase
               .from('care_tickets')

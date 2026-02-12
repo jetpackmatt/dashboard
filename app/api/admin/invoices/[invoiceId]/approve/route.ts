@@ -5,6 +5,8 @@ import {
   markTransactionsAsInvoiced,
   type InvoiceLineItem,
 } from '@/lib/billing/invoice-generator'
+import { generateInvoiceEmail } from '@/lib/email/invoice-templates'
+import { sendInvoiceEmail, fetchInvoiceFiles } from '@/lib/email/client'
 import Stripe from 'stripe'
 
 // Lazy-initialize Stripe client
@@ -48,10 +50,10 @@ export async function POST(
 
     const adminClient = createAdminClient()
 
-    // Get current invoice with client info (including Stripe fields for auto-charge)
+    // Get current invoice with client info (including Stripe fields for auto-charge and billing_emails for invoice email)
     const { data: invoice, error: fetchError } = await adminClient
       .from('invoices_jetpack')
-      .select('*, client:clients(id, company_name, short_code, stripe_customer_id, stripe_payment_method_id, payment_method)')
+      .select('*, client:clients(id, company_name, short_code, stripe_customer_id, stripe_payment_method_id, payment_method, billing_emails)')
       .eq('id', invoiceId)
       .single()
 
@@ -155,7 +157,7 @@ export async function POST(
               jetpackInvoiceNumber: invoice.invoice_number,
             }
 
-            const updatedEvents = [...events, resolvedEvent]
+            const updatedEvents = [resolvedEvent, ...events]
 
             const { error: ticketUpdateError } = await adminClient
               .from('care_tickets')
@@ -211,6 +213,7 @@ export async function POST(
       stripe_customer_id: string | null
       stripe_payment_method_id: string | null
       payment_method: string | null
+      billing_emails: string[] | null
     }
 
     if (hasCcFee && clientData.stripe_customer_id && clientData.stripe_payment_method_id) {
@@ -262,6 +265,82 @@ export async function POST(
       }
     }
 
+    // Step 6: Send invoice email (non-blocking)
+    let emailResult: { success: boolean; error?: string } | null = null
+
+    try {
+      // Get billing emails array from client
+      const billingEmails = (clientData.billing_emails as string[]) || []
+
+      if (billingEmails.length === 0) {
+        console.warn(`[Invoice Approval] No billing emails configured for ${clientData.company_name}`)
+      } else {
+        // Validate file paths exist
+        if (!invoice.pdf_path || !invoice.xlsx_path) {
+          throw new Error('Invoice files not found in database')
+        }
+
+        // Fetch invoice files from Storage with security validation
+        const { pdfBuffer, xlsxBuffer } = await fetchInvoiceFiles(
+          invoice.client_id,
+          invoice.pdf_path,
+          invoice.xlsx_path
+        )
+
+        // Generate email content
+        const emailContent = generateInvoiceEmail({
+          invoiceNumber: invoice.invoice_number,
+          invoiceDate: invoice.invoice_date,
+          clientName: clientData.company_name,
+        })
+
+        // Send email with attachments
+        await sendInvoiceEmail({
+          to: billingEmails,
+          subject: emailContent.subject,
+          html: emailContent.html,
+          text: emailContent.text,
+          attachments: [
+            {
+              filename: `${invoice.invoice_number}.pdf`,
+              content: pdfBuffer
+            },
+            {
+              filename: `${invoice.invoice_number}-details.xlsx`,
+              content: xlsxBuffer
+            },
+          ],
+        })
+
+        // Update invoice with email sent timestamp
+        await adminClient
+          .from('invoices_jetpack')
+          .update({
+            email_sent_at: new Date().toISOString(),
+            email_error: null,
+          })
+          .eq('id', invoiceId)
+
+        emailResult = { success: true }
+        console.log(`[Invoice Approval] Email sent to ${billingEmails.length} recipient(s)`)
+      }
+    } catch (emailError) {
+      console.error('[Invoice Approval] Email send failed:', emailError)
+
+      // Log error to database but don't fail the approval
+      await adminClient
+        .from('invoices_jetpack')
+        .update({
+          email_error: emailError instanceof Error ? emailError.message : 'Unknown error',
+        })
+        .eq('id', invoiceId)
+
+      emailResult = {
+        success: false,
+        error: emailError instanceof Error ? emailError.message : 'Unknown error'
+      }
+    }
+
     return NextResponse.json({
       success: true,
       invoice: updatedInvoice,
@@ -269,6 +348,7 @@ export async function POST(
       shipbobInvoicesMarked: shipbobInvoiceIds.length,
       careTicketsResolved: careTicketsUpdated,
       autoCharge: chargeResult,
+      email: emailResult, // NEW
     })
   } catch (error) {
     console.error('Error in invoice approval:', error)

@@ -52,8 +52,16 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Refreshing the auth token
-  await supabase.auth.getUser()
+  // Refresh the auth token — but NOT for RSC (React Server Component) payload
+  // requests that Next.js sends during client-side <Link> navigation.
+  // Token rotation during RSC requests can revoke the browser's current tokens
+  // before the browser receives the new ones (Set-Cookie from RSC fetch is
+  // unreliable), causing 401 on subsequent API calls.  API route requests
+  // still refresh normally, and their Set-Cookie headers DO reach the browser.
+  const isRscRequest = request.headers.get('RSC') === '1'
+  if (!isRscRequest) {
+    await supabase.auth.getUser()
+  }
 
   return supabaseResponse
 }

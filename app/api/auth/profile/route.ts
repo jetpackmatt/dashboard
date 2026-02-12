@@ -52,13 +52,25 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json()
-    const { full_name, email } = body
+    const { full_name, email, preferences } = body
 
-    // Update user metadata (name)
-    const updates: { data?: { full_name?: string }; email?: string } = {}
+    // Build metadata updates
+    const metadataUpdates: Record<string, unknown> = {}
 
     if (full_name !== undefined) {
-      updates.data = { full_name }
+      metadataUpdates.full_name = full_name
+    }
+
+    if (preferences !== undefined) {
+      // Merge new preferences with existing ones
+      const existingPreferences = user.user_metadata?.preferences || {}
+      metadataUpdates.preferences = { ...existingPreferences, ...preferences }
+    }
+
+    const updates: { data?: Record<string, unknown>; email?: string } = {}
+
+    if (Object.keys(metadataUpdates).length > 0) {
+      updates.data = metadataUpdates
     }
 
     if (email && email !== user.email) {

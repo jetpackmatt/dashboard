@@ -14,7 +14,6 @@ import {
   PackageCheckIcon,
   RotateCcwIcon,
   XCircleIcon,
-  Loader2Icon,
 } from "lucide-react"
 
 import {

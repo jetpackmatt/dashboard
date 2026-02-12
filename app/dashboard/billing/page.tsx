@@ -29,18 +29,20 @@ import { useClient } from "@/components/client-context"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StripeProvider } from "@/components/stripe-provider"
 import { StripeCardSetup } from "@/components/stripe-card-setup"
+import { BillingEmailManager } from "@/components/billing/billing-email-manager"
 
 interface BillingAddress {
   street?: string
   city?: string
-  state?: string
-  zip?: string
+  region?: string
+  postalCode?: string
   country?: string
 }
 
 interface BillingData {
   billingAddress: BillingAddress | null
   billingEmail: string | null
+  billingEmails: string[]
   companyName: string | null
   paymentMethod: 'ach' | 'credit_card'
   outstandingBalance: number
@@ -137,7 +139,13 @@ export default function BillingPage() {
   const unpaidInvoiceCount = billingData?.unpaidInvoiceCount || 0
   const billingAddress = billingData?.billingAddress
   const billingEmail = billingData?.billingEmail
+  const billingEmails = billingData?.billingEmails || []
   const companyName = billingData?.companyName
+
+  // Handle billing emails update
+  const handleBillingEmailsUpdate = (updatedEmails: string[]) => {
+    setBillingData(prev => prev ? { ...prev, billingEmails: updatedEmails } : null)
+  }
 
   // Save payment method to database
   const savePaymentMethod = async (method: 'ach' | 'credit_card', stripePaymentMethodId?: string) => {
@@ -412,29 +420,40 @@ export default function BillingPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4 flex-1">
-                    <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-6 flex-1">
+                    {/* Left column - Company and Address */}
+                    <div className="space-y-4">
                       <div>
                         <p className="text-xs text-muted-foreground">Company</p>
                         <p className="text-sm font-medium mt-0.5">{companyName || "Not set"}</p>
                       </div>
                       <div>
-                        <p className="text-xs text-muted-foreground">Email</p>
-                        <p className="text-sm mt-0.5">{billingEmail || "Not set"}</p>
+                        <p className="text-xs text-muted-foreground">Address</p>
+                        {billingAddress ? (
+                          <p className="text-sm mt-0.5">
+                            {billingAddress.street && <>{billingAddress.street}<br /></>}
+                            {billingAddress.city && billingAddress.region && (
+                              <>{billingAddress.city}, {billingAddress.region} {billingAddress.postalCode}<br /></>
+                            )}
+                            {billingAddress.country}
+                          </p>
+                        ) : (
+                          <p className="text-sm mt-0.5 text-muted-foreground">Not set</p>
+                        )}
                       </div>
                     </div>
+
+                    {/* Right column - Invoice Emails */}
                     <div>
-                      <p className="text-xs text-muted-foreground">Address</p>
-                      {billingAddress ? (
-                        <p className="text-sm mt-0.5">
-                          {billingAddress.street && <>{billingAddress.street}<br /></>}
-                          {billingAddress.city && billingAddress.state && (
-                            <>{billingAddress.city}, {billingAddress.state} {billingAddress.zip}<br /></>
-                          )}
-                          {billingAddress.country}
-                        </p>
+                      <p className="text-xs text-muted-foreground mb-2">Invoice Emails</p>
+                      {clientId ? (
+                        <BillingEmailManager
+                          emails={billingEmails}
+                          clientId={clientId}
+                          onUpdate={handleBillingEmailsUpdate}
+                        />
                       ) : (
-                        <p className="text-sm mt-0.5 text-muted-foreground">Not set</p>
+                        <p className="text-sm text-muted-foreground">No client selected</p>
                       )}
                     </div>
                   </div>

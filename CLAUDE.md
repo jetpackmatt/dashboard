@@ -282,9 +282,42 @@ CREATE FUNCTION my_func() ... SET search_path = public ...
 - Post-auth redirects: Use `window.location.href` (not router.push)
 
 ### Data Queries
+
+**Production Pattern (Application Code):**
 - NEVER query data from browser client
 - All data fetching via API routes with `service_role` key
 - Use UPSERT pattern for all sync operations (but see "Upsert Gotcha" below!)
+
+**Development Pattern (Claude Direct Access):**
+Claude has direct access to Supabase via MCP tools. Use these for:
+- Debugging issues (pull logs, check data quality)
+- Schema exploration (list tables, inspect migrations)
+- Performance analysis (query slow logs, get advisories)
+- Quick data checks during development
+
+**Available MCP Tools:**
+```typescript
+// Schema & Data
+mcp__supabase__list_tables()           // List all tables/schemas
+mcp__supabase__execute_sql()           // Run read-only SQL queries
+mcp__supabase__list_migrations()       // See migration history
+
+// Monitoring & Debugging
+mcp__supabase__get_logs()              // Pull logs by service (api, postgres, auth, etc.)
+mcp__supabase__get_advisors()          // Security & performance advisories
+
+// Type Generation
+mcp__supabase__generate_typescript_types()  // Auto-generate types from schema
+
+// Documentation
+mcp__supabase__search_docs()           // Search Supabase docs via GraphQL
+```
+
+**When to Use Which:**
+- **Application code** → Always use API routes with `createAdminClient()`
+- **Claude debugging/analysis** → Use MCP tools directly
+- **Schema changes** → Use migrations (via MCP or Supabase CLI)
+- **Never** → Don't use postgres MCP (`mcp__postgres__query`) - use Supabase MCP instead
 
 ### Upsert Gotcha (CRITICAL - Dec 2025)
 

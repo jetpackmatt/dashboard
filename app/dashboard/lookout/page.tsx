@@ -71,7 +71,7 @@ function getDefaultDateRange(): DateRange {
 }
 
 export default function LookoutPage() {
-  const { selectedClientId, effectiveIsAdmin, isLoading: isClientLoading } = useClient()
+  const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, isLoading: isClientLoading } = useClient()
 
   // Filter state
   const [quickFilter, setQuickFilter] = React.useState<QuickFilterValue>('at_risk')
@@ -95,8 +95,9 @@ export default function LookoutPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
 
-  // Determine effective client ID
-  const effectiveClientId = effectiveIsAdmin
+  // Determine effective client ID (admins and care users can view all brands)
+  const canViewAllBrands = effectiveIsAdmin || effectiveIsCareUser
+  const effectiveClientId = canViewAllBrands
     ? (selectedClientId || 'all')
     : null
 
@@ -189,8 +190,8 @@ export default function LookoutPage() {
       <div className="flex flex-1 flex-col overflow-hidden bg-background rounded-t-xl">
         <div className="flex flex-col h-[calc(100vh-64px)] px-4 lg:px-6">
           {/* Sticky header with filters - matches Transactions styling */}
-          <div className="flex-shrink-0 -mx-4 lg:-mx-6 bg-[#fcfcfc] dark:bg-zinc-900 border-b border-border/40">
-            <div className="flex items-center justify-between gap-4 px-4 lg:px-6 py-4">
+          <div className="flex-shrink-0 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
+            <div className="flex items-center justify-between gap-4 px-4 lg:px-6 py-3">
               <QuickFilters
                 value={quickFilter}
                 onChange={handleQuickFilterChange}
@@ -209,7 +210,7 @@ export default function LookoutPage() {
               data={shipments}
               isLoading={isLoading}
               error={error}
-              showClientColumn={effectiveIsAdmin}
+              showClientColumn={canViewAllBrands}
               activeFilter={quickFilter}
               onRefresh={fetchShipments}
             />

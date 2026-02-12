@@ -57,7 +57,7 @@ interface CommissionData {
   }
   lastShipmentDates?: {
     shipbob: string | null
-    eshipper: string | null
+    eshipper: Date | null
   }
 }
 
@@ -550,7 +550,7 @@ export default function CommissionsPage() {
               </p>
               {selectedMonth?.isCurrent && data?.lastShipmentDates?.eshipper && (
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  updated thru {format(new Date(data.lastShipmentDates.eshipper + 'T12:00:00'), 'MMM d')}
+                  updated {differenceInMinutes(new Date(), data.lastShipmentDates.eshipper)} min ago
                 </p>
               )}
             </div>

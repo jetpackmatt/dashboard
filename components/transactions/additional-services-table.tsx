@@ -9,6 +9,8 @@ import { AdditionalService, additionalServicesCellRenderers } from "./cell-rende
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
+import { useExport } from "@/components/export-context"
+import { ADDITIONAL_SERVICES_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 
 const DEFAULT_PAGE_SIZE = 50
 // Stable empty array reference to prevent re-render loops
@@ -50,9 +52,10 @@ export function AdditionalServicesTable({
   initialLoading = false,
   onExportTriggerReady,
 }: AdditionalServicesTableProps) {
-  // Check if admin viewing all clients (for client badge prefix column)
-  const { isAdmin, selectedClientId } = useClient()
-  const showClientBadge = isAdmin && !selectedClientId
+  const { startClientExport } = useExport()
+  // Check if admin/care viewing all clients (for client badge prefix column)
+  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Use stable reference for empty array
   const effectiveStatusFilter = statusFilter ?? EMPTY_STATUS_FILTER
@@ -67,6 +70,10 @@ export function AdditionalServicesTable({
   const [totalCount, setTotalCount] = React.useState(initialTotalCount)
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Sort state - default: Transaction Date descending
+  const [sortField, setSortField] = React.useState<string>('transactionDate')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Sync with pre-fetched data when it arrives
   React.useEffect(() => {
@@ -170,38 +177,65 @@ export function AdditionalServicesTable({
     fetchData(newPageIndex, newPageSize, false)
   }
 
+  // Handle sort change
+  const handleSortChange = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    setSortField(field)
+    setSortDirection(direction)
+    setPageIndex(0)
+    // Resolve sortKey from table config
+    const colConfig = ADDITIONAL_SERVICES_TABLE_CONFIG.columns.find(c => c.id === field)
+    const sortKey = colConfig?.sortKey || field
+    // Re-fetch with new sort - pass as params since state won't update synchronously
+    const params = new URLSearchParams({
+      limit: pageSize.toString(),
+      offset: '0',
+      sortField: sortKey,
+      sortDirection: direction,
+    })
+    if (clientId) params.set('clientId', clientId)
+    if (dateRange?.from) params.set('startDate', dateRange.from.toISOString().split('T')[0])
+    if (dateRange?.to) params.set('endDate', dateRange.to.toISOString().split('T')[0])
+    if (effectiveStatusFilter.length > 0) params.set('status', effectiveStatusFilter.join(','))
+    if (feeTypeFilter && feeTypeFilter !== 'all') params.set('feeType', feeTypeFilter)
+    if (searchQuery) params.set('search', searchQuery)
+    setIsPageLoading(true)
+    fetch(`/api/data/billing/additional-services?${params.toString()}`)
+      .then(r => r.json())
+      .then(result => { setData(result.data || []); setTotalCount(result.totalCount || 0) })
+      .finally(() => setIsPageLoading(false))
+  }, [clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery, pageSize])
+
   // Export handler
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
 
-    let dataToExport: AdditionalService[]
-
     if (scope === 'current') {
-      dataToExport = data
-    } else {
-      const params = new URLSearchParams({
-        limit: '10000',
-        offset: '0',
+      exportData(data as unknown as Record<string, unknown>[], {
+        format: exportFormat, scope, filename: 'additional-services',
+        ...toExportMapping(ADDITIONAL_SERVICES_INVOICE_COLUMNS),
       })
+    } else {
+      const params = new URLSearchParams()
       if (clientId) params.set('clientId', clientId)
       if (dateRange?.from) params.set('startDate', dateRange.from.toISOString().split('T')[0])
       if (dateRange?.to) params.set('endDate', dateRange.to.toISOString().split('T')[0])
       if (effectiveStatusFilter.length > 0) params.set('status', effectiveStatusFilter.join(','))
       if (feeTypeFilter && feeTypeFilter !== 'all') params.set('feeType', feeTypeFilter)
       if (searchQuery) params.set('search', searchQuery)
+      params.set('export', 'true')
 
-      const response = await fetch(`/api/data/billing/additional-services?${params.toString()}`)
-      const result = await response.json()
-      dataToExport = result.data || []
+      startClientExport({
+        apiUrl: '/api/data/billing/additional-services',
+        params,
+        source: 'Additional Services',
+        totalCount,
+        exportFn: (allData) => exportData(allData, {
+          format: exportFormat, scope, filename: 'additional-services',
+          ...toExportMapping(ADDITIONAL_SERVICES_INVOICE_COLUMNS),
+        }),
+      })
     }
-
-    exportData(dataToExport as unknown as Record<string, unknown>[], {
-      format: exportFormat,
-      scope,
-      filename: 'additional-services',
-      tableConfig: ADDITIONAL_SERVICES_TABLE_CONFIG,
-    })
-  }, [data, clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery])
+  }, [data, clientId, dateRange, effectiveStatusFilter, feeTypeFilter, searchQuery, totalCount, startClientExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -237,6 +271,9 @@ export function AdditionalServicesTable({
       itemName="services"
       integratedHeader={true}
       prefixColumn={clientBadgePrefixColumn}
+      sortField={sortField}
+      sortDirection={sortDirection}
+      onSortChange={handleSortChange}
     />
   )
 }

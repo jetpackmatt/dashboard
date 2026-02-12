@@ -111,7 +111,6 @@ interface TableRowProps<T> {
   rowKey: string
   visibleColumns: ColumnConfig[]
   cellRenderers: Record<string, CellRenderer<T>>
-  getColumnWidth: (columnId: string) => string
   isPageLoading: boolean
   integratedHeader?: boolean
   onRowClick?: (row: T) => void
@@ -124,7 +123,6 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
   rowKey,
   visibleColumns,
   cellRenderers,
-  getColumnWidth,
   isPageLoading,
   integratedHeader = false,
   onRowClick,
@@ -140,20 +138,19 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
     <tr
       key={rowKey}
       onClick={handleClick}
-      className={`h-10 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 ${isPageLoading ? 'opacity-50' : ''} ${onRowClick ? 'cursor-pointer' : ''}`}
+      className={`h-[45px] border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 ${isPageLoading ? 'opacity-50' : ''} ${onRowClick ? 'cursor-pointer' : ''}`}
     >
-      {/* Prefix column (e.g., client badge) - sits before all data columns */}
+      {/* Prefix column (e.g., client badge) - tint if first data column is tinted */}
       {prefixColumn && (
         <td
-          style={{ width: prefixColumn.width }}
-          className={`align-middle ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
+          className={`w-px whitespace-nowrap align-middle ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'} ${visibleColumns[0]?.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''}`}
         >
           {prefixColumn.render(row)}
         </td>
       )}
       {visibleColumns.map((column, index) => {
         // Status and orderType columns contain Badges - don't apply text-ellipsis
-        const isNonTruncatable = column.id === 'status' || column.id === 'orderType'
+        const isNonTruncatable = column.id === 'status' || column.id === 'orderType' || column.id === 'actions'
         // Determine padding based on position and integrated mode
         // When prefix column exists, first data column is no longer "first" for padding
         const isFirst = index === 0 && !prefixColumn
@@ -171,11 +168,13 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
         const alignClass = column.align === 'center' ? 'text-center' : column.align === 'right' ? 'text-right' : 'text-left'
         // Divider after this column
         const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
+        const shrinkClass = column.shrinkToFit ? 'w-px' : ''
+        const tintClass = column.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''
         return (
           <td
             key={column.id}
-            style={{ width: getColumnWidth(column.id) }}
-            className={`${paddingClass} ${alignClass} ${dividerClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
+            style={column.maxWidth ? { maxWidth: column.maxWidth } : undefined}
+            className={`${paddingClass} ${alignClass} ${dividerClass} ${shrinkClass} ${tintClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
           >
             {cellRenderers[column.id]
               ? cellRenderers[column.id](row, column)
@@ -197,7 +196,6 @@ interface SortableHeaderProps {
   totalColumns: number
   hasPrefixColumn: boolean
   integratedHeader: boolean
-  getColumnWidth: (id: string) => string
   isSortable: boolean
   isActiveSort: boolean
   sortDirection?: 'asc' | 'desc'
@@ -211,7 +209,6 @@ function SortableHeader({
   totalColumns,
   hasPrefixColumn,
   integratedHeader,
-  getColumnWidth,
   isSortable,
   isActiveSort,
   sortDirection,
@@ -237,27 +234,30 @@ function SortableHeader({
     else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
   }
   const headerAlignClass = column.align === 'center' ? 'text-center' : 'text-left'
-  const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
   const cursorClass = isSortable
     ? 'cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors'
     : isDndEnabled ? 'cursor-grab' : ''
+
+  const shrinkClass = column.shrinkToFit ? 'w-px' : ''
 
   return (
     <th
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      style={{ width: getColumnWidth(column.id), opacity: isDragging ? 0.4 : 1 }}
-      className={`${paddingClass} ${headerAlignClass} ${dividerClass} align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap ${cursorClass}`}
+      style={{ opacity: isDragging ? 0.4 : 1, maxWidth: column.maxWidth || undefined }}
+      className={`group/th ${paddingClass} ${headerAlignClass} ${shrinkClass} align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap ${cursorClass}`}
       onClick={isSortable ? () => handleSort(column.id) : undefined}
     >
       {isSortable ? (
         <span className={`inline-flex items-center gap-0.5 ${column.align === 'center' ? 'justify-center' : ''}`}>
           {column.header}
-          {isActiveSort && (
+          {isActiveSort ? (
             sortDirection === 'asc'
-              ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0" />
-              : <ChevronDownIcon className="h-3 w-3 flex-shrink-0" />
+              ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+              : <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+          ) : (
+            <ChevronDownIcon className="h-3 w-3 flex-shrink-0 opacity-0 group-hover/th:opacity-40 transition-opacity" />
           )}
         </span>
       ) : (
@@ -298,7 +298,6 @@ export function TransactionsTable<T>({
   // Get responsive column visibility
   const {
     visibleColumns,
-    columnWidths,
     hiddenByResponsive,
   } = useResponsiveTable({
     config,
@@ -309,11 +308,6 @@ export function TransactionsTable<T>({
   const orderedColumns = useColumnOrder(config, visibleColumns, columnOrder)
 
   const totalPages = Math.ceil(totalCount / pageSize)
-
-  // Helper to get column width
-  const getColumnWidth = (columnId: string): string => {
-    return columnWidths[columnId] || '10%'
-  }
 
   // Sort handler - toggle direction on same column, default desc on new column
   const handleSort = (columnId: string) => {
@@ -359,23 +353,28 @@ export function TransactionsTable<T>({
     >
     <div className="flex flex-col h-full">
       {/* Scrollable table area */}
-      <div className={`flex-1 overflow-y-auto min-h-0 ${integratedHeader ? '-mx-4 lg:-mx-6' : ''}`}>
+      <div className={`flex-1 overflow-y-auto overflow-x-hidden min-h-0 ${integratedHeader ? '-mx-4 lg:-mx-6' : ''}`}>
         <div className={integratedHeader ? '' : ''}>
-          <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-xs font-inter">
-            <colgroup>
-              {/* Prefix column (e.g., client badge) */}
-              {prefixColumn && <col style={{ width: prefixColumn.width }} />}
-              {orderedColumns.map((column) => (
-                <col key={column.id} style={{ width: getColumnWidth(column.id) }} />
-              ))}
-            </colgroup>
+          <table style={{ tableLayout: 'auto', width: '100%' }} className="text-[13px] font-roboto">
+            {/* Proportional width hints from config - guides auto layout distribution */}
+            {(() => {
+              const prefixWidth = prefixColumn ? 8 : 0
+              const totalWidth = prefixWidth + orderedColumns.reduce((sum, c) => sum + (c.shrinkToFit ? 0 : c.width), 0)
+              return totalWidth > 0 ? (
+                <colgroup>
+                  {prefixColumn && <col style={{ width: `${(prefixWidth / totalWidth * 100).toFixed(1)}%` }} />}
+                  {orderedColumns.map(c => (
+                    <col key={c.id} style={c.shrinkToFit ? { width: '0px' } : { width: `${(c.width / totalWidth * 100).toFixed(1)}%` }} />
+                  ))}
+                </colgroup>
+              ) : null
+            })()}
             <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
             <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
-              <tr className="h-10">
+              <tr className="h-[45px] bg-muted/60 dark:bg-zinc-900/60">
                 {/* Prefix column header (empty) */}
                 {prefixColumn && (
                   <th
-                    style={{ width: prefixColumn.width }}
                     className={`align-middle ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
                   />
                 )}
@@ -387,7 +386,6 @@ export function TransactionsTable<T>({
                     totalColumns={orderedColumns.length}
                     hasPrefixColumn={!!prefixColumn}
                     integratedHeader={integratedHeader}
-                    getColumnWidth={getColumnWidth}
                     isSortable={!!(column.sortable && onSortChange)}
                     isActiveSort={sortField === column.id}
                     sortDirection={sortDirection}
@@ -402,12 +400,11 @@ export function TransactionsTable<T>({
               {isLoading ? (
                 // Loading skeleton rows
                 Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={`loading-${i}`} className="h-10 dark:bg-[hsl(220,8%,8%)]">
+                  <tr key={`loading-${i}`} className="h-[45px] dark:bg-[hsl(220,8%,8%)]">
                     {/* Prefix column skeleton (empty - badge not shown during loading) */}
                     {prefixColumn && (
                       <td
-                        style={{ width: prefixColumn.width }}
-                        className={`${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'}`}
+                        className={`w-px whitespace-nowrap ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'} ${orderedColumns[0]?.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''}`}
                       />
                     )}
                     {orderedColumns.map((column, colIndex) => {
@@ -423,11 +420,11 @@ export function TransactionsTable<T>({
                         else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
                       }
                       const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
+                      const skelTintClass = column.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''
                       return (
                         <td
                           key={column.id}
-                          style={{ width: getColumnWidth(column.id) }}
-                          className={`${paddingClass} ${dividerClass}`}
+                          className={`${paddingClass} ${dividerClass} ${skelTintClass}`}
                         >
                           <div className="h-4 w-full animate-pulse bg-muted/40 rounded" />
                         </td>
@@ -443,7 +440,6 @@ export function TransactionsTable<T>({
                     rowKey={getRowKey(row)}
                     visibleColumns={orderedColumns}
                     cellRenderers={cellRenderers}
-                    getColumnWidth={getColumnWidth}
                     isPageLoading={isPageLoading}
                     integratedHeader={integratedHeader}
                     onRowClick={onRowClick}

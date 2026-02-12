@@ -39,3 +39,19 @@ next-env.d.ts
 # claude context (personal notes)
 CLAUDE.local.md
 .backups
+*.backup
+
+# MCP config (contains secrets)
+.mcp.json
+
+# design system (local reference)
+.interface-design/
+
+# reference files (don't watch)
+/reference/
+
+# scripts (don't watch)
+/scripts/
+
+# claude memory
+/.claude/

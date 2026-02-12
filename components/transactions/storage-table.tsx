@@ -8,6 +8,8 @@ import { Storage, storageCellRenderers } from "./cell-renderers"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
+import { useExport } from "@/components/export-context"
+import { STORAGE_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 
 const DEFAULT_PAGE_SIZE = 50
 
@@ -38,9 +40,10 @@ export function StorageTable({
   onPageSizeChange,
   onExportTriggerReady,
 }: StorageTableProps) {
-  // Check if admin viewing all clients (for client badge prefix column)
-  const { isAdmin, selectedClientId } = useClient()
-  const showClientBadge = isAdmin && !selectedClientId
+  const { startClientExport } = useExport()
+  // Check if admin/care viewing all clients (for client badge prefix column)
+  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Convert "all" to undefined for API
   const effectiveFcFilter = fcFilter === "all" ? undefined : fcFilter
@@ -51,6 +54,10 @@ export function StorageTable({
   const [totalCount, setTotalCount] = React.useState(0)
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Sort state - default: Charge Start descending
+  const [sortField, setSortField] = React.useState<string>('chargeStartDate')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Wrap setPageSize to notify parent for persistence
   const setPageSize = React.useCallback((size: number) => {
@@ -127,36 +134,59 @@ export function StorageTable({
     fetchData(newPageIndex, newPageSize, false)
   }
 
+  // Handle sort change
+  const handleSortChange = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    setSortField(field)
+    setSortDirection(direction)
+    setPageIndex(0)
+    const colConfig = STORAGE_TABLE_CONFIG.columns.find(c => c.id === field)
+    const sortKey = colConfig?.sortKey || field
+    const params = new URLSearchParams({
+      limit: pageSize.toString(),
+      offset: '0',
+      sortField: sortKey,
+      sortDirection: direction,
+    })
+    if (clientId) params.set('clientId', clientId)
+    if (effectiveFcFilter) params.set('fc', effectiveFcFilter)
+    if (effectiveLocationTypeFilter) params.set('locationType', effectiveLocationTypeFilter)
+    if (searchQuery) params.set('search', searchQuery)
+    setIsPageLoading(true)
+    fetch(`/api/data/billing/storage?${params.toString()}`)
+      .then(r => r.json())
+      .then(result => { setData(result.data || []); setTotalCount(result.totalCount || 0) })
+      .finally(() => setIsPageLoading(false))
+  }, [clientId, effectiveFcFilter, effectiveLocationTypeFilter, searchQuery, pageSize])
+
   // Export handler
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
 
-    let dataToExport: Storage[]
-
     if (scope === 'current') {
-      dataToExport = data
-    } else {
-      const params = new URLSearchParams({
-        limit: '10000',
-        offset: '0',
+      exportData(data as unknown as Record<string, unknown>[], {
+        format: exportFormat, scope, filename: 'storage',
+        ...toExportMapping(STORAGE_INVOICE_COLUMNS),
       })
+    } else {
+      const params = new URLSearchParams()
       if (clientId) params.set('clientId', clientId)
       if (effectiveFcFilter) params.set('fc', effectiveFcFilter)
       if (effectiveLocationTypeFilter) params.set('locationType', effectiveLocationTypeFilter)
       if (searchQuery) params.set('search', searchQuery)
+      params.set('export', 'true')
 
-      const response = await fetch(`/api/data/billing/storage?${params.toString()}`)
-      const result = await response.json()
-      dataToExport = result.data || []
+      startClientExport({
+        apiUrl: '/api/data/billing/storage',
+        params,
+        source: 'Storage',
+        totalCount,
+        exportFn: (allData) => exportData(allData, {
+          format: exportFormat, scope, filename: 'storage',
+          ...toExportMapping(STORAGE_INVOICE_COLUMNS),
+        }),
+      })
     }
-
-    exportData(dataToExport as unknown as Record<string, unknown>[], {
-      format: exportFormat,
-      scope,
-      filename: 'storage',
-      tableConfig: STORAGE_TABLE_CONFIG,
-    })
-  }, [data, clientId, effectiveFcFilter, effectiveLocationTypeFilter, searchQuery])
+  }, [data, clientId, effectiveFcFilter, effectiveLocationTypeFilter, searchQuery, totalCount, startClientExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -192,6 +222,9 @@ export function StorageTable({
       itemName="items"
       integratedHeader={true}
       prefixColumn={clientBadgePrefixColumn}
+      sortField={sortField}
+      sortDirection={sortDirection}
+      onSortChange={handleSortChange}
     />
   )
 }

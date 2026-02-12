@@ -1,5 +1,45 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
+import { SupabaseClient } from '@supabase/supabase-js'
+
+/**
+ * Batched .in() query helper.
+ * Supabase returns MAX 1000 rows per request. When querying with .in()
+ * on large ID arrays, results can exceed this limit. This helper splits
+ * the IDs into batches and merges results.
+ */
+async function batchedInQuery<T = Record<string, unknown>>(
+  supabase: SupabaseClient,
+  table: string,
+  selectFields: string,
+  inColumn: string,
+  ids: string[],
+  batchSize = 500
+): Promise<T[]> {
+  if (ids.length === 0) return []
+  if (ids.length <= batchSize) {
+    const { data } = await supabase
+      .from(table)
+      .select(selectFields)
+      .in(inColumn, ids)
+    return (data || []) as T[]
+  }
+  // Split into batches and run in parallel
+  const batches: string[][] = []
+  for (let i = 0; i < ids.length; i += batchSize) {
+    batches.push(ids.slice(i, i + batchSize))
+  }
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      const { data } = await supabase
+        .from(table)
+        .select(selectFields)
+        .in(inColumn, batch)
+      return (data || []) as T[]
+    })
+  )
+  return results.flat()
+}
 
 export async function GET(request: NextRequest) {
   // CRITICAL SECURITY: Verify user has access to requested client
@@ -16,6 +56,13 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
+
+  // Cursor-based pagination: much faster than OFFSET for large exports.
+  // When afterId param is present (even if empty string), uses ORDER BY id ASC
+  // so all pages have consistent ordering. Empty afterId = first cursor page.
+  const afterIdParam = searchParams.get('afterId') // null if param absent, '' if present but empty
+  const useCursorMode = afterIdParam !== null // param is present at all
+  const afterId = afterIdParam || null // non-empty value or null
 
   // Date range filtering on order_import_date (ISO date strings, e.g., '2025-01-01')
   const startDate = searchParams.get('startDate')
@@ -45,6 +92,9 @@ export async function GET(request: NextRequest) {
   const sortField = allowedSortFields.includes(rawSortField) ? rawSortField : 'event_labeled'
   const sortDirection = searchParams.get('sortDirection') === 'asc' ? 'asc' : 'desc'
   const sortAscending = sortDirection === 'asc'
+
+  // Export mode - when true, includes extra fields for invoice-format export
+  const isExport = searchParams.get('export') === 'true'
 
   try {
     // Check if we need to filter by order fields (requires JOIN)
@@ -82,6 +132,14 @@ export async function GET(request: NextRequest) {
         client_id,
         application_name,
         destination_country,
+        ship_option_id,
+        zone_used,
+        actual_weight_oz,
+        dim_weight_oz,
+        billable_weight_oz,
+        length,
+        width,
+        height,
         orders!inner(
           id,
           shipbob_order_id,
@@ -92,7 +150,11 @@ export async function GET(request: NextRequest) {
           status,
           order_type,
           channel_name,
-          application_name
+          application_name,
+          zip_code,
+          city,
+          state,
+          country
         )
       `
       : `
@@ -117,6 +179,14 @@ export async function GET(request: NextRequest) {
         client_id,
         application_name,
         destination_country,
+        ship_option_id,
+        zone_used,
+        actual_weight_oz,
+        dim_weight_oz,
+        billable_weight_oz,
+        length,
+        width,
+        height,
         orders(
           id,
           shipbob_order_id,
@@ -127,7 +197,11 @@ export async function GET(request: NextRequest) {
           status,
           order_type,
           channel_name,
-          application_name
+          application_name,
+          zip_code,
+          city,
+          state,
+          country
         )
       `
 
@@ -391,12 +465,31 @@ export async function GET(request: NextRequest) {
       const looksLikeId = /\d/.test(searchTerm) || (/^[a-zA-Z0-9]+$/.test(searchTerm) && searchTerm.length > 3)
 
       if (looksLikeId) {
+        // Pre-resolve store_order_id → shipbob_order_id from orders table
+        let storeOrderIds: string[] = []
+        const storeOrderQuery = supabase
+          .from('orders')
+          .select('shipbob_order_id')
+          .ilike('store_order_id', `%${searchTerm}%`)
+          .limit(100)
+        if (clientId) {
+          storeOrderQuery.eq('client_id', clientId)
+        }
+        const { data: storeOrderMatches } = await storeOrderQuery
+        if (storeOrderMatches && storeOrderMatches.length > 0) {
+          storeOrderIds = storeOrderMatches.map((o: any) => o.shipbob_order_id).filter(Boolean)
+        }
+
         // Use ILIKE for ID searches - supports partial matching
-        // Search visible columns: Order ID (shipbob_order_id), Shipment ID (shipment_id), Tracking ID (tracking_id)
         const searchPattern = `%${searchTerm}%`
-        query = query.or(
-          `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern},tracking_id.ilike.${searchPattern}`
-        )
+        let orFilter = `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern},tracking_id.ilike.${searchPattern}`
+
+        // Add store_order_id matches via their shipbob_order_ids
+        if (storeOrderIds.length > 0) {
+          orFilter += `,shipbob_order_id.in.(${storeOrderIds.join(',')})`
+        }
+
+        query = query.or(orFilter)
       } else {
         // Use full-text search for name searches (GIN indexed, very fast)
         query = query.textSearch('search_vector', searchTerm, {
@@ -599,9 +692,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Execute main query
-    let { data: shipmentsData, error: shipmentsError, count } = await query
-      .order(sortField, { ascending: sortAscending })
-      .range(matchingShipmentIds ? 0 : offset, matchingShipmentIds ? matchingShipmentIds.length - 1 : offset + limit - 1)
+    // Cursor-based pagination (useCursorMode): O(1) index scan vs O(N) for OFFSET
+    // afterId is non-empty string on pages 2+, null on first cursor page
+    if (afterId) {
+      query = query.gt('id', afterId)
+    }
+    let { data: shipmentsData, error: shipmentsError, count } = useCursorMode
+      ? await query.order('id', { ascending: true }).limit(limit)
+      : await query
+          .order(sortField, { ascending: sortAscending })
+          .range(matchingShipmentIds ? 0 : offset, matchingShipmentIds ? matchingShipmentIds.length - 1 : offset + limit - 1)
 
     // If full-text search failed (column doesn't exist), retry with ILIKE
     if (shipmentsError && useFullTextSearch && shipmentsError.message.includes('search_vector')) {
@@ -643,9 +743,25 @@ export async function GET(request: NextRequest) {
 
       // Apply ILIKE search fallback - visible columns including Tracking ID
       const searchPattern = `%${searchQuery}%`
-      fallbackQuery = fallbackQuery.or(
-        `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern},tracking_id.ilike.${searchPattern}`
-      )
+      // Re-use storeOrderIds from the initial search if available
+      let fallbackOrFilter = `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern},tracking_id.ilike.${searchPattern}`
+
+      // Pre-resolve store_order_id for fallback path too
+      const fbStoreQuery = supabase
+        .from('orders')
+        .select('shipbob_order_id')
+        .ilike('store_order_id', searchPattern)
+        .limit(100)
+      if (clientId) fbStoreQuery.eq('client_id', clientId)
+      const { data: fbStoreMatches } = await fbStoreQuery
+      if (fbStoreMatches && fbStoreMatches.length > 0) {
+        const fbIds = fbStoreMatches.map((o: any) => o.shipbob_order_id).filter(Boolean)
+        if (fbIds.length > 0) {
+          fallbackOrFilter += `,shipbob_order_id.in.(${fbIds.join(',')})`
+        }
+      }
+
+      fallbackQuery = fallbackQuery.or(fallbackOrFilter)
 
       const fallbackResult = await fallbackQuery
         .order(sortField, { ascending: sortAscending })
@@ -669,27 +785,41 @@ export async function GET(request: NextRequest) {
     const shipmentIds = (shipmentsData || []).map((s: any) => s.shipment_id)
     const trackingIds = (shipmentsData || []).map((s: any) => s.tracking_id).filter(Boolean)
     let itemCounts: Record<string, number> = {}
-    let billingMap: Record<string, { totalCost: number }> = {}
+    let billingMap: Record<string, { totalCost: number | null }> = {}
     let refundedTrackingIds: Set<string> = new Set()
     let voidedTrackingIds: Set<string> = new Set()
     let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null; substatusCategory: string | null; lastScanDescription: string | null; lastScanDate: string | null }> = {}
     let claimTicketMap: Record<string, { ticketNumber: number; status: string; creditAmount: number | null }> = {}
+    let productsSoldMap: Record<string, string> = {}
+    let billingExportMap: Record<string, { baseCharge: number | null; surchargeAmount: number | null; transactionType: string }> = {}
+    let insuranceMap: Record<string, number> = {}
+    let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
 
     if (shipmentIds.length > 0) {
       // Run item counts, billing, claim eligibility, and claim tickets queries IN PARALLEL
-      const [itemResult, billingResult, claimEligibilityResult, claimTicketsResult] = await Promise.all([
-        // Query 1: Count items per shipment
-        supabase
-          .from('shipment_items')
-          .select('shipment_id')
-          .in('shipment_id', shipmentIds),
+      // NOTE: shipment_items and transactions queries use batchedInQuery to avoid
+      // Supabase's 1000-row limit when exporting large pages (1000 shipments per page)
+      const [itemData, billingData, claimEligibilityResult, claimTicketsResult, insuranceResult, clientInfoResult] = await Promise.all([
+        // Query 1: Items per shipment (with name+quantity for export)
+        // Batched: each shipment can have multiple items → easily exceeds 1000 rows
+        batchedInQuery(
+          supabase,
+          'shipment_items',
+          isExport ? 'shipment_id, name, quantity' : 'shipment_id',
+          'shipment_id',
+          shipmentIds
+        ),
         // Query 2: Get billing data (only if we have tracking IDs)
+        // Batched: ~1.2 transactions per tracking_id → 1000 IDs returns ~1200 rows
         trackingIds.length > 0
-          ? supabase
-              .from('transactions')
-              .select('tracking_id, total_charge, fee_type, transaction_type, is_voided')
-              .in('tracking_id', trackingIds)
-          : Promise.resolve({ data: null }),
+          ? batchedInQuery(
+              supabase,
+              'transactions',
+              'tracking_id, reference_id, total_charge, base_charge, surcharge, fee_type, transaction_type, is_voided',
+              'tracking_id',
+              trackingIds
+            )
+          : Promise.resolve([]),
         // Query 3: Get claim eligibility status from lost_in_transit_checks
         supabase
           .from('lost_in_transit_checks')
@@ -700,22 +830,34 @@ export async function GET(request: NextRequest) {
           .from('care_tickets')
           .select('shipment_id, ticket_number, status, credit_amount')
           .in('shipment_id', shipmentIds)
-          .eq('ticket_type', 'Claim')
+          .eq('ticket_type', 'Claim'),
+        // Query 5: Insurance transactions (export only - keyed by reference_id/shipment_id)
+        isExport
+          ? supabase
+              .from('transactions')
+              .select('reference_id, total_charge')
+              .in('reference_id', shipmentIds)
+              .ilike('fee_type', '%Insurance%')
+          : Promise.resolve({ data: null }),
+        // Query 6: Client info for merchantId/merchantName (export only)
+        isExport
+          ? supabase.from('clients').select('id, merchant_id, company_name')
+          : Promise.resolve({ data: null }),
       ])
 
-      // Process item counts
-      if (itemResult.data) {
-        itemCounts = itemResult.data.reduce((acc: Record<string, number>, item: any) => {
+      // Process item counts (itemData is a flat array from batchedInQuery)
+      if (itemData.length > 0) {
+        itemCounts = itemData.reduce((acc: Record<string, number>, item: any) => {
           acc[item.shipment_id] = (acc[item.shipment_id] || 0) + 1
           return acc
         }, {})
       }
 
-      // Process billing data
-      if (billingResult.data) {
+      // Process billing data (billingData is a flat array from batchedInQuery)
+      if (billingData.length > 0) {
         // Get total_charge from Shipping transactions only (excludes pick fees, insurance)
         // CRITICAL: Only show charge if total_charge is set (has preview or invoice markup)
-        billingMap = billingResult.data.reduce((acc: Record<string, { totalCost: number | null }>, tx: any) => {
+        billingMap = billingData.reduce((acc: Record<string, { totalCost: number | null }>, tx: any) => {
           if (tx.tracking_id && tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund') {
             // total_charge = base_charge + surcharge (marked up shipping cost)
             // Returns null if not yet calculated (UI shows "-")
@@ -728,16 +870,16 @@ export async function GET(request: NextRequest) {
         }, {})
 
         // Also track refunded tracking IDs
-        for (const tx of billingResult.data) {
+        for (const tx of billingData) {
           if (tx.transaction_type === 'Refund' && tx.tracking_id) {
-            refundedTrackingIds.add(tx.tracking_id)
+            refundedTrackingIds.add(tx.tracking_id as string)
           }
         }
 
         // Track voided tracking IDs (duplicate shipping labels that were recreated)
-        for (const tx of billingResult.data) {
+        for (const tx of billingData) {
           if (tx.is_voided === true && tx.tracking_id) {
-            voidedTrackingIds.add(tx.tracking_id)
+            voidedTrackingIds.add(tx.tracking_id as string)
           }
         }
       }
@@ -774,6 +916,55 @@ export async function GET(request: NextRequest) {
               ticketNumber: ticket.ticket_number,
               status: ticket.status,
               creditAmount: ticket.credit_amount,
+            }
+          }
+        }
+      }
+
+      // Export-only data processing
+      if (isExport) {
+        // Build products sold string from shipment_items (e.g. "Product A(2) ; Product B(1)")
+        if (itemData.length > 0) {
+          const itemsByShipment: Record<string, { name: string; qty: number }[]> = {}
+          for (const item of (itemData as any[])) {
+            if (!item.shipment_id) continue
+            if (!itemsByShipment[item.shipment_id]) itemsByShipment[item.shipment_id] = []
+            itemsByShipment[item.shipment_id].push({ name: item.name || '', qty: item.quantity || 1 })
+          }
+          for (const [sid, items] of Object.entries(itemsByShipment)) {
+            productsSoldMap[sid] = items.map(i => `${i.name}(${i.qty})`).join(' ; ')
+          }
+        }
+
+        // Extract billing breakdown (base_charge, surcharge, transaction_type) for Shipping transactions
+        if (billingData.length > 0) {
+          for (const tx of (billingData as any[])) {
+            if (tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund' && tx.tracking_id) {
+              billingExportMap[tx.tracking_id] = {
+                baseCharge: tx.base_charge != null ? parseFloat(tx.base_charge) : null,
+                surchargeAmount: tx.surcharge != null ? parseFloat(tx.surcharge) : null,
+                transactionType: tx.transaction_type || '',
+              }
+            }
+          }
+        }
+
+        // Build insurance map from insurance query results
+        if (insuranceResult?.data) {
+          for (const tx of (insuranceResult.data as any[])) {
+            if (tx.reference_id) {
+              const insAmt = tx.total_charge != null ? parseFloat(tx.total_charge) : 0
+              insuranceMap[tx.reference_id] = (insuranceMap[tx.reference_id] || 0) + insAmt
+            }
+          }
+        }
+
+        // Build client info lookup
+        if (clientInfoResult?.data) {
+          for (const client of (clientInfoResult.data as any[])) {
+            clientInfoMap[client.id] = {
+              merchantId: client.merchant_id?.toString() || '',
+              merchantName: client.company_name || '',
             }
           }
         }
@@ -855,6 +1046,28 @@ export async function GET(request: NextRequest) {
         claimTicketNumber: claimTicketMap[row.shipment_id]?.ticketNumber || null,
         claimTicketStatus: claimTicketMap[row.shipment_id]?.status || null,
         claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,
+        // Export-only fields (invoice format)
+        ...(isExport ? {
+          merchantId: clientInfoMap[row.client_id]?.merchantId || '',
+          merchantName: clientInfoMap[row.client_id]?.merchantName || '',
+          transactionDate: row.event_labeled || null,
+          transactionType: billingExportMap[row.tracking_id]?.transactionType || '',
+          baseCharge: billingExportMap[row.tracking_id]?.baseCharge ?? null,
+          surchargeAmount: billingExportMap[row.tracking_id]?.surchargeAmount ?? null,
+          insuranceCharge: insuranceMap[row.shipment_id] || null,
+          productsSold: productsSoldMap[row.shipment_id] || '',
+          shipOptionId: row.ship_option_id || '',
+          zone: row.zone_used || '',
+          actualWeightOz: row.actual_weight_oz || '',
+          dimWeightOz: row.dim_weight_oz || '',
+          billableWeightOz: row.billable_weight_oz || '',
+          lengthIn: row.length || '',
+          widthIn: row.width || '',
+          heightIn: row.height || '',
+          zipCode: order?.zip_code || '',
+          city: order?.city || '',
+          state: order?.state || '',
+        } : {}),
       }
     })
 

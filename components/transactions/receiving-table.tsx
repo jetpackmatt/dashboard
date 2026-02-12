@@ -9,6 +9,8 @@ import { Receiving, receivingCellRenderers } from "./cell-renderers"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
+import { useExport } from "@/components/export-context"
+import { RECEIVING_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 
 const DEFAULT_PAGE_SIZE = 50
 
@@ -39,9 +41,10 @@ export function ReceivingTable({
   onPageSizeChange,
   onExportTriggerReady,
 }: ReceivingTableProps) {
-  // Check if admin viewing all clients (for client badge prefix column)
-  const { isAdmin, selectedClientId } = useClient()
-  const showClientBadge = isAdmin && !selectedClientId
+  const { startClientExport } = useExport()
+  // Check if admin/care viewing all clients (for client badge prefix column)
+  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Convert "all" to undefined for API
   const effectiveStatusFilter = statusFilter === "all" ? undefined : statusFilter
@@ -51,6 +54,10 @@ export function ReceivingTable({
   const [totalCount, setTotalCount] = React.useState(0)
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageSize, setPageSizeState] = React.useState(initialPageSize)
+
+  // Sort state - default: Transaction Date descending
+  const [sortField, setSortField] = React.useState<string>('transactionDate')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Wrap setPageSize to notify parent for persistence
   const setPageSize = React.useCallback((size: number) => {
@@ -130,37 +137,61 @@ export function ReceivingTable({
     fetchData(newPageIndex, newPageSize, false)
   }
 
+  // Handle sort change
+  const handleSortChange = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    setSortField(field)
+    setSortDirection(direction)
+    setPageIndex(0)
+    const colConfig = RECEIVING_TABLE_CONFIG.columns.find(c => c.id === field)
+    const sortKey = colConfig?.sortKey || field
+    const params = new URLSearchParams({
+      limit: pageSize.toString(),
+      offset: '0',
+      sortField: sortKey,
+      sortDirection: direction,
+    })
+    if (clientId) params.set('clientId', clientId)
+    if (dateRange?.from) params.set('startDate', dateRange.from.toISOString().split('T')[0])
+    if (dateRange?.to) params.set('endDate', dateRange.to.toISOString().split('T')[0])
+    if (effectiveStatusFilter) params.set('receivingStatus', effectiveStatusFilter)
+    if (searchQuery) params.set('search', searchQuery)
+    setIsPageLoading(true)
+    fetch(`/api/data/billing/receiving?${params.toString()}`)
+      .then(r => r.json())
+      .then(result => { setData(result.data || []); setTotalCount(result.totalCount || 0) })
+      .finally(() => setIsPageLoading(false))
+  }, [clientId, dateRange, effectiveStatusFilter, searchQuery, pageSize])
+
   // Export handler
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
 
-    let dataToExport: Receiving[]
-
     if (scope === 'current') {
-      dataToExport = data
-    } else {
-      const params = new URLSearchParams({
-        limit: '10000',
-        offset: '0',
+      exportData(data as unknown as Record<string, unknown>[], {
+        format: exportFormat, scope, filename: 'receiving',
+        ...toExportMapping(RECEIVING_INVOICE_COLUMNS),
       })
+    } else {
+      const params = new URLSearchParams()
       if (clientId) params.set('clientId', clientId)
       if (dateRange?.from) params.set('startDate', dateRange.from.toISOString().split('T')[0])
       if (dateRange?.to) params.set('endDate', dateRange.to.toISOString().split('T')[0])
       if (effectiveStatusFilter) params.set('receivingStatus', effectiveStatusFilter)
       if (searchQuery) params.set('search', searchQuery)
+      params.set('export', 'true')
 
-      const response = await fetch(`/api/data/billing/receiving?${params.toString()}`)
-      const result = await response.json()
-      dataToExport = result.data || []
+      startClientExport({
+        apiUrl: '/api/data/billing/receiving',
+        params,
+        source: 'Receiving',
+        totalCount,
+        exportFn: (allData) => exportData(allData, {
+          format: exportFormat, scope, filename: 'receiving',
+          ...toExportMapping(RECEIVING_INVOICE_COLUMNS),
+        }),
+      })
     }
-
-    exportData(dataToExport as unknown as Record<string, unknown>[], {
-      format: exportFormat,
-      scope,
-      filename: 'receiving',
-      tableConfig: RECEIVING_TABLE_CONFIG,
-    })
-  }, [data, clientId, dateRange, effectiveStatusFilter, searchQuery])
+  }, [data, clientId, dateRange, effectiveStatusFilter, searchQuery, totalCount, startClientExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -196,6 +227,9 @@ export function ReceivingTable({
       itemName="records"
       integratedHeader={true}
       prefixColumn={clientBadgePrefixColumn}
+      sortField={sortField}
+      sortDirection={sortDirection}
+      onSortChange={handleSortChange}
     />
   )
 }

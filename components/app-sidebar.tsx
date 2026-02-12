@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Image from "next/image"
+import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   BarChartIcon,
@@ -85,11 +86,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [hasCommission, setHasCommission] = React.useState(false)
+  const [mounted, setMounted] = React.useState(false)
   const [userData, setUserData] = React.useState({
     name: "",
     email: "",
     avatar: "",
   })
+
+  // Track mount state to avoid hydration mismatch on role-dependent nav items
+  React.useEffect(() => { setMounted(true) }, [])
 
   // Fetch user profile data
   React.useEffect(() => {
@@ -143,21 +148,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   // Build nav items based on user role
-  // - Admins: base items + Financials (always) + Admin
-  // - Care users: base items + Financials (if assigned)
-  // - Clients: base items + Financials (if assigned) + Billing
+  // Only add role-dependent items after mount to prevent hydration mismatch
+  // (effectiveIsAdmin/hasCommission are false during SSR but change on client)
   let allNavItems = [...baseNavItems]
 
-  // Add Financials if user has commission assignment OR is admin
-  if (hasCommission || effectiveIsAdmin) {
-    allNavItems.push(financialsNavItem)
-  }
+  if (mounted) {
+    // Add Financials if user has commission assignment OR is admin
+    if (hasCommission || effectiveIsAdmin) {
+      allNavItems.push(financialsNavItem)
+    }
 
-  if (effectiveIsAdmin) {
-    allNavItems.push(adminNavItem)
-  } else if (!effectiveIsCareUser) {
-    // Regular clients get Billing
-    allNavItems = [...allNavItems, ...clientOnlyNavItems]
+    if (effectiveIsAdmin) {
+      allNavItems.push(adminNavItem)
+    } else if (!effectiveIsCareUser) {
+      // Regular clients get Billing
+      allNavItems = [...allNavItems, ...clientOnlyNavItems]
+    }
   }
 
   // Dynamically set isActive based on current pathname
@@ -197,7 +203,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 asChild
                 className="data-[slot=sidebar-menu-button]:!p-1.5"
               >
-                <a href="/dashboard" className="flex items-center gap-2">
+                <Link href="/dashboard" prefetch={false} className="flex items-center gap-2">
                   {/* Render both logos, use CSS to show correct one based on theme class - no flash */}
                   <Image
                     src="/logos/jetpack-dark.svg"
@@ -215,7 +221,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     className="h-[33px] w-[121px] -ml-[3px] hidden dark:block"
                     priority
                   />
-                </a>
+                </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

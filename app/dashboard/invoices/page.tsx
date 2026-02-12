@@ -6,6 +6,7 @@ import {
   FileSpreadsheetIcon,
   ColumnsIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsLeftIcon,
@@ -40,7 +41,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { INVOICES_TABLE_CONFIG, getRedistributedWidths } from "@/lib/table-config"
+import { INVOICES_TABLE_CONFIG } from "@/lib/table-config"
 import { useClient } from "@/components/client-context"
 import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
 import { DateRange } from "react-day-picker"
@@ -62,6 +63,7 @@ import {
 } from "@dnd-kit/sortable"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
 import { useColumnOrder } from "@/hooks/use-responsive-table"
+import { useUserSettings } from "@/hooks/use-user-settings"
 
 // Date range preset types - matches Transactions page
 type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'
@@ -188,15 +190,18 @@ const colorSchemes = [
   { badge: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-400", tooltip: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800" },
 ]
 
-// SortableHeader component for drag-to-reorder columns
+// SortableHeader component for drag-to-reorder columns (with optional sort indicators)
 interface SortableHeaderProps {
   columnId: string
   children: React.ReactNode
   className?: string
   onClick?: () => void
+  isSortable?: boolean
+  isActiveSort?: boolean
+  activeSortDirection?: 'asc' | 'desc'
 }
 
-function SortableHeader({ columnId, children, className, onClick }: SortableHeaderProps) {
+function SortableHeader({ columnId, children, className, onClick, isSortable, isActiveSort, activeSortDirection }: SortableHeaderProps) {
   const {
     attributes,
     listeners,
@@ -209,17 +214,34 @@ function SortableHeader({ columnId, children, className, onClick }: SortableHead
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={cn(className, "cursor-grab active:cursor-grabbing")}
+      className={cn(
+        className,
+        "cursor-grab active:cursor-grabbing",
+        isSortable && "group/th"
+      )}
       style={{ opacity: isDragging ? 0.4 : 1 }}
       onClick={onClick}
     >
-      {children}
+      <span className="inline-flex items-center gap-0.5">
+        {children}
+        {isSortable && (
+          isActiveSort ? (
+            activeSortDirection === 'asc'
+              ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+              : <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+          ) : (
+            <ChevronDownIcon className="h-3 w-3 flex-shrink-0 opacity-0 group-hover/th:opacity-40 transition-opacity" />
+          )
+        )}
+      </span>
     </th>
   )
 }
 
 export default function InvoicesPage() {
-  const { selectedClientId, effectiveIsAdmin, clients } = useClient()
+  const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, clients } = useClient()
+
+  const { settings: userSettings } = useUserSettings()
 
   const [invoices, setInvoices] = React.useState<Invoice[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
@@ -231,7 +253,10 @@ export default function InvoicesPage() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(50)
+
+  // Sort state - default: Invoice Date descending
+  const [sortField, setSortField] = React.useState<string>('invoiceDate')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Column visibility state
   const DEFAULT_INVOICE_COLUMNS = React.useMemo(() => ({
@@ -262,10 +287,10 @@ export default function InvoicesPage() {
   })
 
   // Load preferences from localStorage (column visibility, column order, page size)
-  const invoicesPrefs = useTablePreferences('invoices', 50)
+  const invoicesPrefs = useTablePreferences('invoices', userSettings.defaultPageSize)
 
   // Define which columns are draggable (exclude client/download - they stay fixed)
-  const draggableColumnIds = ['invoiceNumber', 'billingPeriod', 'invoiceDate', 'cost', 'profit', 'shipments', 'transactions', 'amount', 'status']
+  const draggableColumnIds = ['invoiceDate', 'invoiceNumber', 'billingPeriod', 'shipments', 'cost', 'profit', 'transactions', 'amount', 'status']
   const draggableColumns = INVOICES_TABLE_CONFIG.columns.filter(c => draggableColumnIds.includes(c.id))
 
   // Apply user's drag order to draggable columns
@@ -354,9 +379,21 @@ export default function InvoicesPage() {
     }
   }
 
-  // Filter invoices by date range and status
+  // Handle sort change
+  const handleSortChange = React.useCallback((field: string) => {
+    if (sortField === field) {
+      // Toggle direction
+      setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortField(field)
+      setSortDirection('desc')
+    }
+    setCurrentPage(0)
+  }, [sortField])
+
+  // Filter and sort invoices
   const filteredInvoices = React.useMemo(() => {
-    return invoices.filter(invoice => {
+    const filtered = invoices.filter(invoice => {
       // Date range filter
       if (dateRange?.from || dateRange?.to) {
         const invoiceDate = new Date(invoice.invoice_date.split('T')[0])
@@ -367,64 +404,82 @@ export default function InvoicesPage() {
       if (statusFilter.length > 0 && !statusFilter.includes(invoice.paid_status)) return false
       return true
     })
-  }, [invoices, dateRange, statusFilter])
+
+    // Sort
+    const sortMultiplier = sortDirection === 'asc' ? 1 : -1
+    filtered.sort((a, b) => {
+      let aVal: number | string = 0
+      let bVal: number | string = 0
+
+      switch (sortField) {
+        case 'invoiceDate':
+          aVal = a.invoice_date || ''
+          bVal = b.invoice_date || ''
+          break
+        case 'cost':
+          aVal = a.subtotal ?? 0
+          bVal = b.subtotal ?? 0
+          break
+        case 'profit':
+          aVal = a.total_markup ?? 0
+          bVal = b.total_markup ?? 0
+          break
+        case 'shipments':
+          aVal = a.shipment_count ?? 0
+          bVal = b.shipment_count ?? 0
+          break
+        case 'amount':
+          aVal = a.total_amount ?? 0
+          bVal = b.total_amount ?? 0
+          break
+        default:
+          aVal = a.invoice_date || ''
+          bVal = b.invoice_date || ''
+      }
+
+      if (aVal < bVal) return -1 * sortMultiplier
+      if (aVal > bVal) return 1 * sortMultiplier
+      return 0
+    })
+
+    return filtered
+  }, [invoices, dateRange, statusFilter, sortField, sortDirection])
 
   // Pagination logic
   const totalCount = filteredInvoices.length
-  const totalPages = Math.ceil(totalCount / pageSize)
-  const startIndex = currentPage * pageSize
-  const endIndex = startIndex + pageSize
+  const totalPages = Math.ceil(totalCount / invoicesPrefs.pageSize)
+  const startIndex = currentPage * invoicesPrefs.pageSize
+  const endIndex = startIndex + invoicesPrefs.pageSize
   const paginatedInvoices = filteredInvoices.slice(startIndex, endIndex)
 
   // Determine if we should show the client column (admin viewing "All Brands")
-  const showClientColumn = effectiveIsAdmin && !selectedClientId
+  const showClientColumn = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Determine if we should show cost/profit breakdown (admin only)
   const showCostBreakdown = effectiveIsAdmin
+
+  // First visible draggable column — used for left-padding when client badge is hidden
+  const firstVisibleDraggableId = React.useMemo(() => {
+    return orderedDraggableColumns.find(col => {
+      if (col.id === 'cost' || col.id === 'profit') {
+        return showCostBreakdown && columnVisibility[col.id as keyof typeof columnVisibility]
+      }
+      return columnVisibility[col.id as keyof typeof columnVisibility]
+    })?.id
+  }, [orderedDraggableColumns, columnVisibility, showCostBreakdown])
 
   // Column selector quota — only count columns that appear in the dropdown
   const invoiceToggleableKeys = React.useMemo(() => {
     const keys: (keyof typeof columnVisibility)[] = []
     if (showClientColumn) keys.push('client')
-    keys.push('invoiceNumber', 'billingPeriod', 'invoiceDate')
+    keys.push('invoiceDate', 'invoiceNumber', 'billingPeriod', 'shipments')
     if (showCostBreakdown) keys.push('cost', 'profit')
-    keys.push('shipments', 'transactions', 'amount', 'status', 'download')
+    keys.push('transactions', 'amount', 'status', 'download')
     return keys
   }, [showClientColumn, showCostBreakdown])
   const enabledInvoiceColumnCount = invoiceToggleableKeys.filter(k => columnVisibility[k]).length
   const totalInvoiceColumnCount = invoiceToggleableKeys.length
   const hasInvoiceColumnCustomizations = invoiceToggleableKeys.some(k => columnVisibility[k] !== DEFAULT_INVOICE_COLUMNS[k])
-
-  // Calculate column widths using the standardized config system (with ordered draggable columns)
-  const columnWidths = React.useMemo(() => {
-    // Build list of visible column configs IN DISPLAY ORDER
-    // Fixed client column first, then ordered draggable columns, then fixed download column
-    const visibleColumns = [
-      // Fixed client column (left side)
-      ...(showClientColumn && columnVisibility.client
-        ? [INVOICES_TABLE_CONFIG.columns.find(c => c.id === 'client')!]
-        : []),
-      // Ordered draggable columns (middle)
-      ...orderedDraggableColumns.filter(col => {
-        // Check visibility and admin-only constraints
-        if (col.id === 'cost' || col.id === 'profit') {
-          return showCostBreakdown && columnVisibility[col.id as keyof typeof columnVisibility]
-        }
-        return columnVisibility[col.id as keyof typeof columnVisibility]
-      }),
-      // Fixed download column (right side)
-      ...(columnVisibility.download
-        ? [INVOICES_TABLE_CONFIG.columns.find(c => c.id === 'download')!]
-        : []),
-    ].filter(Boolean)
-
-    const redistributed = getRedistributedWidths(visibleColumns)
-    const widths: Record<string, string> = {}
-    for (const [id, width] of Object.entries(redistributed)) {
-      widths[id] = `${width}%`
-    }
-    return widths
-  }, [orderedDraggableColumns, showClientColumn, showCostBreakdown, columnVisibility])
 
   // Helper to get client badge color based on client index
   const getClientBadgeColor = (clientId: string) => {
@@ -451,7 +506,7 @@ export default function InvoicesPage() {
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-col w-full h-[calc(100vh-64px)] px-6 lg:px-8">
           {/* Sticky header with filters */}
-          <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-inter text-xs">
+          <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
             <div className="px-6 lg:px-8 py-3 flex flex-col gap-4">
               {error && (
                 <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md">
@@ -496,7 +551,7 @@ export default function InvoicesPage() {
                       {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent align="start" className="font-inter text-xs">
+                  <SelectContent align="start" className="font-roboto text-xs">
                     {DATE_RANGE_PRESETS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
@@ -574,6 +629,14 @@ export default function InvoicesPage() {
                       </DropdownMenuCheckboxItem>
                     )}
                     <DropdownMenuCheckboxItem
+                      checked={columnVisibility.invoiceDate}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, invoiceDate: value })
+                      }
+                    >
+                      Date
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
                       checked={columnVisibility.invoiceNumber}
                       onCheckedChange={(value) =>
                         setColumnVisibility({ ...columnVisibility, invoiceNumber: value })
@@ -590,12 +653,12 @@ export default function InvoicesPage() {
                       Period
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
-                      checked={columnVisibility.invoiceDate}
+                      checked={columnVisibility.shipments}
                       onCheckedChange={(value) =>
-                        setColumnVisibility({ ...columnVisibility, invoiceDate: value })
+                        setColumnVisibility({ ...columnVisibility, shipments: value })
                       }
                     >
-                      Invoice Date
+                      Orders
                     </DropdownMenuCheckboxItem>
                     {showCostBreakdown && (
                       <>
@@ -617,14 +680,6 @@ export default function InvoicesPage() {
                         </DropdownMenuCheckboxItem>
                       </>
                     )}
-                    <DropdownMenuCheckboxItem
-                      checked={columnVisibility.shipments}
-                      onCheckedChange={(value) =>
-                        setColumnVisibility({ ...columnVisibility, shipments: value })
-                      }
-                    >
-                      Shipments
-                    </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
                       checked={columnVisibility.transactions}
                       onCheckedChange={(value) =>
@@ -665,40 +720,23 @@ export default function InvoicesPage() {
           </div>
 
           {/* Scrollable table area */}
-          <div className="relative flex flex-col flex-1 min-h-0 overflow-y-auto -mx-6 lg:-mx-8">
+          <div className="relative flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-6 lg:-mx-8">
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
             >
-              <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-xs font-inter">
-              <colgroup>
-                {/* Fixed client column */}
-                {showClientColumn && columnVisibility.client && <col style={{ width: columnWidths.client }} />}
-                {/* Draggable columns in orderedDraggableColumns order */}
-                {orderedDraggableColumns.map(col => {
-                  // Check visibility and admin-only constraints
-                  if (col.id === 'cost' || col.id === 'profit') {
-                    if (!showCostBreakdown || !columnVisibility[col.id as keyof typeof columnVisibility]) return null
-                  } else {
-                    if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
-                  }
-                  if (!columnWidths[col.id]) return null
-                  return <col key={col.id} style={{ width: columnWidths[col.id] }} />
-                })}
-                {/* Fixed download column */}
-                {columnVisibility.download && <col style={{ width: columnWidths.download }} />}
-              </colgroup>
+              <table style={{ tableLayout: 'auto', width: '100%' }} className="text-[13px] font-roboto">
               <thead className="sticky top-0 z-10 bg-surface dark:bg-zinc-900">
                 <SortableContext
                   items={orderedDraggableColumns.map(c => c.id)}
                   strategy={horizontalListSortingStrategy}
                 >
-                  <tr className="h-11">
+                  <tr className="h-[45px]">
                     {/* Fixed client column - NOT wrapped in SortableHeader */}
                     {showClientColumn && columnVisibility.client && (
-                      <th className="pl-6 lg:pl-8 pr-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide" />
+                      <th className="pl-6 lg:pl-8 pr-4 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap" />
                     )}
 
                     {/* Draggable columns - render in orderedDraggableColumns order */}
@@ -716,15 +754,23 @@ export default function InvoicesPage() {
                       // Get alignment from config
                       const align = col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
 
+                      const colIsSortable = !!col.sortable
+                      const isActive = sortField === col.id
+
                       return (
                         <SortableHeader
                           key={col.id}
                           columnId={col.id}
                           className={cn(
-                            "align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide",
+                            "align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap",
                             align,
-                            isFirstColumn && col.id === orderedDraggableColumns[0].id ? 'pl-6 lg:pl-8 pr-2' : 'px-2'
+                            colIsSortable && "cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors",
+                            isFirstColumn && col.id === firstVisibleDraggableId ? 'pl-6 lg:pl-8 pr-2' : 'px-2'
                           )}
+                          isSortable={colIsSortable}
+                          isActiveSort={isActive}
+                          activeSortDirection={sortDirection}
+                          onClick={colIsSortable ? () => handleSortChange(col.id) : undefined}
                         >
                           {col.header}
                         </SortableHeader>
@@ -733,7 +779,7 @@ export default function InvoicesPage() {
 
                     {/* Fixed download column - NOT wrapped in SortableHeader */}
                     {columnVisibility.download && (
-                      <th className="px-2 pr-6 lg:pr-8 text-center align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide" />
+                      <th className="w-px px-2 pr-6 lg:pr-8 text-center align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap" />
                     )}
                   </tr>
                 </SortableContext>
@@ -756,10 +802,10 @@ export default function InvoicesPage() {
                         return (
                           <tr
                             key={invoice.id}
-                            className="h-10 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/50"
+                            className="h-[45px] border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/50"
                           >
                             {showClientColumn && columnVisibility.client && (
-                              <td className="pl-6 lg:pl-8 pr-2 align-middle">
+                              <td className="pl-6 lg:pl-8 pr-4 align-middle whitespace-nowrap">
                                 <TooltipProvider delayDuration={100}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -787,11 +833,12 @@ export default function InvoicesPage() {
                               }
 
                               const isFirstColumn = !(showClientColumn && columnVisibility.client)
+                              const cellPadding = isFirstColumn && col.id === firstVisibleDraggableId ? 'pl-6 lg:pl-8 pr-2' : 'px-2'
                               const align = col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
 
                               if (col.id === 'invoiceNumber') {
                                 return (
-                                  <td key={col.id} className={`${isFirstColumn && col.id === orderedDraggableColumns[0].id ? 'pl-6 lg:pl-8 pr-2' : 'px-2'} align-middle`}>
+                                  <td key={col.id} className={`${cellPadding} align-middle whitespace-nowrap`}>
                                     {invoice.invoice_number}
                                   </td>
                                 )
@@ -799,7 +846,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'billingPeriod') {
                                 return (
-                                  <td key={col.id} className="px-2 text-left align-middle whitespace-nowrap">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle whitespace-nowrap`}>
                                     {formatBillingPeriod(invoice.period_start, invoice.period_end)}
                                   </td>
                                 )
@@ -807,7 +854,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'invoiceDate') {
                                 return (
-                                  <td key={col.id} className="px-2 text-left align-middle whitespace-nowrap">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle whitespace-nowrap`}>
                                     {formatDateFixed(invoice.invoice_date)}
                                   </td>
                                 )
@@ -815,7 +862,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'cost') {
                                 return (
-                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap`}>
                                     {formatCurrency(invoice.subtotal)}
                                   </td>
                                 )
@@ -823,7 +870,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'profit') {
                                 return (
-                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-emerald-600 dark:text-emerald-500">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap text-emerald-600 dark:text-emerald-500`}>
                                     +{formatCurrency(invoice.total_markup)}
                                   </td>
                                 )
@@ -831,7 +878,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'shipments') {
                                 return (
-                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-muted-foreground">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap text-muted-foreground`}>
                                     {invoice.shipment_count != null
                                       ? invoice.shipment_count.toLocaleString()
                                       : <span className="text-muted-foreground">-</span>
@@ -842,7 +889,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'transactions') {
                                 return (
-                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap text-muted-foreground">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap text-muted-foreground`}>
                                     {invoice.transaction_count != null
                                       ? invoice.transaction_count.toLocaleString()
                                       : <span className="text-muted-foreground">-</span>
@@ -853,7 +900,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'amount') {
                                 return (
-                                  <td key={col.id} className="px-2 text-right align-middle tabular-nums whitespace-nowrap font-semibold">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap font-semibold`}>
                                     {formatCurrency(invoice.total_amount)}
                                   </td>
                                 )
@@ -861,7 +908,7 @@ export default function InvoicesPage() {
 
                               if (col.id === 'status') {
                                 return (
-                                  <td key={col.id} className="px-2 text-center align-middle">
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle`}>
                                     <Badge
                                       variant="outline"
                                       className={cn(
@@ -880,7 +927,7 @@ export default function InvoicesPage() {
                               return null
                             })}
                             {columnVisibility.download && (
-                              <td className="px-2 pr-6 lg:pr-8 text-center align-middle">
+                              <td className="w-px px-2 pr-6 lg:pr-8 text-center align-middle whitespace-nowrap">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button
@@ -931,14 +978,14 @@ export default function InvoicesPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Rows</span>
                     <Select
-                      value={pageSize.toString()}
+                      value={invoicesPrefs.pageSize.toString()}
                       onValueChange={(value) => {
-                        setPageSize(Number(value))
+                        invoicesPrefs.setPageSize(Number(value))
                         setCurrentPage(0)
                       }}
                     >
                       <SelectTrigger className="h-7 w-[70px]">
-                        <SelectValue placeholder={pageSize} />
+                        <SelectValue placeholder={invoicesPrefs.pageSize} />
                       </SelectTrigger>
                       <SelectContent>
                         {[25, 50, 100, 200].map((size) => (

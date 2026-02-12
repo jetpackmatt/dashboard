@@ -18,6 +18,8 @@ import {
   ClockIcon,
   ColumnsIcon,
   DownloadIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
   FilterIcon,
   LoaderIcon,
   MoreVerticalIcon,
@@ -61,6 +63,7 @@ import { useDebouncedCallback } from "use-debounce"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { useUserSettings } from "@/hooks/use-user-settings"
 import {
   Sheet,
   SheetClose,
@@ -116,6 +119,7 @@ const UNFULFILLED_DATE_PRESETS: { value: DateRangePreset; label: string }[] = [
   { value: '3d', label: '3D' },
   { value: '4d', label: '4D' },
   { value: 'all', label: 'All' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 // Presets for Shipments and other tabs (longer-term focus)
@@ -127,6 +131,7 @@ const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
   { value: 'mtd', label: 'MTD' },
   { value: 'ytd', label: 'YTD' },
   { value: 'all', label: 'All' },
+  { value: 'custom', label: 'Custom' },
 ]
 
 function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date } | null {
@@ -298,24 +303,29 @@ export function DataTable({
   // ============================================================================
   const [rowSelection, setRowSelection] = React.useState({})
 
+  // Global default page size from user preferences
+  const { settings: userSettings } = useUserSettings()
+  const globalPageSize = userSettings.defaultPageSize
+
   // Table preferences with localStorage persistence for all tabs
-  const shipmentsPrefs = useTablePreferences('shipments', 50)
-  const unfulfilledPrefs = useTablePreferences('unfulfilled', 50)
-  const additionalServicesPrefs = useTablePreferences('additional-services', 50)
-  const returnsPrefs = useTablePreferences('returns', 50)
-  const receivingPrefs = useTablePreferences('receiving', 50)
-  const storagePrefs = useTablePreferences('storage', 50)
-  const creditsPrefs = useTablePreferences('credits', 50)
+  // Per-table overrides take precedence over the global default
+  const shipmentsPrefs = useTablePreferences('shipments', globalPageSize)
+  const unfulfilledPrefs = useTablePreferences('unfulfilled', globalPageSize)
+  const additionalServicesPrefs = useTablePreferences('additional-services', globalPageSize)
+  const returnsPrefs = useTablePreferences('returns', globalPageSize)
+  const receivingPrefs = useTablePreferences('receiving', globalPageSize)
+  const storagePrefs = useTablePreferences('storage', globalPageSize)
+  const creditsPrefs = useTablePreferences('credits', globalPageSize)
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
     pageSize: defaultPageSize,
   })
   const [exportSheetOpen, setExportSheetOpen] = React.useState(false)
   const [exportFormat, setExportFormat] = React.useState<'csv' | 'xlsx'>('csv')
-  const [exportScope, setExportScope] = React.useState<'current' | 'all'>('current')
+  const [exportScope, setExportScope] = React.useState<'current' | 'all'>('all')
   const [isExporting, setIsExporting] = React.useState(false)
   // Export trigger ref - set by active table component
-  const exportTriggerRef = React.useRef<((options: { format: ExportFormat; scope: ExportScope }) => void) | null>(null)
+  const exportTriggerRef = React.useRef<((options: { format: ExportFormat; scope: ExportScope }) => void | Promise<void>) | null>(null)
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
   const [filtersExpanded, setFiltersExpanded] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
@@ -799,7 +809,10 @@ export function DataTable({
   const handleGenericDatePresetChange = (preset: DateRangePreset) => {
     const { setPreset, setDateRange } = currentTabDateState
     setPreset(preset)
-    if (preset !== 'custom') {
+    if (preset === 'custom') {
+      // Clear range so the picker opens fresh for selection
+      setDateRange(undefined)
+    } else {
       const range = getDateRangeFromPreset(preset)
       if (range) {
         setDateRange({ from: range.from, to: range.to })
@@ -976,9 +989,9 @@ export function DataTable({
       onValueChange={handleTabChange}
     >
         {/* Sticky header with controls */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-inter text-xs">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + Export + Columns (right) */}
-          <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 py-[19.5px] flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               <div className="relative w-48 2xl:w-64">
@@ -1005,12 +1018,11 @@ export function DataTable({
                 )}
               </div>
 
-              {/* Date Range - Preset dropdown + Inline date range picker */}
+              {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
               {currentTab !== "storage" && (
                 <div className="flex items-center gap-1.5">
-                  {/* Preset dropdown (no Custom option) */}
                   <Select
-                    value={currentTabDateState.preset === 'custom' ? '' : (currentTabDateState.preset || '60d')}
+                    value={currentTabDateState.preset || '60d'}
                     onValueChange={(value) => {
                       if (value) {
                         handleGenericDatePresetChange(value as DateRangePreset)
@@ -1018,13 +1030,11 @@ export function DataTable({
                     }}
                   >
                     <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
-                      <SelectValue placeholder="Custom">
-                        {currentTabDateState.preset === 'custom'
-                          ? 'Custom'
-                          : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
+                      <SelectValue>
+                        {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent align="start" className="font-inter text-xs">
+                    <SelectContent align="start" className="font-roboto text-xs">
                       {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
@@ -1033,17 +1043,16 @@ export function DataTable({
                     </SelectContent>
                   </Select>
 
-                  {/* Inline date range picker - shows actual dates, allows custom selection */}
-                  <InlineDateRangePicker
-                    dateRange={currentTabDateState.dateRange}
-                    onDateRangeChange={(range) => {
-                      currentTabDateState.setDateRange(range)
-                      // When user manually selects dates, switch to custom mode
-                      if (range?.from && range?.to) {
-                        currentTabDateState.setPreset('custom')
-                      }
-                    }}
-                  />
+                  {/* Inline date range picker - only visible when Custom is selected */}
+                  {currentTabDateState.preset === 'custom' && (
+                    <InlineDateRangePicker
+                      dateRange={currentTabDateState.dateRange}
+                      onDateRangeChange={(range) => {
+                        currentTabDateState.setDateRange(range)
+                      }}
+                      autoOpen
+                    />
+                  )}
                 </div>
               )}
 
@@ -1098,8 +1107,9 @@ export function DataTable({
                 // Maximum columns allowed to prevent horizontal scrolling
                 const MAX_VISIBLE_COLUMNS = 12
 
-                // Count currently enabled columns
-                const enabledColumnCount = currentTableConfig.columns.filter(
+                // Only count data columns (exclude action columns with no header)
+                const dataColumns = currentTableConfig.columns.filter(c => c.header)
+                const enabledColumnCount = dataColumns.filter(
                   col => currentColumnVisibility[col.id] ?? col.defaultVisible !== false
                 ).length
 
@@ -1117,7 +1127,7 @@ export function DataTable({
                           <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56 font-inter text-xs">
+                      <DropdownMenuContent align="end" className="w-56 font-roboto text-xs">
                         {/* Column limit message with Reset link */}
                         <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
                           <span>
@@ -1133,7 +1143,7 @@ export function DataTable({
                             </button>
                           )}
                         </div>
-                        {currentTableConfig.columns.map((column) => {
+                        {currentTableConfig.columns.filter(c => c.header).map((column) => {
                           const isChecked = currentColumnVisibility[column.id] ?? column.defaultVisible !== false
                           // Disable unchecked columns if at limit
                           const isDisabled = !isChecked && isAtLimit
@@ -1554,109 +1564,130 @@ export function DataTable({
 
     {/* Export Sheet */}
     <Sheet open={exportSheetOpen} onOpenChange={setExportSheetOpen}>
-      <SheetContent>
+      <SheetContent className="font-roboto">
         <SheetHeader>
-          <SheetTitle>Export Data</SheetTitle>
-          <SheetDescription>
-            Export {currentTab === 'unfulfilled' ? 'orders' : currentTab} data to a file
+          <SheetTitle className="text-base font-medium">Export {currentTab === 'unfulfilled' ? 'Orders' : currentTab.charAt(0).toUpperCase() + currentTab.slice(1)}</SheetTitle>
+          <SheetDescription className="sr-only">
+            Export data to a file
           </SheetDescription>
         </SheetHeader>
-        <div className="flex flex-col gap-6 py-6">
-          <div className="flex flex-col gap-3">
-            <Label className="text-sm font-medium">File Format</Label>
-            <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-5 py-5">
+          {/* Format */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">Format</span>
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setExportFormat('csv')}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all",
+                  "flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-[13px] transition-colors",
                   exportFormat === 'csv'
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-muted-foreground/50"
+                    ? "border-zinc-400 dark:border-zinc-500 bg-muted/50"
+                    : "border-border hover:bg-muted/30"
                 )}
               >
-                <span className="text-2xl">📄</span>
-                <span className="font-medium">CSV</span>
-                <span className="text-xs text-muted-foreground">Comma-separated</span>
+                <FileTextIcon className="h-4 w-4 text-muted-foreground" />
+                <div className="text-left">
+                  <div className="font-medium">CSV</div>
+                  <div className="text-[11px] text-muted-foreground">Comma-separated</div>
+                </div>
               </button>
               <button
                 onClick={() => setExportFormat('xlsx')}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all",
+                  "flex items-center gap-2.5 px-3 py-2.5 rounded-md border text-[13px] transition-colors",
                   exportFormat === 'xlsx'
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-muted-foreground/50"
+                    ? "border-zinc-400 dark:border-zinc-500 bg-muted/50"
+                    : "border-border hover:bg-muted/30"
                 )}
               >
-                <span className="text-2xl">📊</span>
-                <span className="font-medium">Excel</span>
-                <span className="text-xs text-muted-foreground">XLSX format</span>
+                <FileSpreadsheetIcon className="h-4 w-4 text-muted-foreground" />
+                <div className="text-left">
+                  <div className="font-medium">Excel</div>
+                  <div className="text-[11px] text-muted-foreground">XLSX spreadsheet</div>
+                </div>
               </button>
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <Label className="text-sm font-medium">Export Scope</Label>
-            <div className="flex flex-col gap-2">
-              <label className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
-                <input
-                  type="radio"
-                  name="exportScope"
-                  value="current"
-                  checked={exportScope === 'current'}
-                  onChange={() => setExportScope('current')}
-                  className="h-4 w-4"
-                />
-                <div className="flex flex-col">
-                  <span className="font-medium">Current Page</span>
-                  <span className="text-xs text-muted-foreground">
-                    Export only the visible rows on this page
-                  </span>
+          {/* Scope */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wide">Scope</span>
+            <div className="flex flex-col gap-1.5">
+              <button
+                onClick={() => setExportScope('all')}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-md border text-[13px] text-left transition-colors",
+                  exportScope === 'all'
+                    ? "border-zinc-400 dark:border-zinc-500 bg-muted/50"
+                    : "border-border hover:bg-muted/30"
+                )}
+              >
+                <div className={cn(
+                  "h-3.5 w-3.5 rounded-full border-[1.5px] flex items-center justify-center flex-shrink-0",
+                  exportScope === 'all' ? "border-foreground" : "border-zinc-300 dark:border-zinc-600"
+                )}>
+                  {exportScope === 'all' && <div className="h-1.5 w-1.5 rounded-full bg-foreground" />}
                 </div>
-              </label>
-              <label className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
-                <input
-                  type="radio"
-                  name="exportScope"
-                  value="all"
-                  checked={exportScope === 'all'}
-                  onChange={() => setExportScope('all')}
-                  className="h-4 w-4"
-                />
-                <div className="flex flex-col">
-                  <span className="font-medium">All Pages</span>
-                  <span className="text-xs text-muted-foreground">
-                    Export all records matching current filters
-                  </span>
+                <div>
+                  <div className="font-medium">All records</div>
+                  <div className="text-[11px] text-muted-foreground">Everything matching current filters</div>
                 </div>
-              </label>
+              </button>
+              <button
+                onClick={() => setExportScope('current')}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-md border text-[13px] text-left transition-colors",
+                  exportScope === 'current'
+                    ? "border-zinc-400 dark:border-zinc-500 bg-muted/50"
+                    : "border-border hover:bg-muted/30"
+                )}
+              >
+                <div className={cn(
+                  "h-3.5 w-3.5 rounded-full border-[1.5px] flex items-center justify-center flex-shrink-0",
+                  exportScope === 'current' ? "border-foreground" : "border-zinc-300 dark:border-zinc-600"
+                )}>
+                  {exportScope === 'current' && <div className="h-1.5 w-1.5 rounded-full bg-foreground" />}
+                </div>
+                <div>
+                  <div className="font-medium">Current page</div>
+                  <div className="text-[11px] text-muted-foreground">Only visible rows on this page</div>
+                </div>
+              </button>
             </div>
           </div>
         </div>
-        <SheetFooter className="gap-2">
+        <SheetFooter className="gap-2 pt-2">
           <SheetClose asChild>
-            <Button variant="outline" disabled={isExporting}>Cancel</Button>
+            <Button variant="outline" size="sm" disabled={isExporting} className="text-[13px]">Cancel</Button>
           </SheetClose>
           <Button
-            onClick={() => {
+            size="sm"
+            className="text-[13px]"
+            onClick={async () => {
               setIsExporting(true)
-              // Trigger export via the current table's ref
-              if (exportTriggerRef.current) {
-                exportTriggerRef.current({ format: exportFormat, scope: exportScope })
+              setExportSheetOpen(false) // Close sheet so progress bar is visible
+              try {
+                if (exportTriggerRef.current) {
+                  await exportTriggerRef.current({ format: exportFormat, scope: exportScope })
+                }
+                toast.success(`Exported ${currentTab} data as ${exportFormat.toUpperCase()}`)
+              } catch (err) {
+                toast.error('Export failed. Please try again.')
+                console.error('Export error:', err)
+              } finally {
+                setIsExporting(false)
               }
-              toast.success(`Exporting ${currentTab} data as ${exportFormat.toUpperCase()}...`)
-              setIsExporting(false)
-              setExportSheetOpen(false)
             }}
             disabled={isExporting}
           >
             {isExporting ? (
               <>
-                <LoaderIcon className="mr-2 h-4 w-4 animate-spin" />
+                <LoaderIcon className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 Exporting...
               </>
             ) : (
               <>
-                <DownloadIcon className="mr-2 h-4 w-4" />
+                <DownloadIcon className="mr-1.5 h-3.5 w-3.5" />
                 Export
               </>
             )}

@@ -97,6 +97,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Confidence heatmap (from survival_curves - small table)
+    // Keep individual zones for accuracy (zone_1 through zone_10, international)
     const { data: heatmapData } = await supabase
       .from('survival_curves')
       .select('carrier, zone_bucket, confidence_level, sample_size')
@@ -108,6 +109,7 @@ export async function GET(request: NextRequest) {
         confidenceHeatmap[row.carrier] = {}
       }
       const existing = confidenceHeatmap[row.carrier][row.zone_bucket]
+      // Keep the one with higher sample size if duplicates exist
       if (!existing || row.sample_size > existing.sampleSize) {
         confidenceHeatmap[row.carrier][row.zone_bucket] = {
           confidence: row.confidence_level,

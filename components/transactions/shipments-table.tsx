@@ -12,6 +12,8 @@ import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dial
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
+import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
+import { useExport } from "@/components/export-context"
 
 interface ShipmentsTableProps {
   clientId: string
@@ -66,9 +68,9 @@ export function ShipmentsTable({
   onPageSizeChange,
   onExportTriggerReady,
 }: ShipmentsTableProps) {
-  // Check if admin viewing all clients (for client badge prefix column)
-  const { isAdmin, selectedClientId } = useClient()
-  const showClientBadge = isAdmin && !selectedClientId
+  // Check if admin/care viewing all clients (for client badge prefix column)
+  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Use initial data if provided, otherwise start empty
   const hasInitialData = initialData && initialData.length > 0
@@ -80,6 +82,9 @@ export function ShipmentsTable({
 
   // Track if we've used the initial data (to skip first fetch)
   const [usedInitialData, setUsedInitialData] = React.useState(hasInitialData)
+
+  // Global export context (progress bar persists across navigation)
+  const { startStreamingExport } = useExport()
 
   // Shipment details drawer state
   const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
@@ -95,10 +100,16 @@ export function ShipmentsTable({
     setClaimDialogOpen(true)
   }, [])
 
-  // Create cell renderers with the claim click handler
+  // Handle "Cancel" click (placeholder - opens drawer for now)
+  const handleCancelClick = React.useCallback((shipmentId: string) => {
+    setSelectedShipmentId(shipmentId)
+    setDrawerOpen(true)
+  }, [])
+
+  // Create cell renderers with the claim + cancel click handlers
   const cellRenderers = React.useMemo(
-    () => createShipmentCellRenderers({ onFileClaimClick: handleFileClaimClick }),
-    [handleFileClaimClick]
+    () => createShipmentCellRenderers({ onFileClaimClick: handleFileClaimClick, onCancelClick: handleCancelClick }),
+    [handleFileClaimClick, handleCancelClick]
   )
 
   // Pagination state - use initialPageSize from props for persistence
@@ -297,49 +308,40 @@ export function ShipmentsTable({
     setSortDirection(direction)
   }, [])
 
-  // Export handler - fetches all data when scope is 'all', uses current data for 'current'
+  // Export handler - streams progress for 'all' (via global context), uses current data for 'current'
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
 
-    let dataToExport: Shipment[]
-
-    if (scope === 'current') {
-      // Export current page data
-      dataToExport = data
-    } else {
-      // Fetch all data with current filters
-      const params = new URLSearchParams({
-        clientId,
-        limit: '10000', // Large limit to get all records
-        offset: '0',
+    if (scope === 'all') {
+      // Delegate to global export context (survives navigation)
+      startStreamingExport({
+        url: '/api/data/shipments/export',
+        body: {
+          clientId,
+          startDate: dateRange?.from ? format(startOfDay(dateRange.from), 'yyyy-MM-dd') : undefined,
+          endDate: dateRange?.to ? format(endOfDay(dateRange.to), 'yyyy-MM-dd') : undefined,
+          status: statusFilter.length > 0 ? statusFilter : undefined,
+          type: typeFilter.length > 0 ? typeFilter : undefined,
+          channel: channelFilter.length > 0 ? channelFilter : undefined,
+          carrier: carrierFilter.length > 0 ? carrierFilter : undefined,
+          age: ageFilter.length > 0 ? ageFilter : undefined,
+          search: searchQuery || undefined,
+          format: exportFormat,
+        },
+        source: 'Shipments',
+        totalCount,
       })
-
-      if (dateRange?.from) {
-        params.set('startDate', format(startOfDay(dateRange.from), 'yyyy-MM-dd'))
-        if (dateRange.to) {
-          params.set('endDate', format(endOfDay(dateRange.to), 'yyyy-MM-dd'))
-        }
-      }
-      if (statusFilter.length > 0) params.set('status', statusFilter.join(','))
-      if (typeFilter.length > 0) params.set('type', typeFilter.join(','))
-      if (channelFilter.length > 0) params.set('channel', channelFilter.join(','))
-      if (carrierFilter.length > 0) params.set('carrier', carrierFilter.join(','))
-      if (ageFilter.length > 0) params.set('age', ageFilter.join(','))
-      if (searchQuery) params.set('search', searchQuery)
-
-      const response = await fetch(`/api/data/shipments?${params.toString()}`)
-      const result = await response.json()
-      dataToExport = result.data || []
+      return
     }
 
-    // Export the data
-    exportData(dataToExport as unknown as Record<string, unknown>[], {
+    // Export current page data using invoice column format
+    exportData(data as unknown as Record<string, unknown>[], {
       format: exportFormat,
       scope,
       filename: 'shipments',
-      tableConfig: SHIPMENTS_TABLE_CONFIG,
+      ...toExportMapping(SHIPMENTS_INVOICE_COLUMNS),
     })
-  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, ageFilter, searchQuery])
+  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, ageFilter, searchQuery, totalCount, startStreamingExport])
 
   // Register export trigger with parent
   React.useEffect(() => {

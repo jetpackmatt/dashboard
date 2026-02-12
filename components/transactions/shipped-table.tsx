@@ -15,8 +15,10 @@ import {
 } from "@tanstack/react-table"
 import {
   CheckCircle2Icon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
   ExternalLinkIcon,
@@ -45,6 +47,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { TrackingLink } from "@/components/tracking-link"
 
 interface ShippedOrder {
   id: string
@@ -127,20 +130,26 @@ const columns: ColumnDef<ShippedOrder>[] = [
   {
     accessorKey: "storeOrderId",
     header: "Store Order",
-    cell: ({ row }) => (
-      <div className="text-muted-foreground text-sm">
-        {row.getValue("storeOrderId") || "-"}
-      </div>
-    ),
+    cell: ({ row }) => {
+      const val = row.getValue("storeOrderId") as string
+      return (
+        <div className="truncate text-muted-foreground text-sm" style={{ maxWidth: 'clamp(40px, 5vw, 120px)' }} title={val || undefined}>
+          {val || "-"}
+        </div>
+      )
+    },
   },
   {
     accessorKey: "customerName",
     header: "Customer",
-    cell: ({ row }) => (
-      <div className="max-w-[150px] truncate">
-        {row.getValue("customerName")}
-      </div>
-    ),
+    cell: ({ row }) => {
+      const val = row.getValue("customerName") as string
+      return (
+        <div className="truncate" style={{ maxWidth: 'clamp(60px, 8vw, 180px)' }} title={val || undefined}>
+          {val || "-"}
+        </div>
+      )
+    },
   },
   {
     accessorKey: "status",
@@ -182,22 +191,18 @@ const columns: ColumnDef<ShippedOrder>[] = [
     cell: ({ row }) => {
       const trackingId = row.getValue("trackingId") as string
       const carrier = row.original.carrier
-      const trackingUrl = getTrackingUrl(carrier, trackingId)
 
       if (!trackingId) return "-"
 
-      return trackingUrl ? (
-        <a
-          href={trackingUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+      return (
+        <TrackingLink
+          trackingNumber={trackingId}
+          carrier={carrier}
           className="flex items-center gap-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
         >
           <span className="truncate max-w-[100px]">{trackingId}</span>
           <ExternalLinkIcon className="h-3 w-3 flex-shrink-0" />
-        </a>
-      ) : (
-        <span className="truncate max-w-[100px] block">{trackingId}</span>
+        </TrackingLink>
       )
     },
   },
@@ -246,7 +251,7 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
   const [totalCount, setTotalCount] = React.useState(0)
 
   // Table state
-  const [sorting, setSorting] = React.useState<SortingState>([])
+  const [sorting, setSorting] = React.useState<SortingState>([{ id: 'shippedDate', desc: true }])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [pageIndex, setPageIndex] = React.useState(0)
@@ -346,17 +351,27 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
       <div className="px-4 lg:px-6">
         <div className="rounded-md border">
           <Table>
-            <TableHeader className="bg-[#fcfcfc] dark:bg-zinc-900">
+            <TableHeader className="bg-surface dark:bg-zinc-900">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
+                    <TableHead
+                      key={header.id}
+                      className={`text-[10px] text-zinc-500 dark:text-zinc-500 uppercase tracking-wide ${header.column.getCanSort() ? 'cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors group/th' : ''}`}
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      {header.isPlaceholder ? null : (
+                        <span className="inline-flex items-center gap-0.5">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {header.column.getCanSort() && (
+                            header.column.getIsSorted() === 'asc'
+                              ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+                              : header.column.getIsSorted() === 'desc'
+                                ? <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+                                : <ChevronDownIcon className="h-3 w-3 flex-shrink-0 opacity-0 group-hover/th:opacity-40 transition-opacity" />
                           )}
+                        </span>
+                      )}
                     </TableHead>
                   ))}
                 </TableRow>

@@ -43,6 +43,10 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
 
+  // Sort params
+  const sortField = searchParams.get('sortField') || 'charge_date'
+  const sortAscending = searchParams.get('sortDirection') === 'asc'
+
   // Date filtering
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
@@ -55,6 +59,9 @@ export async function GET(request: NextRequest) {
 
   // Search query
   const search = searchParams.get('search')?.trim().toLowerCase()
+
+  // Export mode - includes extra fields for invoice-format export
+  const isExport = searchParams.get('export') === 'true'
 
   try {
     // Filter by fee_type only (not reference_type) since some fees like
@@ -98,12 +105,26 @@ export async function GET(request: NextRequest) {
     }
 
     const { data, error, count } = await query
-      .order('charge_date', { ascending: false })
+      .order(sortField, { ascending: sortAscending })
       .range(offset, offset + limit - 1)
 
     if (error) {
       console.error('Error fetching additional services:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    // Export: look up client merchant_id and company_name
+    let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
+    if (isExport) {
+      const clientIds = [...new Set((data || []).map((r: Record<string, unknown>) => r.client_id).filter(Boolean))]
+      if (clientIds.length > 0) {
+        const { data: clients } = await supabase.from('clients').select('id, merchant_id, company_name').in('id', clientIds as string[])
+        if (clients) {
+          for (const c of clients) {
+            clientInfoMap[c.id] = { merchantId: c.merchant_id?.toString() || '', merchantName: c.company_name || '' }
+          }
+        }
+      }
     }
 
     // Map to response format matching XLS columns
@@ -125,6 +146,11 @@ export async function GET(request: NextRequest) {
       status: row.invoiced_status_jp ? 'invoiced' : 'pending',
       // Include preview flag for UI styling (optional indicator)
       isPreview: row.markup_is_preview === true,
+      // Export-only fields
+      ...(isExport ? {
+        merchantId: clientInfoMap[row.client_id as string]?.merchantId || '',
+        merchantName: clientInfoMap[row.client_id as string]?.merchantName || '',
+      } : {}),
     }))
 
     return NextResponse.json({

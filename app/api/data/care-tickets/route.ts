@@ -112,6 +112,12 @@ export async function GET(request: NextRequest) {
       query = query.lte('created_at', `${endDate}T23:59:59.999Z`)
     }
 
+    // Exclude soft-deleted tickets unless explicitly requested
+    const includeDeleted = searchParams.get('includeDeleted') === 'true'
+    if (!includeDeleted) {
+      query = query.is('deleted_at', null)
+    }
+
     const { data, error, count } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)

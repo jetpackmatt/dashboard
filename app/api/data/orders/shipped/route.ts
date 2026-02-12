@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
+  const searchQuery = searchParams.get('search')?.trim() || ''
 
   try {
     // Build query for shipped orders (status = 'Fulfilled')
@@ -38,6 +39,14 @@ export async function GET(request: NextRequest) {
     // Only filter by client_id if not viewing all brands
     if (clientId) {
       query = query.eq('client_id', clientId)
+    }
+
+    // Search filter
+    if (searchQuery) {
+      const searchPattern = `%${searchQuery}%`
+      query = query.or(
+        `store_order_id.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},customer_name.ilike.${searchPattern}`
+      )
     }
 
     const { data: ordersData, error: ordersError, count } = await query

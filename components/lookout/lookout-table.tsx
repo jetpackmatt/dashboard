@@ -9,7 +9,6 @@ import {
   ChevronsLeftIcon,
   ChevronsRightIcon,
   CopyIcon,
-  Loader2Icon,
   RefreshCwIcon,
   ExternalLinkIcon,
 } from "lucide-react"
@@ -22,6 +21,9 @@ import { ClientBadge } from "@/components/transactions/client-badge"
 import { getTrackingUrl, getCarrierDisplayName } from "@/components/transactions/cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { TrackingTimelineDrawer } from "./tracking-timeline-drawer"
+import { TrackingLink, useTrackingDrawer } from "@/components/tracking-link"
+import { useUserSettings } from "@/hooks/use-user-settings"
+import { useTablePreferences } from "@/hooks/use-table-preferences"
 import type { MonitoredShipment } from "@/app/dashboard/lookout/page"
 import type { QuickFilterValue } from "./quick-filters"
 
@@ -35,8 +37,8 @@ interface LookoutTableProps {
 }
 
 // Format date for display
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '-'
+function formatDate(dateStr: string | null): React.ReactNode {
+  if (!dateStr) return <span className="text-muted-foreground">-</span>
   try {
     const date = new Date(dateStr)
     return date.toLocaleDateString('en-US', {
@@ -45,7 +47,7 @@ function formatDate(dateStr: string | null): string {
       year: 'numeric',
     })
   } catch {
-    return '-'
+    return <span className="text-muted-foreground">-</span>
   }
 }
 
@@ -104,7 +106,7 @@ function getStatusLabel(claimStatus: string | null, careTicketStatus: string | n
     case 'approved': return 'Credit Approved'
     case 'denied': return 'Credit Denied'
     case 'missed_window': return 'Missed Window'
-    default: return '-'
+    default: return 'Unknown'
   }
 }
 
@@ -120,9 +122,14 @@ export function LookoutTable({
   // For claim_filed, shows the actual care ticket status (Under Review, Credit Requested, etc.)
   const showStatusColumn = activeFilter === 'all' || activeFilter === 'archived' || activeFilter === 'claim_filed'
 
+  // Global default page size
+  const { settings: userSettings } = useUserSettings()
+  const lookoutPrefs = useTablePreferences('lookout', userSettings.defaultPageSize)
+
   // Pagination state
   const [page, setPage] = React.useState(0)
-  const [pageSize, setPageSize] = React.useState(50)
+  const pageSize = lookoutPrefs.pageSize
+  const setPageSize = lookoutPrefs.setPageSize
 
   // Sorting state
   const [sortField, setSortField] = React.useState<string>('daysSilent')
@@ -198,10 +205,12 @@ export function LookoutTable({
 
   // Render sort indicator
   const SortIndicator = ({ field }: { field: string }) => {
-    if (sortField !== field) return null
-    return sortDirection === 'asc'
-      ? <ChevronUpIcon className="h-4 w-4" />
-      : <ChevronDownIcon className="h-4 w-4" />
+    if (sortField === field) {
+      return sortDirection === 'asc'
+        ? <ChevronUpIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+        : <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-foreground" />
+    }
+    return <ChevronDownIcon className="h-3 w-3 flex-shrink-0 opacity-0 group-hover/th:opacity-40 transition-opacity" />
   }
 
   // Calculate pagination
@@ -222,31 +231,18 @@ export function LookoutTable({
   }
 
   // Common header cell styles matching TransactionsTable
-  const headerCellClass = "px-2 text-left align-middle text-xs font-medium text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer"
+  const headerCellClass = "group/th px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
 
   return (
     <div className="flex flex-col h-full">
       {/* Table */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <table style={{ tableLayout: 'fixed', width: '100%' }} className="text-sm">
-          {/* Column widths depend on showClientColumn and showStatusColumn */}
-          {showClientColumn && showStatusColumn && (
-            <colgroup><col style={{ width: '6%' }} /><col style={{ width: '11%' }} /><col style={{ width: '14%' }} /><col style={{ width: '11%' }} /><col style={{ width: '10%' }} /><col style={{ width: '7%' }} /><col style={{ width: '10%' }} /><col style={{ width: '11%' }} /><col style={{ width: '20%' }} /></colgroup>
-          )}
-          {showClientColumn && !showStatusColumn && (
-            <colgroup><col style={{ width: '6%' }} /><col style={{ width: '12%' }} /><col style={{ width: '16%' }} /><col style={{ width: '12%' }} /><col style={{ width: '11%' }} /><col style={{ width: '8%' }} /><col style={{ width: '12%' }} /><col style={{ width: '23%' }} /></colgroup>
-          )}
-          {!showClientColumn && showStatusColumn && (
-            <colgroup><col style={{ width: '12%' }} /><col style={{ width: '15%' }} /><col style={{ width: '12%' }} /><col style={{ width: '11%' }} /><col style={{ width: '7%' }} /><col style={{ width: '11%' }} /><col style={{ width: '12%' }} /><col style={{ width: '20%' }} /></colgroup>
-          )}
-          {!showClientColumn && !showStatusColumn && (
-            <colgroup><col style={{ width: '14%' }} /><col style={{ width: '17%' }} /><col style={{ width: '13%' }} /><col style={{ width: '12%' }} /><col style={{ width: '8%' }} /><col style={{ width: '13%' }} /><col style={{ width: '23%' }} /></colgroup>
-          )}
-          <thead className="sticky top-0 bg-[#fcfcfc] dark:bg-zinc-900 z-10">
-            <tr className="h-11">
-              {/* Client badge prefix column - no header, fixed width, only shown for admins viewing all */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        <table style={{ tableLayout: 'auto', width: '100%' }} className="text-[13px] font-roboto">
+          <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
+            <tr className="h-[45px]">
+              {/* Client badge prefix column - no header, shrink-to-fit, only shown for admins viewing all */}
               {showClientColumn && (
-                <th className="pl-4 lg:pl-6 pr-2 align-middle"></th>
+                <th className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle"></th>
               )}
               <th
                 className={cn(headerCellClass, !showClientColumn && "pl-4 lg:pl-6")}
@@ -314,18 +310,20 @@ export function LookoutTable({
                 </th>
               )}
               <th
-                className={cn(headerCellClass, "pr-4 lg:pr-6")}
+                className={headerCellClass}
               >
                 Actions
               </th>
+              {/* Spacer column — absorbs all excess width so data columns stay content-tight */}
+              <th className="w-full"></th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               // Loading skeleton rows matching TransactionsTable
               Array.from({ length: 10 }).map((_, i) => (
-                <tr key={`loading-${i}`} className="h-12 dark:bg-[hsl(220,8%,8%)]">
-                  {showClientColumn && <td className="pl-4 lg:pl-6 pr-2 align-middle"><div className="h-5 w-6 animate-pulse bg-muted/40 rounded" /></td>}
+                <tr key={`loading-${i}`} className="h-[45px] dark:bg-[hsl(220,8%,8%)]">
+                  {showClientColumn && <td className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle"><div className="h-5 w-6 animate-pulse bg-muted/40 rounded" /></td>}
                   <td className={cn("px-2", !showClientColumn && "pl-4 lg:pl-6")}><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
                   <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
                   <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
@@ -333,12 +331,13 @@ export function LookoutTable({
                   <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
                   <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
                   {showStatusColumn && <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>}
-                  <td className="px-2 pr-4 lg:pr-6"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
+                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
+                  <td></td>
                 </tr>
               ))
             ) : paginatedData.length === 0 ? (
               <tr>
-                <td colSpan={(showClientColumn ? 1 : 0) + 6 + (showStatusColumn ? 1 : 0) + 1} className="h-24 text-center text-muted-foreground">
+                <td colSpan={(showClientColumn ? 1 : 0) + 6 + (showStatusColumn ? 1 : 0) + 2} className="h-24 text-center text-muted-foreground">
                   No monitored shipments found
                 </td>
               </tr>
@@ -349,24 +348,24 @@ export function LookoutTable({
                 return (
                   <tr
                     key={shipment.id}
-                    className="h-12 border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 cursor-pointer"
+                    className="h-[45px] border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 cursor-pointer"
                     onClick={() => handleRowClick(shipment.trackingNumber, shipment.carrier)}
                   >
                     {/* Client badge prefix - first column, no click propagation needed */}
                     {showClientColumn && (
-                      <td className="pl-4 lg:pl-6 pr-2 align-middle">
+                      <td className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle">
                         <ClientBadge clientId={shipment.clientId} />
                       </td>
                     )}
                     <td className={cn("px-2 align-middle overflow-hidden whitespace-nowrap", !showClientColumn && "pl-4 lg:pl-6")} onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
+                      <div className="group/cell flex items-center gap-1.5">
                         <button
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
                             handleShipmentIdClick(shipment.shipmentId)
                           }}
-                          className="font-mono text-xs truncate text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors"
+                          className="font-mono truncate text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors"
                           title="View shipment details"
                         >
                           {shipment.shipmentId}
@@ -379,7 +378,7 @@ export function LookoutTable({
                               navigator.clipboard.writeText(shipment.shipmentId)
                               toast.success("Shipment ID copied")
                             }}
-                            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                             title="Copy Shipment ID"
                           >
                             <CopyIcon className="h-3.5 w-3.5" />
@@ -387,19 +386,17 @@ export function LookoutTable({
                         )}
                       </div>
                     </td>
-                    <td className="pl-2 pr-4 align-middle overflow-hidden whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            handleTrackingClick(shipment.trackingNumber, shipment.carrier)
-                          }}
-                          className="font-mono text-xs truncate text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors"
-                          title="View tracking timeline"
-                        >
-                          {shipment.trackingNumber}
-                        </button>
+                    <td className="px-2 align-middle overflow-hidden whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="group/cell flex items-center gap-1.5">
+                        <div className="truncate min-w-0 font-mono" style={{ maxWidth: 'clamp(60px, 8vw, 180px)' }} title={shipment.trackingNumber}>
+                          <TrackingLink
+                            trackingNumber={shipment.trackingNumber}
+                            carrier={shipment.carrier}
+                            className="text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors"
+                          >
+                            {shipment.trackingNumber}
+                          </TrackingLink>
+                        </div>
                         {shipment.trackingNumber && (
                           <button
                             onClick={(e) => {
@@ -408,7 +405,7 @@ export function LookoutTable({
                               navigator.clipboard.writeText(shipment.trackingNumber)
                               toast.success("Tracking # copied")
                             }}
-                            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                             title="Copy Tracking #"
                           >
                             <CopyIcon className="h-3.5 w-3.5" />
@@ -427,37 +424,37 @@ export function LookoutTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-2 align-middle text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
+                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
                       {formatDate(shipment.shipDate)}
                     </td>
-                    <td className="px-2 align-middle text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
+                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
                       {formatDate(shipment.lastScanDate)}
                     </td>
-                    <td className="px-2 align-middle">
+                    <td className="px-2 align-middle whitespace-nowrap">
                       <Badge
                         variant="outline"
                         className={cn(
-                          "font-mono",
+                          "text-[11px] font-mono",
                           getDaysSilentColor(shipment.daysSilent)
                         )}
                       >
                         {shipment.daysSilent ?? '-'}
                       </Badge>
                     </td>
-                    <td className="px-2 align-middle overflow-hidden text-ellipsis whitespace-nowrap">
+                    <td className="px-2 align-middle whitespace-nowrap">
                       {getCarrierDisplayName(shipment.carrier || '')}
                     </td>
                     {showStatusColumn && (
-                      <td className="px-2 align-middle" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <Badge
                           variant="outline"
-                          className={cn("text-xs", getStatusColor(shipment.claimEligibilityStatus, shipment.careTicketStatus))}
+                          className={cn("text-[11px]", getStatusColor(shipment.claimEligibilityStatus, shipment.careTicketStatus))}
                         >
                           {getStatusLabel(shipment.claimEligibilityStatus, shipment.careTicketStatus)}
                         </Badge>
                       </td>
                     )}
-                    <td className="px-2 pr-4 lg:pr-6 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {(() => {
                         const showFileClaim = shipment.claimEligibilityStatus === 'eligible'
                         // Use daysSilent (which we display) as fallback for daysInTransit
@@ -497,59 +494,60 @@ export function LookoutTable({
                         )
                       })()}
                     </td>
+                    {/* Spacer cell */}
+                    <td></td>
                   </tr>
                 )
               })
             )}
           </tbody>
         </table>
+        {/* Pagination - sticky at bottom of scrollable area */}
+        {!isLoading && sortedData.length > 0 && (
+          <div className="sticky bottom-0 bg-background py-3 px-4 lg:px-6 flex items-center justify-between border-t border-border/40">
+            <div className="text-sm text-muted-foreground">
+              {paginatedData.length.toLocaleString()} of {sortedData.length.toLocaleString()} shipments
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(0)}
+                disabled={!canPrevPage}
+              >
+                <ChevronsLeftIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => p - 1)}
+                disabled={!canPrevPage}
+              >
+                <ChevronLeftIcon className="h-4 w-4" />
+              </Button>
+              <span className="text-sm px-2">
+                Page {page + 1} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => p + 1)}
+                disabled={!canNextPage}
+              >
+                <ChevronRightIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(totalPages - 1)}
+                disabled={!canNextPage}
+              >
+                <ChevronsRightIcon className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Pagination - stays at bottom via flexbox (flex-shrink-0) */}
-      {!isLoading && sortedData.length > 0 && (
-        <div className="flex-shrink-0 bg-background py-3 px-4 lg:px-6 flex items-center justify-between border-t border-border/40">
-          <div className="text-sm text-muted-foreground">
-            {paginatedData.length.toLocaleString()} of {sortedData.length.toLocaleString()} shipments
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(0)}
-              disabled={!canPrevPage}
-            >
-              <ChevronsLeftIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => p - 1)}
-              disabled={!canPrevPage}
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </Button>
-            <span className="text-sm px-2">
-              Page {page + 1} of {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(p => p + 1)}
-              disabled={!canNextPage}
-            >
-              <ChevronRightIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage(totalPages - 1)}
-              disabled={!canNextPage}
-            >
-              <ChevronsRightIcon className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Shipment Details Drawer */}
       <ShipmentDetailsDrawer

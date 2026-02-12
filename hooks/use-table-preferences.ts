@@ -110,6 +110,14 @@ export function useTablePreferences(
     setIsLoaded(true)
   }, [tableId])
 
+  // When the global default changes, apply it if no per-table override exists
+  useEffect(() => {
+    const stored = getStoredPreferences(tableId)
+    if (!stored?.pageSize) {
+      setPageSizeState(defaultPageSize)
+    }
+  }, [tableId, defaultPageSize])
+
   // Save column visibility when it changes
   const setColumnVisibility = useCallback((visibility: Record<string, boolean>) => {
     setColumnVisibilityState(visibility)

@@ -71,7 +71,7 @@ export function MultiSelectFilter({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[200px] p-0 font-inter text-xs"
+        className="w-[200px] p-0 font-roboto text-xs"
         align="start"
         onInteractOutside={() => setOpen(false)}
       >
@@ -80,7 +80,7 @@ export function MultiSelectFilter({
           <button
             onClick={handleSelectAll}
             className={cn(
-              "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+              "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
             )}
           >
             <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
@@ -101,7 +101,7 @@ export function MultiSelectFilter({
                 key={option.value}
                 onClick={() => handleToggle(option.value)}
                 className={cn(
-                  "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                  "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
                 )}
               >
                 <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">

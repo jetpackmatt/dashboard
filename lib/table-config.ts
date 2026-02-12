@@ -10,8 +10,11 @@ export interface ColumnConfig {
   align?: 'left' | 'center' | 'right'  // Text alignment (default: left)
   dividerAfter?: boolean  // Show vertical divider after this column
   extraPaddingLeft?: boolean  // Add extra padding on the left (useful after dividers)
+  maxWidth?: number    // Max width in px (auto layout will truncate with ellipsis beyond this)
   sortable?: boolean   // Whether this column supports sorting
   sortKey?: string     // Database column name for sorting (defaults to id)
+  shrinkToFit?: boolean // Column takes minimum content width (w-px whitespace-nowrap)
+  tinted?: boolean      // Light grey background tint on th/td for visual grouping
 }
 
 export interface TableConfig {
@@ -34,16 +37,16 @@ export interface TableConfig {
 export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
   columns: [
     // Display order matches original table layout
-    { id: 'orderId',      header: 'Order ID',    width: 9,  priority: 1 },
-    { id: 'shipmentId',   header: 'Shipment ID', width: 11, priority: 11 },
-    { id: 'status',       header: 'Status',      width: 12, priority: 2 },
-    { id: 'customerName', header: 'Customer',    width: 11, priority: 4 },
+    { id: 'orderDate',    header: 'Order Imported',  width: 15, priority: 3, sortable: true, sortKey: 'created_at', tinted: true },
+    { id: 'shipmentId',   header: 'Shipment ID', width: 11, priority: 11, tinted: true },
+    { id: 'status',       header: 'Status',      width: 12, priority: 2, tinted: true },
+    { id: 'orderId',      header: 'Order ID',    width: 9,  priority: 1, defaultVisible: false },
+    { id: 'customerName', header: 'Customer',    width: 11, priority: 4, extraPaddingLeft: true },
     { id: 'channelName',  header: 'Channel',     width: 6,  priority: 10, align: 'center' },
-    { id: 'storeOrderId', header: 'Store ID',    width: 8,  priority: 9, align: 'center' },
+    { id: 'storeOrderId', header: 'Store ID',    width: 8,  priority: 9, align: 'center', maxWidth: 130 },
     { id: 'itemCount',    header: 'Picks',       width: 6,  priority: 6, align: 'center' },
     { id: 'orderType',    header: 'Type',        width: 6,  priority: 8, align: 'center' },
     { id: 'age',          header: 'Age',         width: 4,  priority: 5, align: 'center' },
-    { id: 'orderDate',    header: 'Order Imported',  width: 15, priority: 3 },
     { id: 'slaDate',      header: 'SLA Date',    width: 12, priority: 7 },
     // Optional columns (not visible by default) - priority 12+
     { id: 'totalShipments', header: '# Shipments', width: 6,  priority: 12, defaultVisible: false },
@@ -66,17 +69,18 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
 export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
   columns: [
     // Default visible columns (display order)
-    { id: 'orderId',      header: 'Order ID',      width: 10, priority: 1 },
-    { id: 'shipmentId',   header: 'Shipment ID',   width: 10, priority: 12 },
-    { id: 'status',       header: 'Status',        width: 12, priority: 2 },
-    { id: 'customerName', header: 'Customer',      width: 11, priority: 5, sortable: true, sortKey: 'recipient_name' },
-    { id: 'charge',       header: 'Charge',        width: 6,  priority: 4, align: 'center' },
-    { id: 'qty',          header: 'Qty',           width: 5,  priority: 8, align: 'center' },
+    { id: 'labelCreated', header: 'Label Created', width: 12, priority: 10, sortable: true, sortKey: 'event_labeled', tinted: true },
+    { id: 'shipmentId',   header: 'Shipment ID',   width: 10, priority: 12, tinted: true },
+    { id: 'status',       header: 'Status',        width: 12, priority: 2, tinted: true },
+    { id: 'orderId',      header: 'Order ID',      width: 10, priority: 1, defaultVisible: false },
+    { id: 'customerName', header: 'Customer',      width: 11, priority: 5, sortable: true, sortKey: 'recipient_name', extraPaddingLeft: true },
     { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9, sortable: true, sortKey: 'carrier' },
-    { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3 },
-    { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center', sortable: true, sortKey: 'transit_time_days' },
-    { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center', sortable: true, sortKey: 'event_labeled' },
-    { id: 'labelCreated', header: 'Label Created', width: 12, priority: 10, sortable: true, sortKey: 'event_labeled' },
+    { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3, maxWidth: 160, defaultVisible: false },
+    { id: 'charge',       header: 'Charge',        width: 6,  priority: 4, align: 'center', shrinkToFit: true },
+    { id: 'qty',          header: 'Qty',           width: 5,  priority: 8, align: 'center', shrinkToFit: true },
+    { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center', sortable: true, sortKey: 'transit_time_days', shrinkToFit: true },
+    { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center', sortable: true, sortKey: 'event_labeled', shrinkToFit: true },
+    { id: 'actions',      header: '',              width: 10, priority: 1, shrinkToFit: true, tinted: true },
     // Optional columns (not visible by default) - priority 13+
     { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
     { id: 'channelName',  header: 'Channel',       width: 5,  priority: 14, defaultVisible: false },
@@ -85,7 +89,7 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'fcName',       header: 'FC',            width: 10, priority: 17, defaultVisible: false },
     { id: 'shipOption',   header: 'Ship Option',   width: 12, priority: 18, defaultVisible: false },
     { id: 'deliveredDate', header: 'Delivered On',  width: 12, priority: 19, defaultVisible: false },
-    { id: 'storeOrderId', header: 'Store Order',   width: 10, priority: 20, defaultVisible: false },
+    { id: 'storeOrderId', header: 'Store Order',   width: 10, priority: 20, maxWidth: 130, defaultVisible: false },
   ],
   breakpoints: {
     xl: 20,  // 1280px+: All columns (up to priority 20)
@@ -102,12 +106,12 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'transactionDate', header: 'Transaction Date', width: 15, priority: 1 },
-    { id: 'invoiceNumber',   header: 'Invoice',          width: 14, priority: 2 },
+    { id: 'transactionDate', header: 'Date', width: 15, priority: 1, sortable: true, sortKey: 'charge_date' },
     { id: 'referenceId',     header: 'Reference ID',     width: 14, priority: 3 },
+    { id: 'status',          header: 'Status',           width: 14, priority: 6 },
     { id: 'feeType',         header: 'Fee Type',         width: 18, priority: 4 },
     { id: 'charge',          header: 'Charge',           width: 13, priority: 5 },
-    { id: 'status',          header: 'Status',           width: 14, priority: 6 },
+    { id: 'invoiceNumber',   header: 'Invoice',          width: 14, priority: 2 },
   ],
   breakpoints: {
     xl: 6,
@@ -124,14 +128,14 @@ export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const RETURNS_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'returnCreationDate', header: 'Created',           width: 10, priority: 1 },
+    { id: 'returnCreationDate', header: 'Created',           width: 10, priority: 1, sortable: true, sortKey: 'charge_date' },
     { id: 'invoiceNumber',      header: 'Invoice',           width: 14, priority: 2 },
     { id: 'returnId',           header: 'Return ID',         width: 8, priority: 3 },
     { id: 'returnStatus',       header: 'Return Status',     width: 10, priority: 4 },
     { id: 'returnType',         header: 'Return Type',       width: 15, priority: 5 },
     { id: 'charge',             header: 'Charge',            width: 7, priority: 6 },
     { id: 'originalShipmentId', header: 'Original Shipment', width: 10, priority: 7 },
-    { id: 'trackingNumber',     header: 'Tracking #',        width: 18, priority: 8 },
+    { id: 'trackingNumber',     header: 'Tracking #',        width: 18, priority: 8, maxWidth: 160 },
     { id: 'fcName',             header: 'FC',                width: 11, priority: 9, defaultVisible: false },
   ],
   breakpoints: {
@@ -149,12 +153,12 @@ export const RETURNS_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const RECEIVING_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'transactionDate',  header: 'Transaction Date', width: 11, priority: 1 },
-    { id: 'invoiceNumber',    header: 'Invoice',          width: 14, priority: 2 },
-    { id: 'wroId',            header: 'WRO ID',           width: 8,  priority: 3 },
-    { id: 'charge',           header: 'Charge',           width: 9,  priority: 4 },
-    { id: 'receivingStatus',  header: 'Status',           width: 12, priority: 5 },
-    { id: 'feeType',          header: 'Fee Type',         width: 12, priority: 6 },
+    { id: 'transactionDate',  header: 'Date',             width: 11, priority: 1, sortable: true, sortKey: 'charge_date' },
+    { id: 'wroId',            header: 'WRO ID',           width: 8,  priority: 2 },
+    { id: 'feeType',          header: 'Fee Type',         width: 12, priority: 3 },
+    { id: 'invoiceNumber',    header: 'Invoice',          width: 14, priority: 4 },
+    { id: 'charge',           header: 'Charge',           width: 9,  priority: 5 },
+    { id: 'receivingStatus',  header: 'Status',           width: 12, priority: 6 },
     { id: 'contents',         header: 'Contents',         width: 31, priority: 7 },
   ],
   breakpoints: {
@@ -173,7 +177,7 @@ export const RECEIVING_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const STORAGE_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'chargeStartDate', header: 'Charge Start',   width: 12, priority: 1 },
+    { id: 'chargeStartDate', header: 'Date',   width: 12, priority: 1, sortable: true, sortKey: 'charge_date' },
     { id: 'invoiceNumber',   header: 'Invoice',        width: 16, priority: 2 },
     { id: 'inventoryId',     header: 'Inventory ID',   width: 10, priority: 3 },
     { id: 'fcName',          header: 'FC Name',        width: 14, priority: 4 },
@@ -197,7 +201,7 @@ export const STORAGE_TABLE_CONFIG: TableConfig = {
 // ============================================
 export const CREDITS_TABLE_CONFIG: TableConfig = {
   columns: [
-    { id: 'transactionDate',     header: 'Transaction Date', width: 11, priority: 1 },
+    { id: 'transactionDate',     header: 'Date', width: 11, priority: 1, sortable: true, sortKey: 'charge_date' },
     { id: 'creditInvoiceNumber', header: 'Invoice',          width: 14, priority: 2 },
     { id: 'status',              header: 'Status',           width: 12, priority: 3 },
     { id: 'referenceId',         header: 'Reference ID',     width: 12, priority: 4 },
@@ -220,12 +224,12 @@ export const CREDITS_TABLE_CONFIG: TableConfig = {
 export const SHIPPED_TABLE_CONFIG: TableConfig = {
   columns: [
     { id: 'orderId',       header: 'Order ID',     width: 8,  priority: 1 },
-    { id: 'storeOrderId',  header: 'Store Order',  width: 12, priority: 9 },
-    { id: 'customerName',  header: 'Customer',     width: 13, priority: 4 },
+    { id: 'storeOrderId',  header: 'Store Order',  width: 12, priority: 9, maxWidth: 130 },
+    { id: 'customerName',  header: 'Customer',     width: 13, priority: 4, maxWidth: 160 },
     { id: 'status',        header: 'Status',       width: 11, priority: 2 },
     { id: 'carrier',       header: 'Carrier',      width: 12, priority: 5 },
-    { id: 'trackingId',    header: 'Tracking',     width: 12, priority: 6 },
-    { id: 'shippedDate',   header: 'Shipped',      width: 11, priority: 3 },
+    { id: 'trackingId',    header: 'Tracking',     width: 12, priority: 6, maxWidth: 160 },
+    { id: 'shippedDate',   header: 'Shipped',      width: 11, priority: 3, sortable: true, sortKey: 'shipped_date' },
     { id: 'deliveredDate', header: 'Delivered',    width: 11, priority: 7 },
     { id: 'itemCount',     header: 'Items',        width: 6,  priority: 8 },
     { id: 'charge',        header: 'Charge',       width: 8,  priority: 10 },
@@ -236,6 +240,34 @@ export const SHIPPED_TABLE_CONFIG: TableConfig = {
     md: 6,
     sm: 4,
     xs: 3,
+  }
+}
+
+// ============================================
+// INVOICES TABLE CONFIG
+// ============================================
+// All columns left-aligned for consistent visual rhythm (no left-vs-right spacing gap).
+// Shipments before Cost since it's a count, not a dollar figure.
+export const INVOICES_TABLE_CONFIG: TableConfig = {
+  columns: [
+    { id: 'client',        header: '',              width: 3,  priority: 1 },
+    { id: 'invoiceDate',   header: 'Date',          width: 7,  priority: 1, sortable: true, sortKey: 'invoice_date' },
+    { id: 'invoiceNumber', header: 'Invoice #',     width: 7,  priority: 1 },
+    { id: 'billingPeriod', header: 'Period',         width: 8,  priority: 1 },
+    { id: 'shipments',     header: 'Orders',          width: 5,  priority: 2, sortable: true, sortKey: 'shipment_count' },
+    { id: 'cost',          header: 'Cost',           width: 6,  priority: 2, sortable: true, sortKey: 'subtotal' },
+    { id: 'profit',        header: 'Profit',         width: 6,  priority: 2, sortable: true, sortKey: 'total_markup' },
+    { id: 'transactions',  header: 'Transactions',   width: 5,  priority: 3 },
+    { id: 'amount',        header: 'Total',          width: 7,  priority: 1, sortable: true, sortKey: 'total_amount' },
+    { id: 'status',        header: 'Status',         width: 5,  priority: 1 },
+    { id: 'download',      header: '',               width: 3,  priority: 1, align: 'center' },
+  ],
+  breakpoints: {
+    xl: 2,
+    lg: 2,
+    md: 1,
+    sm: 1,
+    xs: 1,
   }
 }
 
@@ -273,6 +305,30 @@ export function getVisibleColumns(
     }
     return false
   })
+}
+
+// ============================================
+// CARE TICKETS TABLE CONFIG
+// ============================================
+export const CARE_TABLE_CONFIG: TableConfig = {
+  columns: [
+    { id: 'client',       header: '',             width: 8,  priority: 1, align: 'left' },   // Client badge (admin only)
+    { id: 'partner',      header: '',             width: 4,  priority: 1, align: 'left' },   // Partner icon (admin only)
+    { id: 'dateCreated',  header: 'Date',         width: 8,  priority: 1, sortable: true },
+    { id: 'reference',    header: 'Reference ID', width: 12, priority: 2 },
+    { id: 'lastUpdated',  header: 'Age',          width: 7,  priority: 3, sortable: true },
+    { id: 'type',         header: 'Type',         width: 14, priority: 4 },
+    { id: 'status',       header: 'Status',       width: 15, priority: 1 },
+    { id: 'credit',       header: 'Credit',       width: 9,  priority: 5, align: 'left', sortable: true },
+    { id: 'latestNotes',  header: 'Description',  width: 50, priority: 6 },  // Gets ~40% at base, absorbs expansion
+  ],
+  breakpoints: {
+    xl: 6,  // Show all
+    lg: 6,  // Show all
+    md: 5,  // Hide credit
+    sm: 4,  // Also hide type
+    xs: 3,  // Also hide lastUpdated
+  }
 }
 
 /**

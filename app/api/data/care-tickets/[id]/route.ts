@@ -190,6 +190,7 @@ export async function PATCH(
       workOrderId,
       inventoryId,
       description,
+      clientId, // Attribute ticket to a client (admin/care_admin only)
       internalNote, // New internal note to add to timeline (singular - adds to array)
       eventNote, // Optional note for the event being created
     } = body
@@ -203,7 +204,7 @@ export async function PATCH(
         whatToReship !== undefined || reshipmentId !== undefined ||
         compensationRequest !== undefined || creditAmount !== undefined ||
         currency !== undefined || workOrderId !== undefined || inventoryId !== undefined ||
-        description !== undefined || eventNote !== undefined
+        description !== undefined || eventNote !== undefined || clientId !== undefined
 
       if (hasOtherFields) {
         return NextResponse.json(
@@ -243,6 +244,7 @@ export async function PATCH(
     if (workOrderId !== undefined) updateData.work_order_id = workOrderId
     if (inventoryId !== undefined) updateData.inventory_id = inventoryId
     if (description !== undefined) updateData.description = description
+    if (clientId !== undefined && (isAdmin || isCareAdmin)) updateData.client_id = clientId
 
     // Handle internal notes timeline - admin, care_admin, and care_team can all add notes
     if (internalNote && (isAdmin || isCareAdmin || isCareTeam)) {
@@ -263,6 +265,31 @@ export async function PATCH(
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     }
 
+    // Create attribution event when client_id is set
+    if (clientId !== undefined && (isAdmin || isCareAdmin)) {
+      const currentEvents = (existingTicket.events as Array<Record<string, unknown>>) || []
+      const userName = user.user_metadata?.full_name || user.email || 'Unknown'
+
+      // Look up client name for the event
+      let clientName = 'Unknown'
+      const { data: clientData } = await supabase
+        .from('clients')
+        .select('company_name')
+        .eq('id', clientId)
+        .single()
+      if (clientData) clientName = clientData.company_name
+
+      const attributionEvent = {
+        status: existingTicket.status,
+        note: `Attributed to ${clientName}`,
+        createdAt: new Date().toISOString(),
+        createdBy: userName,
+      }
+      // If events are already being updated (status change below), we'll prepend there
+      // Otherwise prepend to current events
+      updateData.events = [attributionEvent, ...currentEvents]
+    }
+
     // Create event entry for the timeline
     // Events are created when: status changes, or an eventNote is provided
     const newStatus = status !== undefined ? status : existingTicket.status
@@ -270,7 +297,8 @@ export async function PATCH(
     const shouldCreateEvent = statusChanged || eventNote
 
     if (shouldCreateEvent) {
-      const currentEvents = (existingTicket.events as Array<Record<string, unknown>>) || []
+      // Use already-updated events (e.g. from attribution above) if available, else use existing
+      const currentEvents = (updateData.events as Array<Record<string, unknown>>) || (existingTicket.events as Array<Record<string, unknown>>) || []
       const userName = user.user_metadata?.full_name || user.email || 'Unknown'
 
       const newEvent = {
@@ -312,6 +340,8 @@ export async function PATCH(
  *
  * Delete a care ticket.
  * - Only Admin users can delete tickets
+ * - Supports soft delete (archive) or permanent delete
+ * - Query param: ?permanent=true for hard delete (also removes files)
  */
 export async function DELETE(
   request: NextRequest,
@@ -319,6 +349,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
+    const searchParams = request.nextUrl.searchParams
+    const permanent = searchParams.get('permanent') === 'true'
 
     // Get current user
     const authSupabase = await createClient()
@@ -341,17 +373,82 @@ export async function DELETE(
 
     const supabase = createAdminClient()
 
-    const { error } = await supabase
+    // First, get the ticket to access attachments and shipment_id
+    const { data: ticket, error: fetchError } = await supabase
       .from('care_tickets')
-      .delete()
+      .select('attachments, shipment_id, ticket_type')
       .eq('id', id)
+      .single()
 
-    if (error) {
-      console.error('Error deleting care ticket:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (fetchError) {
+      if (fetchError.code === 'PGRST116') {
+        return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+      }
+      return NextResponse.json({ error: fetchError.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true })
+    if (permanent) {
+      // PERMANENT DELETE: Remove files, reset related records, delete ticket
+
+      // 1. Delete files from Supabase Storage
+      const attachments = ticket.attachments as Array<{ path?: string }> | null
+      if (attachments && attachments.length > 0) {
+        const paths = attachments
+          .filter(att => att.path)
+          .map(att => att.path as string)
+
+        if (paths.length > 0) {
+          const { error: storageError } = await supabase.storage
+            .from('claim-attachments')
+            .remove(paths)
+
+          if (storageError) {
+            console.warn('Warning: Failed to delete some attachments:', storageError.message)
+            // Continue with ticket deletion even if file deletion fails
+          }
+        }
+      }
+
+      // 2. Reset lost_in_transit_checks if this was a claim
+      if (ticket.ticket_type === 'Claim' && ticket.shipment_id) {
+        await supabase
+          .from('lost_in_transit_checks')
+          .update({ claim_eligibility_status: 'eligible' })
+          .eq('shipment_id', ticket.shipment_id)
+          .in('claim_eligibility_status', ['claim_filed', 'approved', 'denied'])
+      }
+
+      // 3. Delete the ticket
+      const { error: deleteError } = await supabase
+        .from('care_tickets')
+        .delete()
+        .eq('id', id)
+
+      if (deleteError) {
+        console.error('Error permanently deleting care ticket:', deleteError)
+        return NextResponse.json({ error: deleteError.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true, action: 'permanently_deleted' })
+    } else {
+      // SOFT DELETE: Set deleted_at timestamp
+      const userName = user.user_metadata?.full_name || user.email || 'Unknown'
+
+      const { error: updateError } = await supabase
+        .from('care_tickets')
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by: userName,
+        })
+        .eq('id', id)
+
+      if (updateError) {
+        console.error('Error archiving care ticket:', updateError)
+        return NextResponse.json({ error: updateError.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true, action: 'archived' })
+    }
   } catch (err) {
     console.error('Delete care ticket error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

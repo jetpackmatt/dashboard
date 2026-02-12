@@ -27,8 +27,15 @@ export async function GET(request: NextRequest) {
   const returnStatus = searchParams.get('returnStatus')
   const returnType = searchParams.get('returnType')
 
+  // Sort params
+  const sortField = searchParams.get('sortField') || 'charge_date'
+  const sortAscending = searchParams.get('sortDirection') === 'asc'
+
   // Search query
   const search = searchParams.get('search')?.trim().toLowerCase()
+
+  // Export mode - includes extra fields for invoice-format export
+  const isExport = searchParams.get('export') === 'true'
 
   try {
     // If return status or type filters are applied, we need to filter by returns table first
@@ -88,7 +95,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { data: transactions, error, count } = await query
-      .order('charge_date', { ascending: false })
+      .order(sortField, { ascending: sortAscending })
       .range(offset, offset + limit - 1)
 
     if (error) {
@@ -114,6 +121,20 @@ export async function GET(request: NextRequest) {
           acc[String(r.shipbob_return_id)] = r
           return acc
         }, {})
+      }
+    }
+
+    // Export: look up client merchant_id and company_name
+    let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
+    if (isExport) {
+      const clientIds = [...new Set((transactions || []).map((r: Record<string, unknown>) => r.client_id).filter(Boolean))]
+      if (clientIds.length > 0) {
+        const { data: clients } = await supabase.from('clients').select('id, merchant_id, company_name').in('id', clientIds as string[])
+        if (clients) {
+          for (const c of clients) {
+            clientInfoMap[c.id] = { merchantId: c.merchant_id?.toString() || '', merchantName: c.company_name || '' }
+          }
+        }
       }
     }
 
@@ -144,6 +165,12 @@ export async function GET(request: NextRequest) {
         status: row.invoiced_status_jp ? 'invoiced' : 'pending',
         // Include preview flag for UI styling (optional indicator)
         isPreview: row.markup_is_preview === true,
+        // Export-only fields
+        ...(isExport ? {
+          merchantId: clientInfoMap[row.client_id as string]?.merchantId || '',
+          merchantName: clientInfoMap[row.client_id as string]?.merchantName || '',
+          transactionType: String(row.transaction_type || ''),
+        } : {}),
       }
     })
 

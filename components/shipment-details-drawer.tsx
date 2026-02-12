@@ -4,6 +4,7 @@ import * as React from "react"
 import { format } from "date-fns"
 import {
   AlertTriangleIcon,
+  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ExternalLinkIcon,
@@ -25,7 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { JetpackLoader } from "@/components/jetpack-loader"
-import { getCarrierDisplayName } from "./transactions/cell-renderers"
+import { getCarrierDisplayName, getTrackingUrl } from "./transactions/cell-renderers"
+import { TrackingLink } from "@/components/tracking-link"
 import { ClaimSubmissionDialog } from "./claims/claim-submission-dialog"
 import { ClaimType, ClaimEligibilityResult, getClaimTypeLabel } from "@/lib/claims/eligibility"
 import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
@@ -278,6 +280,8 @@ function getStatusColors(status: string) {
     case "On Hold":
     case "Out of Stock":
       return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800/50"
+    case "Claim":
+      return "bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800/50"
     default:
       return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700/50"
   }
@@ -784,6 +788,21 @@ export function ShipmentDetailsDrawer({
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Internal navigation state - allows viewing linked shipments (like reshipments)
+  const [navigationStack, setNavigationStack] = React.useState<string[]>([])
+  const effectiveShipmentId = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : shipmentId
+  const canGoBack = navigationStack.length > 0
+
+  // Navigate to a different shipment (e.g., reshipment)
+  const navigateToShipment = (newShipmentId: string) => {
+    setNavigationStack(prev => [...prev, newShipmentId])
+  }
+
+  // Go back to previous shipment
+  const navigateBack = () => {
+    setNavigationStack(prev => prev.slice(0, -1))
+  }
+
   // Claim dialog state
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [selectedClaimType, setSelectedClaimType] = React.useState<ClaimType | undefined>()
@@ -792,13 +811,13 @@ export function ShipmentDetailsDrawer({
 
   // Fetch shipment details when opened
   React.useEffect(() => {
-    if (open && shipmentId) {
+    if (open && effectiveShipmentId) {
       setIsLoading(true)
       setIsLoadingEligibility(true)
       setError(null)
 
       // Fetch shipment details
-      fetch(`/api/data/shipments/${shipmentId}`)
+      fetch(`/api/data/shipments/${effectiveShipmentId}`)
         .then((res) => {
           if (!res.ok) throw new Error("Failed to load shipment")
           return res.json()
@@ -813,7 +832,7 @@ export function ShipmentDetailsDrawer({
         })
 
       // Fetch claim eligibility (separate request, non-blocking)
-      fetch(`/api/data/shipments/${shipmentId}/claim-eligibility`)
+      fetch(`/api/data/shipments/${effectiveShipmentId}/claim-eligibility`)
         .then((res) => {
           if (!res.ok) throw new Error("Failed to load eligibility")
           return res.json()
@@ -829,7 +848,7 @@ export function ShipmentDetailsDrawer({
           setIsLoadingEligibility(false)
         })
     }
-  }, [open, shipmentId])
+  }, [open, effectiveShipmentId])
 
   // Reset when closed
   React.useEffect(() => {
@@ -839,8 +858,14 @@ export function ShipmentDetailsDrawer({
       setEligibility(null)
       setClaimDialogOpen(false)
       setSelectedClaimType(undefined)
+      setNavigationStack([])  // Reset navigation when drawer closes
     }
   }, [open])
+
+  // Reset navigation when the parent shipmentId prop changes
+  React.useEffect(() => {
+    setNavigationStack([])
+  }, [shipmentId])
 
   // Handle submit claim from drawer
   const handleSubmitClaim = (claimType: ClaimType) => {
@@ -855,19 +880,6 @@ export function ShipmentDetailsDrawer({
     }
   }
 
-  // Get tracking URL for the carrier
-  const getTrackingUrl = (carrier: string, trackingId: string): string | null => {
-    if (!trackingId) return null
-    const carrierLower = carrier?.toLowerCase() || ''
-    if (carrierLower.includes('ups')) return `https://www.ups.com/track?tracknum=${trackingId}`
-    if (carrierLower.includes('fedex')) return `https://www.fedex.com/fedextrack/?trknbr=${trackingId}`
-    if (carrierLower.includes('usps')) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingId}`
-    if (carrierLower.includes('dhl')) return `https://www.dhl.com/global-en/home/tracking/tracking-express.html?submit=1&tracking-id=${trackingId}`
-    if (carrierLower.includes('ontrac')) return `https://www.ontrac.com/tracking/?number=${trackingId}`
-    if (carrierLower.includes('amazon')) return `https://track.amazon.com/tracking/${trackingId}`
-    if (carrierLower.includes('veho')) return `https://track.shipveho.com/#/trackingId/${trackingId}`
-    return null
-  }
 
   // Format weight from oz to lbs and oz
   const formatWeight = (oz: number | null | undefined): string => {
@@ -911,14 +923,24 @@ export function ShipmentDetailsDrawer({
               <div className="flex items-center justify-between px-6 py-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1">
+                    {canGoBack && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 -ml-2"
+                        onClick={navigateBack}
+                      >
+                        <ArrowLeftIcon className="h-4 w-4" />
+                      </Button>
+                    )}
                     <h2 className="text-lg font-semibold">
                       Shipment {data.metrics.totalShipments > 1 ? `1 of ${data.metrics.totalShipments}` : ''} - {data.shipmentId}
                     </h2>
                     <Badge
                       variant="outline"
-                      className={`px-2 py-0.5 text-xs font-medium ${getStatusColors(data.status)}`}
+                      className={`px-2 py-0.5 text-xs font-medium ${getStatusColors(data.claimTicket ? 'Claim' : data.status)}`}
                     >
-                      {data.status}
+                      {data.claimTicket ? 'Claim' : data.status}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -957,6 +979,21 @@ export function ShipmentDetailsDrawer({
             <ScrollArea className="flex-1">
               <div className="p-5 space-y-4">
 
+                {/* Reshipment Alert - shows when navigated from a claim's reshipment link */}
+                {canGoBack && shipmentId && (
+                  <div className="rounded-lg p-4 bg-blue-500/10 dark:bg-blue-500/5 border border-blue-200/50 dark:border-blue-800/30">
+                    <p className="text-sm text-blue-700 dark:text-blue-400">
+                      This is a reshipment after a claim was filed for shipment{" "}
+                      <button
+                        onClick={navigateBack}
+                        className="font-semibold hover:underline"
+                      >
+                        #{shipmentId}
+                      </button>
+                    </p>
+                  </div>
+                )}
+
                 {/* Delivery IQ Assessment Alert - shows for monitored shipments */}
                 <AIAssessmentAlert data={data} />
 
@@ -983,11 +1020,19 @@ export function ShipmentDetailsDrawer({
                               ? 'text-red-700 dark:text-red-400'
                               : 'text-amber-700 dark:text-amber-400'
                         }`}>
-                          A {data.claimTicket.issueType || 'Claim'} Claim has been filed
+                          Claim Filed: {data.claimTicket.issueType || 'Claim'}
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
                           Claim #{data.claimTicket.ticketNumber}
                         </p>
+                        {data.claimTicket.description && (
+                          <div className="mt-4">
+                            <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Description</div>
+                            <p className="text-xs text-muted-foreground pr-5 leading-relaxed">
+                              {data.claimTicket.description}
+                            </p>
+                          </div>
+                        )}
                         {data.claimTicket.creditAmount != null && data.claimTicket.creditAmount > 0 && (
                           <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mt-2">
                             Credit: ${data.claimTicket.creditAmount.toFixed(2)} {data.claimTicket.currency}
@@ -1013,17 +1058,30 @@ export function ShipmentDetailsDrawer({
                           </button>
                         )}
                         {data.claimTicket.reshipmentStatus && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Reshipment: {data.claimTicket.reshipmentStatus}
-                            {data.claimTicket.reshipmentId && ` (#${data.claimTicket.reshipmentId})`}
-                          </p>
+                          <div className="mt-3">
+                            <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Reshipment</div>
+                            <p className="text-xs text-muted-foreground">
+                              {data.claimTicket.reshipmentStatus}
+                              {data.claimTicket.reshipmentId && (
+                                <>
+                                  {" — "}
+                                  <button
+                                    onClick={() => navigateToShipment(data.claimTicket!.reshipmentId!)}
+                                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-mono"
+                                  >
+                                    #{data.claimTicket.reshipmentId}
+                                  </button>
+                                </>
+                              )}
+                            </p>
+                          </div>
                         )}
                       </div>
 
                       {/* Right side: Timeline (matches care page styling) */}
                       {data.claimTicket.events && data.claimTicket.events.length > 0 && (
                         <div className="flex-1">
-                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Activity</div>
+                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Claim Timeline</div>
                           <div className="relative">
                             {/* Vertical line */}
                             <div className="absolute left-[5px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/40 via-slate-300 to-slate-200 dark:via-slate-600 dark:to-slate-700" />
@@ -1228,15 +1286,14 @@ export function ShipmentDetailsDrawer({
                       <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Tracking Details</span>
                         {data.trackingId ? (
-                          <a
-                            href={getTrackingUrl(data.shipping.carrier, data.trackingId) || '#'}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <TrackingLink
+                            trackingNumber={data.trackingId}
+                            carrier={data.shipping.carrier}
                             className="text-sm text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
                           >
                             {data.trackingId}
                             <ExternalLinkIcon className="h-3 w-3" />
-                          </a>
+                          </TrackingLink>
                         ) : (
                           <span className="text-sm text-foreground">-</span>
                         )}

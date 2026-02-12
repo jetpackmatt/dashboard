@@ -4,6 +4,8 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ResponsiveSidebarProvider } from "@/components/responsive-sidebar-provider"
 import { SidebarInset } from "@/components/ui/sidebar"
 import { ClientProvider } from "@/components/client-context"
+import { TrackingDrawerProvider } from "@/components/tracking-link"
+import { ExportProvider } from "@/components/export-context"
 
 export default async function DashboardLayout({
   children,
@@ -22,7 +24,11 @@ export default async function DashboardLayout({
       <ResponsiveSidebarProvider>
         <AppSidebar variant="inset" />
         <SidebarInset>
-          {children}
+          <ExportProvider>
+            <TrackingDrawerProvider>
+              {children}
+            </TrackingDrawerProvider>
+          </ExportProvider>
         </SidebarInset>
       </ResponsiveSidebarProvider>
     </ClientProvider>

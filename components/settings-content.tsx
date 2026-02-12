@@ -17,6 +17,7 @@ import {
   UserPlus,
   Key,
   HeartHandshake,
+  Settings2,
   UserCog,
 } from 'lucide-react'
 import { JetpackLoader } from '@/components/jetpack-loader'
@@ -50,7 +51,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useClient, DevRole } from '@/components/client-context'
+import { useUserSettings } from '@/hooks/use-user-settings'
 import { AvatarCropper } from '@/components/avatar-cropper'
 
 interface UserWithClients {
@@ -72,16 +75,17 @@ const isDev = process.env.NODE_ENV === 'development'
 
 export function SettingsContent() {
   const { clients, isLoading, isAdmin, devRole, setDevRole, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin } = useClient()
+  const { settings, updateSetting, isLoaded: settingsLoaded } = useUserSettings()
 
   // Tab state with URL persistence - using Next.js hooks
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const validTabs = ['account', 'notifications', 'users', 'dev']
+  const validTabs = ['settings', 'account', 'notifications', 'users', 'dev']
   const tabFromUrl = searchParams.get('tab')
   // Map 'profile' to 'account' for backwards compatibility
   const normalizedTab = tabFromUrl === 'profile' ? 'account' : tabFromUrl
-  const initialTab = normalizedTab && validTabs.includes(normalizedTab) ? normalizedTab : 'account'
+  const initialTab = normalizedTab && validTabs.includes(normalizedTab) ? normalizedTab : 'settings'
   const [activeTab, setActiveTab] = React.useState(initialTab)
 
   // Sync tab to URL when it changes
@@ -441,6 +445,7 @@ export function SettingsContent() {
     <div className="p-4 lg:p-6">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
+          <TabsTrigger value="settings">Preferences</TabsTrigger>
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
@@ -448,6 +453,86 @@ export function SettingsContent() {
             <TabsTrigger value="dev">Dev Tools</TabsTrigger>
           )}
         </TabsList>
+
+        {/* Settings Tab - User preferences */}
+        <TabsContent value="settings" className="space-y-6">
+          <Card>
+            <CardHeader className="px-8 pt-8 pb-2">
+              <CardTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5" />
+                Preferences
+              </CardTitle>
+              <CardDescription>
+                Customize how you experience Jetpack Pro
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-8 pb-8">
+              <div className="divide-y divide-border/60">
+                {/* Shipment Tracking Method */}
+                <div className="flex items-center justify-between gap-12 py-6">
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-sm font-medium">Shipment Tracking Method</Label>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      Choose between standard carrier tracking and Jetpack&apos;s AI-powered tracking insights via Delivery IQ.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-2.5 flex-shrink-0 w-[210px]">
+                    <span className={cn(
+                      "text-[13px] transition-colors",
+                      settings.trackingMethod === 'carrier'
+                        ? "text-foreground font-medium"
+                        : "text-muted-foreground"
+                    )}>
+                      Carrier Site
+                    </span>
+                    <Switch
+                      checked={settings.trackingMethod === 'deliveryiq'}
+                      onCheckedChange={(checked) =>
+                        updateSetting('trackingMethod', checked ? 'deliveryiq' : 'carrier')
+                      }
+                    />
+                    <span className={cn(
+                      "text-[13px] transition-colors",
+                      settings.trackingMethod === 'deliveryiq'
+                        ? "text-foreground font-medium"
+                        : "text-muted-foreground"
+                    )}>
+                      Delivery IQ
+                    </span>
+                  </div>
+                </div>
+                {/* Default Rows per Page */}
+                <div className="flex items-center justify-between gap-12 py-6">
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-sm font-medium">Default Rows per Page</Label>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      Choose how many rows per page when viewing data.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end flex-shrink-0 w-[210px]">
+                    <Select
+                      value={settings.defaultPageSize.toString()}
+                      onValueChange={(value) =>
+                        updateSetting('defaultPageSize', Number(value) as 50 | 100 | 150 | 200)
+                      }
+                    >
+                      <SelectTrigger className="w-[110px] h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[50, 100, 150, 200].map((size) => (
+                          <SelectItem key={size} value={size.toString()}>
+                            {size} rows
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Account Tab - Available to all users */}
         <TabsContent value="account" className="space-y-6">
@@ -512,25 +597,31 @@ export function SettingsContent() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="profile_name">Display Name</Label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="profile_name" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Display Name
+                    </Label>
                     <Input
                       id="profile_name"
                       value={profileName}
                       onChange={(e) => setProfileName(e.target.value)}
                       placeholder="Your name"
+                      className="h-9 placeholder:text-muted-foreground/40"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="profile_email">Email Address</Label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="profile_email" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Email Address
+                    </Label>
                     <Input
                       id="profile_email"
                       type="email"
                       value={profileEmail}
                       onChange={(e) => setProfileEmail(e.target.value)}
                       placeholder="your@email.com"
+                      className="h-9 placeholder:text-muted-foreground/40"
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground/60">
                       Changing your email will require verification.
                     </p>
                   </div>
@@ -575,36 +666,45 @@ export function SettingsContent() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4 max-w-md">
-                <div className="space-y-2">
-                  <Label htmlFor="current_password">Current Password</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="current_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    Current Password <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="current_password"
                     type="password"
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="Enter current password"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new_password">New Password</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    New Password <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="new_password"
                     type="password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Enter new password"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirm_password">Confirm New Password</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirm_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    Confirm New Password <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="confirm_password"
                     type="password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm new password"
+                    className="h-9 placeholder:text-muted-foreground/40"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground/60">
                     Password must be at least 8 characters.
                   </p>
                 </div>
@@ -694,31 +794,39 @@ export function SettingsContent() {
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         {/* Email */}
-                        <div className="space-y-2">
-                          <Label htmlFor="invite_email">Email Address *</Label>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="invite_email" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            Email Address <span className="text-red-500">*</span>
+                          </Label>
                           <Input
                             id="invite_email"
                             type="email"
                             placeholder="user@example.com"
                             value={inviteEmail}
                             onChange={(e) => setInviteEmail(e.target.value)}
+                            className="h-9 placeholder:text-muted-foreground/40"
                           />
                         </div>
 
                         {/* Full Name */}
-                        <div className="space-y-2">
-                          <Label htmlFor="invite_name">Full Name</Label>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="invite_name" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            Full Name <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                          </Label>
                           <Input
                             id="invite_name"
-                            placeholder="John Smith (optional)"
+                            placeholder="e.g., John Smith"
                             value={inviteFullName}
                             onChange={(e) => setInviteFullName(e.target.value)}
+                            className="h-9 placeholder:text-muted-foreground/40"
                           />
                         </div>
 
                         {/* User Type (Role) - moved before brand */}
-                        <div className="space-y-2">
-                          <Label htmlFor="invite_user_type">User Type *</Label>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="invite_user_type" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            User Type <span className="text-red-500">*</span>
+                          </Label>
                           <Select
                             value={inviteUserType}
                             onValueChange={(v: 'admin' | 'care_admin' | 'care_team' | 'brand_user') => {
@@ -729,7 +837,7 @@ export function SettingsContent() {
                               }
                             }}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className={cn("h-9", inviteUserType ? "text-foreground" : "text-muted-foreground/40")}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -770,13 +878,15 @@ export function SettingsContent() {
                         {/* Brand Assignment - only shown for brand_user */}
                         {inviteUserType === 'brand_user' && (
                           <>
-                            <div className="space-y-2">
-                              <Label htmlFor="invite_client">Assign to Brand *</Label>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="invite_client" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                                Assign to Brand <span className="text-red-500">*</span>
+                              </Label>
                               <Select
                                 value={inviteClientId}
                                 onValueChange={setInviteClientId}
                               >
-                                <SelectTrigger>
+                                <SelectTrigger className={cn("h-9", inviteClientId ? "text-foreground" : "text-muted-foreground/40")}>
                                   <SelectValue placeholder="Select a brand" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -790,13 +900,15 @@ export function SettingsContent() {
                             </div>
 
                             {/* Brand Role - only for brand users */}
-                            <div className="space-y-2">
-                              <Label htmlFor="invite_brand_role">Brand Role</Label>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="invite_brand_role" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                                Brand Role
+                              </Label>
                               <Select
                                 value={inviteBrandRole}
                                 onValueChange={(v: 'owner' | 'editor' | 'viewer') => setInviteBrandRole(v)}
                               >
-                                <SelectTrigger>
+                                <SelectTrigger className={cn("h-9", inviteBrandRole ? "text-foreground" : "text-muted-foreground/40")}>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>

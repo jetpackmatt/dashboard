@@ -509,7 +509,7 @@ export async function getClientsWithTokenStatus(): Promise<
       ...client,
       has_token: clientsWithTokens.has(client.id),
     }))
-    .filter((client) => client.has_token)
+    .filter((client: { has_token: boolean }) => client.has_token)
 }
 
 // ============================================================================

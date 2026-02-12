@@ -478,3 +478,119 @@ export function getConfidenceLevel(sampleSize: number): 'high' | 'medium' | 'low
   if (sampleSize >= 50) return 'low'
   return 'insufficient'
 }
+
+/**
+ * Sync new shipments to delivery_outcomes incrementally
+ * Called by the compute-survival-curves cron before recomputing curves
+ */
+export async function syncNewDeliveryOutcomes(): Promise<{ added: number; errors: number }> {
+  const supabase = createAdminClient()
+  console.log('[FeatureExtraction] Starting incremental sync...')
+
+  // 1. Load claims map for outcome determination
+  const claimMap = new Map<string, { status: string; issue_type: string }>()
+  let claimOffset = 0
+  const claimPageSize = 1000
+
+  while (true) {
+    const { data: claims, error } = await supabase
+      .from('care_tickets')
+      .select('shipment_id, status, issue_type')
+      .not('shipment_id', 'is', null)
+      .range(claimOffset, claimOffset + claimPageSize - 1)
+
+    if (error || !claims || claims.length === 0) break
+
+    for (const claim of claims) {
+      if (claim.shipment_id) {
+        const existing = claimMap.get(claim.shipment_id)
+        if (!existing || claim.issue_type === 'Loss') {
+          claimMap.set(claim.shipment_id, {
+            status: claim.status,
+            issue_type: claim.issue_type,
+          })
+        }
+      }
+    }
+
+    claimOffset += claims.length
+    if (claims.length < claimPageSize) break
+  }
+
+  console.log(`[FeatureExtraction] Loaded ${claimMap.size} claims`)
+
+  // 2. Find shipments NOT in delivery_outcomes (with event_intransit)
+  // Use cursor-based pagination to handle large datasets
+  let totalAdded = 0
+  let totalErrors = 0
+  let lastShipmentId: string | null = null
+  const batchSize = 500
+
+  while (true) {
+    // Query shipments with event_intransit that aren't in delivery_outcomes
+    let query = supabase
+      .from('shipments')
+      .select(`
+        shipment_id,
+        shipbob_order_id,
+        tracking_id,
+        carrier,
+        carrier_service,
+        client_id,
+        zone_used,
+        destination_country,
+        event_intransit,
+        event_outfordelivery,
+        event_delivered,
+        event_deliveryattemptfailed,
+        event_logs
+      `)
+      .not('event_intransit', 'is', null)
+      .order('shipment_id', { ascending: true })
+      .limit(batchSize)
+
+    if (lastShipmentId) {
+      query = query.gt('shipment_id', lastShipmentId)
+    }
+
+    const { data: shipments, error: shipmentError } = await query
+
+    if (shipmentError) {
+      console.error('[FeatureExtraction] Error fetching shipments:', shipmentError)
+      break
+    }
+
+    if (!shipments || shipments.length === 0) break
+
+    // Filter to only shipments not in delivery_outcomes
+    const typedShipments = shipments as RawShipment[]
+    const shipmentIds = typedShipments.map(s => s.shipment_id)
+    const { data: existing } = await supabase
+      .from('delivery_outcomes')
+      .select('shipment_id')
+      .in('shipment_id', shipmentIds)
+
+    const existingIds = new Set((existing || []).map((e: { shipment_id: string }) => e.shipment_id))
+    const newShipments = typedShipments.filter(s => !existingIds.has(s.shipment_id))
+
+    if (newShipments.length > 0) {
+      // Process the new shipments
+      const checkpointCountMap = new Map<string, number>() // Could be enhanced later
+      const result = await processShipmentBatch(
+        newShipments,
+        claimMap,
+        checkpointCountMap
+      )
+      totalAdded += result.processed
+      totalErrors += result.errors
+    }
+
+    lastShipmentId = shipments[shipments.length - 1].shipment_id
+
+    // If we got fewer than batchSize, we've reached the end
+    if (shipments.length < batchSize) break
+  }
+
+  console.log(`[FeatureExtraction] Incremental sync complete: ${totalAdded} added, ${totalErrors} errors`)
+  return { added: totalAdded, errors: totalErrors }
+}

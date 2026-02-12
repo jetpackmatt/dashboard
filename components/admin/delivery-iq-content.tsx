@@ -1,10 +1,7 @@
 "use client"
 
 import * as React from "react"
-import {
-  RefreshCwIcon,
-  ActivityIcon,
-} from "lucide-react"
+import { RefreshCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -176,23 +173,47 @@ function CarrierTable({ carriers }: { carriers: DeliveryIQStats['carriers'] }) {
 }
 
 // Confidence heatmap - flat chips
+// Uses individual zones (zone_1 through zone_10, international) for accuracy
 function ConfidenceHeatmap({ heatmap }: { heatmap: DeliveryIQStats['confidenceHeatmap'] }) {
-  const carriers = Object.keys(heatmap).sort()
-  const zones = ['local', 'regional', 'long_haul', 'extreme', 'international']
+  // Sort carriers by total sample size (most data first), not alphabetically
+  const carriers = Object.keys(heatmap).sort((a, b) => {
+    const aSamples = Object.values(heatmap[a] || {}).reduce((sum, cell) => sum + (cell?.sampleSize || 0), 0)
+    const bSamples = Object.values(heatmap[b] || {}).reduce((sum, cell) => sum + (cell?.sampleSize || 0), 0)
+    return bSamples - aSamples
+  })
+  // Individual zones for accuracy - zone_1 through zone_10 plus international
+  const zones = ['zone_1', 'zone_2', 'zone_3', 'zone_4', 'zone_5', 'zone_6', 'zone_7', 'zone_8', 'zone_9', 'zone_10', 'international']
   const zoneLabels: Record<string, string> = {
-    local: 'Local',
-    regional: 'Regional',
-    long_haul: 'Long Haul',
-    extreme: 'Extreme',
+    zone_1: '1',
+    zone_2: '2',
+    zone_3: '3',
+    zone_4: '4',
+    zone_5: '5',
+    zone_6: '6',
+    zone_7: '7',
+    zone_8: '8',
+    zone_9: '9',
+    zone_10: '10',
     international: 'Intl',
   }
 
-  const getStyles = (confidence: string | undefined) => {
+  const getStyles = (confidence: string | undefined, hasData: boolean) => {
+    if (!hasData) return 'bg-white text-gray-200' // No data - very faint
     switch (confidence) {
       case 'high': return 'bg-emerald-50 text-emerald-600'
       case 'medium': return 'bg-amber-50 text-amber-600'
       case 'low': return 'bg-orange-50 text-orange-600'
-      default: return 'bg-red-50 text-red-500'
+      default: return 'bg-red-50 text-red-400' // insufficient but has data
+    }
+  }
+
+  const getLabel = (confidence: string | undefined, hasData: boolean) => {
+    if (!hasData) return '·' // Dot for no data
+    switch (confidence) {
+      case 'high': return 'H'
+      case 'medium': return 'M'
+      case 'low': return 'L'
+      default: return '!' // Exclamation for insufficient
     }
   }
 
@@ -204,7 +225,7 @@ function ConfidenceHeatmap({ heatmap }: { heatmap: DeliveryIQStats['confidenceHe
             <tr className="border-b border-gray-100">
               <th className="text-left py-3 pr-4 text-sm font-medium text-gray-500 w-40">Carrier</th>
               {zones.map(zone => (
-                <th key={zone} className="text-center py-3 px-2 text-sm font-medium text-gray-500">
+                <th key={zone} className="text-center py-3 px-1 text-sm font-medium text-gray-500">
                   {zoneLabels[zone]}
                 </th>
               ))}
@@ -216,16 +237,17 @@ function ConfidenceHeatmap({ heatmap }: { heatmap: DeliveryIQStats['confidenceHe
                 <td className="py-3 pr-4 text-sm font-medium text-gray-900">{carrier}</td>
                 {zones.map((zone) => {
                   const cell = heatmap[carrier]?.[zone]
+                  const hasData = !!cell
                   return (
-                    <td key={zone} className="py-2 px-2 text-center">
+                    <td key={zone} className="py-2 px-1 text-center">
                       <span
                         className={cn(
-                          'inline-block px-3 py-1 rounded-md text-xs font-medium',
-                          getStyles(cell?.confidence)
+                          'inline-block w-6 h-6 rounded text-[10px] font-medium leading-6',
+                          getStyles(cell?.confidence, hasData)
                         )}
-                        title={cell ? `${cell.sampleSize.toLocaleString()} samples` : 'No data'}
+                        title={cell ? `Zone ${zoneLabels[zone]}: ${cell.confidence} (${cell.sampleSize.toLocaleString()} samples)` : `Zone ${zoneLabels[zone]}: No data`}
                       >
-                        {cell?.confidence || 'insufficient'}
+                        {getLabel(cell?.confidence, hasData)}
                       </span>
                     </td>
                   )
@@ -239,20 +261,24 @@ function ConfidenceHeatmap({ heatmap }: { heatmap: DeliveryIQStats['confidenceHe
       {/* Legend */}
       <div className="flex items-center gap-6 text-sm pt-2">
         <div className="flex items-center gap-2">
-          <span className="inline-block px-2.5 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-600">high</span>
-          <span className="text-gray-400">500+</span>
+          <span className="inline-block w-6 h-6 rounded text-[10px] font-medium leading-6 text-center bg-emerald-50 text-emerald-600">H</span>
+          <span className="text-gray-400">High (500+)</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block px-2.5 py-0.5 rounded-md text-xs font-medium bg-amber-50 text-amber-600">medium</span>
-          <span className="text-gray-400">100-499</span>
+          <span className="inline-block w-6 h-6 rounded text-[10px] font-medium leading-6 text-center bg-amber-50 text-amber-600">M</span>
+          <span className="text-gray-400">Medium (100-499)</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block px-2.5 py-0.5 rounded-md text-xs font-medium bg-orange-50 text-orange-600">low</span>
-          <span className="text-gray-400">50-99</span>
+          <span className="inline-block w-6 h-6 rounded text-[10px] font-medium leading-6 text-center bg-orange-50 text-orange-600">L</span>
+          <span className="text-gray-400">Low (50-99)</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block px-2.5 py-0.5 rounded-md text-xs font-medium bg-red-50 text-red-500">insufficient</span>
-          <span className="text-gray-400">&lt;50</span>
+          <span className="inline-block w-6 h-6 rounded text-[10px] font-medium leading-6 text-center bg-red-50 text-red-400">!</span>
+          <span className="text-gray-400">Insufficient (&lt;50)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-6 h-6 rounded text-[10px] font-medium leading-6 text-center bg-white text-gray-200">·</span>
+          <span className="text-gray-400">No data</span>
         </div>
       </div>
     </div>
@@ -365,7 +391,6 @@ export function DeliveryIQContent() {
               Refresh
             </Button>
             <Button size="sm" onClick={handleRecomputeCurves} disabled={isRefreshing}>
-              <ActivityIcon className="h-4 w-4 mr-2" />
               Recompute Curves
             </Button>
           </div>

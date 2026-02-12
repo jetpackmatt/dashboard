@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 272.85 79.17">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #fff;
+        font-family: THICCCBOI-Regular, THICCCBOI;
+        font-size: 63.46px;
+        isolation: isolate;
+      }
+
+      .cls-2 {
+        fill: #fec15f;
+      }
+
+      .cls-3 {
+        fill: #328bcb;
+      }
+
+      .cls-4 {
+        fill: #ec9559;
+      }
+
+      .cls-5 {
+        letter-spacing: -.07em;
+      }
+
+      .cls-6 {
+        letter-spacing: -.08em;
+      }
+
+      .cls-7 {
+        letter-spacing: -.08em;
+      }
+
+      .cls-8 {
+        letter-spacing: -.06em;
+      }
+
+      .cls-9 {
+        letter-spacing: -.06em;
+      }
+
+      .cls-10 {
+        letter-spacing: -.05em;
+      }
+
+      .cls-11 {
+        letter-spacing: -.05em;
+      }
+    </style>
+  </defs>
+  <g id="Layer_1-2" data-name="Layer 1">
+    <rect class="cls-4" x="14.42" y="10.52" width="30.76" height="30.38"/>
+    <polygon class="cls-3" points="45.18 8.72 14.42 8.72 26.3 0 57.07 0 45.18 8.72"/>
+    <text class="cls-1" transform="translate(53.03 60.01)"><tspan class="cls-11" x="0" y="0">J</tspan><tspan class="cls-6" x="32.36" y="0">e</tspan><tspan class="cls-9" x="64.73" y="0">t</tspan><tspan class="cls-5" x="85.04" y="0">p</tspan><tspan class="cls-7" x="121.02" y="0">a</tspan><tspan class="cls-8" x="156.49" y="0">c</tspan><tspan class="cls-10" x="187.08" y="0">k</tspan></text>
+    <polyline class="cls-2" points="12.36 11.4 12.36 40.92 0 40.92"/>
+  </g>
+</svg>

@@ -123,7 +123,7 @@ function transformDataForExport<T extends Record<string, unknown>>(
         return `${value.toFixed(1)} days`
       }
       // Format currency values
-      if (col === 'charge' || col === 'creditAmount') {
+      if (col === 'charge' || col === 'creditAmount' || col === 'baseCharge' || col === 'surchargeAmount' || col === 'insuranceCharge') {
         const numVal = typeof value === 'number' ? value : parseFloat(String(value))
         if (!isNaN(numVal)) return `$${numVal.toFixed(2)}`
       }
@@ -238,4 +238,123 @@ export function buildExportApiUrl(
   }
   const queryString = searchParams.toString()
   return queryString ? `${baseUrl}?${queryString}` : baseUrl
+}
+
+/**
+ * Fetch a single page with retry logic and timeout.
+ * THROWS if ALL retries fail — no silent data loss.
+ */
+async function fetchPageWithRetry<T>(
+  url: string,
+  offset: number,
+  maxRetries = 5,
+  timeoutMs = 45000
+): Promise<T[]> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        if (attempt === maxRetries) {
+          throw new Error(`Export page at offset ${offset} failed after ${maxRetries + 1} attempts (HTTP ${response.status})`)
+        }
+        await new Promise(r => setTimeout(r, 1500 * Math.pow(2, attempt)))
+        continue
+      }
+      const result = await response.json()
+      return (result.data || []) as T[]
+    } catch (err) {
+      clearTimeout(timeoutId)
+      // Re-throw our own errors (from !response.ok above)
+      if (err instanceof Error && err.message.startsWith('Export page at offset')) throw err
+      if (attempt === maxRetries) {
+        const isTimeout = err instanceof DOMException && err.name === 'AbortError'
+        throw new Error(`Export page at offset ${offset} ${isTimeout ? 'timed out' : 'errored'} after ${maxRetries + 1} attempts`)
+      }
+      await new Promise(r => setTimeout(r, 1500 * Math.pow(2, attempt)))
+    }
+  }
+  // Should be unreachable but TypeScript needs it
+  throw new Error(`Export page at offset ${offset} failed`)
+}
+
+/**
+ * Fetch all records from a paginated API endpoint.
+ *
+ * CRITICAL: Supabase returns MAX 1000 rows per request regardless of limit.
+ * This function paginates through all results to get the complete dataset.
+ *
+ * Uses parallel OFFSET-based pagination with retry logic.
+ * THROWS on ANY page failure — no silent data loss.
+ *
+ * @param apiUrl - Base API URL (e.g., '/api/data/billing/credits')
+ * @param params - Query parameters (excluding limit/offset which are managed internally)
+ * @param options - Optional settings
+ * @returns All records from the API — guaranteed complete or throws
+ */
+export async function fetchAllForExport<T = Record<string, unknown>>(
+  apiUrl: string,
+  params: URLSearchParams,
+  options?: {
+    pageSize?: number
+    maxConcurrent?: number
+    onProgress?: (fetched: number, total: number) => void
+  }
+): Promise<T[]> {
+  const pageSize = options?.pageSize ?? 1000
+  const maxConcurrent = options?.maxConcurrent ?? 4
+
+  // First request: get page 1 + totalCount
+  params.set('limit', String(pageSize))
+  params.set('offset', '0')
+  params.delete('afterId')
+
+  const firstResponse = await fetch(`${apiUrl}?${params.toString()}`)
+  if (!firstResponse.ok) {
+    throw new Error(`Export fetch failed: ${firstResponse.status}`)
+  }
+  const firstResult = await firstResponse.json()
+  const firstPage: T[] = firstResult.data || []
+  const totalCount: number = firstResult.totalCount || firstPage.length
+
+  options?.onProgress?.(firstPage.length, totalCount)
+
+  // If first page has everything, we're done
+  if (firstPage.length >= totalCount || firstPage.length < pageSize) {
+    return firstPage
+  }
+
+  const allData: T[] = [...firstPage]
+
+  // =====================================================================
+  // PARALLEL OFFSET-BASED PAGINATION
+  // All pages must succeed — any failure throws and aborts the export.
+  // =====================================================================
+  const pageOffsets: number[] = []
+  for (let offset = pageSize; offset < totalCount; offset += pageSize) {
+    pageOffsets.push(offset)
+  }
+
+  // Fetch all pages in parallel batches (5 retries, 45s timeout each)
+  for (let i = 0; i < pageOffsets.length; i += maxConcurrent) {
+    const batch = pageOffsets.slice(i, i + maxConcurrent)
+    const results = await Promise.all(
+      batch.map(async (offset) => {
+        const pageParams = new URLSearchParams(params)
+        pageParams.set('offset', String(offset))
+        pageParams.set('limit', String(pageSize))
+        return fetchPageWithRetry<T>(`${apiUrl}?${pageParams.toString()}`, offset)
+      })
+    )
+    for (const pageData of results) {
+      allData.push(...pageData)
+    }
+    options?.onProgress?.(allData.length, totalCount)
+  }
+
+  return allData
 }

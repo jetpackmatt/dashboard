@@ -5,9 +5,13 @@ import { MoonIcon, SunIcon } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
+import { useClient } from "@/components/client-context"
 
 export function ModeToggle() {
   const { theme, setTheme } = useTheme()
+  const { effectiveIsAdmin } = useClient()
+
+  if (!effectiveIsAdmin) return null
 
   return (
     <Button

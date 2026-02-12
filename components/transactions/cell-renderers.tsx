@@ -20,7 +20,10 @@ import {
   RotateCcwIcon,
   TagIcon,
   TruckIcon,
+  ExternalLinkIcon,
+  ShieldAlertIcon,
   XCircleIcon,
+  XIcon,
 } from "lucide-react"
 import { format, differenceInHours } from "date-fns"
 import { toast } from "sonner"
@@ -40,6 +43,7 @@ import {
 } from "@/components/ui/tooltip"
 import { CellRenderer } from "./transactions-table"
 import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
+import { TrackingLink } from "@/components/tracking-link"
 
 // ============================================
 // FEE TYPE DISPLAY NAME MAPPING
@@ -58,6 +62,17 @@ export function getFeeTypeDisplayName(feeType: string | null | undefined): strin
   if (!feeType) return ''
   return FEE_TYPE_DISPLAY_NAMES[feeType] || feeType
 }
+
+// ============================================
+// DYNAMIC TRUNCATION — clamp() scales with viewport
+// ============================================
+
+/** Responsive max-widths for columns that need truncation. Scales smoothly with viewport. */
+const TRUNCATE = {
+  customer:  'clamp(60px, 8vw, 180px)',    // name fields
+  tracking:  'clamp(60px, 8vw, 180px)',    // tracking IDs / numbers
+  storeId:   'clamp(40px, 5vw, 120px)',    // store order IDs
+} as const
 
 // ============================================
 // UNFULFILLED ORDERS TYPES & RENDERERS
@@ -252,7 +267,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
       toast.success("Order ID copied")
     }
     return (
-      <div className="group/cell flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5 font-mono">
         <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
@@ -275,8 +290,8 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
       toast.success("Shipment ID copied")
     }
     return (
-      <div className="group/cell flex items-center gap-1.5">
-        <span className="truncate">{row.shipmentId || "-"}</span>
+      <div className="group/cell flex items-center gap-1.5 font-mono">
+        <span className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -291,7 +306,7 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   },
 
   storeOrderId: (row) => (
-    <div className="text-muted-foreground truncate">
+    <div className="truncate text-muted-foreground mx-auto" style={{ maxWidth: TRUNCATE.storeId }} title={row.storeOrderId || undefined}>
       {row.storeOrderId || "-"}
     </div>
   ),
@@ -306,11 +321,15 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
     </Badge>
   ),
 
-  customerName: (row) => (
-    <div className="truncate">
-      {row.customerName}
-    </div>
-  ),
+  customerName: (row) => {
+    const name = row.customerName || '-'
+    const truncated = name.length > 18 ? name.slice(0, 18) + '\u2026' : name
+    return (
+      <div title={name !== '-' ? name : undefined}>
+        {truncated}
+      </div>
+    )
+  },
 
   channelName: (row) => (
     <div className="flex justify-center">
@@ -743,7 +762,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       toast.success("Order ID copied")
     }
     return (
-      <div className="group/cell flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5 font-mono">
         <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
@@ -766,8 +785,8 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       toast.success("Shipment ID copied")
     }
     return (
-      <div className="group/cell flex items-center gap-1.5">
-        <span className="truncate">{row.shipmentId || "-"}</span>
+      <div className="group/cell flex items-center gap-1.5 font-mono">
+        <span className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer">{row.shipmentId || "-"}</span>
         {row.shipmentId && (
           <button
             onClick={handleCopy}
@@ -954,11 +973,15 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     )
   },
 
-  customerName: (row) => (
-    <div className="truncate">
-      {row.customerName}
-    </div>
-  ),
+  customerName: (row) => {
+    const name = row.customerName || '-'
+    const truncated = name.length > 18 ? name.slice(0, 18) + '\u2026' : name
+    return (
+      <div title={name !== '-' ? name : undefined}>
+        {truncated}
+      </div>
+    )
+  },
 
   charge: (row) => (
     <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
@@ -1030,7 +1053,6 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   },
 
   trackingId: (row) => {
-    const trackingUrl = getTrackingUrl(row.carrier, row.trackingId)
     const handleCopy = (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
@@ -1039,22 +1061,19 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     }
     if (!row.trackingId) return <span className="text-muted-foreground">-</span>
     return (
-      <div className="group/cell flex items-center gap-1.5">
-        {trackingUrl ? (
-          <a
-            href={trackingUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 truncate"
+      <div className="group/cell flex items-center gap-1.5 font-mono">
+        <div className="truncate min-w-0" style={{ maxWidth: TRUNCATE.tracking }} title={row.trackingId}>
+          <TrackingLink
+            trackingNumber={row.trackingId}
+            carrier={row.carrier}
+            className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
           >
             {row.trackingId}
-          </a>
-        ) : (
-          <span className="truncate">{row.trackingId}</span>
-        )}
+          </TrackingLink>
+        </div>
         <button
           onClick={handleCopy}
-          className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
+          className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
           title="Copy Tracking ID"
         >
           <CopyIcon className="h-3.5 w-3.5" />
@@ -1134,7 +1153,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   },
 
   storeOrderId: (row) => (
-    <div className="text-muted-foreground truncate">
+    <div className="truncate text-muted-foreground mx-auto" style={{ maxWidth: TRUNCATE.storeId }} title={row.storeOrderId || undefined}>
       {row.storeOrderId || "-"}
     </div>
   ),
@@ -1146,9 +1165,49 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
  */
 export function createShipmentCellRenderers(options?: {
   onFileClaimClick?: (shipmentId: string) => void
+  onCancelClick?: (shipmentId: string) => void
 }): Record<string, CellRenderer<Shipment>> {
   return {
     ...shipmentCellRenderers,
+    // Actions column with Track, Claim, Cancel buttons
+    actions: (row) => {
+      const hasTracking = !!row.trackingId && !!getTrackingUrl(row.carrier, row.trackingId)
+      return (
+        <div className="flex items-center gap-1.5">
+          {hasTracking ? (
+            <TrackingLink
+              trackingNumber={row.trackingId}
+              carrier={row.carrier}
+              className="px-2 py-0.5 rounded text-[11px] font-medium text-blue-600 hover:bg-blue-100 hover:text-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-colors"
+            >
+              Track
+            </TrackingLink>
+          ) : (
+            <span className="px-2 py-0.5 rounded bg-muted/50 text-[11px] font-medium text-muted-foreground/40 cursor-default">
+              Track
+            </span>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              options?.onFileClaimClick?.(row.shipmentId)
+            }}
+            className="px-2 py-0.5 rounded text-[11px] font-medium text-orange-600 hover:bg-orange-100 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-900/50 dark:hover:text-orange-300 transition-colors"
+          >
+            Claim
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              options?.onCancelClick?.(row.shipmentId)
+            }}
+            className="px-2 py-0.5 rounded text-[11px] font-medium text-red-500 hover:bg-red-100 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/50 dark:hover:text-red-300 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )
+    },
     // Override status renderer with interactive version
     status: (row) => {
       // Show Voided badge for duplicate shipping transactions that were recreated
@@ -1694,10 +1753,10 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       <div className="group/cell flex items-center gap-1.5">
         {row.trackingNumber ? (
           <>
-            <span className="text-muted-foreground truncate">{row.trackingNumber}</span>
+            <div className="truncate min-w-0 text-muted-foreground" style={{ maxWidth: TRUNCATE.tracking }} title={row.trackingNumber}>{row.trackingNumber}</div>
             <button
               onClick={handleCopy}
-              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
               title="Copy Tracking #"
             >
               <CopyIcon className="h-3.5 w-3.5" />
@@ -2136,7 +2195,7 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
       toast.success("Order ID copied")
     }
     return (
-      <div className="group/cell flex items-center gap-1.5">
+      <div className="group/cell flex items-center gap-1.5 font-mono">
         <span className="truncate">{row.orderId || '-'}</span>
         {row.orderId && (
           <button
@@ -2151,10 +2210,10 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
     )
   },
   storeOrderId: (row) => (
-    <div className="text-muted-foreground truncate">{row.storeOrderId || "-"}</div>
+    <div className="truncate text-muted-foreground" style={{ maxWidth: TRUNCATE.storeId }} title={row.storeOrderId || undefined}>{row.storeOrderId || "-"}</div>
   ),
   customerName: (row) => (
-    <div className="truncate">{row.customerName}</div>
+    <div className="truncate" style={{ maxWidth: TRUNCATE.customer }} title={row.customerName || undefined}>{row.customerName}</div>
   ),
   status: (row) => (
     <Badge variant="outline" className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${getShippedStatusColors(row.status)}`}>
@@ -2171,19 +2230,17 @@ export const shippedCellRenderers: Record<string, CellRenderer<ShippedOrder>> = 
     </div>
   ),
   trackingId: (row) => {
-    const trackingUrl = getTrackingUrl(row.carrier, row.trackingId)
     if (!row.trackingId) return <span className="text-muted-foreground">-</span>
-    return trackingUrl ? (
-      <a
-        href={trackingUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 truncate block"
-      >
-        {row.trackingId}
-      </a>
-    ) : (
-      <span className="truncate block">{row.trackingId}</span>
+    return (
+      <div className="truncate" style={{ maxWidth: TRUNCATE.tracking }} title={row.trackingId}>
+        <TrackingLink
+          trackingNumber={row.trackingId}
+          carrier={row.carrier}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+        >
+          {row.trackingId}
+        </TrackingLink>
+      </div>
     )
   },
   shippedDate: (row) => (

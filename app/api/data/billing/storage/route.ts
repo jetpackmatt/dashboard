@@ -23,13 +23,31 @@ export async function GET(request: NextRequest) {
   const fcFilter = searchParams.get('fc')
   const locationTypeFilter = searchParams.get('locationType')
 
+  // Sort params
+  const sortField = searchParams.get('sortField') || 'charge_date'
+  const sortAscending = searchParams.get('sortDirection') === 'asc'
+
   // Search query
   const search = searchParams.get('search')?.trim().toLowerCase()
+
+  // Export mode - includes extra fields for invoice-format export
+  const isExport = searchParams.get('export') === 'true'
 
   try {
     // IMPORTANT: Supabase has a 1000 row limit by default
     // Use cursor-based pagination to fetch all records if needed for filtering
     // For simple pagination without post-filters, we can use range()
+
+    // Export: look up client merchant_id and company_name
+    let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
+    if (isExport) {
+      const { data: clients } = await supabase.from('clients').select('id, merchant_id, company_name')
+      if (clients) {
+        for (const c of clients as any[]) {
+          clientInfoMap[c.id] = { merchantId: c.merchant_id?.toString() || '', merchantName: c.company_name || '' }
+        }
+      }
+    }
 
     const needsPostFiltering = !!locationTypeFilter || !!search
 
@@ -73,7 +91,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Map and filter
-      let mapped = allData.map((row: Record<string, unknown>) => mapStorageRow(row))
+      let mapped = allData.map((row: Record<string, unknown>) => mapStorageRow(row, isExport, clientInfoMap))
 
       if (locationTypeFilter) {
         mapped = mapped.filter(item => item.locationType === locationTypeFilter)
@@ -86,11 +104,11 @@ export async function GET(request: NextRequest) {
         )
       }
 
-      // Sort by charge date descending
+      // Sort by sortField
       mapped.sort((a, b) => {
         const dateA = a.chargeStartDate ? new Date(a.chargeStartDate as string).getTime() : 0
         const dateB = b.chargeStartDate ? new Date(b.chargeStartDate as string).getTime() : 0
-        return dateB - dateA
+        return sortAscending ? dateA - dateB : dateB - dateA
       })
 
       const totalCount = mapped.length
@@ -126,7 +144,7 @@ export async function GET(request: NextRequest) {
         .from('transactions')
         .select('*')
         .eq('reference_type', 'FC')
-        .order('charge_date', { ascending: false })
+        .order(sortField, { ascending: sortAscending })
         .range(offset, offset + limit - 1)
 
       if (clientId) {
@@ -143,7 +161,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      const mapped = (data || []).map((row: Record<string, unknown>) => mapStorageRow(row))
+      const mapped = (data || []).map((row: Record<string, unknown>) => mapStorageRow(row, isExport, clientInfoMap))
 
       return NextResponse.json({
         data: mapped,
@@ -159,7 +177,7 @@ export async function GET(request: NextRequest) {
 
 // Helper to map a storage transaction row to response format
 // CRITICAL: Never show raw cost to clients - return null if billed_amount not yet calculated
-function mapStorageRow(row: Record<string, unknown>) {
+function mapStorageRow(row: Record<string, unknown>, isExport = false, clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}) {
   const refParts = String(row.reference_id || '').split('-')
   const fcId = refParts[0] || ''
   const inventoryId = refParts[1] || ''
@@ -185,5 +203,10 @@ function mapStorageRow(row: Record<string, unknown>) {
     comment: String(details.Comment || ''),
     // Include preview flag for UI styling (optional indicator)
     isPreview: row.markup_is_preview === true,
+    // Export-only fields
+    ...(isExport ? {
+      merchantId: clientInfoMap[row.client_id as string]?.merchantId || '',
+      merchantName: clientInfoMap[row.client_id as string]?.merchantName || '',
+    } : {}),
   }
 }

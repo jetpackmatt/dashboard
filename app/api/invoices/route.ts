@@ -46,6 +46,8 @@ export async function GET(request: NextRequest) {
         version,
         pdf_path,
         xlsx_path,
+        shipment_count,
+        transaction_count,
         client:clients(id, company_name, short_code)
       `)
       .in('status', ['approved', 'sent'])

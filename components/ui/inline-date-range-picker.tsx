@@ -18,6 +18,7 @@ interface InlineDateRangePickerProps {
   onDateRangeChange: (range: DateRange | undefined) => void
   className?: string
   disabled?: boolean
+  autoOpen?: boolean
 }
 
 export function InlineDateRangePicker({
@@ -25,8 +26,17 @@ export function InlineDateRangePicker({
   onDateRangeChange,
   className,
   disabled = false,
+  autoOpen = false,
 }: InlineDateRangePickerProps) {
   const [open, setOpen] = React.useState(false)
+
+  // Auto-open on mount when autoOpen is true
+  React.useEffect(() => {
+    if (autoOpen) {
+      const timer = setTimeout(() => setOpen(true), 100)
+      return () => clearTimeout(timer)
+    }
+  }, [autoOpen])
   // Track if user is in the middle of selecting a new range
   const [isSelectingNewRange, setIsSelectingNewRange] = React.useState(false)
   // Store the range when popover opens to detect new selections
@@ -53,7 +63,7 @@ export function InlineDateRangePicker({
           className={cn(
             "h-[30px] flex items-center gap-1 px-2 rounded-md border border-input bg-background text-xs",
             "hover:bg-accent hover:text-accent-foreground transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
             disabled && "opacity-50 cursor-not-allowed",
             className
           )}

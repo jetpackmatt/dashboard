@@ -854,15 +854,17 @@ function MarkupRuleDialog({
           )}
 
           {/* Client Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="client">Client</Label>
+          <div className="space-y-1.5">
+            <Label htmlFor="client" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              Client
+            </Label>
             <Select
               value={formData.client_id || 'global'}
               onValueChange={v =>
                 setFormData({ ...formData, client_id: v === 'global' ? null : v })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className={cn("h-9", (formData.client_id || 'global') ? "text-foreground" : "text-muted-foreground/40")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -3273,7 +3275,7 @@ function DisputesContent() {
               />
             </div>
             {isSearching && (
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              <JetpackLoader size="sm" />
             )}
             {(searchResults.length > 0 || searchFeeType || searchReferenceType || searchReferenceId) && (
               <Button variant="outline" size="sm" onClick={clearSearch}>
@@ -5035,7 +5037,7 @@ function BrandsContent({ clients }: { clients: Client[] }) {
                         disabled={isDeleting}
                       >
                         {isDeleting ? (
-                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                          <JetpackLoader size="sm" className="mr-1.5" />
                         ) : (
                           <Trash2 className="h-3 w-3 mr-1.5" />
                         )}

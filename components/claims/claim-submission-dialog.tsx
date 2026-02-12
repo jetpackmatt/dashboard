@@ -646,14 +646,17 @@ export function ClaimSubmissionDialog({
       case "shipment":
         return (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="shipmentId">Shipment ID</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="shipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                Shipment ID <span className="text-red-500">*</span>
+              </Label>
               <Input
                 id="shipmentId"
-                placeholder="Enter shipment ID"
+                placeholder="e.g., 330867617"
                 value={formData.shipmentId}
                 onChange={(e) => setFormData(prev => ({ ...prev, shipmentId: e.target.value }))}
                 onKeyDown={(e) => e.key === "Enter" && formData.shipmentId.trim() && handleShipmentStepNext()}
+                className="h-9 placeholder:text-muted-foreground/40"
               />
             </div>
           </div>
@@ -870,18 +873,21 @@ export function ClaimSubmissionDialog({
         const isPickOrShortShip = formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity"
         return (
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="description">
-                {isPickOrShortShip
-                  ? "Describe what was wrong with this shipment:"
-                  : "Enter any additional details we should know: (optional)"}
+            <div className="space-y-1.5">
+              <Label htmlFor="description" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                {isPickOrShortShip ? (
+                  <>Description <span className="text-red-500">*</span></>
+                ) : (
+                  <>Description <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span></>
+                )}
               </Label>
               <Textarea
                 id="description"
-                placeholder="Include relevant context, descriptions, or communications with customer."
+                placeholder="Include relevant context, descriptions, or communications with customer..."
                 value={formData.description}
                 onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                 rows={5}
+                className="placeholder:text-muted-foreground/40"
               />
             </div>
           </div>
@@ -911,15 +917,18 @@ export function ClaimSubmissionDialog({
             </div>
 
             {formData.reshipmentStatus === "I've already reshipped" && (
-              <div className="space-y-2 pt-2">
-                <Label htmlFor="reshipmentId">Reshipment ID</Label>
+              <div className="space-y-1.5 pt-2">
+                <Label htmlFor="reshipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Reshipment ID <span className="text-red-500">*</span>
+                </Label>
                 <div className="relative">
                   <Input
                     id="reshipmentId"
-                    placeholder="Enter the shipment ID of your reshipment"
+                    placeholder="e.g., 330867618"
                     value={formData.reshipmentId}
                     onChange={(e) => setFormData(prev => ({ ...prev, reshipmentId: e.target.value }))}
                     className={cn(
+                      "h-9 placeholder:text-muted-foreground/40",
                       reshipmentValid && "border-green-500 pr-10",
                       reshipmentError && "border-destructive pr-10"
                     )}
@@ -985,13 +994,13 @@ export function ClaimSubmissionDialog({
         return (
           <div className="space-y-5">
             {/* Field 1: Photo - REQUIRED (single file) */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 {photoLabel}
                 {formData.attachments.photo.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
                 ) : (
-                  <span className="text-destructive">*</span>
+                  <span className="text-red-500">*</span>
                 )}
               </Label>
               <FileUpload
@@ -1009,13 +1018,13 @@ export function ClaimSubmissionDialog({
             </div>
 
             {/* Field 2: Customer Complaint - REQUIRED (single file) */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 Screenshot of Customer Complaint
                 {formData.attachments.customerComplaint.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
                 ) : (
-                  <span className="text-destructive">*</span>
+                  <span className="text-red-500">*</span>
                 )}
               </Label>
               <FileUpload
@@ -1033,8 +1042,10 @@ export function ClaimSubmissionDialog({
             </div>
 
             {/* Field 3: Other Docs - OPTIONAL */}
-            <div className="space-y-2">
-              <Label>Any Other Documentation <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+              </Label>
               <FileUpload
                 value={formData.attachments.otherDocs}
                 onChange={(files) => setFormData(prev => ({

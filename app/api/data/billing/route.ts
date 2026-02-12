@@ -1,29 +1,87 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { createAdminClient } from "@/lib/supabase/admin"
+import { createAdminClient, verifyClientAccess, handleAccessError } from "@/lib/supabase/admin"
 
-// Update payment method
+// Update payment method or billing emails
 export async function PATCH(request: NextRequest) {
   try {
-    // Auth check
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { clientId, paymentMethod, stripePaymentMethodId } = body
+    const { clientId, paymentMethod, stripePaymentMethodId, billing_emails } = body
 
-    if (!clientId) {
-      return NextResponse.json({ error: "clientId is required" }, { status: 400 })
-    }
+    // Get clientId from body or query params
+    const searchParams = request.nextUrl.searchParams
+    const requestedClientId = clientId || searchParams.get('clientId')
 
-    if (!paymentMethod || !['ach', 'credit_card'].includes(paymentMethod)) {
-      return NextResponse.json({ error: "Invalid payment method" }, { status: 400 })
+    // CRITICAL SECURITY: Verify user has access to requested client
+    let finalClientId: string | null
+    try {
+      const access = await verifyClientAccess(requestedClientId)
+      finalClientId = access.requestedClientId
+    } catch (error) {
+      return handleAccessError(error)
     }
 
     const adminClient = createAdminClient()
+
+    // Handle billing_emails update
+    if (billing_emails !== undefined) {
+      // Validate array
+      if (!Array.isArray(billing_emails)) {
+        return NextResponse.json(
+          { error: 'billing_emails must be an array' },
+          { status: 400 }
+        )
+      }
+
+      // Require at least one email
+      if (billing_emails.length === 0) {
+        return NextResponse.json(
+          { error: 'At least one billing email is required' },
+          { status: 400 }
+        )
+      }
+
+      // Validate each email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      for (const email of billing_emails) {
+        if (!emailRegex.test(email)) {
+          return NextResponse.json(
+            { error: `Invalid email format: ${email}` },
+            { status: 400 }
+          )
+        }
+      }
+
+      // Max 10 emails
+      if (billing_emails.length > 10) {
+        return NextResponse.json(
+          { error: 'Maximum 10 email addresses allowed' },
+          { status: 400 }
+        )
+      }
+
+      // Update database
+      const { data, error } = await adminClient
+        .from('clients')
+        .update({ billing_emails: billing_emails })
+        .eq('id', finalClientId)
+        .select()
+
+      if (error) {
+        console.error('Failed to update billing_emails:', error)
+        return NextResponse.json(
+          { error: 'Failed to update billing emails' },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    // Handle payment method update
+    if (!paymentMethod || !['ach', 'credit_card'].includes(paymentMethod)) {
+      return NextResponse.json({ error: "Invalid payment method" }, { status: 400 })
+    }
 
     // Build update object
     const updateData: Record<string, string | null> = {
@@ -43,7 +101,7 @@ export async function PATCH(request: NextRequest) {
     const { error } = await adminClient
       .from("clients")
       .update(updateData)
-      .eq("id", clientId)
+      .eq("id", finalClientId)
 
     if (error) {
       console.error("Error updating payment method:", error)
@@ -58,19 +116,17 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams
-  const clientId = searchParams.get("clientId")
-
-  if (!clientId) {
-    return NextResponse.json({ error: "clientId is required" }, { status: 400 })
-  }
-
   try {
-    // Auth check
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const searchParams = request.nextUrl.searchParams
+    const requestedClientId = searchParams.get("clientId")
+
+    // CRITICAL SECURITY: Verify user has access to requested client
+    let clientId: string | null
+    try {
+      const access = await verifyClientAccess(requestedClientId)
+      clientId = access.requestedClientId
+    } catch (error) {
+      return handleAccessError(error)
     }
 
     const adminClient = createAdminClient()
@@ -78,7 +134,7 @@ export async function GET(request: NextRequest) {
     // Get client billing info
     const { data: client, error: clientError } = await adminClient
       .from("clients")
-      .select("billing_address, billing_email, company_name, payment_method")
+      .select("billing_address, billing_email, billing_emails, company_name, payment_method")
       .eq("id", clientId)
       .single()
 
@@ -110,6 +166,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       billingAddress: client?.billing_address || null,
       billingEmail: client?.billing_email || null,
+      billingEmails: client?.billing_emails || [],
       companyName: client?.company_name || null,
       paymentMethod: client?.payment_method || 'ach',
       outstandingBalance,

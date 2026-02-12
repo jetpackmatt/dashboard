@@ -1,5 +1,6 @@
 // Font configuration for the dashboard application
-import { Outfit, Inter } from 'next/font/google'
+import { Outfit, Roboto_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 
 // Google Fonts - Outfit (display/headings)
 export const outfit = Outfit({
@@ -9,12 +10,20 @@ export const outfit = Outfit({
   display: 'swap',
 })
 
-// Google Fonts - Inter (data tables, body text)
-export const inter = Inter({
+// Geist Sans (data tables, body text)
+export const roboto = localFont({
+  src: '../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2',
+  variable: '--font-roboto',
+  display: 'swap',
+})
+
+// Roboto Mono (monospaced - IDs, tracking numbers)
+export const mono = Roboto_Mono({
   subsets: ['latin'],
-  variable: '--font-inter',
+  weight: ['400', '500'],
+  variable: '--font-mono',
   display: 'swap',
 })
 
 // Export font class names for use in layout
-export const fontVariables = `${outfit.variable} ${inter.variable}`
+export const fontVariables = `${outfit.variable} ${roboto.variable} ${mono.variable}`

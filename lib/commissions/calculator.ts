@@ -262,7 +262,7 @@ export async function getUserCommissionAssignment(
 export async function getLastShipmentDates(
   supabase: SupabaseClient,
   userId: string
-): Promise<{ shipbob: string | null; eshipper: string | null }> {
+): Promise<{ shipbob: string | null; eshipper: Date | null }> {
   // Get user's commission assignment
   const { data: userCommission } = await supabase
     .from('user_commissions')
@@ -287,17 +287,17 @@ export async function getLastShipmentDates(
 
   const clientIds = clientAssignments.map(ca => ca.client_id)
 
-  // Get last eShipper shipment date across all assigned clients
+  // Get last eShipper file import timestamp across all assigned clients
   const { data: lastEshipper } = await supabase
     .from('eshipper_shipments')
-    .select('ship_date')
+    .select('created_at')
     .in('client_id', clientIds)
-    .order('ship_date', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(1)
     .single()
 
   return {
     shipbob: null, // ShipBob is real-time, we use the lastUpdated timestamp instead
-    eshipper: lastEshipper?.ship_date || null,
+    eshipper: lastEshipper?.created_at ? new Date(lastEshipper.created_at) : null,
   }
 }

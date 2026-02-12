@@ -24,6 +24,14 @@ export async function GET(request: NextRequest) {
   const statusFilter = searchParams.get('status') // comma-separated list of statuses
   const searchQuery = searchParams.get('search')?.trim() || '' // search across multiple fields
 
+  // Sort params (defaults: created_at desc)
+  const sortField = searchParams.get('sortField') || 'created_at'
+  const sortDirection = searchParams.get('sortDirection') || 'desc'
+  const sortAscending = sortDirection === 'asc'
+
+  // Export mode - includes extra fields for invoice-format export
+  const isExport = searchParams.get('export') === 'true'
+
   // Date range filtering (ISO date strings, e.g., '2025-01-01')
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
@@ -116,6 +124,7 @@ export async function GET(request: NextRequest) {
     // Apply search filter - hybrid approach:
     // - Full-text search (GIN indexed) for name-like searches
     // - ILIKE for ID/tracking searches (substring matching)
+    // - Pre-resolve store_order_id from orders table (can't filter joined columns in .or())
     let needsClientSideSearch = false
     let useFullTextSearch = false
     if (searchQuery) {
@@ -124,12 +133,32 @@ export async function GET(request: NextRequest) {
       const looksLikeId = /\d/.test(searchTerm) || (/^[a-zA-Z0-9]+$/.test(searchTerm) && searchTerm.length > 3)
 
       if (looksLikeId) {
+        // Pre-resolve store_order_id → shipbob_order_id from orders table
+        // This lets us search by Shopify/store order numbers even though they're on a joined table
+        let storeOrderIds: string[] = []
+        const storeOrderQuery = supabase
+          .from('orders')
+          .select('shipbob_order_id')
+          .ilike('store_order_id', `%${searchTerm}%`)
+          .limit(100)
+        if (clientId) {
+          storeOrderQuery.eq('client_id', clientId)
+        }
+        const { data: storeOrderMatches } = await storeOrderQuery
+        if (storeOrderMatches && storeOrderMatches.length > 0) {
+          storeOrderIds = storeOrderMatches.map((o: any) => o.shipbob_order_id).filter(Boolean)
+        }
+
         // Use ILIKE for ID searches - supports partial matching
-        // Note: Can only search shipments table columns in .or() - joined table columns don't work
         const searchPattern = `%${searchTerm}%`
-        query = query.or(
-          `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern}`
-        )
+        let orFilter = `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern}`
+
+        // Add store_order_id matches via their shipbob_order_ids
+        if (storeOrderIds.length > 0) {
+          orFilter += `,shipbob_order_id.in.(${storeOrderIds.join(',')})`
+        }
+
+        query = query.or(orFilter)
       } else {
         // Use full-text search for name searches (GIN indexed, very fast)
         query = query.textSearch('search_vector', searchTerm, {
@@ -152,7 +181,7 @@ export async function GET(request: NextRequest) {
       // Fetch all records for client-side status filtering (up to 1000 limit)
       // Note: Unfulfilled shipments are typically <1000, so this is safe
       const result = await query
-        .order('created_at', { ascending: false })
+        .order(sortField, { ascending: sortAscending })
         .limit(1000)
       shipmentsData = result.data
       shipmentsError = result.error
@@ -160,7 +189,7 @@ export async function GET(request: NextRequest) {
     } else {
       // Normal pagination
       const result = await query
-        .order('created_at', { ascending: false })
+        .order(sortField, { ascending: sortAscending })
         .range(offset, offset + limit - 1)
       shipmentsData = result.data
       shipmentsError = result.error
@@ -186,14 +215,14 @@ export async function GET(request: NextRequest) {
 
       if (statusFilterValues) {
         const fallbackResult = await fallbackQuery
-          .order('created_at', { ascending: false })
+          .order(sortField, { ascending: sortAscending })
           .limit(1000)
         shipmentsData = fallbackResult.data
         shipmentsError = fallbackResult.error
         count = fallbackResult.count
       } else {
         const fallbackResult = await fallbackQuery
-          .order('created_at', { ascending: false })
+          .order(sortField, { ascending: sortAscending })
           .range(offset, offset + limit - 1)
         shipmentsData = fallbackResult.data
         shipmentsError = fallbackResult.error
@@ -258,6 +287,36 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Export: look up client merchant_id and company_name + products sold
+    let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
+    let productsSoldMap: Record<string, string> = {}
+    if (isExport) {
+      const { data: clients } = await supabase.from('clients').select('id, merchant_id, company_name')
+      if (clients) {
+        for (const c of clients as any[]) {
+          clientInfoMap[c.id] = { merchantId: c.merchant_id?.toString() || '', merchantName: c.company_name || '' }
+        }
+      }
+      // Also fetch item names for products_sold
+      if (shipmentIds.length > 0) {
+        const { data: itemsData } = await supabase
+          .from('shipment_items')
+          .select('shipment_id, name, quantity')
+          .in('shipment_id', shipmentIds)
+        if (itemsData) {
+          const itemsByShipment: Record<string, { name: string; qty: number }[]> = {}
+          for (const item of itemsData as any[]) {
+            if (!item.shipment_id) continue
+            if (!itemsByShipment[item.shipment_id]) itemsByShipment[item.shipment_id] = []
+            itemsByShipment[item.shipment_id].push({ name: item.name || '', qty: item.quantity || 1 })
+          }
+          for (const [sid, items] of Object.entries(itemsByShipment)) {
+            productsSoldMap[sid] = items.map(i => `${i.name}(${i.qty})`).join(' ; ')
+          }
+        }
+      }
+    }
+
     // Map to response format with granular statuses
     const shipments = (shipmentsData || []).map((shipment: any) => {
       // Get order data from JOIN (when hasDateFilter) or from separate fetch
@@ -281,6 +340,7 @@ export async function GET(request: NextRequest) {
         storeOrderId: order.store_order_id || '',
         customerName: shipment.recipient_name || order.customer_name || 'Unknown',
         status: derivedStatus,
+        rawStatus: shipment.status, // Raw DB status for category-based filtering
         orderDate: orderDateStr,
         slaDate: shipment.estimated_fulfillment_date,
         itemCount: itemCounts[shipment.shipment_id] || 1,
@@ -296,12 +356,51 @@ export async function GET(request: NextRequest) {
         age: age,
         // Client identification (for admin badge)
         clientId: shipment.client_id || null,
+        // Export-only fields (invoice format - most blank for unfulfilled)
+        ...(isExport ? {
+          merchantId: clientInfoMap[shipment.client_id]?.merchantId || '',
+          merchantName: clientInfoMap[shipment.client_id]?.merchantName || '',
+          transactionDate: '',
+          transactionType: '',
+          trackingId: '',
+          baseCharge: null,
+          surchargeAmount: null,
+          charge: null,
+          insuranceCharge: null,
+          productsSold: productsSoldMap[shipment.shipment_id] || '',
+          qty: itemCounts[shipment.shipment_id] || 1,
+          shipOptionId: '',
+          carrier: '',
+          carrier_service: '',
+          zone: '',
+          actualWeightOz: '',
+          dimWeightOz: '',
+          billableWeightOz: '',
+          lengthIn: '',
+          widthIn: '',
+          heightIn: '',
+          zipCode: '',
+          city: '',
+          state: '',
+          labelCreated: '',
+          deliveredDate: '',
+          transitTimeDays: '',
+        } : {}),
       }
     })
 
     // Apply status filter client-side (after deriving statuses)
     // This ensures accurate filtering since derived status uses event timestamps
     // which can't be easily expressed in Supabase .or() queries
+    //
+    // "On Hold" and "Exception" are parent categories — the derived status may be
+    // more specific (e.g., "Manual Hold", "Out of Stock", "Address Issue").
+    // Map filter values to their raw DB status so we catch all sub-statuses.
+    const CATEGORY_TO_RAW: Record<string, string> = {
+      'on hold': 'OnHold',
+      'exception': 'Exception',
+    }
+
     let filteredShipments = shipments
     if (statusFilterValues && statusFilterValues.length > 0) {
       filteredShipments = filteredShipments.filter((s: any) => {
@@ -309,6 +408,10 @@ export async function GET(request: NextRequest) {
         return statusFilterValues.some(filterStatus => {
           // Handle "awaiting pick (late)" matching "awaiting pick" filter
           if (filterStatus === 'awaiting pick' && derivedStatusLower.startsWith('awaiting pick')) {
+            return true
+          }
+          // Category filters: match by raw DB status (catches all sub-statuses)
+          if (CATEGORY_TO_RAW[filterStatus] && s.rawStatus === CATEGORY_TO_RAW[filterStatus]) {
             return true
           }
           return derivedStatusLower === filterStatus
@@ -365,8 +468,36 @@ function deriveGranularStatus(shipment: any): string {
   const efdStatus = shipment.estimated_fulfillment_date_status
   const statusDetails = shipment.status_details
 
-  // Check event timestamps FIRST - these are the most reliable indicators
-  // of fulfillment progress (even when raw status says "Processing")
+  // Check OnHold/Exception FIRST - these override any prior fulfillment progress
+  // (a shipment can be picked then put on hold afterward)
+  if (status === 'OnHold') {
+    if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
+      const detailName = statusDetails[0]?.name
+      if (detailName) {
+        if (detailName === 'Manual') {
+          return 'Manual Hold'
+        }
+        return formatPascalCase(detailName)
+      }
+    }
+    if (efdStatus) {
+      return formatPascalCase(efdStatus)
+    }
+    return 'On Hold'
+  }
+
+  if (status === 'Exception') {
+    if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
+      const detailName = statusDetails[0]?.name
+      if (detailName === 'OutOfStock') return 'Out of Stock'
+      if (detailName === 'UnknownSku') return 'Unknown SKU'
+      if (detailName === 'AddressValidationFailed') return 'Address Issue'
+      if (detailName) return formatPascalCase(detailName)
+    }
+    return 'Exception'
+  }
+
+  // Check event timestamps - most reliable indicators of fulfillment progress
   if (shipment.event_labeled) {
     return 'Labelled'
   }
@@ -377,55 +508,16 @@ function deriveGranularStatus(shipment: any): string {
     return 'Picked'
   }
 
-  // Check status_details next - contains granular status info
+  // Check status_details for granular processing statuses
   if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
     const detailName = statusDetails[0]?.name
 
-    // Exception statuses
-    if (detailName === 'OutOfStock') {
-      return 'Out of Stock'
-    }
-    if (detailName === 'AddressValidationFailed') {
-      return 'Address Issue'
-    }
-    if (detailName === 'OnHold') {
-      return 'On Hold'
-    }
-
-    // Granular processing statuses from status_details
-    if (detailName === 'Picked') {
-      return 'Picked'
-    }
-    if (detailName === 'Packed') {
-      return 'Packed'
-    }
-    if (detailName === 'PickInProgress') {
-      return 'Pick In-Progress'
-    }
-    if (detailName === 'LabeledCreated' || detailName === 'Labelled') {
-      return 'Labelled'
-    }
-  }
-
-  // Check main status = OnHold FIRST (takes precedence over inventory issues)
-  // Some OnHold orders also have AwaitingInventoryAllocation - show the hold reason, not "Out of Stock"
-  if (status === 'OnHold') {
-    if (statusDetails && Array.isArray(statusDetails) && statusDetails.length > 0) {
-      const detailName = statusDetails[0]?.name
-      if (detailName) {
-        // Special case: "Manual" should display as "Manual Hold"
-        if (detailName === 'Manual') {
-          return 'Manual Hold'
-        }
-        // Format the reason nicely (e.g., "InvalidAddress" -> "Invalid Address")
-        return formatPascalCase(detailName)
-      }
-    }
-    // No status_details - use EFD status if available (e.g., "AwaitingReset" -> "Awaiting Reset")
-    if (efdStatus) {
-      return formatPascalCase(efdStatus)
-    }
-    return 'On Hold'
+    if (detailName === 'OutOfStock') return 'Out of Stock'
+    if (detailName === 'AddressValidationFailed') return 'Address Issue'
+    if (detailName === 'Picked') return 'Picked'
+    if (detailName === 'Packed') return 'Packed'
+    if (detailName === 'PickInProgress') return 'Pick In-Progress'
+    if (detailName === 'LabeledCreated' || detailName === 'Labelled') return 'Labelled'
   }
 
   // Check EFD status for inventory issues (only if not OnHold)

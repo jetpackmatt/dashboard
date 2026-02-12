@@ -11,6 +11,8 @@ import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
+import { useExport } from "@/components/export-context"
+import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 
 // Calculate age in days from order date (used for filtering)
 function calculateAge(orderDate: string): number {
@@ -68,9 +70,10 @@ export function UnfulfilledTable({
   onPageSizeChange,
   onExportTriggerReady,
 }: UnfulfilledTableProps) {
-  // Check if admin viewing all clients (for client badge prefix column)
-  const { isAdmin, selectedClientId } = useClient()
-  const showClientBadge = isAdmin && !selectedClientId
+  const { startClientExport } = useExport()
+  // Check if admin/care viewing all clients (for client badge prefix column)
+  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Use initial data if provided, otherwise start empty
   const hasInitialData = initialData && initialData.length > 0
@@ -82,6 +85,10 @@ export function UnfulfilledTable({
 
   // Track if we've used the initial data (to skip first fetch)
   const [usedInitialData, setUsedInitialData] = React.useState(hasInitialData)
+
+  // Sort state - default: Order Imported descending (matches API default)
+  const [sortField, setSortField] = React.useState<string>('orderDate')
+  const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Shipment details drawer state
   const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
@@ -144,6 +151,15 @@ export function UnfulfilledTable({
         limit: size.toString(),
         offset: offset.toString(),
       })
+
+      // Add sort params
+      if (sortField) {
+        // Resolve sortKey from table config
+        const colConfig = UNFULFILLED_TABLE_CONFIG.columns.find(c => c.id === sortField)
+        const sortKey = colConfig?.sortKey || sortField
+        params.set('sortField', sortKey)
+        params.set('sortDirection', sortDirection)
+      }
 
       // Add status filter
       if (statusFilter.length > 0) {
@@ -240,7 +256,7 @@ export function UnfulfilledTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, onChannelsChange])
+  }, [clientId, data.length, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
@@ -250,7 +266,7 @@ export function UnfulfilledTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset page when filter changes (from parent)
   React.useEffect(() => {
@@ -267,6 +283,13 @@ export function UnfulfilledTable({
     }
   }, [pageSize])
 
+  // Handle sort change
+  const handleSortChange = React.useCallback((field: string, direction: 'asc' | 'desc') => {
+    setSortField(field)
+    setSortDirection(direction)
+    setPageIndex(0) // Reset to first page on sort change
+  }, [])
+
   // Handle row click to open shipment details drawer
   const handleRowClick = React.useCallback((row: UnfulfilledOrder) => {
     setSelectedShipmentId(row.shipmentId)
@@ -277,17 +300,13 @@ export function UnfulfilledTable({
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
 
-    let dataToExport: UnfulfilledOrder[]
-
     if (scope === 'current') {
-      dataToExport = data
-    } else {
-      const params = new URLSearchParams({
-        clientId,
-        limit: '10000',
-        offset: '0',
+      exportData(data as unknown as Record<string, unknown>[], {
+        format: exportFormat, scope, filename: 'unfulfilled-orders',
+        ...toExportMapping(SHIPMENTS_INVOICE_COLUMNS),
       })
-
+    } else {
+      const params = new URLSearchParams({ clientId })
       if (statusFilter.length > 0) params.set('status', statusFilter.join(','))
       if (searchQuery) params.set('search', searchQuery)
       if (dateRange?.from) {
@@ -296,19 +315,20 @@ export function UnfulfilledTable({
           params.set('endDate', format(endOfDay(dateRange.to), 'yyyy-MM-dd'))
         }
       }
+      params.set('export', 'true')
 
-      const response = await fetch(`/api/data/orders/unfulfilled?${params.toString()}`)
-      const result = await response.json()
-      dataToExport = result.data || []
+      startClientExport({
+        apiUrl: '/api/data/orders/unfulfilled',
+        params,
+        source: 'Unfulfilled Orders',
+        totalCount,
+        exportFn: (allData) => exportData(allData, {
+          format: exportFormat, scope, filename: 'unfulfilled-orders',
+          ...toExportMapping(SHIPMENTS_INVOICE_COLUMNS),
+        }),
+      })
     }
-
-    exportData(dataToExport as unknown as Record<string, unknown>[], {
-      format: exportFormat,
-      scope,
-      filename: 'unfulfilled-orders',
-      tableConfig: UNFULFILLED_TABLE_CONFIG,
-    })
-  }, [data, clientId, statusFilter, dateRange, searchQuery])
+  }, [data, clientId, statusFilter, dateRange, searchQuery, totalCount, startClientExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -357,6 +377,9 @@ export function UnfulfilledTable({
         integratedHeader={true}
         onRowClick={handleRowClick}
         prefixColumn={clientBadgePrefixColumn}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
       />
       <ShipmentDetailsDrawer
         shipmentId={selectedShipmentId}

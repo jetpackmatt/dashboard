@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { LucideIcon } from "lucide-react"
 
 import {
@@ -34,15 +35,23 @@ export function NavSecondary({
                   <item.icon />
                   <span>{item.title}</span>
                 </SidebarMenuButton>
-              ) : (
+              ) : item.external ? (
                 <SidebarMenuButton asChild>
                   <a
                     href={item.url}
-                    {...(item.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
                     <item.icon />
                     <span>{item.title}</span>
                   </a>
+                </SidebarMenuButton>
+              ) : (
+                <SidebarMenuButton asChild>
+                  <Link href={item.url} prefetch={false}>
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </Link>
                 </SidebarMenuButton>
               )}
             </SidebarMenuItem>
