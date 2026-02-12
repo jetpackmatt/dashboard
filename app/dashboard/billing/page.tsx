@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 
 import { SiteHeader } from "@/components/site-header"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -127,10 +128,12 @@ export default function BillingPage() {
   if (clientLoading || effectiveIsAdmin) {
     return (
       <>
-        <SiteHeader sectionName="Billing" />
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <LoaderIcon className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <SiteHeader sectionName="Billing">
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        </SiteHeader>
       </>
     )
   }
@@ -223,7 +226,14 @@ export default function BillingPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Billing" />
+      <SiteHeader sectionName="Billing">
+        {(isLoading || isLoadingStripe) && (
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        )}
+      </SiteHeader>
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col w-full">
           <div className="flex flex-col gap-6 py-6 w-full px-4 lg:px-6">
@@ -242,7 +252,7 @@ export default function BillingPage() {
                   {formatCurrency(outstandingBalance)}
                 </div>
                 {isLoading ? (
-                  <Skeleton className="h-5 w-40" />
+                  null
                 ) : unpaidInvoiceCount > 0 ? (
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">
@@ -403,22 +413,7 @@ export default function BillingPage() {
                 </div>
 
                 {isLoading ? (
-                  <div className="space-y-4 flex-1">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Company</p>
-                        <Skeleton className="h-5 w-32 mt-0.5" />
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Email</p>
-                        <Skeleton className="h-5 w-40 mt-0.5" />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Address</p>
-                      <Skeleton className="h-16 w-full mt-0.5" />
-                    </div>
-                  </div>
+                  null
                 ) : (
                   <div className="grid grid-cols-2 gap-6 flex-1">
                     {/* Left column - Company and Address */}
@@ -502,9 +497,7 @@ export default function BillingPage() {
             </div>
 
             {isLoadingStripe ? (
-              <div className="flex items-center justify-center py-8">
-                <LoaderIcon className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
+              null
             ) : stripeClientSecret ? (
               <StripeProvider clientSecret={stripeClientSecret}>
                 <StripeCardSetup

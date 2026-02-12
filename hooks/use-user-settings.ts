@@ -1,17 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useSyncExternalStore, useCallback } from 'react'
 
 /**
- * User Settings Hook
+ * User Settings Hook (module-level singleton)
  *
- * Persists user preferences to Supabase user_metadata via the profile API.
- * Uses localStorage as a fast cache so the UI doesn't flash on page load.
+ * Uses a shared module-level store so ALL hook instances share one fetch.
+ * This is critical because TrackingLink renders per-row in tables — without
+ * deduplication, 50 rows = 50 concurrent /api/auth/profile calls.
  *
  * Flow:
- *   1. On mount: read localStorage cache instantly → set state
- *   2. Then fetch from /api/auth/profile → update state + cache
- *   3. On change: optimistic update state + cache, then PATCH to profile API
+ *   1. First subscriber triggers a single fetch to /api/auth/profile
+ *   2. All hook instances read from the shared store via useSyncExternalStore
+ *   3. Updates are optimistic (localStorage + state) then persisted to server
  */
 
 const STORAGE_KEY = 'jetpack_user_settings'
@@ -28,82 +29,120 @@ const DEFAULTS: UserSettings = {
   defaultPageSize: 50,
 }
 
-function getCachedSettings(): Partial<UserSettings> | null {
-  if (typeof window === 'undefined') return null
+// ---------------------------------------------------------------------------
+// Module-level store — shared across all hook instances
+// ---------------------------------------------------------------------------
 
+interface SettingsState {
+  settings: UserSettings
+  isLoaded: boolean
+}
+
+function loadCached(): UserSettings {
+  if (typeof window === 'undefined') return DEFAULTS
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return JSON.parse(stored)
-  } catch (e) {
-    console.warn('Failed to load cached user settings:', e)
+    if (stored) return { ...DEFAULTS, ...JSON.parse(stored) }
+  } catch {
+    // fall through
   }
-  return null
+  return DEFAULTS
 }
 
 function cacheSettings(settings: UserSettings) {
   if (typeof window === 'undefined') return
-
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-  } catch (e) {
-    console.warn('Failed to cache user settings:', e)
+  } catch {
+    // ignore
   }
 }
 
+// Initialize from localStorage synchronously (no flash)
+let state: SettingsState = {
+  settings: typeof window !== 'undefined' ? loadCached() : DEFAULTS,
+  isLoaded: false,
+}
+
+const listeners = new Set<() => void>()
+
+function getSnapshot(): SettingsState {
+  return state
+}
+
+function getServerSnapshot(): SettingsState {
+  return { settings: DEFAULTS, isLoaded: false }
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  // Trigger the one-time server fetch on first subscriber
+  triggerFetch()
+  return () => { listeners.delete(listener) }
+}
+
+function setState(patch: Partial<SettingsState>) {
+  state = { ...state, ...patch }
+  listeners.forEach((l) => l())
+}
+
+// ---------------------------------------------------------------------------
+// One-time fetch — only runs once, no matter how many hook instances exist
+// ---------------------------------------------------------------------------
+
+let fetchTriggered = false
+
+function triggerFetch() {
+  if (fetchTriggered) return
+  fetchTriggered = true
+
+  // Mark as loaded immediately (cache is already applied)
+  setState({ isLoaded: true })
+
+  // Fetch authoritative settings from server
+  fetch('/api/auth/profile')
+    .then(res => res.ok ? res.json() : null)
+    .then(data => {
+      const serverPrefs = data?.user?.user_metadata?.preferences
+      if (serverPrefs) {
+        const merged = { ...state.settings, ...serverPrefs }
+        cacheSettings(merged)
+        setState({ settings: merged })
+      }
+    })
+    .catch(() => {
+      // Silently fall back to cache/defaults
+    })
+}
+
+// ---------------------------------------------------------------------------
+// React hook — all instances share the module-level store
+// ---------------------------------------------------------------------------
+
 export function useUserSettings() {
-  const [settings, setSettingsState] = useState<UserSettings>(DEFAULTS)
-  const [isLoaded, setIsLoaded] = useState(false)
-
-  // On mount: load from cache instantly, then fetch from server
-  useEffect(() => {
-    // Step 1: Apply cached settings immediately (no flash)
-    const cached = getCachedSettings()
-    if (cached) {
-      setSettingsState(prev => ({ ...prev, ...cached }))
-    }
-    setIsLoaded(true)
-
-    // Step 2: Fetch authoritative settings from user_metadata
-    fetch('/api/auth/profile')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        const serverPrefs = data?.user?.user_metadata?.preferences
-        if (serverPrefs) {
-          setSettingsState(prev => {
-            const merged = { ...prev, ...serverPrefs }
-            cacheSettings(merged)
-            return merged
-          })
-        }
-      })
-      .catch(() => {
-        // Silently fall back to cache/defaults
-      })
-  }, [])
+  const currentState = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
   const updateSetting = useCallback(<K extends keyof UserSettings>(
     key: K,
     value: UserSettings[K]
   ) => {
-    setSettingsState(prev => {
-      const next = { ...prev, [key]: value }
-      // Optimistic: update cache immediately
-      cacheSettings(next)
-      // Persist to server
-      fetch('/api/auth/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences: { [key]: value } }),
-      }).catch(() => {
-        console.warn('Failed to persist user setting to server')
-      })
-      return next
+    const next = { ...state.settings, [key]: value }
+    // Optimistic: update store + cache immediately
+    cacheSettings(next)
+    setState({ settings: next })
+    // Persist to server
+    fetch('/api/auth/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferences: { [key]: value } }),
+    }).catch(() => {
+      console.warn('Failed to persist user setting to server')
     })
   }, [])
 
   return {
-    settings,
+    settings: currentState.settings,
     updateSetting,
-    isLoaded,
+    isLoaded: currentState.isLoaded,
   }
 }

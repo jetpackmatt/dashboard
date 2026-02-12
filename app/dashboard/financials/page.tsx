@@ -418,10 +418,12 @@ export default function CommissionsPage() {
   if (isLoading) {
     return (
       <>
-        <SiteHeader sectionName="Financials" />
-        <div className="flex flex-1 items-center justify-center py-16">
-          <JetpackLoader size="lg" />
-        </div>
+        <SiteHeader sectionName="Financials">
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        </SiteHeader>
       </>
     )
   }
@@ -766,7 +768,14 @@ export default function CommissionsPage() {
   if (isAdminView) {
     return (
       <>
-        <SiteHeader sectionName="Financials" />
+        <SiteHeader sectionName="Financials">
+          {(isLoadingUsers || isLoadingAll) && (
+            <div className="flex items-center gap-1.5 ml-[10px]">
+              <JetpackLoader size="md" />
+              <span className="text-xs text-muted-foreground">Loading</span>
+            </div>
+          )}
+        </SiteHeader>
         <div className="flex flex-1 flex-col p-6">
           <Tabs defaultValue="commissions" className="space-y-6">
             {/* Tabs row with user selector on right */}
@@ -808,9 +817,7 @@ export default function CommissionsPage() {
               {!previewUserId ? (
                 // "All" view - show aggregate data
                 (isLoadingUsers || isLoadingAll) ? (
-                  <div className="flex items-center justify-center py-16">
-                    <JetpackLoader size="lg" />
-                  </div>
+                  null
                 ) : (commissionUsers.length > 0 && allUsersData.length > 0) ? (
                   <div className="flex flex-col gap-6">
                     {/* Summary Card */}

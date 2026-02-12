@@ -4,6 +4,7 @@ import * as React from "react"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 
 import { SiteHeader } from "@/components/site-header"
+import { Separator } from "@/components/ui/separator"
 import { DataTable } from "@/components/data-table"
 import { useClient } from "@/components/client-context"
 import { getStoredPageSize } from "@/hooks/use-table-preferences"
@@ -268,9 +269,20 @@ export default function TransactionsPage() {
   // Get the current category label for the dropdown
   const currentCategoryLabel = TRANSACTION_CATEGORIES.find(c => c.value === currentTab)?.label || "Shipments"
 
+  // Determine if the current tab is loading (for inline loader in DataTable)
+  const isCurrentTabLoading =
+    (currentTab === "unfulfilled" && unfulfilledLoading) ||
+    (currentTab === "shipments" && shipmentsLoading) ||
+    (currentTab === "additional-services" && additionalServicesLoading) ||
+    (currentTab === "returns" && returnsLoading)
+
   return (
     <>
       <SiteHeader sectionName="Transactions">
+        <Separator
+          orientation="vertical"
+          className="mx-1 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
+        />
         <Select value={currentTab} onValueChange={handleTabChange}>
           <SelectTrigger className="h-7 w-auto gap-1.5 border-0 bg-transparent px-2 text-base font-medium text-foreground hover:bg-accent focus:ring-0 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-50">
             <SelectValue>{currentCategoryLabel}</SelectValue>
@@ -294,6 +306,7 @@ export default function TransactionsPage() {
               // Controlled tab state from header dropdown
               currentTab={currentTab}
               onTabChange={handleTabChange}
+              isTabLoading={isCurrentTabLoading}
               // Pre-fetched unfulfilled data for instant tab switching
               unfulfilledData={unfulfilledData}
               unfulfilledTotalCount={unfulfilledTotalCount}

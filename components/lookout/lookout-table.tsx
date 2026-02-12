@@ -320,21 +320,7 @@ export function LookoutTable({
           </thead>
           <tbody>
             {isLoading ? (
-              // Loading skeleton rows matching TransactionsTable
-              Array.from({ length: 10 }).map((_, i) => (
-                <tr key={`loading-${i}`} className="h-[45px] dark:bg-[hsl(220,8%,8%)]">
-                  {showClientColumn && <td className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle"><div className="h-5 w-6 animate-pulse bg-muted/40 rounded" /></td>}
-                  <td className={cn("px-2", !showClientColumn && "pl-4 lg:pl-6")}><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  {showStatusColumn && <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>}
-                  <td className="px-2"><div className="h-4 w-full animate-pulse bg-muted/40 rounded" /></td>
-                  <td></td>
-                </tr>
-              ))
+              null
             ) : paginatedData.length === 0 ? (
               <tr>
                 <td colSpan={(showClientColumn ? 1 : 0) + 6 + (showStatusColumn ? 1 : 0) + 2} className="h-24 text-center text-muted-foreground">

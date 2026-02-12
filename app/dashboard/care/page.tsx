@@ -193,6 +193,19 @@ export default function CarePage() {
 
   // Expanded row state
   const [expandedRowId, setExpandedRowId] = React.useState<string | null>(null)
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = React.useState(1200)
+
+  React.useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    setContainerWidth(el.clientWidth)
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Client attribution state (admin/care_admin only)
   const [confirmAttribution, setConfirmAttribution] = React.useState<{ticketId: string, clientId: string, clientName: string} | null>(null)
@@ -662,7 +675,14 @@ export default function CarePage() {
 
   return (
     <>
-      <SiteHeader sectionName="Jetpack Care" />
+      <SiteHeader sectionName="Jetpack Care">
+        {isLoading && (
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        )}
+      </SiteHeader>
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="flex flex-col w-full h-[calc(100vh-64px)] px-4 lg:px-6">
         {/* Error message */}
@@ -681,7 +701,7 @@ export default function CarePage() {
         {/* Sticky header with filter bar */}
         <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + New Ticket + Columns (right) */}
-          <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 h-[70px] flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               {/* Search Input */}
@@ -745,13 +765,6 @@ export default function CarePage() {
                 )}
               </div>
 
-              {/* Loading indicator */}
-              {isLoading && (
-                <div className="flex items-center gap-1.5">
-                  <JetpackLoader size="sm" />
-                  <span className="text-xs text-muted-foreground">Loading</span>
-                </div>
-              )}
             </div>
 
             {/* RIGHT SIDE: Status + Ticket Type filters + New Ticket + Columns */}
@@ -789,8 +802,8 @@ export default function CarePage() {
               )}
 
               {/* Submit a Claim Button */}
-              <Button size="sm" variant="outline" className="h-[30px] bg-red-100/50 text-red-700 border-red-200 hover:bg-red-200/50 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30 dark:hover:bg-red-900/30" onClick={() => setClaimDialogOpen(true)}>
-                <PlusIcon className="h-4 w-4 mr-1 text-red-700 dark:text-red-400" />
+              <Button size="sm" variant="outline" className="h-[30px] bg-[#eb9458]/20 text-[#c06520] border-[#eb9458]/35 hover:bg-[#eb9458]/30 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:border-[#eb9458]/30 dark:hover:bg-[#eb9458]/35" onClick={() => setClaimDialogOpen(true)}>
+                <PlusIcon className="h-4 w-4 mr-1 text-[#c06520] dark:text-[#f0a868]" />
                 <span className="hidden lg:inline">Submit a Claim</span>
               </Button>
 
@@ -887,7 +900,7 @@ export default function CarePage() {
         </div>
 
         {/* Care Tickets Table */}
-        <div className="relative flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 lg:-mx-6">
+        <div ref={scrollContainerRef} className="relative flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 lg:-mx-6">
           <TooltipProvider>
             <DndContext
               sensors={sensors}
@@ -901,7 +914,7 @@ export default function CarePage() {
                       items={orderedDraggableColumns.map(c => c.id)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <tr className="h-[45px]">
+                      <tr className={cn("h-[45px] transition-opacity duration-200", expandedRowId ? 'opacity-30' : 'opacity-100')}>
                         {/* Fixed columns - NOT wrapped in SortableHeader */}
                         {/* Client column - only visible for admins viewing all clients */}
                         {columnVisibility.client && canViewAllBrands && !selectedClientId && (
@@ -934,7 +947,7 @@ export default function CarePage() {
                                 key={col.id}
                                 columnId={col.id}
                                 className={cn(
-                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
+                                  "px-4 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
                                 onClick={() => handleSort('date')}
@@ -970,7 +983,7 @@ export default function CarePage() {
                                 key={col.id}
                                 columnId={col.id}
                                 className={cn(
-                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
+                                  "px-4 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
                                 onClick={() => handleSort('age')}
@@ -1021,7 +1034,7 @@ export default function CarePage() {
                                 key={col.id}
                                 columnId={col.id}
                                 className={cn(
-                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
+                                  "px-4 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
                                 onClick={() => handleSort('credit')}
@@ -1042,8 +1055,7 @@ export default function CarePage() {
                                 key={col.id}
                                 columnId={col.id}
                                 className={cn(
-                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap hidden lg:table-cell pr-4 lg:pr-6 transition-opacity duration-200",
-                                  expandedRowId ? 'opacity-0' : 'opacity-100',
+                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap hidden lg:table-cell pr-4 lg:pr-6",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
                               >
@@ -1060,17 +1072,7 @@ export default function CarePage() {
                   </thead>
                   <tbody>
                     {isLoading ? (
-                      <tr>
-                        <td
-                          colSpan={actualColumnCount}
-                          className="h-32 text-center align-middle"
-                        >
-                          <div className="flex items-center justify-center gap-2">
-                            <JetpackLoader size="md" />
-                            <span className="text-muted-foreground">Loading tickets...</span>
-                          </div>
-                        </td>
-                      </tr>
+                      null
                     ) : displayedTickets.length === 0 ? (
                       <tr>
                         <td
@@ -1171,7 +1173,7 @@ export default function CarePage() {
                               if (col.id === 'dateCreated') {
                                 return (
                                   <td key={col.id} className={cn(
-                                    "px-2 align-middle text-muted-foreground whitespace-nowrap",
+                                    "px-4 align-middle text-muted-foreground whitespace-nowrap",
                                     isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                   )}>
                                     {formatDate(ticket.createdAt)}
@@ -1224,7 +1226,7 @@ export default function CarePage() {
                               if (col.id === 'lastUpdated') {
                                 return (
                                   <td key={col.id} className={cn(
-                                    "px-2 align-middle text-muted-foreground whitespace-nowrap",
+                                    "px-4 align-middle text-muted-foreground whitespace-nowrap",
                                     isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                   )}>
                                     {formatAge(ticket.createdAt, ticket.resolvedAt)}
@@ -1264,9 +1266,12 @@ export default function CarePage() {
                               if (col.id === 'credit') {
                                 return (
                                   <td key={col.id} className={cn(
-                                    "px-2 align-middle whitespace-nowrap",
+                                    "px-4 align-middle whitespace-nowrap",
                                     isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                   )}>
+                                    <span className={cn(
+                                      expandedRowId === ticket.id && "invisible"
+                                    )}>
                                     {ticket.creditAmount > 0 ? (
                                       <span className="text-foreground">{formatCurrency(ticket.creditAmount)}</span>
                                     ) : (ticket.compensationRequest || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') ? (
@@ -1274,6 +1279,7 @@ export default function CarePage() {
                                     ) : (
                                       <span className="text-muted-foreground/40">-</span>
                                     )}
+                                    </span>
                                   </td>
                                 )
                               }
@@ -1284,7 +1290,7 @@ export default function CarePage() {
                                     "px-2 align-middle hidden lg:table-cell",
                                     isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                   )}>
-                                    <div className="relative">
+                                    <div className="relative" style={{ maxWidth: Math.max(100, containerWidth - 710) }}>
                                       {/* Always render description to preserve column width in table-layout:auto */}
                                       <p className={cn(
                                         "text-muted-foreground truncate pr-4 lg:pr-6",
@@ -1327,9 +1333,11 @@ export default function CarePage() {
                                   animate={{ height: "auto", opacity: 1 }}
                                   exit={{ height: 0, opacity: 0 }}
                                   transition={{ duration: 0.2, ease: "easeOut" }}
+                                  className="overflow-hidden"
+                                  style={{ maxWidth: containerWidth }}
                                 >
                                   <div className="border-t-2 border-white border-b-2 border-white dark:border-white/15">
-                                    <div className="flex items-stretch">
+                                    <div className="flex items-stretch overflow-hidden">
                                       {/* Left Column: Credit/Buttons/Files */}
                                       <div className="flex-shrink-0 w-[180px] border-r-2 border-white dark:border-r-white/15 flex flex-col">
                                           {/* Credit Card - contextual based on state */}
@@ -1662,12 +1670,12 @@ export default function CarePage() {
                                       </div>
 
                                       {/* Right section: Description and Activity */}
-                                      <div className="flex-1 flex flex-col">
+                                      <div className="flex-1 min-w-0 flex flex-col">
                                         {/* Description section */}
                                         {ticket.description && (
                                           <div className="px-6 py-[calc(1.75rem-0.5px)] border-b-2 border-white dark:border-b-white/15 bg-white/25 dark:bg-black/20">
                                             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Description</div>
-                                            <p className="text-[13px] text-foreground whitespace-pre-wrap leading-relaxed">
+                                            <p className="text-[13px] text-foreground whitespace-pre-wrap break-words leading-relaxed">
                                               {ticket.description}
                                             </p>
                                           </div>

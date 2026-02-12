@@ -47,6 +47,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { JetpackLoader } from '@/components/jetpack-loader'
+import { SiteHeader } from '@/components/site-header'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -195,7 +196,7 @@ interface RuleHistoryEntry {
 }
 
 export function AdminContent() {
-  const { clients } = useClient()
+  const { clients, isLoading: isClientLoading } = useClient()
 
   // Tab state with URL persistence - using Next.js hooks
   const searchParams = useSearchParams()
@@ -215,6 +216,15 @@ export function AdminContent() {
   }, [searchParams, router, pathname])
 
   return (
+    <>
+    <SiteHeader sectionName="Admin">
+      {isClientLoading && (
+        <div className="flex items-center gap-1.5 ml-[10px]">
+          <JetpackLoader size="md" />
+          <span className="text-xs text-muted-foreground">Loading</span>
+        </div>
+      )}
+    </SiteHeader>
     <div className="p-4 lg:p-6">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList>
@@ -282,6 +292,7 @@ export function AdminContent() {
         </TabsContent>
       </Tabs>
     </div>
+    </>
   )
 }
 
@@ -439,13 +450,7 @@ function MarkupTablesContent({ clients }: { clients: Client[] }) {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <JetpackLoader size="lg" />
-      </div>
-    )
-  }
+  if (isLoading) return null
 
   if (error) {
     return (
@@ -1609,13 +1614,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <JetpackLoader size="lg" />
-      </div>
-    )
-  }
+  if (isLoading) return null
 
   const draftInvoices = invoices.filter(i => i.status === 'draft')
 
@@ -3213,15 +3212,7 @@ function DisputesContent() {
     }).format(value)
   }
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-12">
-          <JetpackLoader size="lg" />
-        </CardContent>
-      </Card>
-    )
-  }
+  if (isLoading) return null
 
   return (
     <div className="space-y-6">
@@ -3904,13 +3895,7 @@ function SyncHealthContent() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <JetpackLoader size="lg" />
-      </div>
-    )
-  }
+  if (isLoading) return null
 
   if (error) {
     return (
@@ -5178,13 +5163,7 @@ function WarehousesContent() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <JetpackLoader size="lg" />
-      </div>
-    )
-  }
+  if (isLoading) return null
 
   if (error && warehouses.length === 0) {
     return (
@@ -6467,13 +6446,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <JetpackLoader size="lg" />
-      </div>
-    )
-  }
+  if (isLoading) return null
 
   return (
     <div className="space-y-6">

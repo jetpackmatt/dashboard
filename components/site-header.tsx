@@ -18,15 +18,7 @@ export function SiteHeader({ sectionName = "Dashboard", children }: SiteHeaderPr
           className="mx-2 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
         />
         <h1 className="text-base font-medium">{sectionName}</h1>
-        {children && (
-          <>
-            <Separator
-              orientation="vertical"
-              className="mx-1 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
-            />
-            {children}
-          </>
-        )}
+        {children}
         <div className="ml-auto flex items-center gap-2">
           <ClientSelector />
           <ModeToggle />

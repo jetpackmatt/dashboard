@@ -318,12 +318,7 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
   const totalPages = Math.ceil(totalCount / pageSize)
 
   if (isLoading) {
-    return (
-      <div className="px-4 lg:px-6 space-y-4">
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-[400px] w-full" />
-      </div>
-    )
+    return null
   }
 
   if (error) {
@@ -343,7 +338,6 @@ export function ShippedTable({ clientId }: ShippedTableProps) {
       <div className="px-4 lg:px-6 flex items-center justify-end">
         <div className="text-sm text-muted-foreground">
           {totalCount.toLocaleString()} shipped orders
-          {isPageLoading && <LoaderIcon className="inline ml-2 h-4 w-4 animate-spin" />}
         </div>
       </div>
 

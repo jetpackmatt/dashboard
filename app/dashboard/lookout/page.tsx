@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { SiteHeader } from "@/components/site-header"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { useClient } from "@/components/client-context"
 import { LookoutTable } from "@/components/lookout/lookout-table"
 import { QuickFilters, QuickFilterValue } from "@/components/lookout/quick-filters"
@@ -186,12 +187,19 @@ export default function LookoutPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Delivery IQ" />
+      <SiteHeader sectionName="Delivery IQ">
+        {(isLoading || isClientLoading) && (
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        )}
+      </SiteHeader>
       <div className="flex flex-1 flex-col overflow-hidden bg-background rounded-t-xl">
         <div className="flex flex-col h-[calc(100vh-64px)] px-4 lg:px-6">
           {/* Sticky header with filters - matches Transactions styling */}
           <div className="flex-shrink-0 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
-            <div className="flex items-center justify-between gap-4 px-4 lg:px-6 py-3">
+            <div className="flex items-center justify-between gap-4 px-4 lg:px-6 h-[70px]">
               <QuickFilters
                 value={quickFilter}
                 onChange={handleQuickFilterChange}

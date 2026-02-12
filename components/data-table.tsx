@@ -63,6 +63,7 @@ import { useDebouncedCallback } from "use-debounce"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { JetpackLoader } from "@/components/jetpack-loader"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import {
   Sheet,
@@ -86,7 +87,6 @@ import { ReturnsTable } from "@/components/transactions/returns-table"
 import { ReceivingTable } from "@/components/transactions/receiving-table"
 import { StorageTable } from "@/components/transactions/storage-table"
 import { CreditsTable } from "@/components/transactions/credits-table"
-import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   UNFULFILLED_TABLE_CONFIG,
   SHIPMENTS_TABLE_CONFIG,
@@ -258,6 +258,8 @@ export function DataTable({
   returnsData: prefetchedReturnsData,
   returnsTotalCount: prefetchedReturnsTotalCount = 0,
   returnsLoading: prefetchedReturnsLoading = false,
+  // Loading indicator (shown next to date range picker)
+  isTabLoading = false,
 }: {
   clientId: string | null  // null = let API determine from user's assigned clients
   defaultPageSize?: number
@@ -285,6 +287,8 @@ export function DataTable({
   returnsData?: any[]
   returnsTotalCount?: number
   returnsLoading?: boolean
+  // Loading indicator (shown next to date range picker)
+  isTabLoading?: boolean
 }) {
   // Helper to build URL with optional clientId (omits null values)
   const buildApiUrl = (base: string, params: Record<string, string | number | null | undefined>) => {
@@ -1056,13 +1060,14 @@ export function DataTable({
                 </div>
               )}
 
-              {/* Jetpack Loading Indicator - shows when data is loading */}
-              {((currentTab === "unfulfilled" && isUnfulfilledLoading) || (currentTab === "shipments" && isShipmentsLoading)) && (
+              {/* Loading indicator - shown to the right of date range */}
+              {isTabLoading && (
                 <div className="flex items-center gap-1.5">
                   <JetpackLoader size="md" />
                   <span className="text-xs text-muted-foreground">Loading</span>
                 </div>
               )}
+
             </div>
 
             {/* RIGHT SIDE: Filters toggle + Export + Columns */}

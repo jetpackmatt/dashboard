@@ -549,7 +549,14 @@ export default function AnalyticsPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Analytics" />
+      <SiteHeader sectionName="Analytics">
+        {(!isMounted || !isVolumeDataCurrent) && (
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        )}
+      </SiteHeader>
       <div className="flex flex-1 flex-col overflow-x-clip bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col w-full">
           <div className="flex flex-col gap-4 w-full px-4 lg:px-6">
@@ -1814,15 +1821,6 @@ export default function AnalyticsPage() {
                           zipCodeData={volumeData.zipCodeData}
                           onStateSelect={(stateCode) => setSelectedVolumeState(stateCode)}
                         />
-                        {/* Overlay loading indicator when data is stale */}
-                        {!isVolumeDataCurrent && (
-                          <div className="absolute inset-0 bg-background/50 flex items-center justify-center">
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-background/80 px-3 py-2 rounded-md">
-                              <JetpackLoader size="sm" />
-                              <span>Updating map...</span>
-                            </div>
-                          </div>
-                        )}
                       </CardContent>
                     </Card>
 

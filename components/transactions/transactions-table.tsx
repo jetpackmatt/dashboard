@@ -398,40 +398,7 @@ export function TransactionsTable<T>({
             </SortableContext>
             <tbody>
               {isLoading ? (
-                // Loading skeleton rows
-                Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={`loading-${i}`} className="h-[45px] dark:bg-[hsl(220,8%,8%)]">
-                    {/* Prefix column skeleton (empty - badge not shown during loading) */}
-                    {prefixColumn && (
-                      <td
-                        className={`w-px whitespace-nowrap ${integratedHeader ? 'pl-4 lg:pl-6 pr-2' : 'pl-[15px] pr-2'} ${orderedColumns[0]?.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''}`}
-                      />
-                    )}
-                    {orderedColumns.map((column, colIndex) => {
-                      const isFirst = colIndex === 0 && !prefixColumn
-                      const isLast = colIndex === orderedColumns.length - 1
-                      let paddingClass = 'px-2'
-                      if (integratedHeader) {
-                        if (isFirst) paddingClass = 'pl-4 lg:pl-6 pr-2'
-                        else if (isLast) paddingClass = 'pl-2 pr-4 lg:pr-6'
-                        else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
-                      } else {
-                        if (isFirst) paddingClass = 'pl-[15px] pr-2'
-                        else if (column.extraPaddingLeft) paddingClass = 'pl-4 pr-2'
-                      }
-                      const dividerClass = column.dividerAfter ? 'border-r border-border/50' : ''
-                      const skelTintClass = column.tinted ? 'bg-muted/35 dark:bg-zinc-800/40' : ''
-                      return (
-                        <td
-                          key={column.id}
-                          className={`${paddingClass} ${dividerClass} ${skelTintClass}`}
-                        >
-                          <div className="h-4 w-full animate-pulse bg-muted/40 rounded" />
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))
+                null
               ) : data.length > 0 ? (
                 data.map((row) => (
                   <TableRowComponent

@@ -489,20 +489,16 @@ export default function InvoicesPage() {
   }
 
 
-  if (isLoading) {
-    return (
-      <>
-        <SiteHeader sectionName="Invoices" />
-        <div className="flex flex-1 items-center justify-center">
-          <JetpackLoader size="lg" />
-        </div>
-      </>
-    )
-  }
-
   return (
     <>
-      <SiteHeader sectionName="Invoices" />
+      <SiteHeader sectionName="Invoices">
+        {isLoading && (
+          <div className="flex items-center gap-1.5 ml-[10px]">
+            <JetpackLoader size="md" />
+            <span className="text-xs text-muted-foreground">Loading</span>
+          </div>
+        )}
+      </SiteHeader>
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-col w-full h-[calc(100vh-64px)] px-6 lg:px-8">
           {/* Sticky header with filters */}
@@ -523,7 +519,7 @@ export default function InvoicesPage() {
               )}
 
               {/* Date Range Filter and Action Buttons */}
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center justify-between gap-4 h-[70px]">
               {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
               <div className="flex items-center gap-1.5">
                 <Select
