@@ -62,7 +62,7 @@ export function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; t
 export function getStatusColors(status: string) {
   switch (status) {
     case "Resolved":
-      return `bg-emerald-500/8 text-emerald-600/60 font-medium dark:bg-emerald-500/10 dark:text-emerald-400/50`
+      return `bg-emerald-500/25 text-emerald-700 font-medium dark:bg-emerald-500/30 dark:text-emerald-300`
     case "Credit Approved":
       return `bg-emerald-500/15 text-emerald-700 font-medium dark:bg-emerald-500/20 dark:text-emerald-300`
     case "Credit Requested":
@@ -88,7 +88,7 @@ export function getStatusColors(status: string) {
 export function getExpandedRowTint(status: string) {
   switch (status) {
     case "Resolved":
-      return "bg-slate-100/55 dark:bg-slate-800/40"
+      return "bg-emerald-100/55 dark:bg-emerald-950/40"
     case "Credit Approved":
       return "bg-emerald-100/55 dark:bg-emerald-950/40"
     case "Credit Requested":
@@ -116,7 +116,7 @@ export function getExpandedRowTint(status: string) {
 export function getExpandedPanelTint(status: string) {
   switch (status) {
     case "Resolved":
-      return "bg-slate-100/40 dark:bg-slate-800/25"
+      return "bg-emerald-100/40 dark:bg-emerald-950/30"
     case "Credit Approved":
       return "bg-emerald-100/40 dark:bg-emerald-950/30"
     case "Credit Requested":
@@ -194,7 +194,7 @@ export function getStatusTextColor(status: string) {
 export function getStatusDotColor(status: string) {
   switch (status) {
     case "Resolved":
-      return "bg-emerald-400/60 border-emerald-400/60 shadow-sm shadow-emerald-400/15"
+      return "bg-emerald-600 border-emerald-600 shadow-sm shadow-emerald-600/30"
     case "Credit Approved":
       return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Requested":

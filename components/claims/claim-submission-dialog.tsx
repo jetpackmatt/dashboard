@@ -992,11 +992,7 @@ export function ClaimSubmissionDialog({
           ? "Photo Showing Damaged Item(s)"
           : "Photo Showing Incorrect Item(s)"
 
-        // Calculate bytes used by each attachment category for shared 15MB budget
-        const TOTAL_BUDGET_MB = 15
-        const photoBytes = formData.attachments.photo.reduce((sum, f) => sum + f.size, 0)
-        const complaintBytes = formData.attachments.customerComplaint.reduce((sum, f) => sum + f.size, 0)
-        const otherBytes = formData.attachments.otherDocs.reduce((sum, f) => sum + f.size, 0)
+        const MAX_PER_FILE_MB = 20
 
         return (
           <div className="space-y-5">
@@ -1017,10 +1013,8 @@ export function ClaimSubmissionDialog({
                   attachments: { ...prev.attachments, photo: files }
                 }))}
                 accept="image/png,image/jpeg"
-                maxSizeMb={TOTAL_BUDGET_MB}
+                maxSizeMb={MAX_PER_FILE_MB}
                 singleFile
-                totalBudgetMb={TOTAL_BUDGET_MB}
-                usedBudgetBytes={complaintBytes + otherBytes}
               />
             </div>
 
@@ -1041,10 +1035,8 @@ export function ClaimSubmissionDialog({
                   attachments: { ...prev.attachments, customerComplaint: files }
                 }))}
                 accept="image/png,image/jpeg"
-                maxSizeMb={TOTAL_BUDGET_MB}
+                maxSizeMb={MAX_PER_FILE_MB}
                 singleFile
-                totalBudgetMb={TOTAL_BUDGET_MB}
-                usedBudgetBytes={photoBytes + otherBytes}
               />
             </div>
 
@@ -1060,9 +1052,7 @@ export function ClaimSubmissionDialog({
                   attachments: { ...prev.attachments, otherDocs: files }
                 }))}
                 accept="image/png,image/jpeg,application/pdf,.xlsx,.xls,.csv"
-                maxSizeMb={TOTAL_BUDGET_MB}
-                totalBudgetMb={TOTAL_BUDGET_MB}
-                usedBudgetBytes={photoBytes + complaintBytes}
+                maxSizeMb={MAX_PER_FILE_MB}
               />
             </div>
           </div>
@@ -1096,7 +1086,7 @@ export function ClaimSubmissionDialog({
               )}
               {!submitSuccess && applicableSteps[currentStep]?.id === "documentation" && (
                 <span className="text-xs">
-                  15MB max ({((formData.attachments.photo.reduce((s, f) => s + f.size, 0) + formData.attachments.customerComplaint.reduce((s, f) => s + f.size, 0) + formData.attachments.otherDocs.reduce((s, f) => s + f.size, 0)) / (1024 * 1024)).toFixed(1)}MB used)
+                  20MB max per file
                 </span>
               )}
             </div>

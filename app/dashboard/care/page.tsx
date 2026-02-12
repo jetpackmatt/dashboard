@@ -16,6 +16,7 @@ import {
   XIcon,
   DownloadIcon,
   CopyIcon,
+  CheckCircle2Icon,
 } from "lucide-react"
 import { DateRange } from "react-day-picker"
 import { useDebouncedCallback } from "use-debounce"
@@ -771,6 +772,18 @@ export default function CarePage() {
 
             {/* RIGHT SIDE: Status + Ticket Type filters + New Ticket + Columns */}
             <div className="flex items-center gap-2">
+              {/* Clear filters */}
+              {hasFilters && (
+                <button
+                  onClick={clearFilters}
+                  className="inline-flex items-center gap-1 h-[22px] px-1.5 rounded text-[11px] text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted transition-colors"
+                  title="Clear filters"
+                >
+                  <XIcon className="h-3 w-3" />
+                  <span>Clear</span>
+                </button>
+              )}
+
               {/* Status Filter */}
               <MultiSelectFilter
                 options={STATUS_OPTIONS}
@@ -791,17 +804,6 @@ export default function CarePage() {
                 placeholder="Ticket Type"
                 className="w-[140px]"
               />
-
-              {/* Clear filters */}
-              {hasFilters && (
-                <button
-                  onClick={clearFilters}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                  title="Clear filters"
-                >
-                  <XIcon className="h-3.5 w-3.5" />
-                </button>
-              )}
 
               {/* Submit a Claim Button */}
               <Button size="sm" variant="ghost" className="h-[30px] bg-[#eb9458]/20 text-[#c06520] font-medium border-0 hover:bg-[#eb9458]/30 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:hover:bg-[#eb9458]/35" onClick={() => setClaimDialogOpen(true)}>
@@ -1257,8 +1259,9 @@ export default function CarePage() {
                                   )}>
                                     <Badge
                                       variant="outline"
-                                      className={cn("whitespace-nowrap min-w-[72px] justify-center text-[11px]", getStatusColors(ticket.status))}
+                                      className={cn("whitespace-nowrap min-w-[72px] justify-center text-[11px] gap-1", getStatusColors(ticket.status))}
                                     >
+                                      {ticket.status === 'Resolved' && <CheckCircle2Icon className="h-3 w-3" />}
                                       {ticket.status}
                                     </Badge>
                                   </td>
