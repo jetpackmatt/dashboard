@@ -45,7 +45,6 @@ interface EditForm {
   description: string
   internalNote: string
   reshipmentStatus: string
-  whatToReship: string
   reshipmentId: string
   compensationRequest: string
   creditAmount: string
@@ -75,7 +74,6 @@ export function EditTicketDialog({
     description: '',
     internalNote: '',
     reshipmentStatus: '',
-    whatToReship: '',
     reshipmentId: '',
     compensationRequest: '',
     creditAmount: '',
@@ -101,7 +99,6 @@ export function EditTicketDialog({
         description: ticket.description || '',
         internalNote: '', // Start empty - user adds a NEW note
         reshipmentStatus: ticket.reshipmentStatus || '',
-        whatToReship: ticket.whatToReship || '',
         reshipmentId: ticket.reshipmentId || '',
         compensationRequest: ticket.compensationRequest || '',
         creditAmount: ticket.creditAmount?.toString() || '',
@@ -118,6 +115,10 @@ export function EditTicketDialog({
   const isRequest = editForm.ticketType === 'Request'
   const hasShipmentFields = isClaim || isShipmentInquiry
   const hasIssueType = isClaim
+  // Reshipping only for Incorrect Items (Pick Error) and Incorrect Qty (Short Ship)
+  const hasReshipping = isClaim && (editForm.issueType === 'Pick Error' || editForm.issueType === 'Short Ship')
+  // Compensation only for Incorrect Items (Pick Error)
+  const hasCompensation = isClaim && editForm.issueType === 'Pick Error'
 
   const handleUpdate = async () => {
     if (!ticket) return
@@ -139,7 +140,6 @@ export function EditTicketDialog({
           description: editForm.description || null,
           internalNote: editForm.internalNote || null,
           reshipmentStatus: editForm.reshipmentStatus || null,
-          whatToReship: editForm.whatToReship || null,
           reshipmentId: editForm.reshipmentId || null,
           compensationRequest: editForm.compensationRequest || null,
           creditAmount: editForm.creditAmount ? parseFloat(editForm.creditAmount) : 0,
@@ -310,28 +310,39 @@ export function EditTicketDialog({
             </>
           )}
 
-          {/* Claim-specific fields */}
-          {isClaim && (
-            <>
-              <div className="grid grid-cols-2 gap-4">
+          {/* Reshipping - Incorrect Items (Pick Error) + Incorrect Qty (Short Ship) only */}
+          {hasReshipping && (
+            <div className={cn("grid gap-4", hasCompensation ? "grid-cols-3" : "grid-cols-2")}>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-reshipmentStatus" className={labelClass}>Reshipment Status</Label>
+                <Select
+                  value={editForm.reshipmentStatus}
+                  onValueChange={(value) => setEditForm({ ...editForm, reshipmentStatus: value })}
+                >
+                  <SelectTrigger id="edit-reshipmentStatus" className={cn("h-9", editForm.reshipmentStatus ? "text-foreground" : "text-muted-foreground/40")}>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Please reship for me">Please reship for me</SelectItem>
+                    <SelectItem value="I've already reshipped">I&apos;ve already reshipped</SelectItem>
+                    <SelectItem value="Don't reship">Don&apos;t reship</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-reshipmentId" className={labelClass}>Reshipment ID</Label>
+                <Input
+                  id="edit-reshipmentId"
+                  value={editForm.reshipmentId}
+                  onChange={(e) => setEditForm({ ...editForm, reshipmentId: e.target.value })}
+                  placeholder="e.g., 330867618"
+                  className="h-9 placeholder:text-muted-foreground/40"
+                />
+              </div>
+              {/* Compensation - Incorrect Items (Pick Error) only */}
+              {hasCompensation && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="edit-reshipmentStatus" className={labelClass}>Reshipment Status</Label>
-                  <Select
-                    value={editForm.reshipmentStatus}
-                    onValueChange={(value) => setEditForm({ ...editForm, reshipmentStatus: value })}
-                  >
-                    <SelectTrigger id="edit-reshipmentStatus" className={cn("h-9", editForm.reshipmentStatus ? "text-foreground" : "text-muted-foreground/40")}>
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Please reship for me">Please reship for me</SelectItem>
-                      <SelectItem value="I've already reshipped">I&apos;ve already reshipped</SelectItem>
-                      <SelectItem value="Don't reship">Don&apos;t reship</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-compensationRequest" className={labelClass}>Compensation Request</Label>
+                  <Label htmlFor="edit-compensationRequest" className={labelClass}>Compensation</Label>
                   <Select
                     value={editForm.compensationRequest}
                     onValueChange={(value) => setEditForm({ ...editForm, compensationRequest: value })}
@@ -345,61 +356,41 @@ export function EditTicketDialog({
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
+              )}
+            </div>
+          )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-whatToReship" className={labelClass}>What to Reship</Label>
-                  <Input
-                    id="edit-whatToReship"
-                    value={editForm.whatToReship}
-                    onChange={(e) => setEditForm({ ...editForm, whatToReship: e.target.value })}
-                    placeholder="e.g., 2x Vitamin D3 5000IU"
-                    className="h-9 placeholder:text-muted-foreground/40"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-reshipmentId" className={labelClass}>Reshipment ID</Label>
-                  <Input
-                    id="edit-reshipmentId"
-                    value={editForm.reshipmentId}
-                    onChange={(e) => setEditForm({ ...editForm, reshipmentId: e.target.value })}
-                    placeholder="e.g., 12345"
-                    className="h-9 placeholder:text-muted-foreground/40"
-                  />
-                </div>
+          {/* Credit Amount - all claim types */}
+          {isClaim && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-creditAmount" className={labelClass}>Credit Amount</Label>
+                <Input
+                  id="edit-creditAmount"
+                  type="number"
+                  step="0.01"
+                  value={editForm.creditAmount}
+                  onChange={(e) => setEditForm({ ...editForm, creditAmount: e.target.value })}
+                  placeholder="0.00"
+                  className="h-9 placeholder:text-muted-foreground/40"
+                />
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-creditAmount" className={labelClass}>Credit Amount</Label>
-                  <Input
-                    id="edit-creditAmount"
-                    type="number"
-                    step="0.01"
-                    value={editForm.creditAmount}
-                    onChange={(e) => setEditForm({ ...editForm, creditAmount: e.target.value })}
-                    placeholder="0.00"
-                    className="h-9 placeholder:text-muted-foreground/40"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-currency" className={labelClass}>Currency</Label>
-                  <Select
-                    value={editForm.currency}
-                    onValueChange={(value) => setEditForm({ ...editForm, currency: value })}
-                  >
-                    <SelectTrigger id="edit-currency" className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="CAD">CAD</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-currency" className={labelClass}>Currency</Label>
+                <Select
+                  value={editForm.currency}
+                  onValueChange={(value) => setEditForm({ ...editForm, currency: value })}
+                >
+                  <SelectTrigger id="edit-currency" className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="CAD">CAD</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            </>
+            </div>
           )}
 
           {/* Request-specific fields */}
