@@ -125,8 +125,20 @@ export function FileUpload({
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Upload failed')
+        let errorMessage = 'Upload failed'
+        const rawText = await response.text()
+        try {
+          const errorData = JSON.parse(rawText)
+          errorMessage = errorData.error || errorMessage
+        } catch {
+          // Server returned non-JSON (e.g. "Request Entity Too Large")
+          if (response.status === 413 || rawText.toLowerCase().includes('entity too large')) {
+            errorMessage = 'File is too large. Please try a smaller file.'
+          } else if (rawText) {
+            errorMessage = rawText
+          }
+        }
+        throw new Error(errorMessage)
       }
 
       const data = await response.json()

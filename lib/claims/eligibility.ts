@@ -3,12 +3,13 @@
  *
  * Determines whether a shipment is eligible for each claim type:
  * - Lost in Transit: 15 days inactivity (domestic) or 20 days (international)
+ * - Incorrect Delivery: Package must be delivered
  * - Damage: Package must be delivered
  * - Incorrect Items (Pick Error): Package must be delivered
  * - Incorrect Quantity (Short Ship): Package must be delivered
  */
 
-export type ClaimType = 'lostInTransit' | 'damage' | 'incorrectItems' | 'incorrectQuantity'
+export type ClaimType = 'lostInTransit' | 'incorrectDelivery' | 'damage' | 'incorrectItems' | 'incorrectQuantity'
 
 export interface ClaimEligibility {
   eligible: boolean
@@ -25,6 +26,7 @@ export interface ClaimEligibilityResult {
   isInternational: boolean
   eligibility: {
     lostInTransit: ClaimEligibility
+    incorrectDelivery: ClaimEligibility
     damage: ClaimEligibility
     incorrectItems: ClaimEligibility
     incorrectQuantity: ClaimEligibility
@@ -90,6 +92,7 @@ export function calculateEligibility(shipment: ShipmentData): ClaimEligibilityRe
       daysSinceLastUpdate,
       daysSinceLabeled
     ),
+    incorrectDelivery: calculateDeliveryRequiredEligibility(isDelivered, 'Incorrect Delivery'),
     damage: calculateDeliveryRequiredEligibility(isDelivered, 'Damage'),
     incorrectItems: calculateDeliveryRequiredEligibility(isDelivered, 'Incorrect Items'),
     incorrectQuantity: calculateDeliveryRequiredEligibility(isDelivered, 'Incorrect Quantity'),
@@ -224,6 +227,7 @@ function calculateDeliveryRequiredEligibility(
 export function claimTypeToIssueType(claimType: ClaimType): string {
   const mapping: Record<ClaimType, string> = {
     lostInTransit: 'Loss',
+    incorrectDelivery: 'Incorrect Delivery',
     damage: 'Damage',
     incorrectItems: 'Pick Error',
     incorrectQuantity: 'Short Ship',
@@ -237,6 +241,7 @@ export function claimTypeToIssueType(claimType: ClaimType): string {
 export function issueTypeToClaimType(issueType: string): ClaimType | null {
   const mapping: Record<string, ClaimType> = {
     'Loss': 'lostInTransit',
+    'Incorrect Delivery': 'incorrectDelivery',
     'Damage': 'damage',
     'Pick Error': 'incorrectItems',
     'Short Ship': 'incorrectQuantity',
@@ -250,6 +255,7 @@ export function issueTypeToClaimType(issueType: string): ClaimType | null {
 export function getClaimTypeLabel(claimType: ClaimType): string {
   const labels: Record<ClaimType, string> = {
     lostInTransit: 'Lost in Transit',
+    incorrectDelivery: 'Incorrect Delivery',
     damage: 'Damage',
     incorrectItems: 'Incorrect Items',
     incorrectQuantity: 'Incorrect Quantity',

@@ -1,8 +1,9 @@
 /**
  * Email Templates for Claim Notifications
  *
- * 8 templates based on claim type and reshipment selection:
+ * 9 templates based on claim type and reshipment selection:
  * 1. Lost in Transit
+ * 9. Incorrect Delivery
  * 2. Damage
  * 3. Incorrect Items - "Please reship for me"
  * 4. Incorrect Items - "I've already reshipped"
@@ -12,7 +13,7 @@
  * 8. Short Ship - "Don't reship"
  */
 
-export type IssueType = 'Loss' | 'Damage' | 'Pick Error' | 'Short Ship'
+export type IssueType = 'Loss' | 'Incorrect Delivery' | 'Damage' | 'Pick Error' | 'Short Ship'
 export type ReshipmentStatus = 'Please reship for me' | "I've already reshipped" | "Don't reship"
 
 export interface ClaimEmailData {
@@ -39,6 +40,8 @@ function getIssueTypeDisplayName(issueType: IssueType): string {
   switch (issueType) {
     case 'Loss':
       return 'Lost in Transit'
+    case 'Incorrect Delivery':
+      return 'Incorrect Delivery'
     case 'Damage':
       return 'Damage'
     case 'Pick Error':
@@ -97,6 +100,8 @@ function getEmailBody(data: ClaimEmailData): string {
       return templateShortShipAlreadyReshipped(data)
     case 8:
       return templateShortShipDontReship(data)
+    case 9:
+      return templateIncorrectDelivery(data)
     default:
       return templateLostInTransit(data)
   }
@@ -107,6 +112,7 @@ function getEmailBody(data: ClaimEmailData): string {
  */
 function getTemplateNumber(issueType: IssueType, reshipmentStatus: ReshipmentStatus | null): number {
   if (issueType === 'Loss') return 1
+  if (issueType === 'Incorrect Delivery') return 9
   if (issueType === 'Damage') return 2
 
   if (issueType === 'Pick Error') {
@@ -137,6 +143,22 @@ function templateLostInTransit(data: ClaimEmailData): string {
 I am writing to you on behalf of Merchant ID ${data.merchantId}.
 
 Shipment ${data.shipmentId} is lost in transit.
+
+Thank you for your help,
+Nora`
+}
+
+/**
+ * Template 9: Incorrect Delivery
+ */
+function templateIncorrectDelivery(data: ClaimEmailData): string {
+  return `Hello,
+
+I am writing to you on behalf of Merchant ID ${data.merchantId}.
+
+Shipment ${data.shipmentId} has been delivered incorrectly.
+
+${data.description || ''}
 
 Thank you for your help,
 Nora`

@@ -673,7 +673,7 @@ function ClaimDropdown({ eligibility, isLoadingEligibility, onSubmitClaim }: Cla
   // Don't show anything while loading or if no eligibility data
   if (isLoadingEligibility || !eligibility) return null
 
-  const claimTypes: ClaimType[] = ['lostInTransit', 'damage', 'incorrectItems', 'incorrectQuantity']
+  const claimTypes: ClaimType[] = ['lostInTransit', 'incorrectDelivery', 'damage', 'incorrectItems', 'incorrectQuantity']
   const hasEligibleClaim = claimTypes.some(type => eligibility.eligibility[type].eligible)
 
   // Hide entirely if no claims are eligible

@@ -143,6 +143,8 @@ export function getTicketTypeLabel(ticketType: string, issueType?: string) {
     switch (issueType) {
       case 'Loss':
         return 'Lost in Transit'
+      case 'Incorrect Delivery':
+        return 'Incorrect Delivery'
       case 'Short Ship':
         return 'Incorrect Quantity'
       case 'Pick Error':

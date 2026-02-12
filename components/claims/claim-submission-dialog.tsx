@@ -357,6 +357,13 @@ export function ClaimSubmissionDialog({
           ALL_STEPS.find(s => s.id === "verification")!,
           ALL_STEPS.find(s => s.id === "description")!,
         ]
+      case "incorrectDelivery":
+        // Incorrect Delivery: description (required) → documentation → submit
+        return [
+          ...baseSteps,
+          ALL_STEPS.find(s => s.id === "description")!,
+          ALL_STEPS.find(s => s.id === "documentation")!,
+        ]
       case "damage":
         // Damage: description → documentation → submit
         return [
@@ -511,8 +518,8 @@ export function ClaimSubmissionDialog({
         // Auto-advances when verified - but allow manual proceed if eligible
         return litVerification?.eligible === true
       case "description":
-        // Description is REQUIRED for Incorrect Items and Incorrect Quantity
-        if (formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity") {
+        // Description is REQUIRED for Incorrect Delivery, Incorrect Items, and Incorrect Quantity
+        if (formData.claimType === "incorrectDelivery" || formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity") {
           return formData.description.trim().length > 0
         }
         // Loss and Damage - description is optional
@@ -703,7 +710,7 @@ export function ClaimSubmissionDialog({
 
             {/* Check if any claim types are eligible */}
             {(() => {
-              const allClaimTypes: ClaimType[] = ["lostInTransit", "damage", "incorrectItems", "incorrectQuantity"]
+              const allClaimTypes: ClaimType[] = ["lostInTransit", "incorrectDelivery", "damage", "incorrectItems", "incorrectQuantity"]
               const hasAnyEligible = allClaimTypes.some(type => eligibility?.eligibility[type]?.eligible)
 
               if (!hasAnyEligible && eligibility) {
@@ -870,12 +877,12 @@ export function ClaimSubmissionDialog({
         )
 
       case "description":
-        const isPickOrShortShip = formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity"
+        const isDescriptionRequired = formData.claimType === "incorrectDelivery" || formData.claimType === "incorrectItems" || formData.claimType === "incorrectQuantity"
         return (
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="description" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                {isPickOrShortShip ? (
+                {isDescriptionRequired ? (
                   <>Description <span className="text-red-500">*</span></>
                 ) : (
                   <>Description <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span></>
