@@ -85,7 +85,7 @@ export function DeleteTicketDialog({
                   Ticket #{ticket.ticketNumber}
                 </span>
                 <Badge variant="outline">
-                  {getTicketTypeLabel(ticket.ticketType, ticket.issueType)}
+                  {getTicketTypeLabel(ticket.ticketType, ticket.issueType ?? undefined)}
                 </Badge>
               </div>
               {ticket.description && (
