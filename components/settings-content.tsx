@@ -529,6 +529,23 @@ export function SettingsContent() {
                     </Select>
                   </div>
                 </div>
+                {/* Hide Resolved Tickets */}
+                <div className="flex items-center justify-between gap-12 py-6">
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-sm font-medium">Hide Resolved Tickets</Label>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      Hide resolved tickets in the Jetpack Care section.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end flex-shrink-0 w-[210px]">
+                    <Switch
+                      checked={settings.hideResolvedTickets}
+                      onCheckedChange={(checked) =>
+                        updateSetting('hideResolvedTickets', checked)
+                      }
+                    />
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

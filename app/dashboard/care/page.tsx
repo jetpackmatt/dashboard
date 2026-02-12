@@ -184,9 +184,11 @@ export default function CarePage() {
   ], [typeFilter, issueFilter])
 
   // Memoize selected statuses to prevent infinite loops in useCallback dependencies
+  // When no filter is active: use preference to decide whether to include Resolved
   const selectedStatuses = React.useMemo(() => {
-    return statusFilter.length > 0 ? statusFilter : DEFAULT_STATUSES
-  }, [statusFilter])
+    if (statusFilter.length > 0) return statusFilter
+    return userSettings.hideResolvedTickets ? DEFAULT_STATUSES : ALL_STATUSES
+  }, [statusFilter, userSettings.hideResolvedTickets])
 
   // Pagination state
   const [currentPage, setCurrentPage] = React.useState(1)

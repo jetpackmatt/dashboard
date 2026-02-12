@@ -22,11 +22,14 @@ export interface UserSettings {
   trackingMethod: 'carrier' | 'deliveryiq'
   // Default rows per page across all tables (overridden by per-table preference)
   defaultPageSize: 50 | 100 | 150 | 200
+  // When true, resolved tickets are hidden from the Care section
+  hideResolvedTickets: boolean
 }
 
 const DEFAULTS: UserSettings = {
   trackingMethod: 'deliveryiq',
   defaultPageSize: 50,
+  hideResolvedTickets: false,
 }
 
 // ---------------------------------------------------------------------------
