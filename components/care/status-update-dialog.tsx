@@ -100,6 +100,7 @@ export function StatusUpdateDialog({
                 <SelectItem value="Under Review">Under Review</SelectItem>
                 <SelectItem value="Credit Requested">Credit Requested</SelectItem>
                 <SelectItem value="Credit Approved">Credit Approved</SelectItem>
+                <SelectItem value="Credit Denied">Credit Denied</SelectItem>
                 <SelectItem value="Resolved">Resolved</SelectItem>
               </SelectContent>
             </Select>

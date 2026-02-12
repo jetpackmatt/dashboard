@@ -260,6 +260,7 @@ export async function POST(request: NextRequest) {
       description,
       internalNotes,
       attachments,
+      initialNote,
     } = body
 
     // Validate required fields
@@ -290,9 +291,9 @@ export async function POST(request: NextRequest) {
 
     // Insert the ticket
     const supabase = createAdminClient()
-    const ticketStatus = status || 'Input Required'
+    const userName = user.user_metadata?.full_name || user.email || 'System'
 
-    // Create initial event for claims submitted with "Under Review" status
+    // Build initial events (newest first)
     const initialEvents: Array<{
       status: string
       note: string
@@ -300,14 +301,28 @@ export async function POST(request: NextRequest) {
       createdBy: string
     }> = []
 
-    if (ticketStatus === 'Under Review' && ticketType === 'Claim') {
+    // For admin/care created tickets: auto-advance to Under Review
+    if (isAdmin || isCareAdmin) {
       initialEvents.push({
         status: 'Under Review',
-        note: 'Jetpack team is reviewing your claim request.',
+        note: initialNote || (ticketType === 'Claim'
+          ? 'Jetpack team is reviewing your claim request.'
+          : 'We are reviewing this request.'),
         createdAt: new Date().toISOString(),
-        createdBy: 'System',
+        createdBy: userName,
       })
     }
+
+    // All tickets start with "Ticket Created" as the base event
+    initialEvents.push({
+      status: 'Ticket Created',
+      note: 'Awaiting review by a Jetpack team member.',
+      createdAt: new Date().toISOString(),
+      createdBy: 'System',
+    })
+
+    // Ticket status = topmost event status
+    const ticketStatus = status || initialEvents[0].status
 
     const { data: ticket, error } = await supabase
       .from('care_tickets')
@@ -334,7 +349,7 @@ export async function POST(request: NextRequest) {
         description: description || null,
         internal_notes: internalNotes || null,
         attachments: attachments || [],
-        events: initialEvents.length > 0 ? initialEvents : [],
+        events: initialEvents,
       })
       .select()
       .single()

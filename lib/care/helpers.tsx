@@ -62,16 +62,21 @@ export function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; t
 export function getStatusColors(status: string) {
   switch (status) {
     case "Resolved":
+      return `bg-emerald-500/15 text-emerald-700 font-medium dark:bg-emerald-500/20 dark:text-emerald-300`
     case "Credit Approved":
-      return `bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800`
+      return `bg-emerald-500/15 text-emerald-800 font-medium dark:bg-emerald-500/20 dark:text-emerald-200`
     case "Credit Requested":
-      return `bg-orange-100/70 text-orange-700/80 border border-orange-200/70 dark:bg-orange-900/35 dark:text-orange-300 dark:border-orange-800/90`
+      return `bg-amber-500/15 text-amber-700 font-medium dark:bg-amber-500/20 dark:text-amber-300`
+    case "Credit Denied":
+      return `bg-red-500/15 text-red-700 font-medium dark:bg-red-500/20 dark:text-red-300`
     case "Under Review":
-      return `bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800`
+      return `bg-blue-500/10 text-blue-700 font-medium dark:bg-blue-500/15 dark:text-blue-300`
     case "Input Required":
-      return `bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-800`
+      return `bg-red-500/15 text-red-700 font-medium dark:bg-red-500/20 dark:text-red-300`
+    case "Ticket Created":
+      return `bg-slate-500/10 text-slate-600 font-medium dark:bg-slate-500/15 dark:text-slate-400`
     default:
-      return `bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:border-slate-800`
+      return `bg-slate-500/10 text-slate-600 font-medium dark:bg-slate-500/15 dark:text-slate-400`
   }
 }
 
@@ -87,10 +92,14 @@ export function getExpandedRowTint(status: string) {
       return "bg-emerald-100/55 dark:bg-emerald-950/40"
     case "Credit Requested":
       return "bg-orange-100/55 dark:bg-orange-950/40"
+    case "Credit Denied":
+      return "bg-red-100/55 dark:bg-red-950/40"
     case "Under Review":
       return "bg-blue-100/55 dark:bg-blue-950/40"
     case "Input Required":
       return "bg-red-100/55 dark:bg-red-950/40"
+    case "Ticket Created":
+      return "bg-slate-100/55 dark:bg-slate-800/50"
     default:
       return "bg-slate-100/55 dark:bg-slate-800/50"
   }
@@ -110,10 +119,14 @@ export function getExpandedPanelTint(status: string) {
       return "bg-emerald-100/40 dark:bg-emerald-950/30"
     case "Credit Requested":
       return "bg-orange-100/40 dark:bg-orange-950/30"
+    case "Credit Denied":
+      return "bg-red-100/40 dark:bg-red-950/30"
     case "Under Review":
       return "bg-blue-100/40 dark:bg-blue-950/30"
     case "Input Required":
       return "bg-red-100/40 dark:bg-red-950/30"
+    case "Ticket Created":
+      return "bg-slate-100/40 dark:bg-slate-800/30"
     default:
       return "bg-slate-100/40 dark:bg-slate-800/30"
   }
@@ -125,10 +138,10 @@ export function getExpandedPanelTint(status: string) {
  */
 export function getTicketTypeColors(ticketType: string, issueType?: string) {
   if (ticketType === 'Claim') {
-    return `bg-[#eb9458]/20 text-[#c06520] border border-[#eb9458]/35 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:border-[#eb9458]/30`
+    return `bg-[#eb9458]/20 text-[#c06520] font-medium dark:bg-[#eb9458]/25 dark:text-[#f0a868]`
   }
   // All non-claim types use the same blue as the "New Ticket" button
-  return `bg-[#328bcb]/15 text-[#1a5f96] border border-[#328bcb]/30 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:border-[#328bcb]/40`
+  return `bg-[#328bcb]/15 text-[#1a5f96] font-medium dark:bg-[#328bcb]/20 dark:text-[#5aa8dc]`
 }
 
 /**
@@ -146,14 +159,15 @@ export function getTicketTypeLabel(ticketType: string, issueType?: string) {
       case 'Incorrect Delivery':
         return 'Incorrect Delivery'
       case 'Short Ship':
-        return 'Incorrect Quantity'
+        return 'Incorrect Qty'
       case 'Pick Error':
         return 'Incorrect Items'
       default:
         return issueType || 'Claim'
     }
   }
-  return ticketType === 'Work Order' ? 'Request' : ticketType
+  // Non-claim types: value matches display name
+  return ticketType
 }
 
 /**
@@ -164,6 +178,7 @@ export function getTicketTypeLabel(ticketType: string, issueType?: string) {
 export function getStatusTextColor(status: string) {
   switch (status) {
     case "Input Required":
+    case "Credit Denied":
       return "text-red-600 dark:text-red-400"
     default:
       return "text-foreground"
@@ -182,10 +197,14 @@ export function getStatusDotColor(status: string) {
       return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Requested":
       return "bg-orange-400 border-orange-400 shadow-sm shadow-orange-400/30"
+    case "Credit Denied":
+      return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
     case "Under Review":
       return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
     case "Input Required":
       return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
+    case "Ticket Created":
+      return "bg-slate-400 border-slate-400 shadow-sm shadow-slate-400/30"
     default:
       return "bg-slate-400 border-slate-400 shadow-sm shadow-slate-400/30"
   }

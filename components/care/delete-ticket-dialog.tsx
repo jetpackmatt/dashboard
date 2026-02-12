@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { JetpackLoader } from "@/components/jetpack-loader"
+import { getTicketTypeLabel } from "@/lib/care/helpers"
 import type { Ticket } from "@/lib/care/types"
 
 interface DeleteTicketDialogProps {
@@ -84,7 +85,7 @@ export function DeleteTicketDialog({
                   Ticket #{ticket.ticketNumber}
                 </span>
                 <Badge variant="outline">
-                  {ticket.ticketType}
+                  {getTicketTypeLabel(ticket.ticketType, ticket.issueType)}
                 </Badge>
               </div>
               {ticket.description && (

@@ -46,20 +46,23 @@ export const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
 
 // Status filter options for multi-select
 export const STATUS_OPTIONS: FilterOption[] = [
+  { value: 'Ticket Created', label: 'Ticket Created' },
   { value: 'Input Required', label: 'Input Required' },
   { value: 'Under Review', label: 'Under Review' },
   { value: 'Credit Requested', label: 'Credit Requested' },
   { value: 'Credit Approved', label: 'Credit Approved' },
+  { value: 'Credit Denied', label: 'Credit Denied' },
   { value: 'Resolved', label: 'Resolved' },
 ]
 
 // Ticket type filter options - non-claim types first, then claim issues
 export const ISSUE_TYPE_OPTIONS: FilterOption[] = [
-  { value: 'type:Track', label: 'Track' },
-  { value: 'type:Work Order', label: 'Request' },
+  { value: 'type:Shipment Inquiry', label: 'Shipment Inquiry' },
+  { value: 'type:Request', label: 'Request' },
   { value: 'type:Technical', label: 'Technical' },
   { value: 'type:Inquiry', label: 'Inquiry' },
   { value: 'issue:Loss', label: 'Lost in Transit' },
+  { value: 'issue:Incorrect Delivery', label: 'Incorrect Delivery' },
   { value: 'issue:Damage', label: 'Damage' },
   { value: 'issue:Pick Error', label: 'Incorrect Items' },
   { value: 'issue:Short Ship', label: 'Incorrect Quantity' },
@@ -68,10 +71,12 @@ export const ISSUE_TYPE_OPTIONS: FilterOption[] = [
 
 // All possible ticket statuses
 export const ALL_STATUSES = [
+  'Ticket Created',
   'Input Required',
   'Under Review',
   'Credit Requested',
   'Credit Approved',
+  'Credit Denied',
   'Resolved',
 ]
 

@@ -145,7 +145,7 @@ export async function PATCH(
     // Get existing ticket to check access and get current events/internal_notes
     const { data: existingTicket, error: fetchError } = await supabase
       .from('care_tickets')
-      .select('client_id, status, events, internal_notes')
+      .select('client_id, status, events, internal_notes, credit_amount, ticket_type')
       .eq('id', id)
       .single()
 
@@ -301,9 +301,49 @@ export async function PATCH(
       const currentEvents = (updateData.events as Array<Record<string, unknown>>) || (existingTicket.events as Array<Record<string, unknown>>) || []
       const userName = user.user_metadata?.full_name || user.email || 'Unknown'
 
+      // Build contextual default note based on status
+      let defaultNote = ''
+      if (statusChanged) {
+        const creditAmt = parseFloat(existingTicket.credit_amount || '0')
+        const hasCreditAmount = creditAmt > 0
+        const creditStr = hasCreditAmount ? `$${creditAmt.toFixed(2)}` : null
+        const isClaim = existingTicket.ticket_type === 'Claim'
+
+        switch (newStatus) {
+          case 'Under Review':
+            defaultNote = 'The Jetpack team is reviewing this request.'
+            break
+          case 'Credit Requested':
+            defaultNote = 'We have sent a credit request to the warehouse team.'
+            break
+          case 'Credit Approved':
+            defaultNote = creditStr
+              ? `A credit of ${creditStr} has been approved and will appear on your next invoice.`
+              : 'A credit has been approved and will appear on your next invoice.'
+            break
+          case 'Credit Denied':
+            defaultNote = 'The credit request was denied. Reach out on Slack for more details.'
+            break
+          case 'Input Required':
+            defaultNote = 'We need more information to proceed. Please reach out via Slack or email.'
+            break
+          case 'Resolved':
+            if (isClaim) {
+              defaultNote = creditStr
+                ? `Your credit of ${creditStr} has been applied to your account.`
+                : 'A credit has been applied to your account.'
+            } else {
+              defaultNote = 'This ticket has been marked as resolved.'
+            }
+            break
+          default:
+            defaultNote = `Status changed to ${newStatus}`
+        }
+      }
+
       const newEvent = {
         status: newStatus,
-        note: eventNote || (statusChanged ? `Status changed to ${newStatus}` : ''),
+        note: eventNote || defaultNote,
         createdAt: new Date().toISOString(),
         createdBy: userName,
       }

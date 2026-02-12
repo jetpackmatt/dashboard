@@ -196,8 +196,8 @@ export function EditTicketDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Claim">Claim</SelectItem>
-                  <SelectItem value="Track">Track</SelectItem>
-                  <SelectItem value="Work Order">Work Order</SelectItem>
+                  <SelectItem value="Shipment Inquiry">Shipment Inquiry</SelectItem>
+                  <SelectItem value="Request">Request</SelectItem>
                   <SelectItem value="Technical">Technical</SelectItem>
                   <SelectItem value="Inquiry">Inquiry</SelectItem>
                 </SelectContent>
@@ -377,7 +377,7 @@ export function EditTicketDialog({
           )}
 
           {/* Work Order specific fields */}
-          {(editForm.ticketType === 'Work Order' || editForm.ticketType === 'Technical' || editForm.ticketType === 'Inquiry') && (
+          {(editForm.ticketType === 'Request' || editForm.ticketType === 'Technical' || editForm.ticketType === 'Inquiry') && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-workOrderId">Work Order ID</Label>

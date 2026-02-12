@@ -324,17 +324,17 @@ export default function CarePage() {
   }
 
   // Get the most relevant reference ID for a ticket based on its type
-  const getReferenceId = (ticket: Ticket): string | null => {
-    // For Claims and Track tickets, prioritize shipment ID, then order ID
-    if (ticket.ticketType === 'Claim' || ticket.ticketType === 'Track') {
-      return ticket.shipmentId || ticket.orderId || null
+  const getReferenceId = (ticket: Ticket): string => {
+    // For Claims and Shipment Inquiry tickets, prioritize shipment ID, then order ID
+    if (ticket.ticketType === 'Claim' || ticket.ticketType === 'Shipment Inquiry') {
+      return ticket.shipmentId || ticket.orderId || String(ticket.ticketNumber)
     }
-    // For Work Orders, use work order ID or inventory ID
-    if (ticket.ticketType === 'Work Order') {
-      return ticket.workOrderId || ticket.inventoryId || null
+    // For Requests, use work order ID or inventory ID
+    if (ticket.ticketType === 'Request') {
+      return ticket.workOrderId || ticket.inventoryId || String(ticket.ticketNumber)
     }
     // For Technical/Inquiry, use order ID or shipment ID
-    return ticket.orderId || ticket.shipmentId || null
+    return ticket.orderId || ticket.shipmentId || String(ticket.ticketNumber)
   }
 
   // Create ticket form state
@@ -802,14 +802,14 @@ export default function CarePage() {
               )}
 
               {/* Submit a Claim Button */}
-              <Button size="sm" variant="outline" className="h-[30px] bg-[#eb9458]/20 text-[#c06520] border-[#eb9458]/35 hover:bg-[#eb9458]/30 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:border-[#eb9458]/30 dark:hover:bg-[#eb9458]/35" onClick={() => setClaimDialogOpen(true)}>
-                <PlusIcon className="h-4 w-4 mr-1 text-[#c06520] dark:text-[#f0a868]" />
+              <Button size="sm" variant="ghost" className="h-[30px] bg-[#eb9458]/20 text-[#c06520] font-medium border-0 hover:bg-[#eb9458]/30 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:hover:bg-[#eb9458]/35" onClick={() => setClaimDialogOpen(true)}>
+                <PlusIcon className="h-4 w-4 mr-1" />
                 <span className="hidden lg:inline">Submit a Claim</span>
               </Button>
 
               {/* New Ticket Button */}
-              <Button size="sm" variant="outline" className="h-[30px] bg-[#328bcb]/15 text-[#1a5f96] border-[#328bcb]/30 hover:bg-[#328bcb]/25 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:border-[#328bcb]/40 dark:hover:bg-[#328bcb]/30" onClick={() => setCreateDialogOpen(true)}>
-                <PlusIcon className="h-4 w-4 mr-1 text-[#1a5f96] dark:text-[#5aa8dc]" />
+              <Button size="sm" variant="ghost" className="h-[30px] bg-[#328bcb]/15 text-[#1a5f96] font-medium border-0 hover:bg-[#328bcb]/25 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:hover:bg-[#328bcb]/30" onClick={() => setCreateDialogOpen(true)}>
+                <PlusIcon className="h-4 w-4 mr-1" />
                 <span className="hidden lg:inline">New Ticket</span>
               </Button>
 
@@ -1341,29 +1341,31 @@ export default function CarePage() {
                                       {/* Left Column: Credit/Buttons/Files */}
                                       <div className="flex-shrink-0 w-[180px] border-r-2 border-white dark:border-r-white/15 flex flex-col">
                                           {/* Credit Card - contextual based on state */}
-                                          {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
+                                          {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Denied') && (
                                             <div className="pl-4 lg:pl-6 pr-[calc(1rem+5px)] py-[calc(1rem+2px)] border-b-2 border-white dark:border-b-white/15">
                                               <div className={cn(
                                                 "text-[9px] font-medium uppercase tracking-wider mb-0.5 whitespace-nowrap",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-600 dark:text-emerald-400"
-                                                  : ticket.status === 'Credit Requested'
-                                                    ? "text-orange-700 dark:text-orange-300"
-                                                    : "text-muted-foreground"
+                                                  : ticket.status === 'Credit Denied'
+                                                    ? "text-red-600 dark:text-red-400"
+                                                    : ticket.status === 'Credit Requested'
+                                                      ? "text-orange-700 dark:text-orange-300"
+                                                      : "text-muted-foreground"
                                               )}>
-                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
+                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Denied' ? 'Credit Denied' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
                                               </div>
                                               <div className={cn(
                                                 "text-lg font-semibold",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-700 dark:text-emerald-300"
-                                                  : ticket.status === 'Credit Requested'
-                                                    ? "text-foreground"
+                                                  : ticket.status === 'Credit Denied'
+                                                    ? "text-red-700 dark:text-red-300 line-through"
                                                     : "text-foreground"
                                               )}>
                                                 {ticket.creditAmount > 0 ? formatCurrency(ticket.creditAmount) : 'TBD'}
                                               </div>
-                                              {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved') && (
+                                              {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Denied') && (
                                                 <div className="text-[10px] text-muted-foreground mt-1 leading-tight">
                                                   {(() => {
                                                     // Find the event when the status was set
@@ -1374,7 +1376,9 @@ export default function CarePage() {
                                                       const day = date.getDate()
                                                       return ticket.status === 'Credit Approved'
                                                         ? `Approved on ${month}/${day}`
-                                                        : `Requested on ${month}/${day}`
+                                                        : ticket.status === 'Credit Denied'
+                                                          ? `Denied on ${month}/${day}`
+                                                          : `Requested on ${month}/${day}`
                                                     }
                                                     return null
                                                   })()}
@@ -1405,8 +1409,8 @@ export default function CarePage() {
                                             </button>
                                           </div>
 
-                                          {/* Files Section */}
-                                          {ticket.attachments && ticket.attachments.length > 0 && (
+                                          {/* Files Section - only in left column when carrier/tracking are shown in center */}
+                                          {ticket.attachments && ticket.attachments.length > 0 && !!(ticket.carrier || ticket.trackingNumber) && (
                                             <div className="flex-1 pl-4 lg:pl-6 pr-7 pt-5 pb-7">
                                               <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-3">Files</div>
                                               <div className="flex flex-col gap-1.5">
@@ -1431,62 +1435,162 @@ export default function CarePage() {
                                       <div className="flex flex-col flex-1 border-r-2 border-white dark:border-r-white/15">
                                         {/* Details Section */}
                                         <div className="border-b-2 border-white dark:border-b-white/15">
-                                          {/* Row 1: Ticket #, Carrier, Tracking # */}
-                                          <div className={cn(
-                                            "grid grid-cols-3",
-                                            ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' && "border-b-2 border-white dark:border-b-white/15"
-                                          )}>
-                                            <div className="px-5 py-7 border-r-2 border-white dark:border-r-white/15">
-                                              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Ticket #</div>
-                                              <div className="group/cell flex items-center gap-1.5">
-                                                <span className="text-[13px] font-mono truncate">{ticket.ticketNumber}</span>
-                                                {ticket.ticketNumber && (
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation()
-                                                      navigator.clipboard.writeText(ticket.ticketNumber.toString())
-                                                      toast.success("Ticket # copied")
-                                                    }}
-                                                    className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
-                                                    title="Copy Ticket #"
-                                                  >
-                                                    <CopyIcon className="h-3.5 w-3.5" />
-                                                  </button>
+                                          {/* Row 1: Ticket # + (Carrier/Tracking OR Files OR Internal Notes) */}
+                                          {(() => {
+                                            const hasCarrierOrTracking = !!(ticket.carrier || ticket.trackingNumber)
+                                            const hasFiles = ticket.attachments && ticket.attachments.length > 0
+                                            // What fills the 2nd+3rd columns: carrier/tracking > files > internal notes > nothing
+                                            const fillMode = hasCarrierOrTracking ? 'carrier-tracking' : hasFiles ? 'files' : (effectiveIsAdmin || effectiveIsCareUser) ? 'internal-notes' : 'ticket-only'
+                                            return (
+                                              <div className={cn(
+                                                "grid",
+                                                fillMode === 'carrier-tracking' ? "grid-cols-3" : fillMode === 'ticket-only' ? "grid-cols-1" : "grid-cols-[1fr_2fr]",
+                                                ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' && "border-b-2 border-white dark:border-b-white/15"
+                                              )}>
+                                                <div className={cn("px-5 py-7", fillMode !== 'ticket-only' && "border-r-2 border-white dark:border-r-white/15")}>
+                                                  <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Ticket #</div>
+                                                  <div className="group/cell flex items-center gap-1.5">
+                                                    <span className="text-[13px] font-mono truncate">{ticket.ticketNumber}</span>
+                                                    {ticket.ticketNumber && (
+                                                      <button
+                                                        onClick={(e) => {
+                                                          e.stopPropagation()
+                                                          navigator.clipboard.writeText(ticket.ticketNumber.toString())
+                                                          toast.success("Ticket # copied")
+                                                        }}
+                                                        className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
+                                                        title="Copy Ticket #"
+                                                      >
+                                                        <CopyIcon className="h-3.5 w-3.5" />
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                                {fillMode === 'carrier-tracking' && (
+                                                  <>
+                                                    <div className="px-5 py-7 border-r-2 border-white dark:border-r-white/15">
+                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Carrier</div>
+                                                      <div className="text-[13px] font-medium truncate">{ticket.carrier || '-'}</div>
+                                                    </div>
+                                                    <div className="px-5 py-7">
+                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Tracking #</div>
+                                                      {ticket.trackingNumber ? (
+                                                        <div className="group/cell flex items-center gap-1.5">
+                                                          <TrackingLink
+                                                            trackingNumber={ticket.trackingNumber}
+                                                            carrier={ticket.carrier || ''}
+                                                            className="text-[13px] font-mono truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+                                                          >
+                                                            {ticket.trackingNumber}
+                                                          </TrackingLink>
+                                                          <button
+                                                            onClick={(e) => {
+                                                              e.stopPropagation()
+                                                              navigator.clipboard.writeText(ticket.trackingNumber || '')
+                                                              toast.success("Tracking # copied")
+                                                            }}
+                                                            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
+                                                            title="Copy Tracking #"
+                                                          >
+                                                            <CopyIcon className="h-3.5 w-3.5" />
+                                                          </button>
+                                                        </div>
+                                                      ) : (
+                                                        <div className="text-[13px] font-mono truncate">-</div>
+                                                      )}
+                                                    </div>
+                                                  </>
+                                                )}
+                                                {fillMode === 'files' && (
+                                                  <div className="px-5 py-7">
+                                                    <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-3">Files</div>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                                      {ticket.attachments!.map((file, idx) => (
+                                                        <a
+                                                          key={idx}
+                                                          href={file.url}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          className="flex items-center gap-2 py-1 text-[11px] font-medium text-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors min-w-0"
+                                                        >
+                                                          {getFileIcon(file.type, file.name)}
+                                                          <span className="truncate block">{file.name}</span>
+                                                        </a>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                )}
+                                                {fillMode === 'internal-notes' && (
+                                                  <div className="px-5 py-7 bg-white/25 dark:bg-black/20">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider">Internal Notes</div>
+                                                      <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
+                                                        setAddNoteOpenForTicket(open ? ticket.id : null)
+                                                        if (!open) setNewNoteText('')
+                                                      }}>
+                                                        <PopoverTrigger asChild>
+                                                          <button className="flex items-center justify-center w-4 h-4 text-muted-foreground hover:text-foreground transition-colors">
+                                                            <PlusIcon className="h-3.5 w-3.5" />
+                                                          </button>
+                                                        </PopoverTrigger>
+                                                        <PopoverContent className="w-72 p-3" align="end">
+                                                          <div className="space-y-2">
+                                                            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Add Internal Note</div>
+                                                            <Textarea
+                                                              placeholder="Type your note..."
+                                                              value={newNoteText}
+                                                              onChange={(e) => setNewNoteText(e.target.value)}
+                                                              className="min-h-[80px] text-sm resize-none"
+                                                              autoFocus
+                                                            />
+                                                            <div className="flex justify-end gap-2">
+                                                              <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                onClick={() => {
+                                                                  setAddNoteOpenForTicket(null)
+                                                                  setNewNoteText('')
+                                                                }}
+                                                              >
+                                                                Cancel
+                                                              </Button>
+                                                              <Button
+                                                                size="sm"
+                                                                className="h-7 text-xs"
+                                                                onClick={() => handleAddInternalNote(ticket.id)}
+                                                                disabled={!newNoteText.trim() || isAddingNote}
+                                                              >
+                                                                {isAddingNote ? (
+                                                                  <JetpackLoader size="sm" />
+                                                                ) : (
+                                                                  'Save'
+                                                                )}
+                                                              </Button>
+                                                            </div>
+                                                          </div>
+                                                        </PopoverContent>
+                                                      </Popover>
+                                                    </div>
+                                                    {ticket.internalNotes && ticket.internalNotes.length > 0 && (
+                                                      <div className="divide-y divide-border/50">
+                                                        {ticket.internalNotes.map((note, idx) => (
+                                                          <div key={idx} className="py-2 first:pt-0 last:pb-0">
+                                                            <p className="text-[13px] text-foreground whitespace-pre-wrap leading-relaxed">{note.note}</p>
+                                                            <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground/60">
+                                                              <span className="font-semibold">{note.createdBy}</span>
+                                                              <span>•</span>
+                                                              <span>{new Date(note.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                                                            </div>
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
                                                 )}
                                               </div>
-                                            </div>
-                                            <div className="px-5 py-7 border-r-2 border-white dark:border-r-white/15">
-                                              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Carrier</div>
-                                              <div className="text-[13px] font-medium truncate">{ticket.carrier || '-'}</div>
-                                            </div>
-                                            <div className="px-5 py-7">
-                                              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Tracking #</div>
-                                              {ticket.trackingNumber ? (
-                                                <div className="group/cell flex items-center gap-1.5">
-                                                  <TrackingLink
-                                                    trackingNumber={ticket.trackingNumber}
-                                                    carrier={ticket.carrier || ''}
-                                                    className="text-[13px] font-mono truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-                                                  >
-                                                    {ticket.trackingNumber}
-                                                  </TrackingLink>
-                                                  <button
-                                                    onClick={(e) => {
-                                                      e.stopPropagation()
-                                                      navigator.clipboard.writeText(ticket.trackingNumber || '')
-                                                      toast.success("Tracking # copied")
-                                                    }}
-                                                    className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
-                                                    title="Copy Tracking #"
-                                                  >
-                                                    <CopyIcon className="h-3.5 w-3.5" />
-                                                  </button>
-                                                </div>
-                                              ) : (
-                                                <div className="text-[13px] font-mono truncate">-</div>
-                                              )}
-                                            </div>
-                                          </div>
+                                            )
+                                          })()}
 
                                           {/* Claim-specific rows - varies by issue type */}
                                           {ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' ? (
@@ -1596,8 +1700,8 @@ export default function CarePage() {
                                           )}
                                         </div>
 
-                                        {/* Internal Notes Section */}
-                                        {(effectiveIsAdmin || effectiveIsCareUser) && (
+                                        {/* Internal Notes Section - only here when carrier/tracking or files exist (otherwise shown in top row) */}
+                                        {(effectiveIsAdmin || effectiveIsCareUser) && !!(ticket.carrier || ticket.trackingNumber || (ticket.attachments && ticket.attachments.length > 0)) && (
                                           <div className="flex-1 bg-white/25 dark:bg-black/20">
                                             <div className="p-5">
                                               <div className="flex items-center gap-2 mb-2">

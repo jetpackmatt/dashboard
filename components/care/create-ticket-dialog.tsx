@@ -44,6 +44,7 @@ interface CreateForm {
   carrier: string
   trackingNumber: string
   description: string
+  initialNote: string
   attachments: { name: string; url: string; size: number; type: string }[]
 }
 
@@ -56,12 +57,13 @@ export function CreateTicketDialog({
   isAdmin,
 }: CreateTicketDialogProps) {
   const [createForm, setCreateForm] = React.useState<CreateForm>({
-    ticketType: 'Track',
+    ticketType: 'Shipment Inquiry',
     shipmentId: '',
     clientId: '',
     carrier: '',
     trackingNumber: '',
     description: '',
+    initialNote: '',
     attachments: [],
   })
   const [isCreating, setIsCreating] = React.useState(false)
@@ -73,12 +75,13 @@ export function CreateTicketDialog({
   React.useEffect(() => {
     if (!open) {
       setCreateForm({
-        ticketType: 'Track',
+        ticketType: 'Shipment Inquiry',
         shipmentId: '',
         clientId: '',
         carrier: '',
         trackingNumber: '',
         description: '',
+        initialNote: '',
         attachments: [],
       })
       setCreateDialogError(null)
@@ -99,13 +102,13 @@ export function CreateTicketDialog({
       const response = await fetch(`/api/data/shipments/${shipmentId}`)
       if (response.ok) {
         const data = await response.json()
-        if (data.shipment) {
+        if (data.shipmentId) {
           setCreateForm(prev => ({
             ...prev,
-            carrier: data.shipment.carrier ? getCarrierDisplayName(data.shipment.carrier) : '',
-            trackingNumber: data.shipment.tracking_id || '',
+            carrier: data.shipping?.carrier ? getCarrierDisplayName(data.shipping.carrier) : '',
+            trackingNumber: data.trackingId || '',
             // Auto-populate client if shipment has one
-            clientId: data.shipment.client_id || prev.clientId,
+            clientId: data.clientId || prev.clientId,
           }))
         }
       } else if (response.status === 404) {
@@ -138,18 +141,18 @@ export function CreateTicketDialog({
       return
     }
 
-    // For Track type, shipment fields are required
-    if (createForm.ticketType === 'Track') {
+    // For Shipment Inquiry type, shipment fields are required
+    if (createForm.ticketType === 'Shipment Inquiry') {
       if (!createForm.shipmentId.trim()) {
-        setCreateDialogError('Shipment ID is required for Track tickets.')
+        setCreateDialogError('Shipment ID is required for Shipment Inquiry tickets.')
         return
       }
       if (!createForm.carrier.trim()) {
-        setCreateDialogError('Carrier is required for Track tickets.')
+        setCreateDialogError('Carrier is required for Shipment Inquiry tickets.')
         return
       }
       if (!createForm.trackingNumber.trim()) {
-        setCreateDialogError('Tracking Number is required for Track tickets.')
+        setCreateDialogError('Tracking Number is required for Shipment Inquiry tickets.')
         return
       }
     }
@@ -167,6 +170,7 @@ export function CreateTicketDialog({
           carrier: createForm.carrier || null,
           trackingNumber: createForm.trackingNumber || null,
           description: createForm.description || null,
+          initialNote: createForm.initialNote.trim() || null,
           attachments: createForm.attachments.length > 0 ? createForm.attachments : null,
         }),
       })
@@ -192,7 +196,7 @@ export function CreateTicketDialog({
         <DialogHeader className="space-y-2">
           <DialogTitle>Create New Ticket</DialogTitle>
           <DialogDescription>
-            Create a support ticket for tracking, work orders, technical issues, or general inquiries.
+            Create a support ticket for shipment inquiries, requests, technical issues, or general inquiries.
           </DialogDescription>
         </DialogHeader>
 
@@ -217,111 +221,142 @@ export function CreateTicketDialog({
         )}
 
         <div className="space-y-4">
-          {/* Row 1: Type + Shipment ID */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="ticketType" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                Type <span className="text-red-500">*</span>
-              </Label>
-              <Select
-                value={createForm.ticketType}
-                onValueChange={(value) => {
-                  setCreateForm({ ...createForm, ticketType: value })
-                  setCreateDialogError(null)
-                }}
-              >
-                <SelectTrigger id="ticketType" className={cn("h-9", createForm.ticketType ? "text-foreground" : "text-muted-foreground/40")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Track">Track</SelectItem>
-                  <SelectItem value="Work Order">Request</SelectItem>
-                  <SelectItem value="Technical">Technical</SelectItem>
-                  <SelectItem value="Inquiry">Inquiry</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="shipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                Shipment ID {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
-              </Label>
-              <div className="relative">
-                <Input
-                  id="shipmentId"
-                  value={createForm.shipmentId}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    setCreateForm({ ...createForm, shipmentId: value })
-                    lookupShipment(value)
-                  }}
-                  placeholder="e.g., 330867617"
-                  className="h-9 pr-8 placeholder:text-muted-foreground/40"
-                />
-                {isLookingUpShipment && (
-                  <JetpackLoader size="sm" className="absolute right-3 top-2.5" />
-                )}
+          {/* Row 1: Type + (Shipment ID for shipment types, Brand for others) */}
+          {(() => {
+            const isShipmentType = createForm.ticketType === 'Shipment Inquiry'
+            const showBrand = isAdmin && (!selectedClientId || selectedClientId === 'all')
+            return (
+              <div className={cn("grid gap-4", isShipmentType || showBrand ? "grid-cols-2" : "grid-cols-1")}>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ticketType" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    Type <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={createForm.ticketType}
+                    onValueChange={(value) => {
+                      setCreateForm({ ...createForm, ticketType: value, ...(value !== 'Shipment Inquiry' ? { shipmentId: '', carrier: '', trackingNumber: '' } : {}) })
+                      setCreateDialogError(null)
+                    }}
+                  >
+                    <SelectTrigger id="ticketType" className={cn("h-9", createForm.ticketType ? "text-foreground" : "text-muted-foreground/40")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Shipment Inquiry">Shipment Inquiry</SelectItem>
+                      <SelectItem value="Request">Request</SelectItem>
+                      <SelectItem value="Technical">Technical</SelectItem>
+                      <SelectItem value="Inquiry">Inquiry</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {isShipmentType ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="shipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Shipment ID <span className="text-red-500">*</span>
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="shipmentId"
+                        value={createForm.shipmentId}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setCreateForm({ ...createForm, shipmentId: value })
+                          lookupShipment(value)
+                        }}
+                        placeholder="e.g., 330867617"
+                        className="h-9 pr-8 placeholder:text-muted-foreground/40"
+                      />
+                      {isLookingUpShipment && (
+                        <JetpackLoader size="sm" className="absolute right-3 top-2.5" />
+                      )}
+                    </div>
+                  </div>
+                ) : showBrand ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="clientId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Brand <span className="text-red-500">*</span>
+                    </Label>
+                    <Select
+                      value={createForm.clientId}
+                      onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                    >
+                      <SelectTrigger id="clientId" className={cn("h-9", createForm.clientId ? "text-foreground" : "text-muted-foreground/40")}>
+                        <SelectValue placeholder="Select brand..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.filter(client => client.merchant_id).map((client) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            {client.company_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
               </div>
-            </div>
-          </div>
+            )
+          })()}
 
-          {/* Row 2: Brand (for admins) + Carrier + Tracking */}
-          <div className={`grid gap-4 ${isAdmin && (!selectedClientId || selectedClientId === 'all') ? 'grid-cols-3' : 'grid-cols-2'}`}>
-            {/* Brand selector - only shown for admins when no specific client is selected */}
-            {isAdmin && (!selectedClientId || selectedClientId === 'all') && (
+          {/* Row 2: Brand (for admins) + Carrier + Tracking - only for Shipment Inquiry */}
+          {createForm.ticketType === 'Shipment Inquiry' && (
+            <div className={`grid gap-4 ${isAdmin && (!selectedClientId || selectedClientId === 'all') ? 'grid-cols-3' : 'grid-cols-2'}`}>
+              {/* Brand selector - only shown for admins when no specific client is selected */}
+              {isAdmin && (!selectedClientId || selectedClientId === 'all') && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="clientId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    Brand <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={createForm.clientId}
+                    onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                  >
+                    <SelectTrigger id="clientId" className={cn("h-9", createForm.clientId ? "text-foreground" : "text-muted-foreground/40")}>
+                      <SelectValue placeholder="Select brand..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.filter(client => client.merchant_id).map((client) => (
+                        <SelectItem key={client.id} value={client.id}>
+                          {client.company_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-1.5">
-                <Label htmlFor="clientId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                  Brand <span className="text-red-500">*</span>
+                <Label htmlFor="carrier" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Carrier <span className="text-red-500">*</span>
                 </Label>
                 <Select
-                  value={createForm.clientId}
-                  onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                  value={createForm.carrier}
+                  onValueChange={(value) => setCreateForm({ ...createForm, carrier: value })}
                 >
-                  <SelectTrigger id="clientId" className={cn("h-9", createForm.clientId ? "text-foreground" : "text-muted-foreground/40")}>
-                    <SelectValue placeholder="Select brand..." />
+                  <SelectTrigger id="carrier" className={cn("h-9", createForm.carrier ? "text-foreground" : "text-muted-foreground/40")}>
+                    <SelectValue placeholder="Select carrier..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {clients.filter(client => client.merchant_id).map((client) => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.company_name}
+                    {CARRIER_OPTIONS.map((carrier) => (
+                      <SelectItem key={carrier} value={carrier}>
+                        {carrier}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
-            <div className="space-y-1.5">
-              <Label htmlFor="carrier" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                Carrier {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
-              </Label>
-              <Select
-                value={createForm.carrier}
-                onValueChange={(value) => setCreateForm({ ...createForm, carrier: value })}
-              >
-                <SelectTrigger id="carrier" className={cn("h-9", createForm.carrier ? "text-foreground" : "text-muted-foreground/40")}>
-                  <SelectValue placeholder="Select carrier..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {CARRIER_OPTIONS.map((carrier) => (
-                    <SelectItem key={carrier} value={carrier}>
-                      {carrier}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1.5">
+                <Label htmlFor="trackingNumber" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Tracking # <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="trackingNumber"
+                  value={createForm.trackingNumber}
+                  onChange={(e) => setCreateForm({ ...createForm, trackingNumber: e.target.value })}
+                  placeholder="e.g., 1Z999AA10123456784"
+                  className="h-9 placeholder:text-muted-foreground/40"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="trackingNumber" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                Tracking # {createForm.ticketType === 'Track' && <span className="text-red-500">*</span>}
-              </Label>
-              <Input
-                id="trackingNumber"
-                value={createForm.trackingNumber}
-                onChange={(e) => setCreateForm({ ...createForm, trackingNumber: e.target.value })}
-                placeholder="e.g., 1Z999AA10123456784"
-                className="h-9 placeholder:text-muted-foreground/40"
-              />
-            </div>
-          </div>
+          )}
 
           {/* Description */}
           <div className="space-y-1.5">
@@ -335,6 +370,20 @@ export function CreateTicketDialog({
               placeholder="Describe the issue or request..."
               rows={3}
               className="placeholder:text-muted-foreground/40"
+            />
+          </div>
+
+          {/* Initial Status Note */}
+          <div className="space-y-1.5">
+            <Label htmlFor="initialNote" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              Initial Status Note (optional)
+            </Label>
+            <Input
+              id="initialNote"
+              value={createForm.initialNote}
+              onChange={(e) => setCreateForm({ ...createForm, initialNote: e.target.value })}
+              placeholder="Custom note for the initial status update..."
+              className="h-9 placeholder:text-muted-foreground/40"
             />
           </div>
 
