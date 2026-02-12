@@ -503,9 +503,9 @@ export default function InvoicesPage() {
         <div className="@container/main flex flex-col w-full h-[calc(100vh-64px)] px-6 lg:px-8">
           {/* Sticky header with filters */}
           <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
-            <div className="px-6 lg:px-8 py-3 flex flex-col gap-4">
+            <div className="px-6 lg:px-8 flex flex-col gap-0">
               {error && (
-                <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md">
+                <div className="bg-destructive/10 text-destructive text-sm p-3 rounded-md mt-3">
                   {error}
                   <Button
                     variant="ghost"

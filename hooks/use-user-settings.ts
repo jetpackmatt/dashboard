@@ -73,8 +73,10 @@ function getSnapshot(): SettingsState {
   return state
 }
 
+const SERVER_SNAPSHOT: SettingsState = { settings: DEFAULTS, isLoaded: false }
+
 function getServerSnapshot(): SettingsState {
-  return { settings: DEFAULTS, isLoaded: false }
+  return SERVER_SNAPSHOT
 }
 
 function subscribe(listener: () => void): () => void {

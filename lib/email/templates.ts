@@ -173,7 +173,7 @@ function templateDamage(data: ClaimEmailData): string {
 I am writing to you on behalf of Merchant ID ${data.merchantId}.
 
 Shipment ${data.shipmentId} arrived damaged.
-
+${data.description ? `\n${data.description}\n` : ''}
 Please see attached photos and documentation.
 
 Thank you for your help,
