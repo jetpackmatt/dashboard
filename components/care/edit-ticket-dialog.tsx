@@ -36,7 +36,7 @@ interface EditForm {
   ticketType: string
   issueType: string
   status: string
-  manager: string
+
   orderId: string
   shipmentId: string
   shipDate: string
@@ -66,7 +66,7 @@ export function EditTicketDialog({
     ticketType: '',
     issueType: '',
     status: '',
-    manager: '',
+
     orderId: '',
     shipmentId: '',
     shipDate: '',
@@ -92,7 +92,7 @@ export function EditTicketDialog({
         ticketType: ticket.ticketType || '',
         issueType: ticket.issueType || '',
         status: ticket.status || '',
-        manager: ticket.manager || '',
+
         orderId: ticket.orderId || '',
         shipmentId: ticket.shipmentId || '',
         shipDate: ticket.shipDate ? ticket.shipDate.split('T')[0] : '',
@@ -131,7 +131,6 @@ export function EditTicketDialog({
           ticketType: editForm.ticketType || null,
           issueType: editForm.issueType || null,
           status: editForm.status || null,
-          manager: editForm.manager || null,
           orderId: editForm.orderId || null,
           shipmentId: editForm.shipmentId || null,
           shipDate: editForm.shipDate || null,
@@ -240,18 +239,6 @@ export function EditTicketDialog({
                 </Select>
               </div>
             )}
-          </div>
-
-          {/* Manager */}
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-manager" className={labelClass}>Assigned Manager</Label>
-            <Input
-              id="edit-manager"
-              value={editForm.manager}
-              onChange={(e) => setEditForm({ ...editForm, manager: e.target.value })}
-              placeholder="Manager name"
-              className="h-9 placeholder:text-muted-foreground/40"
-            />
           </div>
 
           {/* Order/Shipment Details - Claim + Shipment Inquiry */}
