@@ -729,6 +729,60 @@ export async function updateTransactionsWithDailyBreakdown(
     }
   }
 
+  // Step 4: Backfill refund transactions
+  // SFTP has one row per shipment (positive amounts only), so refund transactions
+  // (e.g., voided label credits) never get a direct match. The refund's base_cost
+  // should equal the charge's — it's refunding that exact charge.
+  const sftpByShipment = new Map(rows.map(r => [r.shipment_id, r]))
+  const refundTxIds: Array<{ id: string; shipmentId: string }> = []
+
+  for (const [shipmentId, txArray] of txByShipment) {
+    if (!sftpByShipment.has(shipmentId)) continue
+    for (const tx of txArray) {
+      if (tx.transaction_type === 'Refund') {
+        refundTxIds.push({ id: tx.id, shipmentId })
+      }
+    }
+  }
+
+  if (refundTxIds.length > 0) {
+    // Check which refund transactions still need base_cost
+    const refundIds = refundTxIds.map(r => r.id)
+    const { data: unmatchedRefunds } = await supabase
+      .from('transactions')
+      .select('id, reference_id')
+      .in('id', refundIds.slice(0, 500))
+      .is('base_cost', null)
+
+    if (unmatchedRefunds && unmatchedRefunds.length > 0) {
+      console.log(`  Daily SFTP: Backfilling ${unmatchedRefunds.length} refund transaction(s) from charge SFTP data...`)
+
+      const refundPromises = unmatchedRefunds.map(tx => {
+        const sftpRow = sftpByShipment.get(tx.reference_id)
+        if (!sftpRow) return Promise.resolve({ success: true, shipmentId: tx.reference_id })
+
+        return supabase
+          .from('transactions')
+          .update({
+            base_cost: sftpRow.base_cost,
+            surcharge: sftpRow.surcharge,
+            surcharge_details: sftpRow.surcharge_details.length > 0 ? sftpRow.surcharge_details : null,
+            insurance_cost: sftpRow.insurance_cost,
+          })
+          .eq('id', tx.id)
+          .then(({ error }) => {
+            if (error) return { success: false, shipmentId: tx.reference_id, error: error.message }
+            return { success: true, shipmentId: tx.reference_id }
+          })
+      })
+
+      const refundResults = await Promise.all(refundPromises)
+      const refundUpdated = refundResults.filter(r => r.success).length
+      result.updated += refundUpdated
+      console.log(`  Daily SFTP: Refund backfill complete: ${refundUpdated} updated`)
+    }
+  }
+
   console.log(`  Daily SFTP update complete: ${result.updated} updated, ${result.notFound} not found, ${result.errors.length} errors`)
 
   return result

@@ -175,7 +175,8 @@ export async function runPreflightValidation(
       .select(`
         shipment_id, tracking_id, carrier, carrier_service, ship_option_id,
         zone_used, actual_weight_oz, dim_weight_oz, billable_weight_oz,
-        length, width, height, event_labeled, event_created, fc_name, order_id
+        length, width, height, event_labeled, event_created, fc_name, order_id,
+        recipient_name
       `)
       .eq('client_id', clientId)
       .in('shipment_id', shipmentIds.slice(0, 500)) // First batch
@@ -189,7 +190,8 @@ export async function runPreflightValidation(
         .select(`
           shipment_id, tracking_id, carrier, carrier_service, ship_option_id,
           zone_used, actual_weight_oz, dim_weight_oz, billable_weight_oz,
-          length, width, height, event_labeled, event_created, fc_name, order_id
+          length, width, height, event_labeled, event_created, fc_name, order_id,
+          recipient_name
         `)
         .eq('client_id', clientId)
         .in('shipment_id', shipmentIds.slice(i, i + 500))
@@ -632,8 +634,13 @@ export async function runPreflightValidation(
         return items?.hasName && items?.hasQuantity
       }).length,
       withCustomerName: shipmentsData.filter(s => {
+        // Primary: orders.customer_name
         const order = orderDataMap.get(String(s.order_id))
-        return order && (order as { customer_name?: string }).customer_name
+        const customerName = order ? (order as { customer_name?: string }).customer_name : null
+        if (customerName && String(customerName).trim()) return true
+        // Fallback: shipments.recipient_name (trimmed to catch whitespace-only values like " ")
+        const recipientName = (s as { recipient_name?: string }).recipient_name
+        return !!(recipientName && String(recipientName).trim())
       }).length,
       // Zip code: required for US, optional for international (many countries don't use them)
       withZipCode: shipmentsData.filter(s => {
@@ -792,6 +799,11 @@ export async function runPreflightValidation(
   // Detects shipping transactions whose tracking_id doesn't match the shipment's current tracking_id
   // This can happen when a label is voided/replaced - the transaction exists but the tracking is no longer valid
   const orphanedTrackingTx = shippingTransactions.filter(tx => {
+    // Skip negative-cost transactions (voided label credits carry the old tracking
+    // intentionally — they reference the label being refunded, not the current label)
+    const cost = typeof tx.cost === 'number' ? tx.cost : parseFloat(String(tx.cost))
+    if (cost < 0) return false
+
     const shipmentId = String(tx.reference_id)
     const shipment = shipmentsDataMap.get(shipmentId)
     if (!shipment) return false // Skip if we can't find the shipment

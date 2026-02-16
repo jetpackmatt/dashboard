@@ -21,7 +21,7 @@ import { calculateShipmentPreviewMarkups } from '@/lib/billing/preview-markups'
  * Cron schedule: 0 10 * * * (every day at 10:00 UTC = 5am EST)
  */
 export const runtime = 'nodejs'
-export const maxDuration = 120 // 2 minutes max
+export const maxDuration = 300 // 5 minutes max (backfill may process up to 4 files)
 
 export async function GET(request: Request) {
   try {
@@ -93,6 +93,66 @@ export async function GET(request: Request) {
       }
     }
 
+    // Step 2b: Backfill pass — retry SFTP matching for previous 3 days
+    // Catches transactions that arrived in DB after the original SFTP cron ran
+    console.log('Starting SFTP backfill for previous 3 days...')
+    const backfillResults: Array<{ date: string; missing: number; updated: number; notFound: number }> = []
+
+    for (let daysAgo = 1; daysAgo <= 3; daysAgo++) {
+      const backfillFileDate = new Date(today)
+      backfillFileDate.setDate(backfillFileDate.getDate() - daysAgo)
+      const backfillChargeDate = yesterday(backfillFileDate)
+      const chargeDateStr = formatDateForLog(backfillChargeDate)
+
+      // Check if there are unmatched positive-cost Shipping transactions for this charge_date
+      // (negative-cost refunds are handled separately by the refund backfill in sftp-client.ts)
+      const { count, error: countError } = await adminClient
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('fee_type', 'Shipping')
+        .eq('reference_type', 'Shipment')
+        .eq('charge_date', chargeDateStr)
+        .is('base_cost', null)
+        .or('is_voided.is.null,is_voided.eq.false')
+        .gt('cost', 0)
+
+      if (countError) {
+        console.log(`  Backfill day -${daysAgo} (${chargeDateStr}): Error checking: ${countError.message}`)
+        continue
+      }
+
+      if (!count || count === 0) {
+        continue
+      }
+
+      console.log(`  Backfill day -${daysAgo} (${chargeDateStr}): ${count} unmatched, fetching SFTP file...`)
+
+      const backfillSftp = await fetchDailyShippingBreakdown(backfillFileDate)
+      if (!backfillSftp.success) {
+        console.log(`  Backfill day -${daysAgo}: File not found (${backfillSftp.error})`)
+        continue
+      }
+
+      const backfillUpdate = await updateTransactionsWithDailyBreakdown(
+        adminClient, backfillSftp.rows, backfillFileDate
+      )
+
+      backfillResults.push({
+        date: chargeDateStr,
+        missing: count,
+        updated: backfillUpdate.updated,
+        notFound: backfillUpdate.notFound,
+      })
+
+      console.log(`  Backfill day -${daysAgo} (${chargeDateStr}): ${backfillUpdate.updated} updated, ${backfillUpdate.notFound} not found`)
+    }
+
+    if (backfillResults.length > 0) {
+      console.log(`Backfill complete: ${backfillResults.reduce((s, r) => s + r.updated, 0)} total updated`)
+    } else {
+      console.log('Backfill: no unmatched transactions in previous 3 days')
+    }
+
     // Step 3: Calculate preview markups for shipments that now have base_cost
     // This makes marked-up charges visible immediately after SFTP sync
     console.log('Calculating preview markups for shipments...')
@@ -116,7 +176,8 @@ export async function GET(request: Request) {
         updated: markupResult.updated,
         skipped: markupResult.skipped,
         errors: markupResult.errors.length,
-      }
+      },
+      backfill: backfillResults,
     })
 
   } catch (error) {
