@@ -1431,17 +1431,23 @@ function formatTransactionDate(dateStr: string): string {
   // Check if this is a date-only string (no time component)
   const hasTime = dateStr.includes('T') && !dateStr.endsWith('T00:00:00.000Z') && !dateStr.endsWith('T00:00:00Z')
 
-  // Parse the date
-  const date = new Date(dateStr)
-  const isWithinLast12Months = date >= twelveMonthsAgo
+  // Parse the date portion directly from the string to avoid timezone shift.
+  // new Date("2026-02-13") interprets as UTC midnight → shifts back a day in US timezones.
+  const datePart = dateStr.split('T')[0]
+  const [yearStr, monthStr, dayStr] = datePart.split('-')
+  const year = parseInt(yearStr)
+  const month = parseInt(monthStr) - 1 // 0-indexed
+  const day = parseInt(dayStr)
+  const monthName = months[month]
 
-  const monthName = months[date.getMonth()]
-  const day = date.getDate()
-  const year = date.getFullYear()
+  // For 12-month comparison, build a local date from parsed components
+  const localDate = new Date(year, month, day)
+  const isWithinLast12Months = localDate >= twelveMonthsAgo
 
-  // Format time if present
+  // Format time if present (use new Date() only for time extraction — full ISO strings are safe)
   let timeStr = ''
   if (hasTime) {
+    const date = new Date(dateStr)
     const hours = date.getHours()
     const minutes = date.getMinutes()
     const ampm = hours >= 12 ? 'PM' : 'AM'
