@@ -1787,6 +1787,26 @@ export async function syncAllTransactions(
     console.log(`[TransactionSync] Fetched ${transactions.length} transactions`)
 
     if (transactions.length === 0) {
+      // No new transactions from API, but still run preview markup passes
+      // since they query the DB (not the API batch) and may need to process
+      // credits that were reset or newly linked to care_tickets.
+      console.log('[TransactionSync] No new transactions, running markup passes...')
+      try {
+        const markupResult = await calculateNonShipmentPreviewMarkups({ limit: 2000 })
+        if (markupResult.updated > 0) {
+          console.log(`[TransactionSync] Preview markups: ${markupResult.updated} updated`)
+        }
+      } catch (markupError) {
+        console.error('[TransactionSync] Preview markup calculation failed (non-fatal):', markupError)
+      }
+      try {
+        const creditMarkupResult = await calculateCreditPreviewMarkups({ limit: 2000 })
+        if (creditMarkupResult.updated > 0 || creditMarkupResult.pending > 0) {
+          console.log(`[TransactionSync] Credit markups: ${creditMarkupResult.updated} classified, ${creditMarkupResult.pending} pending review`)
+        }
+      } catch (creditMarkupError) {
+        console.error('[TransactionSync] Credit markup calculation failed (non-fatal):', creditMarkupError)
+      }
       result.success = true
       result.duration = Date.now() - startTime
       return result
