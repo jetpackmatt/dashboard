@@ -106,6 +106,9 @@ export async function GET(request: NextRequest) {
         creditReason: String(details.Comment || details.CreditReason || ''),
         creditAmount,
         status: row.invoiced_status_jp ? 'invoiced' : 'pending',
+        // Pending Review: credit not yet classified (billed_amount is NULL)
+        // UI shows "Pending Review" badge instead of an amount
+        isPendingReview: row.billed_amount === null && row.markup_is_preview === true,
         // Include preview flag for UI styling (optional indicator)
         isPreview: row.markup_is_preview === true,
         // Export-only fields

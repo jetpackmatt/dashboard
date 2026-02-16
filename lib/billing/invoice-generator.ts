@@ -157,6 +157,7 @@ export interface InvoiceLineItem {
   taxAmount?: number // Tax amount in dollars
   taxType?: string // e.g., "GST"
   taxes?: TaxInfo[] // Full taxes array for calculating taxes_charge
+  creditShippingPortion?: number | null // From sync-time classification (credit_shipping_portion column)
 }
 
 export interface InvoiceData {
@@ -419,6 +420,8 @@ export async function collectBillingTransactions(
         transactionDate: tx.charge_date,
         // Store reference_id for shipping fee credit matching
         orderNumber: tx.reference_id,
+        // Stored classification from sync-time Sixth Pass
+        creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -697,6 +700,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         transactionDate: txChargeDate,
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
+        // Stored classification from sync-time Sixth Pass
+        creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -976,6 +981,8 @@ export async function collectUnprocessedBillingTransactions(
         transactionDate: txChargeDate,
         // Store reference_id for shipping fee credit matching
         orderNumber: txReferenceId,
+        // Stored classification from sync-time Sixth Pass
+        creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1319,24 +1326,67 @@ export async function applyMarkupsToLineItems(
     // Get the shipOptionId for this item (stored in shipOptionMap by shipment_id/orderNumber)
     const shipOptionId = item.orderNumber ? shipOptionMap.get(item.orderNumber) || null : null
 
-    // Special handling for credits: check if this is a shipping fee credit
-    if (item.lineCategory === 'Credits' && item.orderNumber) {
-      const shipmentMarkup = shipmentMarkupMap.get(item.orderNumber)
-      // Credit amount is negative, shipment base is positive
-      // Match if absolute credit amount equals shipment base amount (within 1 cent tolerance)
-      if (shipmentMarkup && Math.abs(Math.abs(item.baseAmount) - shipmentMarkup.baseAmount) < 0.01) {
-        // This is a shipping fee credit - apply same markup as original shipment
-        const markupDecimal = shipmentMarkup.markupPercentage / 100 // Convert from percentage to decimal
-        const markupAmount = item.baseAmount * markupDecimal // baseAmount is negative
-        const billedAmount = item.baseAmount + markupAmount
-        return {
-          ...item,
-          shipOptionId, // Store for verification
-          markupApplied: Math.round(markupAmount * 100) / 100,
-          billedAmount: Math.round(billedAmount * 100) / 100,
-          markupRuleId: shipmentMarkup.markupRuleId,
-          markupPercentage: markupDecimal, // Store as decimal
+    // Special handling for credits: use stored classification or fall back to runtime detection
+    if (item.lineCategory === 'Credits') {
+      const shipmentMarkup = item.orderNumber ? shipmentMarkupMap.get(item.orderNumber) : null
+
+      // Priority 1: Use stored credit_shipping_portion from sync-time classification (Sixth Pass)
+      if (item.creditShippingPortion != null) {
+        if (item.creditShippingPortion > 0 && shipmentMarkup) {
+          // Stored classification: markup on shipping portion only
+          const markupDecimal = shipmentMarkup.markupPercentage / 100
+          const shippingPortion = item.creditShippingPortion // positive value
+          const itemPortion = Math.abs(item.baseAmount) - shippingPortion // remainder
+          // Credit billed = -(shipping × (1+markup) + item_remainder)
+          const billedAmount = -(shippingPortion * (1 + markupDecimal) + itemPortion)
+          const markupAmount = -(shippingPortion * markupDecimal)
+          return {
+            ...item,
+            shipOptionId,
+            markupApplied: Math.round(markupAmount * 100) / 100,
+            billedAmount: Math.round(billedAmount * 100) / 100,
+            markupRuleId: shipmentMarkup.markupRuleId,
+            markupPercentage: markupDecimal,
+          }
+        } else if (item.creditShippingPortion === 0) {
+          // Item-only: no markup, pass through at cost
+          return {
+            ...item,
+            shipOptionId,
+            markupApplied: 0,
+            billedAmount: item.baseAmount,
+            markupRuleId: null,
+            markupPercentage: 0,
+          }
         }
+      }
+
+      // Priority 2: Runtime fallback — exact base_cost match detection (legacy credits without classification)
+      if (item.orderNumber && shipmentMarkup) {
+        if (Math.abs(Math.abs(item.baseAmount) - shipmentMarkup.baseAmount) < 0.01) {
+          // Credit exactly matches shipment base_cost — this is a shipping label credit
+          const markupDecimal = shipmentMarkup.markupPercentage / 100
+          const markupAmount = item.baseAmount * markupDecimal // baseAmount is negative
+          const billedAmount = item.baseAmount + markupAmount
+          return {
+            ...item,
+            shipOptionId,
+            markupApplied: Math.round(markupAmount * 100) / 100,
+            billedAmount: Math.round(billedAmount * 100) / 100,
+            markupRuleId: shipmentMarkup.markupRuleId,
+            markupPercentage: markupDecimal,
+          }
+        }
+      }
+
+      // Unclassified: pass through at cost (no markup)
+      return {
+        ...item,
+        shipOptionId,
+        markupApplied: 0,
+        billedAmount: item.baseAmount,
+        markupRuleId: null,
+        markupPercentage: 0,
       }
     }
 

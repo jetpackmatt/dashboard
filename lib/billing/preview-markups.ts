@@ -108,6 +108,7 @@ interface TransactionRow {
 export interface PreviewMarkupResult {
   updated: number
   skipped: number
+  pending: number
   errors: string[]
 }
 
@@ -124,6 +125,7 @@ export async function calculatePreviewMarkups(
   const result: PreviewMarkupResult = {
     updated: 0,
     skipped: 0,
+    pending: 0,
     errors: [],
   }
 
@@ -486,7 +488,7 @@ export async function calculateNonShipmentPreviewMarkups(
     'Return Label',
     'WRO Receiving Fee',
     'WRO Label Fee',
-    'Credit',
+    // 'Credit' — handled separately by calculateCreditPreviewMarkups() (needs care_ticket data)
     'VAS - Paid Requests',
     'Address Correction',
     'Inventory Placement Program Fee',
@@ -499,4 +501,489 @@ export async function calculateNonShipmentPreviewMarkups(
     transactionIds: options.transactionIds,
     limit: options.limit || 1000,
   })
+}
+
+// ==========================================
+// Credit-specific markup calculation
+// ==========================================
+
+// Claim types that NEVER include a shipping label cost in credits
+const NEVER_HAS_LABEL = ['Loss', 'Damage', 'Incorrect Delivery']
+
+// Claim types that SOMETIMES include a shipping label cost in credits
+const SOMETIMES_HAS_LABEL = ['Pick Error', 'Short Ship']
+
+// Care ticket fields needed for classification
+interface CreditTicketInfo {
+  id: string
+  issueType: string | null
+  reshipmentStatus: string | null
+  compensationRequest: string | null
+  reshipmentId: string | null
+  shipmentId: string | null
+  ticketNumber: number | null
+  status: string | null
+  events: Array<{ status: string; note: string; createdAt: string; createdBy: string }> | null
+}
+
+// Shipping transaction data for label cost comparison
+interface ShippingTxInfo {
+  baseCost: number
+  surcharge: number
+  markupPercentage: number | null
+  markupRuleId: string | null
+}
+
+/**
+ * Calculate and store preview markups on Credit transactions.
+ *
+ * Must run AFTER the Fifth Pass (care_ticket linking) so that credits
+ * have care_ticket_id populated for claim-type classification.
+ *
+ * Classification logic:
+ * 1. NEVER_HAS_LABEL (Loss, Damage, Incorrect Delivery) → item-only, no markup
+ * 2. SOMETIMES_HAS_LABEL (Pick Error, Short Ship):
+ *    a. Reshipment: compare credit vs reshipment label cost (decomposable)
+ *    b. Original label: compare credit vs original shipping base_cost + surcharge
+ *    c. compensation_request = "Credit me the item's manufacturing cost" → item-only
+ *    d. Otherwise → Pending Review
+ * 3. No care_ticket or unknown issue_type → Pending Review
+ */
+export async function calculateCreditPreviewMarkups(
+  options: { limit?: number } = {}
+): Promise<PreviewMarkupResult> {
+  const supabase = createAdminClient()
+  const result: PreviewMarkupResult = {
+    updated: 0,
+    skipped: 0,
+    pending: 0,
+    errors: [],
+  }
+
+  try {
+    // 1. Fetch uninvoiced Credit transactions needing markup classification
+    const { data: credits, error: fetchError } = await supabase
+      .from('transactions')
+      .select('id, transaction_id, client_id, cost, reference_id, reference_type, care_ticket_id, taxes, charge_date')
+      .eq('fee_type', 'Credit')
+      .eq('is_voided', false)
+      .not('client_id', 'is', null)
+      .or('invoiced_status_jp.is.null,invoiced_status_jp.eq.false')
+      .is('markup_is_preview', null)
+      .order('charge_date', { ascending: false })
+      .limit(options.limit || 500)
+
+    if (fetchError) {
+      result.errors.push(`Fetch error: ${fetchError.message}`)
+      return result
+    }
+
+    if (!credits || credits.length === 0) {
+      return result
+    }
+
+    console.log(`[CreditMarkup] Processing ${credits.length} credit transactions...`)
+
+    // 2. Batch-lookup care_tickets for classification signals
+    const ticketIds = credits
+      .map((c: { care_ticket_id: string | null }) => c.care_ticket_id)
+      .filter((id: string | null): id is string => !!id)
+    const uniqueTicketIds = [...new Set(ticketIds)]
+
+    const ticketMap = new Map<string, CreditTicketInfo>()
+
+    if (uniqueTicketIds.length > 0) {
+      for (let i = 0; i < uniqueTicketIds.length; i += 500) {
+        const batch = uniqueTicketIds.slice(i, i + 500)
+        const { data: tickets } = await supabase
+          .from('care_tickets')
+          .select('id, issue_type, reshipment_status, compensation_request, reshipment_id, shipment_id, ticket_number, status, events')
+          .in('id', batch)
+
+        for (const t of tickets || []) {
+          ticketMap.set(t.id, {
+            id: t.id,
+            issueType: t.issue_type,
+            reshipmentStatus: t.reshipment_status,
+            compensationRequest: t.compensation_request,
+            reshipmentId: t.reshipment_id,
+            shipmentId: t.shipment_id,
+            ticketNumber: t.ticket_number,
+            status: t.status,
+            events: (t.events as CreditTicketInfo['events']) || [],
+          })
+        }
+      }
+    }
+
+    // 3. Collect all shipment IDs we need Shipping tx data for
+    //    - Original shipments (from care_ticket.shipment_id and credit.reference_id)
+    //    - Reshipments (from care_ticket.reshipment_id)
+    const shipmentIdsNeeded = new Set<string>()
+
+    for (const credit of credits) {
+      // Original shipment from credit reference
+      if (credit.reference_id && credit.reference_type === 'Shipment') {
+        shipmentIdsNeeded.add(credit.reference_id)
+      }
+      // From care ticket
+      const ticket = credit.care_ticket_id ? ticketMap.get(credit.care_ticket_id) : null
+      if (ticket?.shipmentId) shipmentIdsNeeded.add(ticket.shipmentId)
+      if (ticket?.reshipmentId) shipmentIdsNeeded.add(ticket.reshipmentId)
+    }
+
+    // Batch-lookup Shipping transactions for these shipments
+    const shippingTxMap = new Map<string, ShippingTxInfo>()
+    const shipmentIdArray = [...shipmentIdsNeeded]
+
+    if (shipmentIdArray.length > 0) {
+      for (let i = 0; i < shipmentIdArray.length; i += 500) {
+        const batch = shipmentIdArray.slice(i, i + 500)
+        const { data: shippingTxs } = await supabase
+          .from('transactions')
+          .select('reference_id, base_cost, surcharge, cost, markup_percentage, markup_rule_id')
+          .eq('fee_type', 'Shipping')
+          .eq('is_voided', false)
+          .in('reference_id', batch)
+          .order('charge_date', { ascending: false })
+
+        for (const stx of shippingTxs || []) {
+          // Only store the first (most recent) per shipment_id
+          if (!shippingTxMap.has(stx.reference_id)) {
+            const baseCost = Number(stx.base_cost) || 0
+            const surcharge = Number(stx.surcharge) || 0
+            // Fall back to total cost if no SFTP breakdown
+            const effectiveBase = baseCost > 0 ? baseCost : (Number(stx.cost) || 0)
+            const effectiveSurcharge = baseCost > 0 ? surcharge : 0
+
+            shippingTxMap.set(stx.reference_id, {
+              baseCost: effectiveBase,
+              surcharge: effectiveSurcharge,
+              markupPercentage: stx.markup_percentage != null ? Number(stx.markup_percentage) : null,
+              markupRuleId: stx.markup_rule_id,
+            })
+          }
+        }
+      }
+    }
+
+    // 4. For credits without a stored markup_percentage on the shipping tx,
+    //    we need the client's current shipping markup rule as fallback
+    const clientIdsNeedingRule = new Set<string>()
+    for (const credit of credits) {
+      const ticket = credit.care_ticket_id ? ticketMap.get(credit.care_ticket_id) : null
+      if (!ticket || !SOMETIMES_HAS_LABEL.includes(ticket.issueType || '')) continue
+      // Check if we'll need a fallback markup percentage
+      const shipmentId = ticket.reshipmentId || ticket.shipmentId || credit.reference_id
+      const shipping = shipmentId ? shippingTxMap.get(shipmentId) : null
+      if (!shipping?.markupPercentage) {
+        clientIdsNeedingRule.add(credit.client_id)
+      }
+    }
+
+    // Fetch current shipping markup rules for clients that need fallback
+    const clientMarkupMap = new Map<string, number>() // client_id → markup decimal
+    if (clientIdsNeedingRule.size > 0) {
+      const clientIds = [...clientIdsNeedingRule]
+      const { data: rules } = await supabase
+        .from('markup_rules')
+        .select('client_id, markup_value')
+        .in('client_id', clientIds)
+        .eq('billing_category', 'shipments')
+        .eq('markup_type', 'percentage')
+        .eq('is_active', true)
+
+      for (const rule of rules || []) {
+        if (!clientMarkupMap.has(rule.client_id)) {
+          clientMarkupMap.set(rule.client_id, Number(rule.markup_value) / 100)
+        }
+      }
+    }
+
+    // 5. Classify each credit and calculate billed_amount
+    const updates: Array<{ id: string; updateData: Record<string, unknown>; careTicketId?: string; billedAmount?: number }> = []
+
+    for (const credit of credits) {
+      const absCredit = Math.abs(Number(credit.cost) || 0)
+      if (absCredit === 0) {
+        result.skipped++
+        continue
+      }
+
+      const ticket = credit.care_ticket_id ? ticketMap.get(credit.care_ticket_id) : null
+
+      // ── No care ticket → PENDING REVIEW ──
+      if (!ticket) {
+        updates.push({ id: credit.id, updateData: buildPendingUpdate() })
+        result.updated++
+        continue
+      }
+
+      const issueType = ticket.issueType || ''
+
+      // ── NEVER_HAS_LABEL → item-only, no markup ──
+      if (NEVER_HAS_LABEL.includes(issueType)) {
+        const update = buildItemOnlyUpdate(credit)
+        updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(credit.cost) })
+        result.updated++
+        continue
+      }
+
+      // ── SOMETIMES_HAS_LABEL → comparison logic ──
+      if (SOMETIMES_HAS_LABEL.includes(issueType)) {
+        const isItemCostOnly = ticket.compensationRequest === "Credit me the item's manufacturing cost"
+
+        // Determine the shipment to compare against and the markup to use
+        const shipmentId = credit.reference_type === 'Shipment' ? credit.reference_id : ticket.shipmentId
+
+        // ── Priority 1: Reshipment label (client said "I've already reshipped") ──
+        if (ticket.reshipmentId) {
+          const reship = shippingTxMap.get(ticket.reshipmentId)
+          if (reship && reship.baseCost > 0) {
+            const markupDecimal = reship.markupPercentage ?? clientMarkupMap.get(credit.client_id) ?? 0
+            const reshipLabel = reship.baseCost + reship.surcharge
+
+            if (Math.abs(absCredit - reshipLabel) < 0.05) {
+              // Credit exactly matches reshipment label → LABEL ONLY, markup entire credit
+              const update = buildLabelUpdate(credit, reship.baseCost, reship.surcharge, markupDecimal, reship.markupRuleId)
+              updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(update.billed_amount) })
+              result.updated++
+              continue
+            } else if (absCredit > reshipLabel) {
+              // Credit > reshipment label → COMBINED: we know the shipping portion
+              const update = buildCombinedUpdate(credit, reship.baseCost, reship.surcharge, markupDecimal, reship.markupRuleId)
+              updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(update.billed_amount) })
+              result.updated++
+              continue
+            } else {
+              // Credit < reshipment label — unexpected, pending review
+              updates.push({ id: credit.id, updateData: buildPendingUpdate() })
+              result.updated++
+              continue
+            }
+          }
+          // No Shipping tx for reshipment — fall through to original label comparison
+        }
+
+        // ── Priority 2: Original shipment label ──
+        const shipping = shipmentId ? shippingTxMap.get(shipmentId) : null
+        if (shipping && shipping.baseCost > 0) {
+          const markupDecimal = shipping.markupPercentage ?? clientMarkupMap.get(credit.client_id) ?? 0
+          const fullLabel = shipping.baseCost + shipping.surcharge
+          const baseOnly = shipping.baseCost
+
+          if (Math.abs(absCredit - fullLabel) < 0.05 || Math.abs(absCredit - baseOnly) < 0.05) {
+            // Exact match to original label
+            const matchedSurcharge = Math.abs(absCredit - fullLabel) < 0.05 ? shipping.surcharge : 0
+            const update = buildLabelUpdate(credit, shipping.baseCost, matchedSurcharge, markupDecimal, shipping.markupRuleId)
+            updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(update.billed_amount) })
+            result.updated++
+            continue
+          } else if (isItemCostOnly) {
+            // Pick Error + compensation confirms item-only
+            const update = buildItemOnlyUpdate(credit)
+            updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(credit.cost) })
+            result.updated++
+            continue
+          } else {
+            // Ambiguous amount — pending review
+            updates.push({ id: credit.id, updateData: buildPendingUpdate() })
+            result.updated++
+            continue
+          }
+        } else if (isItemCostOnly) {
+          // No base_cost but compensation confirms item-only
+          const update = buildItemOnlyUpdate(credit)
+          updates.push({ id: credit.id, updateData: update, careTicketId: ticket.id, billedAmount: Number(credit.cost) })
+          result.updated++
+          continue
+        } else {
+          // No comparison data — pending review
+          updates.push({ id: credit.id, updateData: buildPendingUpdate() })
+          result.updated++
+          continue
+        }
+      }
+
+      // ── Unknown issue_type → PENDING REVIEW ──
+      updates.push({ id: credit.id, updateData: buildPendingUpdate() })
+      result.updated++
+    }
+
+    // 6. Execute updates in batches
+    const BATCH_SIZE = 100
+    let actualUpdated = 0
+
+    for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+      const batch = updates.slice(i, i + BATCH_SIZE)
+
+      const batchResults = await Promise.all(
+        batch.map(async ({ id, updateData, careTicketId, billedAmount }) => {
+          const { error } = await supabase
+            .from('transactions')
+            .update(updateData)
+            .eq('id', id)
+
+          // Update care_ticket after successful classification:
+          // - Set credit_amount to the correct billed amount (with markup)
+          // - Advance status to "Credit Approved" (if still in Credit Requested)
+          // - Add event note with the correct amount
+          // This was moved here from the Fifth Pass (sync.ts) so clients
+          // never see raw ShipBob costs — only the correctly marked-up amount.
+          if (!error && careTicketId && billedAmount != null) {
+            const ticket = ticketMap.get(careTicketId)
+            const correctAmount = Math.abs(billedAmount)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ticketUpdate: Record<string, any> = {
+              credit_amount: correctAmount,
+              updated_at: new Date().toISOString(),
+            }
+
+            // Only advance status if ticket is still waiting for credit
+            if (ticket && ticket.status === 'Credit Requested') {
+              const approvedEvent = {
+                note: `A credit of $${correctAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+                status: 'Credit Approved',
+                createdAt: new Date().toISOString(),
+                createdBy: 'System',
+              }
+              ticketUpdate.status = 'Credit Approved'
+              ticketUpdate.events = [approvedEvent, ...(ticket.events || [])]
+            }
+
+            await supabase
+              .from('care_tickets')
+              .update(ticketUpdate)
+              .eq('id', careTicketId)
+          }
+
+          return { id, error }
+        })
+      )
+
+      for (const { id, error } of batchResults) {
+        if (error) {
+          result.errors.push(`Update ${id}: ${error.message}`)
+        } else {
+          actualUpdated++
+        }
+      }
+    }
+
+    result.updated = actualUpdated
+    result.pending = updates.filter(u => u.updateData.billed_amount === null).length
+
+    // Log summary
+    const classified = updates.filter(u => u.updateData.billed_amount !== null).length
+    console.log(`[CreditMarkup] Complete: ${classified} classified, ${result.pending} pending review, ${result.skipped} skipped, ${result.errors.length} errors`)
+
+    return result
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : 'Unknown error')
+    return result
+  }
+}
+
+/** Pending Review: billed_amount=NULL, markup_is_preview=true to prevent re-processing */
+function buildPendingUpdate(): Record<string, unknown> {
+  return {
+    billed_amount: null,
+    markup_applied: null,
+    markup_percentage: null,
+    credit_shipping_portion: null,
+    markup_is_preview: true,
+    updated_at: new Date().toISOString(),
+  }
+}
+
+/** Item-only credit: no markup, credit_shipping_portion=0 */
+function buildItemOnlyUpdate(credit: { cost: number | null; taxes?: TaxEntry[] | null }): Record<string, unknown> {
+  const cost = Number(credit.cost) || 0
+  const update: Record<string, unknown> = {
+    billed_amount: cost,
+    markup_applied: 0,
+    markup_percentage: 0,
+    credit_shipping_portion: 0,
+    markup_is_preview: true,
+    updated_at: new Date().toISOString(),
+  }
+  // Calculate taxes on billed_amount
+  if (credit.taxes && Array.isArray(credit.taxes) && credit.taxes.length > 0) {
+    update.taxes_charge = credit.taxes.map((t: TaxEntry) => ({
+      tax_type: t.tax_type,
+      tax_rate: t.tax_rate,
+      tax_amount: Math.round(cost * (t.tax_rate / 100) * 100) / 100,
+    }))
+  }
+  return update
+}
+
+/** Label-only credit: entire credit is shipping, markup applies to base_cost */
+function buildLabelUpdate(
+  credit: { cost: number | null; taxes?: TaxEntry[] | null },
+  baseCost: number,
+  surcharge: number,
+  markupDecimal: number,
+  markupRuleId: string | null
+): Record<string, unknown> {
+  // billed_amount = -(baseCost × (1+markup) + surcharge)
+  const billedAmount = -((baseCost * (1 + markupDecimal)) + surcharge)
+  const roundedBilled = Math.round(billedAmount * 100) / 100
+  const markupAmount = Math.round(baseCost * markupDecimal * 100) / 100
+
+  const update: Record<string, unknown> = {
+    billed_amount: roundedBilled,
+    markup_applied: -markupAmount, // Negative because it's a credit
+    markup_percentage: markupDecimal,
+    markup_rule_id: markupRuleId,
+    credit_shipping_portion: baseCost,
+    markup_is_preview: true,
+    updated_at: new Date().toISOString(),
+  }
+  if (credit.taxes && Array.isArray(credit.taxes) && credit.taxes.length > 0) {
+    update.taxes_charge = credit.taxes.map((t: TaxEntry) => ({
+      tax_type: t.tax_type,
+      tax_rate: t.tax_rate,
+      tax_amount: Math.round(roundedBilled * (t.tax_rate / 100) * 100) / 100,
+    }))
+  }
+  return update
+}
+
+/** Combined credit: shipping portion gets markup, item portion passes through */
+function buildCombinedUpdate(
+  credit: { cost: number | null; taxes?: TaxEntry[] | null },
+  baseCost: number,
+  surcharge: number,
+  markupDecimal: number,
+  markupRuleId: string | null
+): Record<string, unknown> {
+  const rawCost = Number(credit.cost) || 0  // Negative
+  const absCredit = Math.abs(rawCost)
+  const labelCost = baseCost + surcharge
+  const itemPortion = absCredit - labelCost  // What's left after removing the label
+
+  // Markup only applies to the base_cost of the label (not surcharge, not item)
+  const markedUpLabel = baseCost * (1 + markupDecimal) + surcharge
+  const billedAmount = -(markedUpLabel + itemPortion)
+  const roundedBilled = Math.round(billedAmount * 100) / 100
+  const markupAmount = Math.round(baseCost * markupDecimal * 100) / 100
+
+  const update: Record<string, unknown> = {
+    billed_amount: roundedBilled,
+    markup_applied: -markupAmount,
+    markup_percentage: markupDecimal,
+    markup_rule_id: markupRuleId,
+    credit_shipping_portion: baseCost,
+    markup_is_preview: true,
+    updated_at: new Date().toISOString(),
+  }
+  if (credit.taxes && Array.isArray(credit.taxes) && credit.taxes.length > 0) {
+    update.taxes_charge = credit.taxes.map((t: TaxEntry) => ({
+      tax_type: t.tax_type,
+      tax_rate: t.tax_rate,
+      tax_amount: Math.round(roundedBilled * (t.tax_rate / 100) * 100) / 100,
+    }))
+  }
+  return update
 }

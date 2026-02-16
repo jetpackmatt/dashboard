@@ -210,6 +210,11 @@ The `surcharge` column contains the aggregated sum for backwards compatibility. 
 | `invoice_id_jp` | text | JPHS-0038-120825 format |
 | `invoice_date_jp` | timestamptz | When we billed |
 
+### Care Ticket Link
+| Column | Type | Notes |
+|--------|------|-------|
+| `care_ticket_id` | uuid | FK to care_tickets(id), links credit transactions to care tickets. Set automatically during sync Fifth Pass or manually via Misfits page. |
+
 ### Dispute Fields
 | Column | Type | Notes |
 |--------|------|-------|

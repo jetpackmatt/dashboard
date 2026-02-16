@@ -13,7 +13,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ShipBobClient, ShipBobProduct } from './client'
 import { ensureFCsExist } from '@/lib/fulfillment-centers'
-import { calculateNonShipmentPreviewMarkups } from '@/lib/billing/preview-markups'
+import { calculateNonShipmentPreviewMarkups, calculateCreditPreviewMarkups } from '@/lib/billing/preview-markups'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
@@ -2225,34 +2225,23 @@ export async function syncAllTransactions(
             const creditTx = creditTxMap[ticket.shipment_id]
             if (!creditTx) continue
 
-            const creditAmount = Math.abs(creditTx.amount)
-            const events = (ticket.events as Array<{ status: string; note: string; createdAt: string; createdBy: string }>) || []
+            // Link care_ticket_id on the credit transaction + reset markup_is_preview
+            // so the Sixth Pass (credit markup) reprocesses with ticket data.
+            // Only link if not already linked (prevents re-processing loop on reconcile).
+            // NOTE: We do NOT advance ticket status or set credit_amount here.
+            // The Sixth Pass handles that AFTER classification, so the correct
+            // billed_amount (with markup) is shown to clients — never the raw cost.
+            const { error: linkError, count: linkCount } = await supabase
+              .from('transactions')
+              .update({ care_ticket_id: ticket.id, markup_is_preview: null })
+              .eq('transaction_id', creditTx.transaction_id)
+              .is('care_ticket_id', null)
 
-            // Add Credit Approved event
-            const approvedEvent = {
-              note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
-              status: 'Credit Approved',
-              createdAt: new Date().toISOString(),
-              createdBy: 'System',
-            }
-
-            const updatedEvents = [approvedEvent, ...events]
-
-            const { error: updateError } = await supabase
-              .from('care_tickets')
-              .update({
-                status: 'Credit Approved',
-                credit_amount: creditAmount,
-                events: updatedEvents,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', ticket.id)
-
-            if (updateError) {
-              console.warn(`[TransactionSync] Failed to update care_ticket #${ticket.ticket_number}:`, updateError.message)
-            } else {
+            if (linkError) {
+              console.warn(`[TransactionSync] Failed to link credit to care_ticket #${ticket.ticket_number}:`, linkError.message)
+            } else if (linkCount && linkCount > 0) {
               careTicketsLinked++
-              console.log(`[TransactionSync] Updated care_ticket #${ticket.ticket_number} to Credit Approved ($${creditAmount.toFixed(2)})`)
+              console.log(`[TransactionSync] Linked credit ${creditTx.transaction_id} to care_ticket #${ticket.ticket_number}`)
             }
           }
         }
@@ -2264,6 +2253,26 @@ export async function syncAllTransactions(
 
     if (careTicketsLinked > 0) {
       console.log(`[TransactionSync] Linked ${careTicketsLinked} Credit transactions to care_tickets`)
+    }
+
+    // ==========================================
+    // SIXTH PASS: Calculate preview markups for Credit transactions
+    // ==========================================
+    // Credit markups need the care_ticket link from the Fifth Pass to determine
+    // issue_type, reshipment_status, compensation_request for classification.
+    // Must run AFTER Fifth Pass links credits to care_tickets.
+    console.log('[TransactionSync] Calculating preview markups for Credit transactions...')
+    try {
+      const creditMarkupResult = await calculateCreditPreviewMarkups({ limit: 2000 })
+      if (creditMarkupResult.updated > 0 || creditMarkupResult.pending > 0 || creditMarkupResult.errors.length > 0) {
+        console.log(`[TransactionSync] Credit markups: ${creditMarkupResult.updated} classified, ${creditMarkupResult.pending} pending review, ${creditMarkupResult.skipped} skipped`)
+        if (creditMarkupResult.errors.length > 0) {
+          console.log(`[TransactionSync] Credit markup errors: ${creditMarkupResult.errors.slice(0, 3).join(', ')}`)
+        }
+      }
+    } catch (creditMarkupError) {
+      // Don't fail the sync if credit markup calculation fails
+      console.error('[TransactionSync] Credit markup calculation failed (non-fatal):', creditMarkupError)
     }
 
     console.log(

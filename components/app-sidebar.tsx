@@ -14,6 +14,7 @@ import {
   HelpCircleIcon,
   LayoutDashboardIcon,
   ListIcon,
+  PuzzleIcon,
   SettingsIcon,
   ShieldIcon,
 } from "lucide-react"
@@ -83,7 +84,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
-  const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
+  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [hasCommission, setHasCommission] = React.useState(false)
   const [mounted, setMounted] = React.useState(false)
@@ -153,6 +154,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   let allNavItems = [...baseNavItems]
 
   if (mounted) {
+    // Add Misfits between Invoices and Jetpack Care (admin + care admin only)
+    if (effectiveIsAdmin || effectiveIsCareAdmin) {
+      const careIndex = allNavItems.findIndex(item => item.url === '/dashboard/care')
+      if (careIndex >= 0) {
+        allNavItems.splice(careIndex, 0, {
+          title: "Misfits",
+          url: "/dashboard/misfits",
+          icon: PuzzleIcon,
+        })
+      }
+    }
+
     // Add Financials if user has commission assignment OR is admin
     if (hasCommission || effectiveIsAdmin) {
       allNavItems.push(financialsNavItem)

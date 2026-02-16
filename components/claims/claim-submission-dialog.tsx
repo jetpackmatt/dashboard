@@ -132,6 +132,7 @@ export function ClaimSubmissionDialog({
   const [isValidatingReshipment, setIsValidatingReshipment] = React.useState(false)
   const [reshipmentValid, setReshipmentValid] = React.useState(false)
   const [reshipmentError, setReshipmentError] = React.useState<string | null>(null)
+  const [resolvedReshipmentId, setResolvedReshipmentId] = React.useState<string | null>(null)
 
   // Auto-advance when Lost in Transit verification completes successfully
   React.useEffect(() => {
@@ -194,6 +195,7 @@ export function ClaimSubmissionDialog({
       setReshipmentValid(false)
       setReshipmentError(null)
       setIsValidatingReshipment(false)
+      setResolvedReshipmentId(null)
 
       // If we have a pre-filled shipment, fetch its data
       // If also preselecting Lost in Transit, trigger verification automatically
@@ -452,22 +454,30 @@ export function ClaimSubmissionDialog({
     if (!reshipmentId.trim()) {
       setReshipmentValid(false)
       setReshipmentError(null)
+      setResolvedReshipmentId(null)
       return
     }
 
     setIsValidatingReshipment(true)
     setReshipmentError(null)
     setReshipmentValid(false)
+    setResolvedReshipmentId(null)
 
     try {
-      const response = await fetch(`/api/data/shipments/${reshipmentId.trim()}`)
+      // Use resolve endpoint that accepts shipment_id, order_id, or store order #
+      const params = new URLSearchParams({ q: reshipmentId.trim() })
+      if (shipmentSummary?.clientId) params.set('clientId', shipmentSummary.clientId)
+      const response = await fetch(`/api/data/shipments/resolve?${params}`)
 
       if (response.ok) {
+        const data = await response.json()
         setReshipmentValid(true)
         setReshipmentError(null)
+        // Store the resolved shipment_id (may differ from user input if they entered an order #)
+        setResolvedReshipmentId(data.shipmentId)
       } else if (response.status === 404) {
         setReshipmentValid(false)
-        setReshipmentError("Shipment not found")
+        setReshipmentError("No shipment found for this reference")
       } else if (response.status === 403) {
         setReshipmentValid(false)
         setReshipmentError("You don't have access to this shipment")
@@ -592,7 +602,8 @@ export function ClaimSubmissionDialog({
           shipDate: shipmentSummary.labelCreated !== "—" ? shipmentSummary.labelCreated : null,
           description: formData.description || null,
           reshipmentStatus: formData.reshipmentStatus,
-          reshipmentId: formData.reshipmentId || null,
+          // Always store the resolved shipment_id (not the user's raw input)
+          reshipmentId: resolvedReshipmentId || formData.reshipmentId || null,
           compensationRequest: formData.compensationRequest,
           // Flatten structured attachments into array for API
           // Include path for generating fresh signed URLs when sending emails
@@ -926,12 +937,13 @@ export function ClaimSubmissionDialog({
             {formData.reshipmentStatus === "I've already reshipped" && (
               <div className="space-y-1.5 pt-2">
                 <Label htmlFor="reshipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                  Reshipment ID <span className="text-red-500">*</span>
+                  Reshipment Reference <span className="text-red-500">*</span>
                 </Label>
+                <p className="text-[11px] text-muted-foreground">Enter a Jetpack Shipment ID or your store&apos;s order number</p>
                 <div className="relative">
                   <Input
                     id="reshipmentId"
-                    placeholder="e.g., 330867618"
+                    placeholder="Shipment ID or store order #"
                     value={formData.reshipmentId}
                     onChange={(e) => setFormData(prev => ({ ...prev, reshipmentId: e.target.value }))}
                     className={cn(
