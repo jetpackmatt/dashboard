@@ -134,23 +134,28 @@ export function ClaimSubmissionDialog({
   const [reshipmentError, setReshipmentError] = React.useState<string | null>(null)
   const [resolvedReshipmentId, setResolvedReshipmentId] = React.useState<string | null>(null)
 
-  // Auto-advance when Lost in Transit verification completes successfully
+  // Auto-trigger verification when user lands on the verification step
+  // This handles ALL entry paths: prefilled dialog, manual navigation, etc.
   React.useEffect(() => {
-    if (litVerification?.eligible) {
-      const applicableSteps = getApplicableSteps()
-      const currentStepId = applicableSteps[currentStep]?.id
+    const applicableSteps = getApplicableSteps()
+    const currentStepId = applicableSteps[currentStep]?.id
 
-      // Only auto-advance if we're on the verification step
-      if (currentStepId === "verification") {
-        // Brief delay to show success state before advancing
-        const timer = setTimeout(() => {
-          setCurrentStep(prev => prev + 1)
-        }, 1500)
-        return () => clearTimeout(timer)
-      }
+    if (currentStepId !== "verification") return
+
+    // Auto-advance if verification already completed successfully
+    if (litVerification?.eligible) {
+      const timer = setTimeout(() => {
+        setCurrentStep(prev => prev + 1)
+      }, 1500)
+      return () => clearTimeout(timer)
+    }
+
+    // Auto-trigger verification if not already running and no result yet
+    if (!isVerifyingLIT && !litVerification && !isLoading && formData.shipmentId) {
+      verifyLostInTransit(formData.shipmentId)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [litVerification?.eligible, currentStep])
+  }, [currentStep, litVerification?.eligible, isVerifyingLIT, isLoading])
 
   // Reset form when dialog opens/closes
   React.useEffect(() => {
@@ -200,15 +205,13 @@ export function ClaimSubmissionDialog({
       // If we have a pre-filled shipment, fetch its data
       // If also preselecting Lost in Transit, trigger verification automatically
       if (prefillShipmentId) {
-        const shouldTriggerLITVerification = preselectedClaimType === "lostInTransit"
-        fetchShipmentData(prefillShipmentId, shouldTriggerLITVerification)
+        fetchShipmentData(prefillShipmentId)
       }
     }
   }, [open, prefillShipmentId, preselectedClaimType])
 
   // Fetch shipment data and eligibility
-  // If triggerLITVerification is true, also trigger Lost in Transit verification after fetching
-  const fetchShipmentData = async (shipmentId: string, triggerLITVerification = false) => {
+  const fetchShipmentData = async (shipmentId: string) => {
     setIsLoading(true)
     setError(null)
 
@@ -260,12 +263,8 @@ export function ClaimSubmissionDialog({
 
       if (eligibilityData) {
         setEligibility(eligibilityData)
-
-        // If this is a preselected Lost in Transit claim, trigger verification automatically
-        if (triggerLITVerification && eligibilityData.eligibility?.lostInTransit?.requiresVerification) {
-          // Don't await - let it run in parallel while user sees the description form
-          verifyLostInTransit(shipmentId)
-        }
+        // Note: LIT verification is triggered automatically by the useEffect
+        // when the user lands on the verification step, regardless of entry path
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load shipment")
