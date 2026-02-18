@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
         .is('billed_amount', null)
 
       if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%`)
+        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->Comment.ilike.%${search}%,additional_details->CreditReason.ilike.%${search}%,additional_details->TicketReference.ilike.%${search}%`)
       }
 
       const result = await query
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
 
       if (referenceType) query = query.eq('reference_type', referenceType)
       if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%`)
+        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->Comment.ilike.%${search}%,additional_details->CreditReason.ilike.%${search}%,additional_details->TicketReference.ilike.%${search}%`)
       }
 
       const result = await query
@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
       if (feeType) query = query.eq('fee_type', feeType)
       if (referenceType) query = query.eq('reference_type', referenceType)
       if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%`)
+        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->Comment.ilike.%${search}%,additional_details->CreditReason.ilike.%${search}%,additional_details->TicketReference.ilike.%${search}%`)
       }
 
       const result = await query
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
       if (feeType) q1 = q1.eq('fee_type', feeType)
       if (referenceType) q1 = q1.eq('reference_type', referenceType)
       if (search) {
-        q1 = q1.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%`)
+        q1 = q1.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->Comment.ilike.%${search}%,additional_details->CreditReason.ilike.%${search}%,additional_details->TicketReference.ilike.%${search}%`)
       }
 
       // Query 2: credits without care ticket
@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
       if (feeType && feeType !== 'Credit') q2 = q2.eq('fee_type', feeType)
       if (referenceType) q2 = q2.eq('reference_type', referenceType)
       if (search) {
-        q2 = q2.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%`)
+        q2 = q2.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->Comment.ilike.%${search}%,additional_details->CreditReason.ilike.%${search}%,additional_details->TicketReference.ilike.%${search}%`)
       }
 
       const [result1, result2] = await Promise.all([q1, q2])

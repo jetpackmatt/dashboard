@@ -114,8 +114,8 @@ export interface ValidationWarning {
 }
 
 // Thresholds for critical vs warning
-// STRICT MODE: ANY missing data is critical and blocks invoice generation
-const STRICT_MODE = true
+// Most fields are critical (block invoice generation).
+// Cosmetic/informational fields use 'warning' severity and don't block.
 
 /**
  * Run comprehensive pre-flight validation for invoice generation
@@ -745,12 +745,14 @@ export async function runPreflightValidation(
   // ===== CHECK FOR ISSUES =====
 
   // Helper function - categoryLabel is human-readable name for the transaction type
+  // severity: 'critical' blocks invoice generation, 'warning' is informational only
   const checkField = (
     category: string,
     fieldName: string,
     total: number,
     withField: number,
-    categoryLabel: string = 'records' // Human-readable label (e.g., "shipments", "returns", "storage")
+    categoryLabel: string = 'records',
+    severity: 'critical' | 'warning' = 'critical'
   ) => {
     if (total === 0) return
 
@@ -759,8 +761,7 @@ export async function runPreflightValidation(
 
     if (missing === 0) return
 
-    // STRICT MODE: ANY missing data is critical and blocks invoice generation
-    if (STRICT_MODE) {
+    if (severity === 'critical') {
       issues.push({
         category,
         severity: 'critical',
@@ -769,7 +770,6 @@ export async function runPreflightValidation(
         percentage: pct,
       })
     } else {
-      // Non-strict mode: only warn
       warnings.push({
         category,
         message: `${missing} ${categoryLabel} (${pct}%) missing ${fieldName}`,
@@ -791,7 +791,7 @@ export async function runPreflightValidation(
   checkField('TIMELINE', 'event_labeled (transaction date)', s.total, s.withEventLabeled, 'shipments')
   checkField('TIMELINE', 'event_created (order created)', s.total, s.withEventCreated, 'shipments')
   checkField('SHIPMENT_ITEMS', 'products_sold & quantity', s.total, s.withProductsSold, 'shipments')
-  checkField('ORDERS', 'customer_name', s.total, s.withCustomerName, 'shipments')
+  checkField('ORDERS', 'customer_name', s.total, s.withCustomerName, 'shipments', 'warning')
   checkField('ORDERS', 'zip_code', s.total, s.withZipCode, 'shipments')
   checkField('ORDERS', 'store_order_id', s.total, s.withStoreOrderId, 'shipments')
 

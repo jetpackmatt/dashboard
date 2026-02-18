@@ -184,7 +184,6 @@ const TYPE_FILTERS = [
   { value: 'pending_credits', label: 'Pending Credits' },
 ] as const
 
-const FEE_TYPE_OPTIONS = ['Shipping', 'Storage', 'Credit', 'Return', 'Pick and Pack', 'Receiving', 'Other'] as const
 
 function formatDateFixed(dateStr: string): string {
   if (!dateStr) return '-'
@@ -221,7 +220,6 @@ export default function MisfitsPage() {
 
   // Filter state
   const [typeFilter, setTypeFilter] = React.useState('')
-  const [feeTypeFilter, setFeeTypeFilter] = React.useState('')
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
@@ -256,7 +254,7 @@ export default function MisfitsPage() {
     try {
       const params = new URLSearchParams()
       if (typeFilter) params.set('type', typeFilter)
-      if (feeTypeFilter) params.set('feeType', feeTypeFilter)
+
       if (searchQuery) params.set('search', searchQuery)
       params.set('limit', misfitsPrefs.pageSize.toString())
       params.set('offset', ((currentPage - 1) * misfitsPrefs.pageSize).toString())
@@ -280,7 +278,7 @@ export default function MisfitsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [typeFilter, feeTypeFilter, searchQuery, currentPage, misfitsPrefs.pageSize])
+  }, [typeFilter, searchQuery, currentPage, misfitsPrefs.pageSize])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => { fetchMisfits() }, [fetchMisfits])
@@ -491,10 +489,10 @@ export default function MisfitsPage() {
             <div className="px-4 lg:px-6 h-[52px] flex items-center justify-between gap-4">
               {/* LEFT: Search + dropdown filters */}
               <div className="flex items-center gap-2">
-                <div className="relative w-44 2xl:w-56">
+                <div className="relative w-64 2xl:w-80">
                   <SearchIcon className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Search reference, tracking..."
+                    placeholder="Search reference, tracking, detail..."
                     value={searchInput}
                     onChange={(e) => {
                       setSearchInput(e.target.value)
@@ -511,28 +509,6 @@ export default function MisfitsPage() {
                     </button>
                   )}
                 </div>
-
-                <Select value={feeTypeFilter} onValueChange={(v) => { setFeeTypeFilter(v === '__all__' ? '' : v); setCurrentPage(1) }}>
-                  <SelectTrigger className="h-7 w-auto gap-1.5 text-xs bg-background border-border">
-                    <SelectValue placeholder="Fee Type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__" className="text-xs">All Fee Types</SelectItem>
-                    {FEE_TYPE_OPTIONS.map(ft => (
-                      <SelectItem key={ft} value={ft} className="text-xs">{ft}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {feeTypeFilter && (
-                  <button
-                    onClick={() => { setFeeTypeFilter(''); setCurrentPage(1) }}
-                    className="inline-flex items-center gap-1 h-[22px] px-1.5 rounded text-[11px] text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-background transition-colors"
-                  >
-                    <XIcon className="h-3 w-3" />
-                    Clear
-                  </button>
-                )}
               </div>
 
               {/* RIGHT: Type filter segmented control */}
@@ -643,7 +619,7 @@ export default function MisfitsPage() {
                 ) : misfits.length === 0 ? (
                   <tr>
                     <td colSpan={canEdit ? 10 : 9} className="h-32 text-center align-middle text-muted-foreground">
-                      {searchQuery || typeFilter || feeTypeFilter ? 'No misfits match your filters' : 'No misfits found — everything is attributed!'}
+                      {searchQuery || typeFilter ? 'No misfits match your filters' : 'No misfits found — everything is attributed!'}
                     </td>
                   </tr>
                 ) : (
