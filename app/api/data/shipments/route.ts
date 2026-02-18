@@ -408,6 +408,16 @@ export async function GET(request: NextRequest) {
     if (endDate) {
       query = query.lte('orders.order_import_date', `${endDate}T23:59:59.999Z`)
     }
+
+    // Performance: Add event_labeled bounds matching the date range to help
+    // Postgres skip irrelevant rows. Without this, filters like carrier cause
+    // bitmap scans across ALL matching shipments (e.g. all 17K Cirro rows)
+    // even though the date range only needs a subset, causing statement timeout.
+    // Safe because event_labeled >= order_import_date always holds
+    // (a shipment can't be labeled before the order is imported).
+    if (startDate) {
+      query = query.gte('event_labeled', startDate)
+    }
     if (typeFilter.length > 0) {
       query = query.in('order_type', typeFilter)
     }
@@ -595,6 +605,8 @@ export async function GET(request: NextRequest) {
           }
           if (startDate) batchQuery = batchQuery.gte('orders.order_import_date', startDate)
           if (endDate) batchQuery = batchQuery.lte('orders.order_import_date', `${endDate}T23:59:59.999Z`)
+          // Same event_labeled bounds performance fix
+          if (startDate) batchQuery = batchQuery.gte('event_labeled', startDate)
           if (typeFilter.length > 0) batchQuery = batchQuery.in('order_type', typeFilter)
           if (channelFilter.length > 0) batchQuery = batchQuery.in('application_name', channelFilter)
           if (carrierFilter.length > 0) batchQuery = batchQuery.in('carrier', carrierFilter)
@@ -737,6 +749,8 @@ export async function GET(request: NextRequest) {
       }
       if (startDate) fallbackQuery = fallbackQuery.gte('orders.order_import_date', startDate)
       if (endDate) fallbackQuery = fallbackQuery.lte('orders.order_import_date', `${endDate}T23:59:59.999Z`)
+      // Same event_labeled bounds performance fix
+      if (startDate) fallbackQuery = fallbackQuery.gte('event_labeled', startDate)
       if (typeFilter.length > 0) fallbackQuery = fallbackQuery.in('order_type', typeFilter)
       if (channelFilter.length > 0) fallbackQuery = fallbackQuery.in('application_name', channelFilter)
       if (carrierFilter.length > 0) fallbackQuery = fallbackQuery.in('carrier', carrierFilter)

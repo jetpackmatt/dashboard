@@ -122,15 +122,24 @@ export function useColumnOrder(
   customOrder?: string[]
 ): ColumnConfig[] {
   return React.useMemo(() => {
+    let ordered: ColumnConfig[]
     if (customOrder && customOrder.length > 0) {
       // Use custom order, filtering to only visible columns
       const visibleIds = new Set(visibleColumns.map(c => c.id))
-      return customOrder
+      ordered = customOrder
         .filter(id => visibleIds.has(id))
         .map(id => visibleColumns.find(c => c.id === id)!)
         .filter(Boolean)
+    } else {
+      // Default: return in config order (which is already priority-sorted in our configs)
+      ordered = visibleColumns
     }
-    // Default: return in config order (which is already priority-sorted in our configs)
-    return visibleColumns
+    // Actions column always anchored to far right
+    const actionsIdx = ordered.findIndex(c => c.id === 'actions')
+    if (actionsIdx !== -1 && actionsIdx !== ordered.length - 1) {
+      const [actions] = ordered.splice(actionsIdx, 1)
+      ordered.push(actions)
+    }
+    return ordered
   }, [visibleColumns, customOrder, config])
 }
