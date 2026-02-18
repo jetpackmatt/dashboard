@@ -63,6 +63,8 @@ import { useDebouncedCallback } from "use-debounce"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { useSavedViews } from "@/hooks/use-saved-views"
+import { SavedViewsBar } from "@/components/saved-views-bar"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import {
@@ -708,6 +710,102 @@ export function DataTable({
     setShipmentsCarrierFilter([])
   }
 
+  // ============================================================================
+  // SAVED VIEWS
+  // ============================================================================
+
+  const unfulfilledSavedViews = useSavedViews('unfulfilled')
+  const shipmentsSavedViews = useSavedViews('shipments')
+
+  // Store filters before a preset is applied, so we can restore on deselect
+  const unfulfilledPreviousFilters = React.useRef<Record<string, unknown> | null>(null)
+  const shipmentsPreviousFilters = React.useRef<Record<string, unknown> | null>(null)
+
+  // Snapshot current unfulfilled filters for saving
+  const getUnfulfilledFilterSnapshot = React.useCallback((): Record<string, unknown> => ({
+    status: unfulfilledStatusFilter,
+    age: unfulfilledAgeFilter,
+    type: unfulfilledTypeFilter,
+    channel: unfulfilledChannelFilter,
+    datePreset: unfulfilledDatePreset,
+    dateRange: unfulfilledDateRange ? {
+      from: unfulfilledDateRange.from?.toISOString(),
+      to: unfulfilledDateRange.to?.toISOString(),
+    } : undefined,
+  }), [unfulfilledStatusFilter, unfulfilledAgeFilter, unfulfilledTypeFilter, unfulfilledChannelFilter, unfulfilledDatePreset, unfulfilledDateRange])
+
+  // Snapshot current shipments filters for saving
+  const getShipmentsFilterSnapshot = React.useCallback((): Record<string, unknown> => ({
+    status: shipmentsStatusFilter,
+    age: shipmentsAgeFilter,
+    type: shipmentsTypeFilter,
+    channel: shipmentsChannelFilter,
+    carrier: shipmentsCarrierFilter,
+    datePreset: shipmentsDatePreset,
+    dateRange: shipmentsDateRange ? {
+      from: shipmentsDateRange.from?.toISOString(),
+      to: shipmentsDateRange.to?.toISOString(),
+    } : undefined,
+  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDatePreset, shipmentsDateRange])
+
+  // Apply a saved view's filters to unfulfilled tab
+  const applyUnfulfilledFilters = React.useCallback((filters: Record<string, unknown>) => {
+    setUnfulfilledStatusFilter((filters.status as string[]) || [])
+    setUnfulfilledAgeFilter((filters.age as string[]) || [])
+    setUnfulfilledTypeFilter((filters.type as string[]) || [])
+    setUnfulfilledChannelFilter((filters.channel as string[]) || [])
+    // Restore date range
+    const preset = filters.datePreset as DateRangePreset | undefined
+    if (preset && preset !== 'custom') {
+      setUnfulfilledDatePreset(preset)
+      const range = getDateRangeFromPreset(preset)
+      if (range) setUnfulfilledDateRange({ from: range.from, to: range.to })
+    } else if (preset === 'custom' && filters.dateRange) {
+      const dr = filters.dateRange as { from?: string; to?: string }
+      setUnfulfilledDatePreset('custom')
+      setUnfulfilledDateRange({
+        from: dr.from ? new Date(dr.from) : undefined,
+        to: dr.to ? new Date(dr.to) : undefined,
+      })
+    }
+  }, [])
+
+  // Apply a saved view's filters to shipments tab
+  const applyShipmentsFilters = React.useCallback((filters: Record<string, unknown>) => {
+    setShipmentsStatusFilter((filters.status as string[]) || [])
+    setShipmentsAgeFilter((filters.age as string[]) || [])
+    setShipmentsTypeFilter((filters.type as string[]) || [])
+    setShipmentsChannelFilter((filters.channel as string[]) || [])
+    setShipmentsCarrierFilter((filters.carrier as string[]) || [])
+    // Restore date range
+    const preset = filters.datePreset as DateRangePreset | undefined
+    if (preset && preset !== 'custom') {
+      setShipmentsDatePreset(preset)
+      const range = getDateRangeFromPreset(preset)
+      if (range) setShipmentsDateRange({ from: range.from, to: range.to })
+    } else if (preset === 'custom' && filters.dateRange) {
+      const dr = filters.dateRange as { from?: string; to?: string }
+      setShipmentsDatePreset('custom')
+      setShipmentsDateRange({
+        from: dr.from ? new Date(dr.from) : undefined,
+        to: dr.to ? new Date(dr.to) : undefined,
+      })
+    }
+  }, [])
+
+  // Check if active view is modified whenever filters change
+  React.useEffect(() => {
+    if (currentTab === 'unfulfilled') {
+      unfulfilledSavedViews.checkIfModified(getUnfulfilledFilterSnapshot())
+    }
+  }, [currentTab, unfulfilledStatusFilter, unfulfilledAgeFilter, unfulfilledTypeFilter, unfulfilledChannelFilter, unfulfilledDatePreset, unfulfilledDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (currentTab === 'shipments') {
+      shipmentsSavedViews.checkIfModified(getShipmentsFilterSnapshot())
+    }
+  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Additional Services tab computed values
   // Note: Date range is NOT counted as a filter since it has its own indicator
   const hasAdditionalServicesFilters = additionalServicesTypeFilter !== "all" || additionalServicesStatusFilter !== "all"
@@ -1180,8 +1278,71 @@ export function DataTable({
 
           {/* Row 3: Expandable Filter Bar (for all tabs) */}
           {filtersExpanded && (
-            <div className="px-4 lg:px-6 pt-0 pb-4 flex items-center justify-end gap-4 animate-in slide-in-from-top-2 duration-200">
-              {/* Filter Dropdowns */}
+            <div className="px-4 lg:px-6 pt-0 pb-4 flex items-center justify-between gap-4 animate-in slide-in-from-top-2 duration-200">
+              {/* Left side: Saved Views (unfulfilled/shipments only) */}
+              {currentTab === "unfulfilled" && (
+                <SavedViewsBar
+                  views={unfulfilledSavedViews.views}
+                  activeViewId={unfulfilledSavedViews.activeViewId}
+                  isModified={unfulfilledSavedViews.isModified}
+                  onLoad={(id) => {
+                    // Remember current filters before applying preset
+                    if (!unfulfilledSavedViews.activeViewId) {
+                      unfulfilledPreviousFilters.current = getUnfulfilledFilterSnapshot()
+                    }
+                    const view = unfulfilledSavedViews.loadView(id)
+                    if (view) applyUnfulfilledFilters(view.filters)
+                  }}
+                  onSave={(name) => unfulfilledSavedViews.saveView(name, getUnfulfilledFilterSnapshot())}
+                  onUpdate={(id) => unfulfilledSavedViews.updateView(id, getUnfulfilledFilterSnapshot())}
+                  onDelete={(id) => unfulfilledSavedViews.deleteView(id)}
+                  onDeselect={() => {
+                    unfulfilledSavedViews.setActiveViewId(null)
+                    if (unfulfilledPreviousFilters.current) {
+                      applyUnfulfilledFilters(unfulfilledPreviousFilters.current)
+                      unfulfilledPreviousFilters.current = null
+                    } else {
+                      clearUnfulfilledFilters()
+                      setUnfulfilledDatePreset('all')
+                      const range = getDateRangeFromPreset('all')
+                      if (range) setUnfulfilledDateRange({ from: range.from, to: range.to })
+                    }
+                  }}
+                />
+              )}
+              {currentTab === "shipments" && (
+                <SavedViewsBar
+                  views={shipmentsSavedViews.views}
+                  activeViewId={shipmentsSavedViews.activeViewId}
+                  isModified={shipmentsSavedViews.isModified}
+                  onLoad={(id) => {
+                    // Remember current filters before applying preset
+                    if (!shipmentsSavedViews.activeViewId) {
+                      shipmentsPreviousFilters.current = getShipmentsFilterSnapshot()
+                    }
+                    const view = shipmentsSavedViews.loadView(id)
+                    if (view) applyShipmentsFilters(view.filters)
+                  }}
+                  onSave={(name) => shipmentsSavedViews.saveView(name, getShipmentsFilterSnapshot())}
+                  onUpdate={(id) => shipmentsSavedViews.updateView(id, getShipmentsFilterSnapshot())}
+                  onDelete={(id) => shipmentsSavedViews.deleteView(id)}
+                  onDeselect={() => {
+                    shipmentsSavedViews.setActiveViewId(null)
+                    if (shipmentsPreviousFilters.current) {
+                      applyShipmentsFilters(shipmentsPreviousFilters.current)
+                      shipmentsPreviousFilters.current = null
+                    } else {
+                      clearShipmentsFilters()
+                      setShipmentsDatePreset('60d')
+                      const range = getDateRangeFromPreset('60d')
+                      if (range) setShipmentsDateRange({ from: range.from, to: range.to })
+                    }
+                  }}
+                />
+              )}
+              {/* Empty spacer for tabs without saved views */}
+              {currentTab !== "unfulfilled" && currentTab !== "shipments" && <div />}
+              {/* Right side: Filter Dropdowns */}
               <div className="flex items-center gap-2">
                 {/* Clear Filters - show first, only when filters are active */}
                 {currentTabFilters.hasFilters && (
