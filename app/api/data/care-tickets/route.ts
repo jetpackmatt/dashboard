@@ -359,9 +359,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
+    // Auto-link: if ticket has a shipment_id, find unlinked credit transactions
+    // for the same reference_id + client_id and set their care_ticket_id
+    let autoLinkedCount = 0
+    if (ticket.shipment_id && ticket.client_id) {
+      const { data: linkedTxs, error: linkErr } = await supabase
+        .from('transactions')
+        .update({ care_ticket_id: ticket.id })
+        .eq('fee_type', 'Credit')
+        .is('care_ticket_id', null)
+        .eq('client_id', ticket.client_id)
+        .eq('reference_id', ticket.shipment_id)
+        .eq('is_voided', false)
+        .select('transaction_id')
+
+      if (linkErr) {
+        console.error('Auto-link credit transactions error:', linkErr)
+      } else {
+        autoLinkedCount = linkedTxs?.length || 0
+        if (autoLinkedCount > 0) {
+          console.log(`Auto-linked ${autoLinkedCount} credit transaction(s) to ticket #${ticket.ticket_number}`)
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       ticket,
+      autoLinkedCount,
     }, { status: 201 })
   } catch (err) {
     console.error('Create care ticket error:', err)

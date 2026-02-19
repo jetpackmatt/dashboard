@@ -182,6 +182,24 @@ export async function POST(request: NextRequest) {
       }
       result.brand = true
 
+      // Auto-link: for credit misfits without a ticket, find a matching care ticket
+      // by shipment_id (reference_id) + client_id
+      if (tx.fee_type === 'Credit' && !tx.care_ticket_id && tx.reference_id) {
+        const { data: matchingTicket } = await supabase
+          .from('care_tickets')
+          .select('id')
+          .eq('shipment_id', tx.reference_id)
+          .eq('client_id', clientId)
+          .is('deleted_at', null)
+          .limit(1)
+          .single()
+
+        if (matchingTicket) {
+          update.care_ticket_id = matchingTicket.id
+          result.ticket = true
+        }
+      }
+
       const { error: updateError } = await supabase
         .from('transactions')
         .update(update)
@@ -288,7 +306,18 @@ export async function POST(request: NextRequest) {
         txUpdate.reference_type = 'Shipment'
       }
 
-      await supabase.from('transactions').update(txUpdate).eq('transaction_id', transactionId)
+      const { error: txUpdateError } = await supabase.from('transactions').update(txUpdate).eq('transaction_id', transactionId)
+
+      if (txUpdateError) {
+        console.error('Error linking ticket to transaction:', txUpdateError)
+        // Ticket was created but not linked — report partial success
+        return NextResponse.json({
+          success: true,
+          resolved: { brand: !!tx.client_id, shipment: false, ticket: false },
+          ticketNumber: newTicket.ticket_number,
+          warning: 'Ticket created but failed to link to transaction',
+        })
+      }
 
       result.ticket = true
       result.brand = !!tx.client_id

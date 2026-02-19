@@ -133,12 +133,18 @@ function findTicketMatch(
   const txDate = tx.chargeDate ? new Date(tx.chargeDate) : null
 
   // 1. Shipment match — credit references same shipment as ticket (strongest signal)
-  if (tx.referenceId && tx.referenceType === 'Shipment') {
+  // Match by reference_id regardless of reference_type — many credits use 'Default'
+  // but still carry the shipment ID in reference_id
+  if (tx.referenceId && tx.referenceId !== '0') {
     const shipmentMatch = tickets.find(
       (t) => !usedTicketIds.has(t.id) && t.shipmentId === tx.referenceId
     )
     if (shipmentMatch) {
-      return { ticket: shipmentMatch, confidence: 'exact', reason: 'Same shipment ID' }
+      return {
+        ticket: shipmentMatch,
+        confidence: tx.referenceType === 'Shipment' ? 'exact' : 'probable',
+        reason: 'Same shipment ID',
+      }
     }
   }
 
