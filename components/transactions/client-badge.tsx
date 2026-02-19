@@ -29,10 +29,11 @@ const JETPACK_INTERNAL_ID = '4e5a1e9e-35a3-41ab-bbb0-22cc0ac99fe4'
 export { JETPACK_INTERNAL_ID }
 
 export function ClientBadge({ clientId }: ClientBadgeProps) {
-  const { isAdmin, selectedClientId, clients } = useClient()
+  const { isAdmin, isCareUser, effectiveIsAdmin, effectiveIsCareUser, selectedClientId, clients } = useClient()
 
-  // Only show for admins viewing all clients (not filtered)
-  if (!isAdmin || selectedClientId || !clientId) {
+  // Show for admins and care users viewing all clients (not filtered)
+  const canSeeAllBrands = isAdmin || isCareUser || effectiveIsAdmin || effectiveIsCareUser
+  if (!canSeeAllBrands || selectedClientId || !clientId) {
     return null
   }
 
