@@ -6416,6 +6416,23 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
         body: formData,
       })
 
+      if (!response.ok) {
+        // Handle non-JSON error responses (e.g. Vercel "Request Entity Too Large")
+        let errorMsg: string
+        const contentType = response.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          const errorData = await response.json()
+          errorMsg = errorData.error || `Upload failed (${response.status})`
+        } else {
+          const text = await response.text()
+          errorMsg = response.status === 413
+            ? 'File too large. Please split into smaller files.'
+            : text || `Upload failed (${response.status})`
+        }
+        setUploadResult({ success: false, message: errorMsg })
+        return
+      }
+
       const data = await response.json()
 
       if (data.success) {
