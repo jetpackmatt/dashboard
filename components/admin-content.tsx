@@ -6399,56 +6399,87 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
     )
   }
 
-  // Handle file upload
+  // Handle file upload - parses CSV client-side and sends rows in batches
+  // to avoid Vercel's 4.5MB body size limit
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
-
-    const formData = new FormData()
-    formData.append('file', file)
 
     try {
       setIsUploading(true)
       setUploadResult(null)
 
-      const response = await fetch('/api/admin/eshipper-upload', {
-        method: 'POST',
-        body: formData,
-      })
+      // Read and parse CSV client-side
+      const content = await file.text()
+      const lines = content.split('\n').filter(line => line.trim())
 
-      if (!response.ok) {
-        // Handle non-JSON error responses (e.g. Vercel "Request Entity Too Large")
-        let errorMsg: string
-        const contentType = response.headers.get('content-type') || ''
-        if (contentType.includes('application/json')) {
-          const errorData = await response.json()
-          errorMsg = errorData.error || `Upload failed (${response.status})`
-        } else {
-          const text = await response.text()
-          errorMsg = response.status === 413
-            ? 'File too large. Please split into smaller files.'
-            : text || `Upload failed (${response.status})`
-        }
-        setUploadResult({ success: false, message: errorMsg })
+      if (lines.length < 2) {
+        setUploadResult({ success: false, message: 'CSV file appears empty or has no data rows' })
         return
       }
 
-      const data = await response.json()
+      const header = lines[0]
+      const dataLines = lines.slice(1)
+      const BATCH_SIZE = 2000
 
-      if (data.success) {
+      let totalProcessed = 0
+      let totalFailed = 0
+      let allByCompany: Record<string, number> = {}
+      let allClientsCreated: string[] = []
+      let allClientsLinked: string[] = []
+
+      // Send rows in batches with the CSV header prepended to each
+      const totalBatches = Math.ceil(dataLines.length / BATCH_SIZE)
+      for (let i = 0; i < dataLines.length; i += BATCH_SIZE) {
+        const batchLines = dataLines.slice(i, i + BATCH_SIZE)
+        const batchCSV = [header, ...batchLines].join('\n')
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1
+
         setUploadResult({
           success: true,
-          message: `Imported ${data.rowsProcessed} shipments from ${file.name}`,
-          details: data.byCompany,
+          message: `Uploading batch ${batchNum} of ${totalBatches}...`,
         })
-        // Refresh stats
-        fetchData()
-      } else {
-        setUploadResult({
-          success: false,
-          message: data.error || 'Upload failed',
+
+        const blob = new Blob([batchCSV], { type: 'text/csv' })
+        const formData = new FormData()
+        formData.append('file', blob, file.name)
+
+        const response = await fetch('/api/admin/eshipper-upload', {
+          method: 'POST',
+          body: formData,
         })
+
+        if (!response.ok) {
+          const contentType = response.headers.get('content-type') || ''
+          let errorMsg: string
+          if (contentType.includes('application/json')) {
+            const errorData = await response.json()
+            errorMsg = errorData.error || `Batch ${batchNum} failed (${response.status})`
+          } else {
+            errorMsg = `Batch ${batchNum} failed (${response.status})`
+          }
+          setUploadResult({ success: false, message: errorMsg })
+          return
+        }
+
+        const data = await response.json()
+        totalProcessed += data.rowsProcessed || 0
+        totalFailed += data.rowsFailed || 0
+        if (data.byCompany) {
+          for (const [company, count] of Object.entries(data.byCompany)) {
+            allByCompany[company] = (allByCompany[company] || 0) + (count as number)
+          }
+        }
+        if (data.clientsCreated) allClientsCreated.push(...data.clientsCreated)
+        if (data.clientsLinked) allClientsLinked.push(...data.clientsLinked)
       }
+
+      setUploadResult({
+        success: totalFailed === 0,
+        message: `Imported ${totalProcessed} shipments from ${file.name}${totalFailed > 0 ? ` (${totalFailed} failed)` : ''}`,
+        details: allByCompany,
+      })
+      fetchData()
     } catch (err) {
       setUploadResult({
         success: false,
@@ -6456,7 +6487,6 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
       })
     } finally {
       setIsUploading(false)
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
