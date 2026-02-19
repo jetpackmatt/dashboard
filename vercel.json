@@ -1,4 +1,10 @@
 {
+  "functions": {
+    "app/api/admin/eshipper-upload/route.ts": {
+      "maxDuration": 120,
+      "maxRequestBodySize": "50mb"
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/sync",
