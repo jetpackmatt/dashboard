@@ -230,6 +230,15 @@ export async function POST(request: NextRequest) {
 
       // Backdate ticket to the credit's charge_date so it orders correctly in Care
       const creditDate = tx.charge_date || new Date().toISOString()
+      const creditDateISO = creditDate.includes('T') ? creditDate : `${creditDate}T00:00:00.000Z`
+
+      // Calculate the day before credit for realistic Under Review / Credit Requested events
+      const creditDateObj = new Date(creditDateISO)
+      const dayBefore = new Date(creditDateObj)
+      dayBefore.setUTCDate(dayBefore.getUTCDate() - 1)
+      const dayBeforeStr = dayBefore.toISOString().split('T')[0]
+      const underReviewAt = `${dayBeforeStr}T14:00:00.000Z`   // morning EST
+      const creditRequestedAt = `${dayBeforeStr}T14:15:00.000Z` // 15 min later (matches auto-advance)
 
       // Check if this credit is already on a Jetpack invoice → should be Resolved
       let invoiceDate: string | null = null
@@ -243,13 +252,13 @@ export async function POST(request: NextRequest) {
       }
       const isAlreadyInvoiced = !!invoiceDate
 
-      // Build events timeline (newest first)
+      // Build events timeline (newest first) matching standard auto-credit flow
       const events: Array<{ status: string; note: string; createdAt: string; createdBy: string }> = []
 
       if (isAlreadyInvoiced) {
         events.push({
           status: 'Resolved',
-          note: `Credit already invoiced on ${tx.invoice_id_jp}. Auto-resolved.`,
+          note: `Your credit of $${creditAmount.toFixed(2)} has been applied to invoice #${tx.invoice_id_jp}.`,
           createdAt: `${invoiceDate}T00:00:00.000Z`,
           createdBy: 'System',
         })
@@ -257,9 +266,23 @@ export async function POST(request: NextRequest) {
 
       events.push({
         status: 'Credit Approved',
-        note: 'Ticket created from unlinked ShipBob credit.',
-        createdAt: creditDate.includes('T') ? creditDate : `${creditDate}T00:00:00.000Z`,
-        createdBy: userName,
+        note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+        createdAt: creditDateISO,
+        createdBy: 'System',
+      })
+
+      events.push({
+        status: 'Credit Requested',
+        note: 'Credit request has been sent to the warehouse team for review.',
+        createdAt: creditRequestedAt,
+        createdBy: 'System',
+      })
+
+      events.push({
+        status: 'Under Review',
+        note: 'Jetpack team is reviewing your claim request.',
+        createdAt: underReviewAt,
+        createdBy: 'System',
       })
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -272,7 +295,7 @@ export async function POST(request: NextRequest) {
         description: description?.trim() || null,
         shipment_id: ticketShipmentId || null,
         created_by: user?.id || null,
-        created_at: creditDate.includes('T') ? creditDate : `${creditDate}T00:00:00.000Z`,
+        created_at: underReviewAt,
         events,
       }
 

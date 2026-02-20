@@ -710,6 +710,16 @@ export async function calculateCreditPreviewMarkups(
         continue
       }
 
+      // ── Credits >= $100 are always item-only (no markup needed) ──
+      // Large credits are never shipping label refunds, so pass through without manual review
+      if (absCredit >= 100) {
+        const update = buildItemOnlyUpdate(credit)
+        const careTicketId = credit.care_ticket_id || undefined
+        updates.push({ id: credit.id, updateData: update, careTicketId, billedAmount: Number(credit.cost) })
+        result.updated++
+        continue
+      }
+
       const ticket = credit.care_ticket_id ? ticketMap.get(credit.care_ticket_id) : null
 
       // ── No care ticket → PENDING REVIEW ──
