@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const RECEIVING_FEE_TYPES = [
   'WRO Receiving Fee',
+  'WRO Label Fee',
+  'URO Storage Fee',
   'Receiving Fee',
   'Inbound Fee',
   'Dock Receiving Fee',

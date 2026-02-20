@@ -8,11 +8,18 @@ const ADDITIONAL_SERVICE_FEES = [
   'B2B - Label Fee',
   'B2B - Case Pick Fee',
   'B2B - Pallet Pick Fee',
+  'B2B - ASIN Fee',
+  'B2B - Order Fee',
+  'B2B - Pallet Material Charge',
+  'B2B - Pallet Pack Fee',
+  'B2B - ShipBob Freight Fee',
+  'B2B - Supplies',
   'Inventory Placement Program Fee',
   'Warehousing Fee',
   'Multi-Hub IQ Fee',
   'Kitting Fee',
   'VAS Fee',
+  'VAS - Paid Requests',
   'Duty/Tax',
   'Insurance',
   'Signature Required',
@@ -22,6 +29,8 @@ const ADDITIONAL_SERVICE_FEES = [
   'Saturday Delivery',
   'Oversized Package',
   'Dimensional Weight',
+  'Address Correction',
+  'Others',
 ]
 
 /**
