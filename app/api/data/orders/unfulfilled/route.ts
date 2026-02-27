@@ -54,6 +54,7 @@ export async function GET(request: NextRequest) {
         event_labeled,
         event_picked,
         event_packed,
+        event_pickinprogress,
         created_at,
         recipient_name,
         carrier_service,
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
           application_name,
           total_shipments,
           country,
+          state,
           shipping_method
         )
       `
@@ -84,6 +86,7 @@ export async function GET(request: NextRequest) {
         event_labeled,
         event_picked,
         event_packed,
+        event_pickinprogress,
         created_at,
         recipient_name,
         carrier_service,
@@ -256,6 +259,7 @@ export async function GET(request: NextRequest) {
             application_name,
             total_shipments,
             country,
+            state,
             shipping_method
           `)
           .in('id', orderIds)
@@ -351,6 +355,7 @@ export async function GET(request: NextRequest) {
         // Optional columns
         totalShipments: order.total_shipments || 1,
         destCountry: order.country || '',
+        destState: order.state || '',
         shipOption: order.shipping_method || '',
         // Computed field for export
         age: age,
@@ -506,6 +511,9 @@ function deriveGranularStatus(shipment: any): string {
   }
   if (shipment.event_picked) {
     return 'Picked'
+  }
+  if (shipment.event_pickinprogress) {
+    return 'Pick In-Progress'
   }
 
   // Check status_details for granular processing statuses

@@ -311,11 +311,11 @@ export default function CarePage() {
   }, [orderedDraggableColumns, carePrefs])
 
   // Sorting state - defaults to Date column, newest first
-  const [sortColumn, setSortColumn] = React.useState<'date' | 'age' | 'credit'>('date')
+  const [sortColumn, setSortColumn] = React.useState<'date' | 'updated' | 'credit'>('date')
   const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Handle column sort click
-  const handleSort = (column: 'date' | 'age' | 'credit') => {
+  const handleSort = (column: 'date' | 'updated' | 'credit') => {
     if (sortColumn === column) {
       // Toggle direction if same column
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
@@ -514,11 +514,10 @@ export default function CarePage() {
     return result
   }
 
-  // Calculate ticket age in days (frozen at resolution time for resolved tickets)
-  const formatAge = (createdAt: string, resolvedAt: string | null) => {
-    const startDate = new Date(createdAt)
-    const endDate = resolvedAt ? new Date(resolvedAt) : new Date()
-    const diffMs = endDate.getTime() - startDate.getTime()
+  // Calculate time since last status update
+  const formatTimeSinceUpdate = (lastUpdated: string | null, createdAt: string) => {
+    const refDate = lastUpdated ? new Date(lastUpdated) : new Date(createdAt)
+    const diffMs = Date.now() - refDate.getTime()
     const days = diffMs / (1000 * 60 * 60 * 24)
 
     if (days < 1) return 'Today'
@@ -530,11 +529,10 @@ export default function CarePage() {
   const sortedTickets = React.useMemo(() => {
     const ticketsToSort = [...tickets]
 
-    // Calculate age in ms for sorting
-    const getAgeMs = (ticket: Ticket) => {
-      const startDate = new Date(ticket.createdAt)
-      const endDate = ticket.resolvedAt ? new Date(ticket.resolvedAt) : new Date()
-      return endDate.getTime() - startDate.getTime()
+    // Calculate ms since last status update for sorting
+    const getMsSinceUpdate = (ticket: Ticket) => {
+      const refDate = ticket.lastUpdated ? new Date(ticket.lastUpdated) : new Date(ticket.createdAt)
+      return Date.now() - refDate.getTime()
     }
 
     if (sortColumn === 'date') {
@@ -543,11 +541,11 @@ export default function CarePage() {
         const dateB = new Date(b.createdAt).getTime()
         return sortDirection === 'asc' ? dateA - dateB : dateB - dateA
       })
-    } else if (sortColumn === 'age') {
+    } else if (sortColumn === 'updated') {
       ticketsToSort.sort((a, b) => {
-        const ageA = getAgeMs(a)
-        const ageB = getAgeMs(b)
-        return sortDirection === 'asc' ? ageA - ageB : ageB - ageA
+        const updA = getMsSinceUpdate(a)
+        const updB = getMsSinceUpdate(b)
+        return sortDirection === 'asc' ? updA - updB : updB - updA
       })
     } else if (sortColumn === 'credit') {
       ticketsToSort.sort((a, b) => {
@@ -702,9 +700,9 @@ export default function CarePage() {
         )}
 
         {/* Sticky header with filter bar */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + New Ticket + Columns (right) */}
-          <div className="px-4 lg:px-6 h-[70px] flex items-center justify-between gap-4">
+          <div className="px-4 lg:px-6 py-[19.5px] flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
             <div className="flex items-center gap-3">
               {/* Search Input */}
@@ -886,7 +884,7 @@ export default function CarePage() {
                       setColumnVisibility({ ...columnVisibility, lastUpdated: value })
                     }
                   >
-                    Age
+                    Updated
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuCheckboxItem
                     checked={columnVisibility.latestNotes}
@@ -918,7 +916,7 @@ export default function CarePage() {
                       items={orderedDraggableColumns.map(c => c.id)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <tr className={cn("h-[45px] transition-opacity duration-200", expandedRowId ? 'opacity-30' : 'opacity-100')}>
+                      <tr className={cn("h-[45px] bg-muted/60 dark:bg-zinc-900/60 transition-opacity duration-200", expandedRowId ? 'opacity-30' : 'opacity-100')}>
                         {/* Fixed columns - NOT wrapped in SortableHeader */}
                         {/* Client column - only visible for admins viewing all clients */}
                         {columnVisibility.client && canViewAllBrands && !selectedClientId && (
@@ -990,11 +988,11 @@ export default function CarePage() {
                                   "px-4 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
-                                onClick={() => handleSort('age')}
+                                onClick={() => handleSort('updated')}
                               >
                                 <span className="inline-flex items-center gap-1">
-                                  Age
-                                  {sortColumn === 'age' && (
+                                  Updated
+                                  {sortColumn === 'updated' && (
                                     sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3 text-foreground" /> : <ChevronDownIcon className="h-3 w-3 text-foreground" />
                                   )}
                                 </span>
@@ -1091,7 +1089,7 @@ export default function CarePage() {
                         <React.Fragment key={ticket.id}>
                           <tr
                             className={cn(
-                              "h-[50px] cursor-pointer transition-all duration-200",
+                              "h-[45px] cursor-pointer transition-all duration-200",
                               expandedRowId === ticket.id
                                 ? cn("border-b border-transparent", getExpandedRowTint(ticket.status))
                                 : "border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30",
@@ -1233,7 +1231,7 @@ export default function CarePage() {
                                     "px-4 align-middle text-muted-foreground whitespace-nowrap",
                                     isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                   )}>
-                                    {formatAge(ticket.createdAt, ticket.resolvedAt)}
+                                    {formatTimeSinceUpdate(ticket.lastUpdated, ticket.createdAt)}
                                   </td>
                                 )
                               }

@@ -316,7 +316,7 @@ export const CARE_TABLE_CONFIG: TableConfig = {
     { id: 'partner',      header: '',             width: 4,  priority: 1, align: 'left' },   // Partner icon (admin only)
     { id: 'dateCreated',  header: 'Date',         width: 8,  priority: 1, sortable: true },
     { id: 'reference',    header: 'Reference ID', width: 12, priority: 2 },
-    { id: 'lastUpdated',  header: 'Age',          width: 7,  priority: 3, sortable: true },
+    { id: 'lastUpdated',  header: 'Updated',      width: 7,  priority: 3, sortable: true },
     { id: 'type',         header: 'Type',         width: 14, priority: 4 },
     { id: 'status',       header: 'Status',       width: 15, priority: 1 },
     { id: 'credit',       header: 'Credit',       width: 9,  priority: 5, align: 'left', sortable: true },

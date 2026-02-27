@@ -51,6 +51,7 @@ interface ShipmentDetails {
   customer: {
     name: string
     email: string
+    phone?: string | null
     company?: string
     address: {
       line1?: string
@@ -69,6 +70,8 @@ interface ShipmentDetails {
     zone: number
     fulfillmentCenter: string
     fcId: number
+    originCountry?: string | null
+    requireSignature: boolean
   }
   package: {
     actualWeightOz: number
@@ -77,6 +80,12 @@ interface ShipmentDetails {
     length: number
     width: number
     height: number
+    materialType?: string | null
+    insuranceValue?: number | null
+    giftMessage?: string | null
+    trackingBol?: string | null
+    trackingProNumber?: string | null
+    trackingScac?: string | null
   }
   dates: {
     created: string | null
@@ -889,6 +898,18 @@ export function ShipmentDetailsDrawer({
     return `${lbs} lb(s), ${remainingOz} oz(s)`
   }
 
+  // Format package material type from PascalCase to readable
+  const formatMaterialType = (type: string): string => {
+    const map: Record<string, string> = {
+      BubbleMailer: 'Bubble Mailer',
+      PolyMailer: 'Poly Mailer',
+      Box: 'Box',
+      Custom: 'Custom',
+      OwnContainer: 'Own Container',
+    }
+    return map[type] || type.replace(/([a-z])([A-Z])/g, '$1 $2')
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -1203,6 +1224,12 @@ export function ShipmentDetailsDrawer({
                         <span className="text-xs text-muted-foreground">Email</span>
                         <span className="text-sm text-foreground text-right truncate ml-4">{data.customer.email || '-'}</span>
                       </div>
+                      {data.customer.phone && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Phone</span>
+                          <span className="text-sm text-foreground text-right">{data.customer.phone}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-start">
                         <span className="text-xs text-muted-foreground shrink-0">Address</span>
                         <div className="text-sm text-foreground text-right">
@@ -1231,6 +1258,12 @@ export function ShipmentDetailsDrawer({
                         <span className="text-xs text-muted-foreground">Fulfillment Center</span>
                         <span className="text-sm text-foreground">{data.shipping.fulfillmentCenter || '-'}</span>
                       </div>
+                      {data.shipping.originCountry && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Origin Country</span>
+                          <span className="text-sm text-foreground">{data.shipping.originCountry}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between">
                         <span className="text-xs text-muted-foreground">Order Type</span>
                         <span className="text-sm text-foreground">{data.orderType || 'DTC'}</span>
@@ -1302,6 +1335,46 @@ export function ShipmentDetailsDrawer({
                         <span className="text-xs text-muted-foreground">Destination Country</span>
                         <span className="text-sm text-foreground">{data.customer.address.country || 'US'}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-xs text-muted-foreground">Signature Required</span>
+                        <span className="text-sm text-foreground">{data.shipping.requireSignature ? 'Yes' : 'No'}</span>
+                      </div>
+                      {data.package.materialType && data.package.materialType !== 'Undefined' && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Package Type</span>
+                          <span className="text-sm text-foreground">{formatMaterialType(data.package.materialType)}</span>
+                        </div>
+                      )}
+                      {data.package.insuranceValue != null && data.package.insuranceValue > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Insurance Value</span>
+                          <span className="text-sm text-foreground">${data.package.insuranceValue.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {data.package.giftMessage && (
+                        <div className="flex justify-between items-start">
+                          <span className="text-xs text-muted-foreground shrink-0">Gift Message</span>
+                          <span className="text-sm text-foreground text-right ml-4 italic">{data.package.giftMessage}</span>
+                        </div>
+                      )}
+                      {data.package.trackingBol && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">Bill of Lading</span>
+                          <span className="text-sm text-foreground">{data.package.trackingBol}</span>
+                        </div>
+                      )}
+                      {data.package.trackingProNumber && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">PRO Number</span>
+                          <span className="text-sm text-foreground">{data.package.trackingProNumber}</span>
+                        </div>
+                      )}
+                      {data.package.trackingScac && (
+                        <div className="flex justify-between">
+                          <span className="text-xs text-muted-foreground">SCAC</span>
+                          <span className="text-sm text-foreground">{data.package.trackingScac}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -46,7 +46,6 @@ const FEE_TYPE_TO_CATEGORY: Record<string, BillingCategory> = {
 
   // Storage
   'Warehousing Fee': 'storage',
-  'URO Storage Fee': 'storage',
 
   // Returns
   'Return to sender - Processing Fees': 'returns',
@@ -56,6 +55,7 @@ const FEE_TYPE_TO_CATEGORY: Record<string, BillingCategory> = {
   // Receiving
   'WRO Receiving Fee': 'receiving',
   'WRO Label Fee': 'receiving',
+  'URO Storage Fee': 'receiving',
 
   // Credits (treated as the category of what they're crediting)
   'Credit': 'credits',

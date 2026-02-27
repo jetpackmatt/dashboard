@@ -28,6 +28,7 @@ interface ShipmentsTableProps {
   typeFilter?: string[]
   channelFilter?: string[]
   carrierFilter?: string[]
+  destinationFilter?: string[]
   dateRange?: DateRange
   // Search query for real-time search
   searchQuery?: string
@@ -35,6 +36,8 @@ interface ShipmentsTableProps {
   onChannelsChange?: (channels: string[]) => void
   // Callback to notify parent of available carriers
   onCarriersChange?: (carriers: string[]) => void
+  // Callback to notify parent of available destinations
+  onDestinationsChange?: (countries: string[], statesByCountry: Record<string, string[]>) => void
   // Callback to notify parent of loading state changes
   onLoadingChange?: (isLoading: boolean) => void
   // Pre-fetched data for instant initial render (optional)
@@ -57,10 +60,12 @@ export function ShipmentsTable({
   typeFilter = [],
   channelFilter = [],
   carrierFilter = [],
+  destinationFilter = [],
   dateRange,
   searchQuery = "",
   onChannelsChange,
   onCarriersChange,
+  onDestinationsChange,
   onLoadingChange,
   initialData,
   initialTotalCount = 0,
@@ -202,6 +207,11 @@ export function ShipmentsTable({
         params.set('carrier', carrierFilter.join(','))
       }
 
+      // Add destination filter (server-side - country and country:state pairs)
+      if (destinationFilter.length > 0) {
+        params.set('destination', destinationFilter.join(','))
+      }
+
       // Add age filter (server-side - API handles fetching all records and filtering)
       if (ageFilter.length > 0) {
         params.set('age', ageFilter.join(','))
@@ -258,6 +268,15 @@ export function ShipmentsTable({
         }
       }
 
+      // Extract unique destinations from API response and notify parent
+      if (destinationFilter.length === 0 && onDestinationsChange) {
+        const destinations = result.destinations || [...new Set(filteredData.map((d: Shipment) => d.destCountry).filter(Boolean))]
+        const destStates = result.destinationStates || {}
+        if (destinations.length > 0) {
+          onDestinationsChange(destinations as string[], destStates as Record<string, string[]>)
+        }
+      }
+
       // All filtering (including age) is done server-side
       setData(filteredData)
       setTotalCount(result.totalCount || 0)
@@ -269,7 +288,7 @@ export function ShipmentsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange, onCarriersChange])
+  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange, onCarriersChange, onDestinationsChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
@@ -279,12 +298,12 @@ export function ShipmentsTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset page when filter or sort changes
   React.useEffect(() => {
     setPageIndex(0)
-  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, dateRange, searchQuery, sortField, sortDirection])
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection])
 
   // Handle page changes
   const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {

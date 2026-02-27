@@ -336,6 +336,9 @@ export async function PATCH(
               defaultNote = 'This ticket has been marked as resolved.'
             }
             break
+          case 'In Process':
+            defaultNote = 'This ticket is being actively worked on.'
+            break
           default:
             defaultNote = `Status changed to ${newStatus}`
         }

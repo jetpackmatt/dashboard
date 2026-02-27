@@ -61,6 +61,8 @@ import {
 import { cn } from "@/lib/utils"
 import { useDebouncedCallback } from "use-debounce"
 import { MultiSelectFilter, FilterOption } from "@/components/ui/multi-select-filter"
+import { DestinationFilter } from "@/components/ui/destination-filter"
+import { buildDestinationOptions } from "@/lib/destination-data"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
 import { useSavedViews } from "@/hooks/use-saved-views"
@@ -422,6 +424,7 @@ export function DataTable({
   const [unfulfilledAgeFilter, setUnfulfilledAgeFilter] = React.useState<string[]>([])
   const [unfulfilledTypeFilter, setUnfulfilledTypeFilter] = React.useState<string[]>([])
   const [unfulfilledChannelFilter, setUnfulfilledChannelFilter] = React.useState<string[]>([])
+  const [unfulfilledDestinationFilter, setUnfulfilledDestinationFilter] = React.useState<string[]>([])
   const [unfulfilledDateRange, setUnfulfilledDateRange] = React.useState<DateRange | undefined>(() => {
     const range = getDateRangeFromPreset('all')
     return range ? { from: range.from, to: range.to } : undefined
@@ -450,6 +453,7 @@ export function DataTable({
   const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>([])
   const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>([])
   const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>([])
+  const [shipmentsDestinationFilter, setShipmentsDestinationFilter] = React.useState<string[]>([])
   // Initialize shipments date range to 60 days for better performance
   const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
     const range = getDateRangeFromPreset('60d')
@@ -459,6 +463,12 @@ export function DataTable({
   const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>(prefetchedShipmentsChannels)
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
   const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)
+
+  // Destination data (countries + states extracted from API responses)
+  const [unfulfilledDestinations, setUnfulfilledDestinations] = React.useState<string[]>([])
+  const [unfulfilledDestStates, setUnfulfilledDestStates] = React.useState<Record<string, string[]>>({})
+  const [shipmentsDestinations, setShipmentsDestinations] = React.useState<string[]>([])
+  const [shipmentsDestStates, setShipmentsDestStates] = React.useState<Record<string, string[]>>({})
 
   // Consolidated carrier display names for filter dropdown
   // Multiple raw carriers (e.g., "DHL", "DHLExpress") map to single display name ("DHL Express")
@@ -482,6 +492,7 @@ export function DataTable({
     typeFilter: shipmentsTypeFilter,
     channelFilter: shipmentsChannelFilter,
     carrierFilter: expandedCarrierFilter,
+    destinationFilter: shipmentsDestinationFilter,
     dateRange: shipmentsDateRange,
   })
 
@@ -491,6 +502,7 @@ export function DataTable({
     ageFilter: unfulfilledAgeFilter,
     typeFilter: unfulfilledTypeFilter,
     channelFilter: unfulfilledChannelFilter,
+    destinationFilter: unfulfilledDestinationFilter,
     dateRange: unfulfilledDateRange,
   })
 
@@ -667,14 +679,15 @@ export function DataTable({
   // Check if unfulfilled filters are active and count them (now using arrays)
   // Note: Date range is NOT counted as a filter since it has its own indicator
   const hasUnfulfilledFilters = unfulfilledStatusFilter.length > 0 || unfulfilledAgeFilter.length > 0 ||
-    unfulfilledTypeFilter.length > 0 || unfulfilledChannelFilter.length > 0
+    unfulfilledTypeFilter.length > 0 || unfulfilledChannelFilter.length > 0 || unfulfilledDestinationFilter.length > 0
 
   // Count active filters for badge - count total selected values
   const activeFilterCount =
     unfulfilledStatusFilter.length +
     unfulfilledAgeFilter.length +
     unfulfilledTypeFilter.length +
-    unfulfilledChannelFilter.length
+    unfulfilledChannelFilter.length +
+    unfulfilledDestinationFilter.length
 
   // Clear unfulfilled filters (does NOT clear date range - date has separate control)
   const clearUnfulfilledFilters = () => {
@@ -682,6 +695,7 @@ export function DataTable({
     setUnfulfilledAgeFilter([])
     setUnfulfilledTypeFilter([])
     setUnfulfilledChannelFilter([])
+    setUnfulfilledDestinationFilter([])
   }
 
   // ============================================================================
@@ -693,13 +707,15 @@ export function DataTable({
   // Note: Claims filter removed - now handled by Delivery IQ page
   const hasShipmentsFilters = shipmentsStatusFilter.length > 0 ||
     shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
-    shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0
+    shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0 ||
+    shipmentsDestinationFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
     shipmentsAgeFilter.length +
     shipmentsTypeFilter.length +
     shipmentsChannelFilter.length +
-    shipmentsCarrierFilter.length
+    shipmentsCarrierFilter.length +
+    shipmentsDestinationFilter.length
 
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
@@ -708,6 +724,7 @@ export function DataTable({
     setShipmentsTypeFilter([])
     setShipmentsChannelFilter([])
     setShipmentsCarrierFilter([])
+    setShipmentsDestinationFilter([])
   }
 
   // ============================================================================
@@ -727,12 +744,13 @@ export function DataTable({
     age: unfulfilledAgeFilter,
     type: unfulfilledTypeFilter,
     channel: unfulfilledChannelFilter,
+    destination: unfulfilledDestinationFilter,
     datePreset: unfulfilledDatePreset,
     dateRange: unfulfilledDateRange ? {
       from: unfulfilledDateRange.from?.toISOString(),
       to: unfulfilledDateRange.to?.toISOString(),
     } : undefined,
-  }), [unfulfilledStatusFilter, unfulfilledAgeFilter, unfulfilledTypeFilter, unfulfilledChannelFilter, unfulfilledDatePreset, unfulfilledDateRange])
+  }), [unfulfilledStatusFilter, unfulfilledAgeFilter, unfulfilledTypeFilter, unfulfilledChannelFilter, unfulfilledDestinationFilter, unfulfilledDatePreset, unfulfilledDateRange])
 
   // Snapshot current shipments filters for saving
   const getShipmentsFilterSnapshot = React.useCallback((): Record<string, unknown> => ({
@@ -741,12 +759,13 @@ export function DataTable({
     type: shipmentsTypeFilter,
     channel: shipmentsChannelFilter,
     carrier: shipmentsCarrierFilter,
+    destination: shipmentsDestinationFilter,
     datePreset: shipmentsDatePreset,
     dateRange: shipmentsDateRange ? {
       from: shipmentsDateRange.from?.toISOString(),
       to: shipmentsDateRange.to?.toISOString(),
     } : undefined,
-  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDatePreset, shipmentsDateRange])
+  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsDatePreset, shipmentsDateRange])
 
   // Apply a saved view's filters to unfulfilled tab
   const applyUnfulfilledFilters = React.useCallback((filters: Record<string, unknown>) => {
@@ -754,6 +773,7 @@ export function DataTable({
     setUnfulfilledAgeFilter((filters.age as string[]) || [])
     setUnfulfilledTypeFilter((filters.type as string[]) || [])
     setUnfulfilledChannelFilter((filters.channel as string[]) || [])
+    setUnfulfilledDestinationFilter((filters.destination as string[]) || [])
     // Restore date range
     const preset = filters.datePreset as DateRangePreset | undefined
     if (preset && preset !== 'custom') {
@@ -777,6 +797,7 @@ export function DataTable({
     setShipmentsTypeFilter((filters.type as string[]) || [])
     setShipmentsChannelFilter((filters.channel as string[]) || [])
     setShipmentsCarrierFilter((filters.carrier as string[]) || [])
+    setShipmentsDestinationFilter((filters.destination as string[]) || [])
     // Restore date range
     const preset = filters.datePreset as DateRangePreset | undefined
     if (preset && preset !== 'custom') {
@@ -1384,6 +1405,11 @@ export function DataTable({
                       onSelectionChange={setUnfulfilledChannelFilter}
                       placeholder="Channel"
                     />
+                    <DestinationFilter
+                      options={buildDestinationOptions(unfulfilledDestinations, unfulfilledDestStates)}
+                      selected={unfulfilledDestinationFilter}
+                      onSelectionChange={setUnfulfilledDestinationFilter}
+                    />
                   </>
                 )}
 
@@ -1420,6 +1446,11 @@ export function DataTable({
                       selected={shipmentsCarrierFilter}
                       onSelectionChange={setShipmentsCarrierFilter}
                       placeholder="Carrier"
+                    />
+                    <DestinationFilter
+                      options={buildDestinationOptions(shipmentsDestinations, shipmentsDestStates)}
+                      selected={shipmentsDestinationFilter}
+                      onSelectionChange={setShipmentsDestinationFilter}
                     />
                   </>
                 )}
@@ -1554,9 +1585,14 @@ export function DataTable({
             ageFilter={debouncedUnfulfilledFilters.ageFilter}
             typeFilter={debouncedUnfulfilledFilters.typeFilter}
             channelFilter={debouncedUnfulfilledFilters.channelFilter}
+            destinationFilter={debouncedUnfulfilledFilters.destinationFilter}
             dateRange={debouncedUnfulfilledFilters.dateRange}
             searchQuery={searchQuery}
             onChannelsChange={setAvailableChannels}
+            onDestinationsChange={(countries, states) => {
+              setUnfulfilledDestinations(countries)
+              setUnfulfilledDestStates(states)
+            }}
             onLoadingChange={setIsUnfulfilledLoading}
             userColumnVisibility={unfulfilledPrefs.columnVisibility}
             columnOrder={unfulfilledPrefs.columnOrder}
@@ -1592,10 +1628,15 @@ export function DataTable({
             typeFilter={debouncedShipmentsFilters.typeFilter}
             channelFilter={debouncedShipmentsFilters.channelFilter}
             carrierFilter={debouncedShipmentsFilters.carrierFilter}
+            destinationFilter={debouncedShipmentsFilters.destinationFilter}
             dateRange={debouncedShipmentsFilters.dateRange}
             searchQuery={searchQuery}
             onChannelsChange={setShipmentsChannels}
             onCarriersChange={setShipmentsCarriers}
+            onDestinationsChange={(countries, states) => {
+              setShipmentsDestinations(countries)
+              setShipmentsDestStates(states)
+            }}
             onLoadingChange={setIsShipmentsLoading}
             // Page size persistence
             initialPageSize={shipmentsPrefs.pageSize}

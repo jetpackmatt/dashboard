@@ -554,7 +554,7 @@ export async function collectBillingTransactions(
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: tx.id,
@@ -566,7 +566,7 @@ export async function collectBillingTransactions(
         markupRuleId: null,
         markupPercentage: 0,
         lineCategory: 'Receiving',
-        description: `WRO ${tx.reference_id || 'N/A'} - ${transactionFee || 'Receiving'}`,
+        description: `${referenceType || 'WRO'} ${tx.reference_id || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: tx.charge_date,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
@@ -843,7 +843,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: txId,
@@ -856,7 +856,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         markupRuleId: null,
         markupPercentage: 0,
         lineCategory: 'Receiving',
-        description: `WRO ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
+        description: `${referenceType || 'WRO'} ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
@@ -1124,7 +1124,7 @@ export async function collectUnprocessedBillingTransactions(
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Regular Receiving (WRO = Warehouse Receiving Order) - includes WRO Receiving Fee
       items.push({
         id: txId,
@@ -1137,7 +1137,7 @@ export async function collectUnprocessedBillingTransactions(
         markupRuleId: null,
         markupPercentage: 0,
         lineCategory: 'Receiving',
-        description: `WRO ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
+        description: `${referenceType || 'WRO'} ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
@@ -2356,7 +2356,7 @@ export async function collectDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO = Warehouse Receiving Order) - decode ULID for full timestamp
       receiving.push({
         id: tx.id,
@@ -2763,7 +2763,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp (matches reference XLSX)
       receiving.push({
         id: tx.id as string,
@@ -3003,7 +3003,7 @@ export async function collectUnprocessedDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
-    } else if (referenceType === 'WRO' || transactionFee.includes('Receiving')) {
+    } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
       // Receiving (WRO) - decode ULID for full timestamp
       receiving.push({
         id: tx.id as string,

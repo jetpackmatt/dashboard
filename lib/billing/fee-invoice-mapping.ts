@@ -43,10 +43,10 @@ export const FEE_TO_INVOICE_TYPE: Record<string, InvoiceType> = {
 
   // Warehouse Storage
   'Warehousing Fee': 'WarehouseStorage',
-  'URO Storage Fee': 'WarehouseStorage',
 
   // Warehouse Inbound (Receiving)
   'WRO Receiving Fee': 'WarehouseInboundFee',
+  'URO Storage Fee': 'WarehouseInboundFee',
 
   // Returns
   'Return to sender - Processing Fees': 'ReturnsFee',

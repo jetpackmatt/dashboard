@@ -21,6 +21,7 @@ const TIMELINE_DELAY_MS = 500 // Delay between timeline API calls (500ms = max 1
 
 // Map ShipBob timeline log_type_id to database column names
 const TIMELINE_EVENT_MAP: Record<number, string> = {
+  118: 'event_pickinprogress',
   601: 'event_created',
   602: 'event_picked',
   603: 'event_packed',
@@ -4128,8 +4129,9 @@ export async function reconcileVoidedShippingTransactions(): Promise<VoidedRecon
       return result
     }
 
-    result.duplicateGroups = duplicates.length
-    console.log(`[VoidedReconcile] Found ${duplicates.length} duplicate groups`)
+    const uniqueShipments = new Set(duplicates.map((d: { reference_id: string }) => d.reference_id))
+    result.duplicateGroups = uniqueShipments.size
+    console.log(`[VoidedReconcile] Found ${duplicates.length} transactions to void across ${result.duplicateGroups} shipments`)
 
     // Mark older transactions as voided
     for (const dup of duplicates) {
@@ -4142,6 +4144,7 @@ export async function reconcileVoidedShippingTransactions(): Promise<VoidedRecon
         result.errors.push(`Update ${dup.transaction_id}: ${updateErr.message}`)
       } else {
         result.voided++
+        console.log(`[VoidedReconcile] Voided ${dup.transaction_id} (shipment ${dup.reference_id}): ${dup.reason}`)
       }
     }
 

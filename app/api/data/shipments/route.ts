@@ -1,4 +1,5 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { parseDestinationFilter } from '@/lib/destination-data'
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
 
@@ -80,6 +81,9 @@ export async function GET(request: NextRequest) {
   // Carrier filter (comma-separated) - filters by shipping carrier
   const carrierFilter = searchParams.get('carrier')?.split(',').filter(Boolean) || []
 
+  // Destination filter (comma-separated country codes and country:state pairs)
+  const destinationFilter = searchParams.get('destination')?.split(',').filter(Boolean) || []
+
   // Search query for real-time search across multiple fields
   const searchQuery = searchParams.get('search')?.trim() || ''
 
@@ -101,7 +105,10 @@ export async function GET(request: NextRequest) {
     // Search also requires JOIN to search across order fields like store_order_id
     // Age filter also requires JOIN since we filter on order_import_date
     // NOTE: type/channel filters now use denormalized columns on shipments (no JOIN needed)
-    const hasOrderFilters = startDate || endDate || searchQuery || ageFilter.length > 0
+    // Parse destination filter into country-level and state-level parts
+    const parsedDestination = destinationFilter.length > 0 ? parseDestinationFilter(destinationFilter) : null
+    const hasStateFilter = parsedDestination ? Object.keys(parsedDestination.statesByCountry).length > 0 : false
+    const hasOrderFilters = startDate || endDate || searchQuery || ageFilter.length > 0 || hasStateFilter
 
     // =========================================================================
     // SINGLE QUERY WITH JOIN - Let the database do the filtering properly
@@ -462,6 +469,40 @@ export async function GET(request: NextRequest) {
     // Apply carrier filter (filters on shipments.carrier column)
     if (carrierFilter.length > 0) {
       query = query.in('carrier', carrierFilter)
+    }
+
+    // Apply destination filter
+    // Country-level only: filter on shipments.destination_country (no JOIN needed)
+    // State-level: use !inner JOIN + .or() with referencedTable:'orders' to filter
+    //   on orders.country/state — this lets PostgREST handle it in SQL so
+    //   count and pagination are correct
+    if (parsedDestination) {
+      const { countries, statesByCountry } = parsedDestination
+      const stateCountries = Object.keys(statesByCountry)
+
+      if (countries.length > 0 && stateCountries.length === 0) {
+        // Country-level only — filter directly on shipments table
+        query = query.in('destination_country', countries)
+      } else if (stateCountries.length > 0) {
+        // Has state-level filtering — use the !inner JOIN (forced by hasOrderFilters)
+        // and filter on the orders relation directly
+        // Also narrow destination_country on shipments for performance
+        const allCountries = [...new Set([...countries, ...stateCountries])]
+        query = query.in('destination_country', allCountries)
+
+        // Build OR conditions scoped to the orders relation
+        const orderOrParts: string[] = []
+        // Country-level: any order from these countries passes
+        if (countries.length > 0) {
+          orderOrParts.push(`country.in.(${countries.join(',')})`)
+        }
+        // State-level: only matching states for each country
+        for (const c of stateCountries) {
+          const states = statesByCountry[c]
+          orderOrParts.push(`and(country.eq.${c},state.in.(${states.join(',')}))`)
+        }
+        query = query.or(orderOrParts.join(','), { referencedTable: 'orders' })
+      }
     }
 
     // Apply search filter - hybrid approach:
@@ -1042,6 +1083,7 @@ export async function GET(request: NextRequest) {
         // Additional columns
         orderDate: order?.purchase_date || null,
         destCountry: row.destination_country || '',
+        destState: order?.state || '',
         shipOption: row.carrier_service || '',
         // Computed field for export
         age: age,
@@ -1131,6 +1173,19 @@ export async function GET(request: NextRequest) {
       allCarriers = [...new Set(shipments.map((s: any) => s.carrier).filter(Boolean))].sort() as string[]
     }
 
+    // Extract unique destinations (countries + states) from current page data
+    const allDestinationCountries = [...new Set(shipments.map((s: any) => s.destCountry).filter(Boolean))].sort() as string[]
+    // Build country → states map from current data
+    const destinationStates: Record<string, string[]> = {}
+    for (const s of shipments as any[]) {
+      if (s.destCountry && s.destState) {
+        if (!destinationStates[s.destCountry]) destinationStates[s.destCountry] = []
+        if (!destinationStates[s.destCountry].includes(s.destState)) {
+          destinationStates[s.destCountry].push(s.destState)
+        }
+      }
+    }
+
     // Use the pre-computed filtered count if age filter was applied, otherwise use DB count
     const finalTotalCount = filteredTotalCount !== null ? filteredTotalCount : (count || 0)
 
@@ -1139,6 +1194,8 @@ export async function GET(request: NextRequest) {
       totalCount: finalTotalCount,
       hasMore: (offset + limit) < finalTotalCount,
       carriers: allCarriers,
+      destinations: allDestinationCountries,
+      destinationStates,
     })
   } catch (err) {
     console.error('Shipments API error:', err)

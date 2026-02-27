@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Package } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ExternalLink, Package } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Dialog,
@@ -59,6 +59,7 @@ interface ShipmentSummary {
   clientId: string  // Needed for claim submission
   orderId: string
   trackingId: string
+  trackingUrl: string | null
   carrier: string
   status: string
   customer: string
@@ -253,6 +254,7 @@ export function ClaimSubmissionDialog({
         clientId: shipmentData.clientId,
         orderId: shipmentData.orderId,
         trackingId: shipmentData.trackingId || "—",
+        trackingUrl: shipmentData.trackingUrl || null,
         carrier: shipmentData.shipping?.carrier || "—",
         status: shipmentData.status,
         customer: shipmentData.customer?.name || "—",
@@ -319,6 +321,7 @@ export function ClaimSubmissionDialog({
         clientId: shipmentData.clientId,
         orderId: shipmentData.orderId,
         trackingId: shipmentData.trackingId || "—",
+        trackingUrl: shipmentData.trackingUrl || null,
         carrier: shipmentData.shipping?.carrier || "—",
         status: shipmentData.status,
         customer: shipmentData.customer?.name || "—",
@@ -543,7 +546,9 @@ export function ClaimSubmissionDialog({
       case "compensation":
         return !!formData.compensationRequest
       case "documentation":
-        // All claim types with documentation step require photo + customer complaint
+        // Incorrect Delivery: all uploads optional (description is the key evidence)
+        if (formData.claimType === "incorrectDelivery") return true
+        // All other claim types with documentation step require photo + customer complaint
         const hasPhoto = formData.attachments.photo && formData.attachments.photo.length > 0
         const hasComplaint = formData.attachments.customerComplaint && formData.attachments.customerComplaint.length > 0
         return hasPhoto && hasComplaint
@@ -599,7 +604,7 @@ export function ClaimSubmissionDialog({
           carrier: shipmentSummary.carrier !== "—" ? shipmentSummary.carrier : null,
           trackingNumber: shipmentSummary.trackingId !== "—" ? shipmentSummary.trackingId : null,
           shipDate: shipmentSummary.labelCreated !== "—" ? shipmentSummary.labelCreated : null,
-          description: formData.description || null,
+          description: formData.description || (formData.claimType === "lostInTransit" ? "This shipment has been lost in transit." : null),
           reshipmentStatus: formData.reshipmentStatus,
           // Always store the resolved shipment_id (not the user's raw input)
           reshipmentId: resolvedReshipmentId || formData.reshipmentId || null,
@@ -818,36 +823,44 @@ export function ClaimSubmissionDialog({
               )}
 
               {litVerification && !litVerification.eligible && (
-                <div className="space-y-5">
-                  {/* Main message - big number focus */}
-                  <div className="text-center">
-                    <div className="text-amber-600 font-medium mb-3">Not Yet Eligible</div>
-                    {litVerification.daysRemaining && (
-                      <div className="text-4xl font-bold text-foreground">
-                        {litVerification.daysRemaining} day{litVerification.daysRemaining === 1 ? '' : 's'}
-                      </div>
-                    )}
-                    <div className="text-sm text-muted-foreground mt-1">
-                      until eligible
-                    </div>
-                  </div>
-
-                  {/* Compact info row */}
-                  {litVerification.lastScanDate && (
-                    <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1.5">
-                        <Package className="h-3.5 w-3.5" />
-                        <span>Last scan: {new Date(litVerification.lastScanDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-                      </div>
-                      <span className="text-muted-foreground/50">·</span>
-                      <span>{litVerification.isInternational ? 'International' : 'Domestic'} ({litVerification.requiredDays} days required)</span>
+                <div className="text-center">
+                  <div className="text-xs font-medium uppercase tracking-wider text-amber-600 dark:text-amber-500 mb-3">Not Yet Eligible</div>
+                  {litVerification.daysRemaining != null && (
+                    <div className="text-4xl font-bold text-foreground leading-none">
+                      {litVerification.daysRemaining} <span className="text-lg font-medium text-muted-foreground">day{litVerification.daysRemaining === 1 ? '' : 's'} remaining</span>
                     </div>
                   )}
-
-                  {/* Status detail - collapsed by default feel */}
-                  {litVerification.lastScanDescription && (
-                    <div className="text-xs text-muted-foreground/70 text-center px-4">
-                      {litVerification.lastScanDescription}
+                  {litVerification.lastScanDate && litVerification.requiredDays && (
+                    <div className="text-sm text-muted-foreground mt-2">
+                      If no further scans, eligible{' '}
+                      <span className="font-medium text-foreground">
+                        {(() => {
+                          const eligibleDate = new Date(litVerification.lastScanDate)
+                          eligibleDate.setDate(eligibleDate.getDate() + litVerification.requiredDays)
+                          return eligibleDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                        })()}
+                      </span>.
+                    </div>
+                  )}
+                  {litVerification.lastScanDate && (
+                    <div className="text-xs text-muted-foreground mt-4">
+                      Last carrier scan {new Date(litVerification.lastScanDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {litVerification.lastScanDescription && (
+                        <> — {litVerification.lastScanDescription.split(',').slice(0, -1).join(', ').replace(/^\s+/, '') || litVerification.lastScanDescription}</>
+                      )}
+                    </div>
+                  )}
+                  {shipmentSummary?.trackingUrl && (
+                    <div className="mt-3">
+                      <a
+                        href={shipmentSummary.trackingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        View Carrier Tracking
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
                     </div>
                   )}
                 </div>
@@ -999,22 +1012,26 @@ export function ClaimSubmissionDialog({
 
       case "documentation":
         const isDamage = formData.claimType === "damage"
+        const isIncorrectDelivery = formData.claimType === "incorrectDelivery"
         const photoLabel = isDamage
           ? "Photo Showing Damaged Item(s)"
           : "Photo Showing Incorrect Item(s)"
+        const docsRequired = !isIncorrectDelivery
 
         const MAX_PER_FILE_MB = 50
 
         return (
           <div className="space-y-5">
-            {/* Field 1: Photo - REQUIRED (single file) */}
+            {/* Field 1: Photo - REQUIRED for damage/pick error/short ship, OPTIONAL for incorrect delivery */}
             <div className="space-y-1.5">
               <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 {photoLabel}
                 {formData.attachments.photo.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
+                ) : docsRequired ? (
                   <span className="text-red-500">*</span>
+                ) : (
+                  <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                 )}
               </Label>
               <FileUpload
@@ -1029,14 +1046,16 @@ export function ClaimSubmissionDialog({
               />
             </div>
 
-            {/* Field 2: Customer Complaint - REQUIRED (single file) */}
+            {/* Field 2: Customer Complaint - REQUIRED for damage/pick error/short ship, OPTIONAL for incorrect delivery */}
             <div className="space-y-1.5">
               <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 Screenshot of Customer Complaint
                 {formData.attachments.customerComplaint.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : (
+                ) : docsRequired ? (
                   <span className="text-red-500">*</span>
+                ) : (
+                  <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                 )}
               </Label>
               <FileUpload

@@ -47,8 +47,11 @@ export function StatusUpdateDialog({
     }
   }, [ticket, open])
 
+  const noteRequired = newStatus === 'In Process'
+
   const handleUpdate = async () => {
     if (!ticket || !newStatus) return
+    if (noteRequired && !statusNote.trim()) return
 
     setIsUpdating(true)
     try {
@@ -107,12 +110,17 @@ export function StatusUpdateDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="status-note">Note (optional)</Label>
+            <Label htmlFor="status-note">
+              {noteRequired ? 'Status Note' : 'Note (optional)'}
+            </Label>
             <Textarea
               id="status-note"
               value={statusNote}
               onChange={(e) => setStatusNote(e.target.value)}
-              placeholder="Add a note about this status change..."
+              placeholder={noteRequired
+                ? "Describe what's being done, e.g. \"Investigating with warehouse team...\""
+                : "Add a note about this status change..."
+              }
               rows={3}
             />
           </div>
@@ -123,7 +131,7 @@ export function StatusUpdateDialog({
           </Button>
           <Button
             onClick={handleUpdate}
-            disabled={isUpdating || newStatus === ticket?.status}
+            disabled={isUpdating || newStatus === ticket?.status || (noteRequired && !statusNote.trim())}
           >
             {isUpdating ? (
               <>

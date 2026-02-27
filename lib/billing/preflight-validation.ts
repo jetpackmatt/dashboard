@@ -505,8 +505,8 @@ export async function runPreflightValidation(
   }
   const returnsDataMap = new Map(returnsData.map(r => [String(r.shipbob_return_id), r]))
 
-  // ===== 8. Get RECEIVING (WRO) transactions (with pagination) =====
-  // Only include actual receiving fees - exclude "Inventory Placement Program Fee" which goes to Additional Services
+  // ===== 8. Get RECEIVING (WRO/URO) transactions (with pagination) =====
+  // Only include actual WRO receiving fees - exclude "Inventory Placement Program Fee" which goes to Additional Services
   const receivingTransactions: Record<string, unknown>[] = []
   let receivingOffset = 0
   let hasMoreReceiving = true
@@ -531,6 +531,28 @@ export async function runPreflightValidation(
     }
   }
 
+  // Also include URO Storage Fee transactions as receiving
+  let uroOffset = 0
+  let hasMoreUro = true
+  while (hasMoreUro) {
+    const { data: uroBatch } = await supabase
+      .from('transactions')
+      .select('id, reference_id, fee_type, transaction_type, charge_date, cost')
+      .eq('client_id', clientId)
+      .eq('reference_type', 'URO')
+      .in('invoice_id_sb', invoiceIds)
+      .is('dispute_status', null)
+      .range(uroOffset, uroOffset + PAGE_SIZE - 1)
+
+    if (uroBatch && uroBatch.length > 0) {
+      receivingTransactions.push(...uroBatch)
+      uroOffset += uroBatch.length
+      hasMoreUro = uroBatch.length === PAGE_SIZE
+    } else {
+      hasMoreUro = false
+    }
+  }
+
   // ===== 9. Get CREDITS transactions (with pagination) =====
   const creditsTransactions: Record<string, unknown>[] = []
   let creditsOffset = 0
@@ -539,7 +561,7 @@ export async function runPreflightValidation(
   while (hasMoreCredits) {
     const { data: creditsBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, charge_date, additional_details, cost')
+      .select('id, reference_id, charge_date, additional_details, cost, billed_amount, markup_is_preview')
       .eq('client_id', clientId)
       .eq('fee_type', 'Credit')
       .in('invoice_id_sb', invoiceIds)
@@ -875,6 +897,29 @@ export async function runPreflightValidation(
     checkField('CREDITS', 'reference_id', cr.total, cr.withReferenceId, 'credits')
     checkField('CREDITS', 'transaction_date', cr.total, cr.withTransactionDate, 'credits')
     checkField('CREDITS', 'credit_reason', cr.total, cr.withCreditReason, 'credits')
+  }
+
+  // PENDING CREDIT CLASSIFICATION CHECK
+  // Credits with billed_amount=NULL and markup_is_preview=true are still awaiting
+  // classification in misfits — they shouldn't be invoiced until resolved
+  const pendingCredits = creditsTransactions.filter(tx =>
+    tx.billed_amount === null && tx.markup_is_preview === true
+  )
+  if (pendingCredits.length > 0) {
+    const pendingTotal = pendingCredits.reduce((sum, tx) => sum + parseNum(tx.cost), 0)
+    issues.push({
+      category: 'PENDING_CREDITS',
+      severity: 'critical',
+      message: `${pendingCredits.length} credit(s) totaling $${Math.abs(pendingTotal).toFixed(2)} are pending classification in misfits and will be invoiced without proper markup`,
+      count: pendingCredits.length,
+      percentage: Math.round((pendingCredits.length / creditsTransactions.length) * 100),
+      details: pendingCredits.slice(0, 5).map(tx => ({
+        transaction_id: tx.id,
+        reference_id: tx.reference_id,
+        cost: tx.cost,
+        charge_date: tx.charge_date,
+      })),
+    })
   }
 
   // ===== DATA QUALITY CHECKS =====

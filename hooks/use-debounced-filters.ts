@@ -48,6 +48,7 @@ export interface ShipmentsFilters {
   typeFilter: string[]
   channelFilter: string[]
   carrierFilter: string[]
+  destinationFilter: string[]
   dateRange: DateRange | undefined
 }
 
@@ -83,6 +84,7 @@ export interface UnfulfilledFilters {
   ageFilter: string[]
   typeFilter: string[]
   channelFilter: string[]
+  destinationFilter: string[]
   dateRange: DateRange | undefined
 }
 

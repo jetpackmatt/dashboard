@@ -93,6 +93,7 @@ export interface UnfulfilledOrder {
   // Optional columns
   totalShipments: number
   destCountry: string
+  destState: string
   shipOption: string
   // Computed field (for export - also used in cell renderer)
   age?: number | null
@@ -503,6 +504,7 @@ export interface Shipment {
   carrier: string
   // New optional fields for additional columns
   destCountry?: string
+  destState?: string
   orderDate?: string
   fcName?: string
   shipOption?: string

@@ -28,11 +28,14 @@ interface UnfulfilledTableProps {
   ageFilter?: string[]
   typeFilter?: string[]
   channelFilter?: string[]
+  destinationFilter?: string[]
   dateRange?: DateRange
   // Search query for real-time search
   searchQuery?: string
   // Callback to update available channels in parent
   onChannelsChange?: (channels: string[]) => void
+  // Callback to update available destinations in parent
+  onDestinationsChange?: (countries: string[], statesByCountry: Record<string, string[]>) => void
   // Callback to notify parent of loading state changes
   onLoadingChange?: (isLoading: boolean) => void
   // Column visibility from column selector
@@ -56,9 +59,11 @@ export function UnfulfilledTable({
   ageFilter = [],
   typeFilter = [],
   channelFilter = [],
+  destinationFilter = [],
   dateRange,
   searchQuery = "",
   onChannelsChange,
+  onDestinationsChange,
   onLoadingChange,
   userColumnVisibility = {},
   columnOrder,
@@ -241,12 +246,43 @@ export function UnfulfilledTable({
         })
       }
 
+      // Destination filter - match country-level or country:state-level
+      if (destinationFilter.length > 0) {
+        filteredData = filteredData.filter((order: UnfulfilledOrder) => {
+          if (destinationFilter.includes(order.destCountry)) return true
+          if (order.destState) {
+            return destinationFilter.includes(`${order.destCountry}:${order.destState}`)
+          }
+          return false
+        })
+      }
+
+      // Extract destination options and notify parent
+      // Only update when destination filter is NOT active (like channels pattern)
+      if (destinationFilter.length === 0 && onDestinationsChange) {
+        const countries = [...new Set(
+          filteredData.map((d: UnfulfilledOrder) => d.destCountry).filter(Boolean)
+        )] as string[]
+        const statesByCountry: Record<string, string[]> = {}
+        for (const d of filteredData as UnfulfilledOrder[]) {
+          if (d.destCountry && d.destState) {
+            if (!statesByCountry[d.destCountry]) statesByCountry[d.destCountry] = []
+            if (!statesByCountry[d.destCountry].includes(d.destState)) {
+              statesByCountry[d.destCountry].push(d.destState)
+            }
+          }
+        }
+        if (countries.length > 0) {
+          onDestinationsChange(countries, statesByCountry)
+        }
+      }
+
       // Note: Date range filtering is now done server-side for performance
 
       setData(filteredData)
       // Use filtered data count when client-side filters are active
       // Note: Status filter is now server-side, so use server count for that
-      const hasClientFilters = ageFilter.length > 0 || typeFilter.length > 0 || channelFilter.length > 0
+      const hasClientFilters = ageFilter.length > 0 || typeFilter.length > 0 || channelFilter.length > 0 || destinationFilter.length > 0
       setTotalCount(hasClientFilters ? filteredData.length : (result.totalCount || 0))
     } catch (err) {
       console.error('Error fetching unfulfilled orders:', err)
@@ -256,7 +292,7 @@ export function UnfulfilledTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange])
+  }, [clientId, data.length, statusFilter, ageFilter, typeFilter, channelFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange, onDestinationsChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
@@ -266,12 +302,12 @@ export function UnfulfilledTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset page when filter changes (from parent)
   React.useEffect(() => {
     setPageIndex(0)
-  }, [statusFilter, ageFilter, typeFilter, channelFilter, dateRange, searchQuery])
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, destinationFilter, dateRange, searchQuery])
 
   // Handle page changes
   const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {

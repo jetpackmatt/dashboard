@@ -430,6 +430,7 @@ export async function GET(
       customer: {
         name: shipment.recipient_name || shipment.orders?.customer_name,
         email: shipment.recipient_email || shipment.orders?.customer_email,
+        phone: shipment.recipient_phone || null,
         company: shipment.orders?.company_name,
         address: {
           line1: shipment.orders?.address1,
@@ -450,6 +451,8 @@ export async function GET(
         zone: shipment.zone_used,
         fulfillmentCenter: shipment.fc_name,
         fcId: shipment.fc_id,
+        originCountry: shipment.origin_country || null,
+        requireSignature: shipment.require_signature || false,
       },
 
       // Package details
@@ -460,6 +463,12 @@ export async function GET(
         length: shipment.length,
         width: shipment.width,
         height: shipment.height,
+        materialType: shipment.package_material_type || null,
+        insuranceValue: shipment.insurance_value || null,
+        giftMessage: shipment.gift_message || null,
+        trackingBol: shipment.tracking_bol || null,
+        trackingProNumber: shipment.tracking_pro_number || null,
+        trackingScac: shipment.tracking_scac || null,
       },
 
       // Timeline dates
