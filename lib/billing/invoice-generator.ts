@@ -9,8 +9,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { calculateBatchMarkups, getShipmentFeeType, type BillingCategory, type TransactionContext } from './markup-engine'
 import type { JetpackInvoice, LineCategory } from './types'
 import ExcelJS from 'exceljs'
-import { generatePDFInvoice } from './pdf-generator'
-
 // Fee type display name mappings (server-compatible version)
 // Duplicated from components/transactions/cell-renderers.tsx since that's client-only
 const FEE_TYPE_DISPLAY_NAMES: Record<string, string> = {
@@ -3175,7 +3173,8 @@ export async function generateInvoice(
   // Generate XLS file with 6 sheets
   const xlsBuffer = await generateExcelInvoice(data, detailedData)
 
-  // Generate PDF summary
+  // Generate PDF summary (dynamic import avoids loading @react-pdf at module init)
+  const { generatePDFInvoice } = await import('./pdf-generator')
   const pdfBuffer = await generatePDFInvoice(data)
 
   // Store files (both XLSX and PDF)
@@ -3187,5 +3186,3 @@ export async function generateInvoice(
   return data
 }
 
-// Re-export PDF generator for direct use
-export { generatePDFInvoice }

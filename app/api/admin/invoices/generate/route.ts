@@ -81,12 +81,13 @@ export async function POST(request: NextRequest) {
 
     console.log(`Invoice date: ${invoiceDate.toISOString().split('T')[0]}`)
 
-    // Get clients to process
+    // Get clients to process - only billable clients (must have short_code configured)
     let clientsQuery = adminClient
       .from('clients')
       .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address, payment_method')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
+      .not('short_code', 'is', null)
 
     if (clientId) {
       clientsQuery = clientsQuery.eq('id', clientId)
@@ -140,7 +141,8 @@ export async function POST(request: NextRequest) {
 
     for (const client of clients) {
       if (!client.short_code) {
-        errors.push({ client: client.company_name, error: 'No short code configured' })
+        // Non-billable client (e.g. commission-only) — skip silently
+        console.log(`Skipping ${client.company_name}: no short code configured`)
         continue
       }
 
