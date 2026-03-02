@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
         reshipment_status,
         reshipment_id,
         attachments,
+        carrier_confirmed_loss,
         client:clients!care_tickets_client_id_fkey (
           company_name,
           merchant_id
@@ -123,6 +124,7 @@ export async function GET(request: NextRequest) {
                 compensationRequest: claim.compensation_request as string | null,
                 reshipmentStatus: claim.reshipment_status as ReshipmentStatus | null,
                 reshipmentId: claim.reshipment_id as string | null,
+                carrierConfirmedLoss: claim.carrier_confirmed_loss as boolean,
               })
 
               // Fetch attachments if any (path is used to generate fresh signed URLs)

@@ -222,7 +222,8 @@ export async function POST(request: NextRequest) {
       const userName = user?.user_metadata?.full_name || user?.email || 'System'
 
       const creditAmount = Math.abs(parseFloat(tx.cost) || 0)
-      const { shipmentId: newShipmentId, description } = body
+      const { shipmentId: newShipmentId, description, issueType } = body
+      const validIssueTypes = ['Loss', 'Damage', 'Incorrect Items', 'Incorrect Quantity', 'Claim']
 
       // Determine shipment ID: from input, or from transaction reference
       const ticketShipmentId = newShipmentId?.trim() ||
@@ -288,7 +289,7 @@ export async function POST(request: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ticketData: Record<string, any> = {
         ticket_type: 'Claim',
-        issue_type: 'Credit',
+        issue_type: validIssueTypes.includes(issueType) ? issueType : 'Loss',
         status: isAlreadyInvoiced ? 'Resolved' : 'Credit Approved',
         credit_amount: creditAmount,
         currency: 'USD',
@@ -315,8 +316,19 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (ticketCreateErr || !newTicket) {
-        console.error('Error creating ticket:', ticketCreateErr)
-        return NextResponse.json({ error: 'Failed to create ticket' }, { status: 500 })
+        console.error('Error creating ticket:', ticketCreateErr, {
+          transactionId,
+          ticketType: ticketData.ticket_type,
+          issueType: ticketData.issue_type,
+          status: ticketData.status,
+          creditAmount: ticketData.credit_amount,
+          clientId: ticketData.client_id,
+          shipmentId: ticketData.shipment_id,
+          createdBy: ticketData.created_by,
+        })
+        return NextResponse.json({
+          error: ticketCreateErr?.message || 'Failed to create ticket',
+        }, { status: 500 })
       }
 
       // Link the transaction to the new ticket
@@ -363,7 +375,9 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (err) {
-    console.error('Error in misfits connect route:', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    console.error('Error in misfits connect route:', err instanceof Error ? { message: err.message, stack: err.stack } : err)
+    return NextResponse.json({
+      error: err instanceof Error ? err.message : 'Internal server error',
+    }, { status: 500 })
   }
 }

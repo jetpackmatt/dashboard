@@ -184,8 +184,11 @@ export async function GET(request: NextRequest) {
     if (search) {
       mapped = mapped.filter((item) =>
         item.ticketNumber?.toString().includes(search) ||
+        item.shipmentId?.toString().toLowerCase().includes(search) ||
         item.orderId?.toLowerCase().includes(search) ||
         item.trackingNumber?.toLowerCase().includes(search) ||
+        item.workOrderId?.toString().toLowerCase().includes(search) ||
+        item.inventoryId?.toString().toLowerCase().includes(search) ||
         item.description?.toLowerCase().includes(search) ||
         item.clientName?.toLowerCase().includes(search)
       )
@@ -261,6 +264,7 @@ export async function POST(request: NextRequest) {
       internalNotes,
       attachments,
       initialNote,
+      carrierConfirmedLoss,
     } = body
 
     // Validate required fields
@@ -350,6 +354,7 @@ export async function POST(request: NextRequest) {
         internal_notes: internalNotes || null,
         attachments: attachments || [],
         events: initialEvents,
+        carrier_confirmed_loss: carrierConfirmedLoss || false,
       })
       .select()
       .single()

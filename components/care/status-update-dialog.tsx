@@ -131,7 +131,7 @@ export function StatusUpdateDialog({
           </Button>
           <Button
             onClick={handleUpdate}
-            disabled={isUpdating || newStatus === ticket?.status || (noteRequired && !statusNote.trim())}
+            disabled={isUpdating || (newStatus === ticket?.status && !statusNote.trim()) || (noteRequired && !statusNote.trim())}
           >
             {isUpdating ? (
               <>

@@ -30,6 +30,7 @@ interface EditTicketDialogProps {
   onOpenChange: (open: boolean) => void
   ticket: Ticket | null
   onUpdate: () => Promise<void>
+  isBrandUser?: boolean
 }
 
 interface EditForm {
@@ -60,6 +61,7 @@ export function EditTicketDialog({
   onOpenChange,
   ticket,
   onUpdate,
+  isBrandUser = false,
 }: EditTicketDialogProps) {
   const [editForm, setEditForm] = React.useState<EditForm>({
     ticketType: '',
@@ -175,29 +177,8 @@ export function EditTicketDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
-          {/* Row 1: Status + Type + Issue Type (Claims only) */}
-          <div className={cn("grid gap-4", hasIssueType ? "grid-cols-3" : "grid-cols-2")}>
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-status" className={labelClass}>
-                Status <span className="text-red-500">*</span>
-              </Label>
-              <Select
-                value={editForm.status}
-                onValueChange={(value) => setEditForm({ ...editForm, status: value })}
-              >
-                <SelectTrigger id="edit-status" className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Input Required">Input Required</SelectItem>
-                  <SelectItem value="Under Review">Under Review</SelectItem>
-                  <SelectItem value="Credit Requested">Credit Requested</SelectItem>
-                  <SelectItem value="Credit Approved">Credit Approved</SelectItem>
-                  <SelectItem value="Credit Denied">Credit Denied</SelectItem>
-                  <SelectItem value="Resolved">Resolved</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Row 1: Type + Issue Type (Claims only) */}
+          <div className={cn("grid gap-4", hasIssueType ? "grid-cols-2" : "grid-cols-1")}>
             <div className="space-y-1.5">
               <Label htmlFor="edit-ticketType" className={labelClass}>
                 Ticket Type <span className="text-red-500">*</span>
@@ -241,30 +222,18 @@ export function EditTicketDialog({
             )}
           </div>
 
-          {/* Order/Shipment Details - Claim + Shipment Inquiry */}
+          {/* Shipment Details - Claim + Shipment Inquiry */}
           {hasShipmentFields && (
             <>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-shipmentId" className={labelClass}>Shipment ID</Label>
-                  <Input
-                    id="edit-shipmentId"
-                    value={editForm.shipmentId}
-                    onChange={(e) => setEditForm({ ...editForm, shipmentId: e.target.value })}
-                    placeholder="e.g., 330867617"
-                    className="h-9 placeholder:text-muted-foreground/40"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-orderId" className={labelClass}>Order ID</Label>
-                  <Input
-                    id="edit-orderId"
-                    value={editForm.orderId}
-                    onChange={(e) => setEditForm({ ...editForm, orderId: e.target.value })}
-                    placeholder="e.g., 1847362"
-                    className="h-9 placeholder:text-muted-foreground/40"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-shipmentId" className={labelClass}>Shipment ID</Label>
+                <Input
+                  id="edit-shipmentId"
+                  value={editForm.shipmentId}
+                  onChange={(e) => setEditForm({ ...editForm, shipmentId: e.target.value })}
+                  placeholder="e.g., 330867617"
+                  className="h-9 placeholder:text-muted-foreground/40"
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-4">
@@ -432,20 +401,22 @@ export function EditTicketDialog({
             />
           </div>
 
-          {/* Add Internal Note - always shown */}
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-internalNote" className={labelClass}>
-              Add Internal Note <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(admin/care only)</span>
-            </Label>
-            <Textarea
-              id="edit-internalNote"
-              value={editForm.internalNote}
-              onChange={(e) => setEditForm({ ...editForm, internalNote: e.target.value })}
-              placeholder="Add a new internal note..."
-              rows={2}
-              className="placeholder:text-muted-foreground/40"
-            />
-          </div>
+          {/* Add Internal Note - admin/care only */}
+          {!isBrandUser && (
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-internalNote" className={labelClass}>
+                Add Internal Note
+              </Label>
+              <Textarea
+                id="edit-internalNote"
+                value={editForm.internalNote}
+                onChange={(e) => setEditForm({ ...editForm, internalNote: e.target.value })}
+                placeholder="Add a new internal note..."
+                rows={2}
+                className="placeholder:text-muted-foreground/40"
+              />
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -12,6 +12,7 @@ import {
   ChevronsRightIcon,
   PlusIcon,
   PencilIcon,
+  Trash2Icon,
   SearchIcon,
   XIcon,
   DownloadIcon,
@@ -56,6 +57,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -150,6 +152,8 @@ function SortableHeader({ columnId, children, className, onClick }: SortableHead
 export default function CarePage() {
   const { selectedClientId, isAdmin, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, clients } = useClient()
   const canViewAllBrands = effectiveIsAdmin || effectiveIsCareUser
+  const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser && !effectiveIsCareAdmin
+  const canDeleteTickets = effectiveIsAdmin || effectiveIsCareAdmin
   const { settings: userSettings } = useUserSettings()
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
@@ -311,11 +315,11 @@ export default function CarePage() {
   }, [orderedDraggableColumns, carePrefs])
 
   // Sorting state - defaults to Date column, newest first
-  const [sortColumn, setSortColumn] = React.useState<'date' | 'updated' | 'credit'>('date')
+  const [sortColumn, setSortColumn] = React.useState<'date' | 'updated' | 'credit' | 'type'>('date')
   const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('desc')
 
   // Handle column sort click
-  const handleSort = (column: 'date' | 'updated' | 'credit') => {
+  const handleSort = (column: 'date' | 'updated' | 'credit' | 'type') => {
     if (sortColumn === column) {
       // Toggle direction if same column
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
@@ -354,6 +358,15 @@ export default function CarePage() {
   const [statusDialogOpen, setStatusDialogOpen] = React.useState(false)
   const [statusTicket, setStatusTicket] = React.useState<Ticket | null>(null)
 
+  // Bulk selection state
+  const [selectedTicketIds, setSelectedTicketIds] = React.useState<Set<string>>(new Set())
+  const [bulkAction, setBulkAction] = React.useState<'archive' | 'delete' | 'resolve' | null>(null)
+  const [isBulkProcessing, setIsBulkProcessing] = React.useState(false)
+
+  // Event edit/delete state
+  const [editingEvent, setEditingEvent] = React.useState<{ ticketId: string; eventIndex: number; status: string; note: string } | null>(null)
+  const [deletingEvent, setDeletingEvent] = React.useState<{ ticketId: string; eventIndex: number; status: string } | null>(null)
+
   // Shipment details drawer state
   const [shipmentDrawerOpen, setShipmentDrawerOpen] = React.useState(false)
   const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
@@ -372,6 +385,7 @@ export default function CarePage() {
 
   // Calculate actual rendered column count (for colSpan)
   const actualColumnCount =
+    1 + // Checkbox column
     (columnVisibility.client && canViewAllBrands && !selectedClientId ? 1 : 0) +
     (canViewAllBrands && !selectedClientId ? 1 : 0) + // Partner column
     (columnVisibility.dateCreated ? 1 : 0) +
@@ -551,6 +565,13 @@ export default function CarePage() {
       ticketsToSort.sort((a, b) => {
         return sortDirection === 'asc' ? a.creditAmount - b.creditAmount : b.creditAmount - a.creditAmount
       })
+    } else if (sortColumn === 'type') {
+      ticketsToSort.sort((a, b) => {
+        const typeA = (a.issueType || a.ticketType || '').toLowerCase()
+        const typeB = (b.issueType || b.ticketType || '').toLowerCase()
+        const cmp = typeA.localeCompare(typeB)
+        return sortDirection === 'asc' ? cmp : -cmp
+      })
     } else {
       // Default: newest first
       ticketsToSort.sort((a, b) => {
@@ -662,6 +683,116 @@ export default function CarePage() {
       setError(err instanceof Error ? err.message : 'Failed to save reshipment ID')
     } finally {
       setIsSavingReshipmentId(false)
+    }
+  }
+
+  // Bulk selection helpers
+  const toggleTicketSelection = (ticketId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setSelectedTicketIds(prev => {
+      const next = new Set(prev)
+      if (next.has(ticketId)) {
+        next.delete(ticketId)
+      } else {
+        next.add(ticketId)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedTicketIds.size === displayedTickets.length) {
+      setSelectedTicketIds(new Set())
+    } else {
+      setSelectedTicketIds(new Set(displayedTickets.map(t => t.id)))
+    }
+  }
+
+  // Clear selection when tickets change (page, filter, etc.)
+  React.useEffect(() => {
+    setSelectedTicketIds(new Set())
+  }, [tickets])
+
+  // Handle bulk action confirmation
+  const handleBulkAction = async () => {
+    if (!bulkAction || selectedTicketIds.size === 0) return
+
+    setIsBulkProcessing(true)
+    try {
+      const response = await fetch('/api/data/care-tickets/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: bulkAction,
+          ticketIds: Array.from(selectedTicketIds),
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Bulk operation failed')
+      }
+
+      const data = await response.json()
+      const actionLabel = bulkAction === 'archive' ? 'archived' : bulkAction === 'delete' ? 'deleted' : 'resolved'
+      toast.success(`${data.successCount} ticket${data.successCount !== 1 ? 's' : ''} ${actionLabel}`)
+
+      setSelectedTicketIds(new Set())
+      setExpandedRowId(null)
+      fetchTickets()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Bulk operation failed')
+    } finally {
+      setIsBulkProcessing(false)
+      setBulkAction(null)
+    }
+  }
+
+  // Handle editing an event's note
+  const handleEditEvent = async () => {
+    if (!editingEvent) return
+    try {
+      const response = await fetch(`/api/data/care-tickets/${editingEvent.ticketId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          editEventIndex: editingEvent.eventIndex,
+          editEventStatus: editingEvent.status,
+          editEventNote: editingEvent.note,
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to edit event')
+      }
+      toast.success('Event updated')
+      setEditingEvent(null)
+      fetchTickets()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to edit event')
+    }
+  }
+
+  // Handle deleting an event
+  const handleDeleteEvent = async () => {
+    if (!deletingEvent) return
+    try {
+      const response = await fetch(`/api/data/care-tickets/${deletingEvent.ticketId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deleteEventIndex: deletingEvent.eventIndex,
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to delete event')
+      }
+      toast.success('Event removed')
+      setDeletingEvent(null)
+      fetchTickets()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete event')
     }
   }
 
@@ -780,6 +911,33 @@ export default function CarePage() {
                   <XIcon className="h-3 w-3" />
                   <span>Clear</span>
                 </button>
+              )}
+
+              {/* Bulk Actions - shown when tickets are selected */}
+              {selectedTicketIds.size > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-[30px] gap-1.5 text-xs font-medium bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30">
+                      Bulk Actions ({selectedTicketIds.size})
+                      <ChevronDownIcon className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onClick={() => setBulkAction('archive')}>
+                      Archive Tickets
+                    </DropdownMenuItem>
+                    {!isBrandUser && (
+                      <>
+                        <DropdownMenuItem onClick={() => setBulkAction('delete')}>
+                          Delete Tickets
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setBulkAction('resolve')}>
+                          Mark Resolved
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
 
               {/* Status Filter */}
@@ -920,11 +1078,23 @@ export default function CarePage() {
                         {/* Fixed columns - NOT wrapped in SortableHeader */}
                         {/* Client column - only visible for admins viewing all clients */}
                         {columnVisibility.client && canViewAllBrands && !selectedClientId && (
-                          <th className="w-px whitespace-nowrap text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide pl-4 lg:pl-6 pr-2"></th>
+                          <th className="w-px whitespace-nowrap text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide pl-4 lg:pl-6 pr-3"></th>
                         )}
+                        {/* Checkbox column */}
+                        <th className={cn(
+                          "w-px whitespace-nowrap align-middle pl-3 pr-0",
+                          !(columnVisibility.client && canViewAllBrands && !selectedClientId) && "pl-4 lg:pl-6"
+                        )}>
+                          <Checkbox
+                            checked={displayedTickets.length > 0 && selectedTicketIds.size === displayedTickets.length}
+                            onCheckedChange={toggleSelectAll}
+                            aria-label="Select all tickets"
+                            className="h-3.5 w-3.5"
+                          />
+                        </th>
                         {/* Partner column - only visible for admins viewing all clients */}
                         {canViewAllBrands && !selectedClientId && (
-                          <th className="w-px whitespace-nowrap px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide"></th>
+                          <th className="w-px whitespace-nowrap px-1 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide"></th>
                         )}
 
                         {/* Draggable columns - render in orderedDraggableColumns order */}
@@ -937,11 +1107,8 @@ export default function CarePage() {
                           return orderedDraggableColumns.map(col => {
                             if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
 
-                            // Determine if fixed columns are showing
-                            const hasFixedColumns = (columnVisibility.client && canViewAllBrands && !selectedClientId) ||
-                                                   (canViewAllBrands && !selectedClientId)
-                            // Only apply left padding to the FIRST visible column when no fixed columns
-                            const isFirstVisibleColumn = !hasFixedColumns && col.id === firstVisibleColId
+                            // Checkbox column is always present, so there's always a fixed column with left padding
+                            const isFirstVisibleColumn = false
 
                           if (col.id === 'dateCreated') {
                             return (
@@ -1006,11 +1173,17 @@ export default function CarePage() {
                                 key={col.id}
                                 columnId={col.id}
                                 className={cn(
-                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap",
+                                  "px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap select-none hover:text-foreground transition-colors",
                                   isFirstVisibleColumn && 'pl-4 lg:pl-6'
                                 )}
+                                onClick={() => handleSort('type')}
                               >
-                                Type
+                                <span className="inline-flex items-center gap-1">
+                                  Type
+                                  {sortColumn === 'type' && (
+                                    sortDirection === 'asc' ? <ChevronUpIcon className="h-3 w-3 text-foreground" /> : <ChevronDownIcon className="h-3 w-3 text-foreground" />
+                                  )}
+                                </span>
                               </SortableHeader>
                             )
                           }
@@ -1100,7 +1273,7 @@ export default function CarePage() {
                           >
                             {/* Client badge - only visible for admins viewing all clients */}
                             {columnVisibility.client && canViewAllBrands && !selectedClientId && (
-                              <td className="w-px whitespace-nowrap align-middle pl-4 lg:pl-6 pr-2">
+                              <td className="w-px whitespace-nowrap align-middle pl-4 lg:pl-6 pr-3">
                                 {ticket.clientId ? (
                                   <ClientBadge clientId={ticket.clientId} />
                                 ) : (isAdmin || effectiveIsCareAdmin) ? (
@@ -1137,9 +1310,22 @@ export default function CarePage() {
                                 )}
                               </td>
                             )}
+                            {/* Checkbox */}
+                            <td className={cn(
+                              "w-px whitespace-nowrap align-middle pl-3 pr-0",
+                              !(columnVisibility.client && canViewAllBrands && !selectedClientId) && "pl-4 lg:pl-6"
+                            )}>
+                              <Checkbox
+                                checked={selectedTicketIds.has(ticket.id)}
+                                onCheckedChange={() => toggleTicketSelection(ticket.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label={`Select ticket #${ticket.ticketNumber}`}
+                                className="h-3.5 w-3.5"
+                              />
+                            </td>
                             {/* Partner badge - only visible for admins viewing all clients */}
                             {canViewAllBrands && !selectedClientId && (
-                              <td className="w-px whitespace-nowrap px-2 align-middle">
+                              <td className="w-px whitespace-nowrap px-1 align-middle">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <img
@@ -1166,11 +1352,8 @@ export default function CarePage() {
                               return orderedDraggableColumns.map(col => {
                                 if (!columnVisibility[col.id as keyof typeof columnVisibility]) return null
 
-                                // Determine if fixed columns are showing
-                                const hasFixedColumns = (columnVisibility.client && canViewAllBrands && !selectedClientId) ||
-                                                       (canViewAllBrands && !selectedClientId)
-                                // Only apply left padding to the FIRST visible column when no fixed columns
-                                const isFirstVisibleColumn = !hasFixedColumns && col.id === firstVisibleColId
+                                // Checkbox column is always present, so there's always a fixed column with left padding
+                                const isFirstVisibleColumn = false
 
                               if (col.id === 'dateCreated') {
                                 return (
@@ -1392,12 +1575,14 @@ export default function CarePage() {
 
                                           {/* Action Buttons */}
                                           <div className="flex flex-col w-full px-3 lg:px-4 py-4 gap-1.5 border-b-2 border-white dark:border-b-white/15 bg-white/25 dark:bg-black/20">
-                                            <button
-                                              className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
-                                              onClick={(e) => { e.stopPropagation(); openStatusDialog(ticket, e) }}
-                                            >
-                                              Update Status
-                                            </button>
+                                            {!isBrandUser && (
+                                              <button
+                                                className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
+                                                onClick={(e) => { e.stopPropagation(); openStatusDialog(ticket, e) }}
+                                              >
+                                                Update Status
+                                              </button>
+                                            )}
                                             <button
                                               className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
                                               onClick={(e) => { e.stopPropagation(); openEditDialog(ticket, e) }}
@@ -1405,10 +1590,16 @@ export default function CarePage() {
                                               Edit Ticket
                                             </button>
                                             <button
-                                              className="w-full px-2.5 py-[6px] text-[11px] font-medium text-destructive bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
-                                              onClick={(e) => { e.stopPropagation(); openDeleteDialog(ticket, e) }}
+                                              className={cn(
+                                                "w-full px-2.5 py-[6px] text-[11px] font-medium rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left",
+                                                canDeleteTickets || isBrandUser
+                                                  ? "text-destructive bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10"
+                                                  : "text-muted-foreground/50 bg-white/30 dark:bg-white/5 cursor-not-allowed"
+                                              )}
+                                              onClick={(e) => { e.stopPropagation(); if (canDeleteTickets || isBrandUser) openDeleteDialog(ticket, e) }}
+                                              disabled={!canDeleteTickets && !isBrandUser}
                                             >
-                                              Delete Ticket
+                                              {isBrandUser ? 'Archive Ticket' : 'Delete Ticket'}
                                             </button>
                                           </div>
 
@@ -1442,8 +1633,9 @@ export default function CarePage() {
                                           {(() => {
                                             const hasCarrierOrTracking = !!(ticket.carrier || ticket.trackingNumber)
                                             const hasFiles = ticket.attachments && ticket.attachments.length > 0
-                                            // What fills the 2nd+3rd columns: carrier/tracking > files > internal notes > nothing
-                                            const fillMode = hasCarrierOrTracking ? 'carrier-tracking' : hasFiles ? 'files' : (effectiveIsAdmin || effectiveIsCareUser) ? 'internal-notes' : 'ticket-only'
+                                            // What fills the 2nd+3rd columns: carrier/tracking > files > nothing
+                                            // Internal notes ALWAYS go in the second row for consistent layout
+                                            const fillMode = hasCarrierOrTracking ? 'carrier-tracking' : hasFiles ? 'files' : 'ticket-only'
                                             return (
                                               <div className={cn(
                                                 "grid",
@@ -1521,74 +1713,6 @@ export default function CarePage() {
                                                         </a>
                                                       ))}
                                                     </div>
-                                                  </div>
-                                                )}
-                                                {fillMode === 'internal-notes' && (
-                                                  <div className="px-5 py-7 bg-white/25 dark:bg-black/20">
-                                                    <div className="flex items-center gap-2 mb-2">
-                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider">Internal Notes</div>
-                                                      <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
-                                                        setAddNoteOpenForTicket(open ? ticket.id : null)
-                                                        if (!open) setNewNoteText('')
-                                                      }}>
-                                                        <PopoverTrigger asChild>
-                                                          <button className="flex items-center justify-center w-4 h-4 text-muted-foreground hover:text-foreground transition-colors">
-                                                            <PlusIcon className="h-3.5 w-3.5" />
-                                                          </button>
-                                                        </PopoverTrigger>
-                                                        <PopoverContent className="w-72 p-3" align="end">
-                                                          <div className="space-y-2">
-                                                            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Add Internal Note</div>
-                                                            <Textarea
-                                                              placeholder="Type your note..."
-                                                              value={newNoteText}
-                                                              onChange={(e) => setNewNoteText(e.target.value)}
-                                                              className="min-h-[80px] text-sm resize-none"
-                                                              autoFocus
-                                                            />
-                                                            <div className="flex justify-end gap-2">
-                                                              <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                className="h-7 text-xs"
-                                                                onClick={() => {
-                                                                  setAddNoteOpenForTicket(null)
-                                                                  setNewNoteText('')
-                                                                }}
-                                                              >
-                                                                Cancel
-                                                              </Button>
-                                                              <Button
-                                                                size="sm"
-                                                                className="h-7 text-xs"
-                                                                onClick={() => handleAddInternalNote(ticket.id)}
-                                                                disabled={!newNoteText.trim() || isAddingNote}
-                                                              >
-                                                                {isAddingNote ? (
-                                                                  <JetpackLoader size="sm" />
-                                                                ) : (
-                                                                  'Save'
-                                                                )}
-                                                              </Button>
-                                                            </div>
-                                                          </div>
-                                                        </PopoverContent>
-                                                      </Popover>
-                                                    </div>
-                                                    {ticket.internalNotes && ticket.internalNotes.length > 0 && (
-                                                      <div className="divide-y divide-border/50">
-                                                        {ticket.internalNotes.map((note, idx) => (
-                                                          <div key={idx} className="py-2 first:pt-0 last:pb-0">
-                                                            <p className="text-[13px] text-foreground whitespace-pre-wrap leading-relaxed">{note.note}</p>
-                                                            <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground/60">
-                                                              <span className="font-semibold">{note.createdBy}</span>
-                                                              <span>•</span>
-                                                              <span>{new Date(note.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                                                            </div>
-                                                          </div>
-                                                        ))}
-                                                      </div>
-                                                    )}
                                                   </div>
                                                 )}
                                               </div>
@@ -1703,8 +1827,8 @@ export default function CarePage() {
                                           )}
                                         </div>
 
-                                        {/* Internal Notes Section - only here when carrier/tracking or files exist (otherwise shown in top row) */}
-                                        {(effectiveIsAdmin || effectiveIsCareUser) && !!(ticket.carrier || ticket.trackingNumber || (ticket.attachments && ticket.attachments.length > 0)) && (
+                                        {/* Internal Notes Section - always in second row for consistent layout */}
+                                        {(effectiveIsAdmin || effectiveIsCareUser) && (
                                           <div className="flex-1 bg-white/25 dark:bg-black/20">
                                             <div className="p-5">
                                               <div className="flex items-center gap-2 mb-2">
@@ -1798,7 +1922,7 @@ export default function CarePage() {
 
                                                     <div className="space-y-5">
                                                       {ticket.events.map((event, idx) => (
-                                                        <div key={idx} className="relative flex gap-4 pl-6">
+                                                        <div key={idx} className="group/event relative flex gap-4 pl-6">
                                                           {/* Timeline dot */}
                                                           <div className={cn(
                                                             "absolute left-0 top-0.5 w-[11px] h-[11px] rounded-full border-2",
@@ -1808,16 +1932,43 @@ export default function CarePage() {
                                                           )} />
 
                                                           <div className="flex-1 min-w-0 pb-1">
-                                                            <div className="flex items-baseline justify-between gap-2 mb-1">
+                                                            <div className="flex items-center justify-between gap-2 mb-1">
                                                               <span className={cn(
                                                                 "text-sm font-semibold",
                                                                 getStatusTextColor(event.status)
                                                               )}>
                                                                 {event.status}
                                                               </span>
-                                                              <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                                                                {formatDateTime(event.createdAt, event.createdBy)}
-                                                              </span>
+                                                              <div className="flex items-center gap-1.5">
+                                                                {/* Edit/Delete icons - visible on hover for admin/care roles, not for "Ticket Created" */}
+                                                                {event.status !== 'Ticket Created' && (effectiveIsAdmin || effectiveIsCareUser) && (
+                                                                  <div className="flex items-center gap-0.5 opacity-0 group-hover/event:opacity-100 transition-opacity">
+                                                                    <button
+                                                                      onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        setEditingEvent({ ticketId: ticket.id, eventIndex: idx, status: event.status, note: event.note || '' })
+                                                                      }}
+                                                                      className="p-0.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                                                                      title="Edit event"
+                                                                    >
+                                                                      <PencilIcon className="h-3 w-3" />
+                                                                    </button>
+                                                                    <button
+                                                                      onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        setDeletingEvent({ ticketId: ticket.id, eventIndex: idx, status: event.status })
+                                                                      }}
+                                                                      className="p-0.5 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                                                                      title="Delete event"
+                                                                    >
+                                                                      <Trash2Icon className="h-3 w-3" />
+                                                                    </button>
+                                                                  </div>
+                                                                )}
+                                                                <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                                                                  {formatDateTime(event.createdAt, event.createdBy)}
+                                                                </span>
+                                                              </div>
                                                             </div>
                                                             {event.note && (
                                                               <p className={cn(
@@ -1959,6 +2110,7 @@ export default function CarePage() {
           if (!open) setEditingTicket(null)
         }}
         ticket={editingTicket}
+        isBrandUser={isBrandUser}
         onUpdate={async () => {
           setEditingTicket(null)
           fetchTickets()
@@ -1973,6 +2125,7 @@ export default function CarePage() {
           if (!open) setDeletingTicket(null)
         }}
         ticket={deletingTicket}
+        archiveOnly={isBrandUser}
         onDelete={async () => {
           setDeletingTicket(null)
           setExpandedRowId(null)
@@ -2020,6 +2173,119 @@ export default function CarePage() {
               }}
             >
               {isAttributing ? 'Attributing...' : 'Attribute'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Action Confirmation Dialog */}
+      <AlertDialog open={!!bulkAction} onOpenChange={(open) => { if (!open) setBulkAction(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {bulkAction === 'archive' && 'Archive Tickets'}
+              {bulkAction === 'delete' && 'Permanently Delete Tickets'}
+              {bulkAction === 'resolve' && 'Mark Tickets as Resolved'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkAction === 'archive' && (
+                <>Are you sure you want to archive <strong>{selectedTicketIds.size}</strong> ticket{selectedTicketIds.size !== 1 ? 's' : ''}? They will be hidden from view but can be recovered later.</>
+              )}
+              {bulkAction === 'delete' && (
+                <>Are you sure you want to permanently delete <strong>{selectedTicketIds.size}</strong> ticket{selectedTicketIds.size !== 1 ? 's' : ''}? This will remove all ticket data and attached files forever. This cannot be undone.</>
+              )}
+              {bulkAction === 'resolve' && (
+                <>Are you sure you want to mark <strong>{selectedTicketIds.size}</strong> ticket{selectedTicketIds.size !== 1 ? 's' : ''} as resolved?</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkProcessing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isBulkProcessing}
+              onClick={handleBulkAction}
+              className={cn(
+                bulkAction === 'delete' && 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+                bulkAction === 'archive' && 'bg-amber-600 hover:bg-amber-700 text-white',
+              )}
+            >
+              {isBulkProcessing ? (
+                <>
+                  <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  {bulkAction === 'archive' && 'Archive'}
+                  {bulkAction === 'delete' && 'Permanently Delete'}
+                  {bulkAction === 'resolve' && 'Mark Resolved'}
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Edit Event Dialog */}
+      <Dialog open={!!editingEvent} onOpenChange={(open) => { if (!open) setEditingEvent(null) }}>
+        <DialogContent className="sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Edit Event</DialogTitle>
+            <DialogDescription>
+              Update the status and note for this timeline event.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Status</Label>
+              <Select
+                value={editingEvent?.status || ''}
+                onValueChange={(value) => setEditingEvent(prev => prev ? { ...prev, status: value } : null)}
+              >
+                <SelectTrigger className="text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ALL_STATUSES.filter(s => s !== 'Ticket Created' && s !== 'Resolved').map(s => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Note</Label>
+              <Textarea
+                value={editingEvent?.note || ''}
+                onChange={(e) => setEditingEvent(prev => prev ? { ...prev, note: e.target.value } : null)}
+                rows={3}
+                className="text-sm"
+                placeholder="Event note..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
+            <Button onClick={handleEditEvent}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Event Confirmation */}
+      <AlertDialog open={!!deletingEvent} onOpenChange={(open) => { if (!open) setDeletingEvent(null) }}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Event</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove the &ldquo;{deletingEvent?.status}&rdquo; event from this ticket&apos;s timeline? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteEvent}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

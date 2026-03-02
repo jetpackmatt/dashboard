@@ -229,8 +229,8 @@ export function claimTypeToIssueType(claimType: ClaimType): string {
     lostInTransit: 'Loss',
     incorrectDelivery: 'Incorrect Delivery',
     damage: 'Damage',
-    incorrectItems: 'Pick Error',
-    incorrectQuantity: 'Short Ship',
+    incorrectItems: 'Incorrect Items',
+    incorrectQuantity: 'Incorrect Quantity',
   }
   return mapping[claimType]
 }

@@ -243,6 +243,7 @@ export default function MisfitsPage() {
   const [newTicketPopoverId, setNewTicketPopoverId] = React.useState<string | null>(null)
   const [newTicketShipmentId, setNewTicketShipmentId] = React.useState('')
   const [newTicketDescription, setNewTicketDescription] = React.useState('')
+  const [newTicketIssueType, setNewTicketIssueType] = React.useState('Loss')
   const [isConnecting, setIsConnecting] = React.useState(false)
 
   // Brand attribution state
@@ -317,6 +318,7 @@ export default function MisfitsPage() {
           action: 'create_ticket',
           shipmentId: newTicketShipmentId.trim() || undefined,
           description: newTicketDescription.trim() || undefined,
+          issueType: newTicketIssueType,
         }),
       })
       if (res.ok) {
@@ -325,16 +327,16 @@ export default function MisfitsPage() {
           ? `Created ticket #${result.ticketNumber} (auto-resolved — already invoiced)`
           : `Created ticket #${result.ticketNumber} and linked`
         toast.success(msg)
+        setNewTicketPopoverId(null)
         fetchMisfits()
       } else {
         const data = await res.json()
-        toast.error(data.error || 'Failed to create ticket')
+        toast.error(data.error || 'Failed to create ticket', { duration: 5000 })
       }
     } catch {
-      toast.error('Failed to create ticket')
+      toast.error('Failed to create ticket — check connection and try again', { duration: 5000 })
     }
     setIsConnecting(false)
-    setNewTicketPopoverId(null)
   }
 
   // Handle connect to ticket
@@ -816,6 +818,18 @@ export default function MisfitsPage() {
                                     </div>
                                   )}
                                   <div className="space-y-1.5">
+                                    <Select value={newTicketIssueType} onValueChange={setNewTicketIssueType}>
+                                      <SelectTrigger className="h-8 text-[13px]">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="Loss">Loss</SelectItem>
+                                        <SelectItem value="Damage">Damage</SelectItem>
+                                        <SelectItem value="Incorrect Items">Incorrect Items</SelectItem>
+                                        <SelectItem value="Incorrect Quantity">Incorrect Quantity</SelectItem>
+                                        <SelectItem value="Claim">Claim</SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                     <Input
                                       value={newTicketShipmentId}
                                       onChange={(e) => setNewTicketShipmentId(e.target.value)}
@@ -979,7 +993,7 @@ export default function MisfitsPage() {
                                       Find Ticket
                                     </button>
                                   </PopoverTrigger>
-                                  <PopoverContent className="w-[380px] p-0" align="start" onClick={(e) => e.stopPropagation()}>
+                                  <PopoverContent className="w-[460px] p-0" align="start" onClick={(e) => e.stopPropagation()}>
                                     <TicketSearchCommand
                                       onSelect={(ticketId, ticketNumber) => handleConnectTicket(tx.transactionId, ticketId, ticketNumber)}
                                       clientId={tx.clientId}

@@ -459,7 +459,7 @@ export function DataTable({
     const range = getDateRangeFromPreset('60d')
     return range ? { from: range.from, to: range.to } : undefined
   })
-  const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>('60d')
+  const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>('all')
   const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>(prefetchedShipmentsChannels)
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
   const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)

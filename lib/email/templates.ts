@@ -13,7 +13,7 @@
  * 8. Short Ship - "Don't reship"
  */
 
-export type IssueType = 'Loss' | 'Incorrect Delivery' | 'Damage' | 'Pick Error' | 'Short Ship'
+export type IssueType = 'Loss' | 'Incorrect Delivery' | 'Damage' | 'Pick Error' | 'Short Ship' | 'Incorrect Items' | 'Incorrect Quantity' | 'Claim'
 export type ReshipmentStatus = 'Please reship for me' | "I've already reshipped" | "Don't reship"
 
 export interface ClaimEmailData {
@@ -25,6 +25,7 @@ export interface ClaimEmailData {
   compensationRequest: string | null  // Only for Pick Error (Incorrect Items)
   reshipmentStatus: ReshipmentStatus | null
   reshipmentId: string | null
+  carrierConfirmedLoss?: boolean      // Carrier confirmed loss before 15-day window
 }
 
 export interface ClaimEmailResult {
@@ -45,9 +46,13 @@ function getIssueTypeDisplayName(issueType: IssueType): string {
     case 'Damage':
       return 'Damage'
     case 'Pick Error':
+    case 'Incorrect Items':
       return 'Incorrect Items'
     case 'Short Ship':
-      return 'Short Ship'
+    case 'Incorrect Quantity':
+      return 'Incorrect Quantity'
+    case 'Claim':
+      return 'Claim'
     default:
       return issueType
   }
@@ -115,19 +120,19 @@ function getTemplateNumber(issueType: IssueType, reshipmentStatus: ReshipmentSta
   if (issueType === 'Incorrect Delivery') return 9
   if (issueType === 'Damage') return 2
 
-  if (issueType === 'Pick Error') {
+  if (issueType === 'Pick Error' || issueType === 'Incorrect Items') {
     if (reshipmentStatus === 'Please reship for me') return 3
     if (reshipmentStatus === "I've already reshipped") return 4
     return 5 // "Don't reship"
   }
 
-  if (issueType === 'Short Ship') {
+  if (issueType === 'Short Ship' || issueType === 'Incorrect Quantity') {
     if (reshipmentStatus === 'Please reship for me') return 6
     if (reshipmentStatus === "I've already reshipped") return 7
     return 8 // "Don't reship"
   }
 
-  return 1 // fallback
+  return 1 // fallback (also handles 'Claim' generic type)
 }
 
 // =============================================================================
@@ -138,12 +143,16 @@ function getTemplateNumber(issueType: IssueType, reshipmentStatus: ReshipmentSta
  * Template 1: Lost in Transit
  */
 function templateLostInTransit(data: ClaimEmailData): string {
+  const carrierConfirmedParagraph = data.carrierConfirmedLoss
+    ? `\nDespite not reaching the full 15 days since last scan, we have directly confirmed with the carrier that the package is indeed lost. See attached screenshot as evidence of this.\n`
+    : ''
+
   return `Hello,
 
 I am writing to you on behalf of Merchant ID ${data.merchantId}.
 
 Shipment ${data.shipmentId} is lost in transit.
-
+${carrierConfirmedParagraph}
 Thank you for your help,
 Nora`
 }

@@ -2186,6 +2186,31 @@ export function getTrackingUrl(carrier: string, trackingId: string): string | nu
     return `https://www.uniuni.com/tracking?no=${trackingId}`
   }
 
+  // Passport - International shipping
+  if (carrierLower.includes('passport')) {
+    return `https://track.passportshipping.com/${trackingId}`
+  }
+
+  // Canada Post
+  if (carrierLower.includes('canada post')) {
+    return `https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=${trackingId}`
+  }
+
+  // TForce / TForce Freight
+  if (carrierLower.includes('tforce')) {
+    return `https://www.tforcefreight.com/ltl/apps/Tracking?pro=${trackingId}`
+  }
+
+  // APC Postal Logistics
+  if (carrierLower.includes('apc')) {
+    return `https://www.apc-pli.com/apc-tracking.html?id=${trackingId}`
+  }
+
+  // GoFo Express
+  if (carrierLower.includes('gofo')) {
+    return `https://www.gofoexpress.com/tracking?number=${trackingId}`
+  }
+
   // ShipBob internal / PrePaid - no external tracking URL
   if (carrierLower.includes('shipbob') || carrierLower.includes('prepaid')) {
     return null

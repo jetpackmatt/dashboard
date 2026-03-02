@@ -17,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { FileUpload } from "./file-upload"
 // Note: Client ID comes from shipment data (shipmentSummary.clientId), not client context
+import { useClient } from "@/components/client-context"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   ClaimType,
   ClaimEligibilityResult,
@@ -128,6 +130,12 @@ export function ClaimSubmissionDialog({
   // Lost in Transit verification state
   const [isVerifyingLIT, setIsVerifyingLIT] = React.useState(false)
   const [litVerification, setLitVerification] = React.useState<VerifyLostInTransitResponse | null>(null)
+  const [carrierConfirmedOverride, setCarrierConfirmedOverride] = React.useState(false)
+  const [carrierScreenshot, setCarrierScreenshot] = React.useState<UploadedFile[]>([])
+
+  // Role check for carrier-confirmed override (admins/care only)
+  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin } = useClient()
+  const canOverrideLIT = effectiveIsAdmin || effectiveIsCareUser || effectiveIsCareAdmin
 
   // Reshipment ID validation state
   const [isValidatingReshipment, setIsValidatingReshipment] = React.useState(false)
@@ -150,6 +158,7 @@ export function ClaimSubmissionDialog({
       }, 1500)
       return () => clearTimeout(timer)
     }
+
 
     // Auto-trigger verification if not already running and no result yet
     if (!isVerifyingLIT && !litVerification && !isLoading && formData.shipmentId) {
@@ -198,6 +207,8 @@ export function ClaimSubmissionDialog({
       setTicketNumber(null)
       setIsVerifyingLIT(false)
       setLitVerification(null)
+      setCarrierConfirmedOverride(false)
+      setCarrierScreenshot([])
       setReshipmentValid(false)
       setReshipmentError(null)
       setIsValidatingReshipment(false)
@@ -355,10 +366,11 @@ export function ClaimSubmissionDialog({
 
     switch (formData.claimType) {
       case "lostInTransit":
-        // Lost in Transit: verification → description → submit
+        // Lost in Transit: verification → [documentation if carrier override] → description → submit
         return [
           ...baseSteps,
           ALL_STEPS.find(s => s.id === "verification")!,
+          ...(carrierConfirmedOverride ? [ALL_STEPS.find(s => s.id === "documentation")!] : []),
           ALL_STEPS.find(s => s.id === "description")!,
         ]
       case "incorrectDelivery":
@@ -523,11 +535,14 @@ export function ClaimSubmissionDialog({
         return formData.shipmentId.trim().length > 0
       case "issue":
         if (!formData.claimType) return false
+        if (formData.claimType === "lostInTransit" && carrierConfirmedOverride) return true
         const eligibilityInfo = eligibility?.eligibility[formData.claimType]
         if (!eligibilityInfo?.eligible) return false
         return true
       case "verification":
         // Auto-advances when verified - but allow manual proceed if eligible
+        // Also allow if admin/care has confirmed carrier loss
+        if (carrierConfirmedOverride) return true
         return litVerification?.eligible === true
       case "description":
         // Description is REQUIRED for Incorrect Delivery, Incorrect Items, and Incorrect Quantity
@@ -546,6 +561,10 @@ export function ClaimSubmissionDialog({
       case "compensation":
         return !!formData.compensationRequest
       case "documentation":
+        // Carrier-confirmed LIT: require carrier screenshot
+        if (formData.claimType === "lostInTransit" && carrierConfirmedOverride) {
+          return carrierScreenshot.length > 0
+        }
         // Incorrect Delivery: all uploads optional (description is the key evidence)
         if (formData.claimType === "incorrectDelivery") return true
         // All other claim types with documentation step require photo + customer complaint
@@ -560,7 +579,13 @@ export function ClaimSubmissionDialog({
   const goNext = () => {
     const applicableSteps = getApplicableSteps()
     if (currentStep < applicableSteps.length - 1) {
-      setCurrentStep(prev => prev + 1)
+      // Skip verification step if carrier override is already active (bypassed from step 2)
+      const nextStepId = applicableSteps[currentStep + 1]?.id
+      if (nextStepId === "verification" && carrierConfirmedOverride) {
+        setCurrentStep(prev => prev + 2)
+      } else {
+        setCurrentStep(prev => prev + 1)
+      }
       setError(null)
     }
   }
@@ -609,9 +634,11 @@ export function ClaimSubmissionDialog({
           // Always store the resolved shipment_id (not the user's raw input)
           reshipmentId: resolvedReshipmentId || formData.reshipmentId || null,
           compensationRequest: formData.compensationRequest,
+          carrierConfirmedLoss: carrierConfirmedOverride,
           // Flatten structured attachments into array for API
           // Include path for generating fresh signed URLs when sending emails
           attachments: [
+            ...carrierScreenshot.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'carrierConfirmation' })),
             ...formData.attachments.photo.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'photo' })),
             ...formData.attachments.customerComplaint.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'customerComplaint' })),
             ...formData.attachments.otherDocs.map(f => ({ name: f.name, url: f.url, path: f.path, type: f.type, category: 'otherDocs' })),
@@ -731,12 +758,37 @@ export function ClaimSubmissionDialog({
               if (!hasAnyEligible && eligibility) {
                 // No claim types eligible - show friendly message
                 return (
-                  <div className="rounded-lg border border-muted bg-muted/30 p-6 text-center">
-                    <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-                    <p className="text-muted-foreground">
-                      This shipment is still on its way and is not eligible for any types of claim filing.
-                      Let&apos;s keep an eye on it!
-                    </p>
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-muted bg-muted/30 p-6 text-center">
+                      <Package className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                      <p className="text-muted-foreground">
+                        This shipment is still on its way and is not eligible for any types of claim filing.
+                        Let&apos;s keep an eye on it!
+                      </p>
+                    </div>
+
+                    {/* Admin/Care override for carrier-confirmed loss */}
+                    {canOverrideLIT && (
+                      <div className="flex items-center justify-center gap-2.5">
+                        <Checkbox
+                          id="carrier-confirmed-issue"
+                          checked={carrierConfirmedOverride}
+                          onCheckedChange={(checked) => {
+                            setCarrierConfirmedOverride(checked === true)
+                            if (checked) {
+                              setFormData(prev => ({ ...prev, claimType: "lostInTransit" }))
+                              setError(null)
+                            } else {
+                              setFormData(prev => ({ ...prev, claimType: null }))
+                              setCarrierScreenshot([])
+                            }
+                          }}
+                        />
+                        <Label htmlFor="carrier-confirmed-issue" className="text-[13px] cursor-pointer">
+                          Bypass and File Loss Claim
+                        </Label>
+                      </div>
+                    )}
                   </div>
                 )
               }
@@ -861,6 +913,22 @@ export function ClaimSubmissionDialog({
                         View Carrier Tracking
                         <ExternalLink className="h-3 w-3" />
                       </a>
+                    </div>
+                  )}
+
+                  {/* Admin/Care override: carrier has confirmed loss */}
+                  {canOverrideLIT && (
+                    <div className="mt-6 pt-5 border-t">
+                      <div className="flex items-center justify-center gap-2.5">
+                        <Checkbox
+                          id="carrier-confirmed"
+                          checked={carrierConfirmedOverride}
+                          onCheckedChange={(checked) => setCarrierConfirmedOverride(checked === true)}
+                        />
+                        <Label htmlFor="carrier-confirmed" className="text-[13px] cursor-pointer">
+                          Bypass and File Loss Claim
+                        </Label>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1011,14 +1079,56 @@ export function ClaimSubmissionDialog({
         )
 
       case "documentation":
+        const isCarrierConfirmedLIT = formData.claimType === "lostInTransit" && carrierConfirmedOverride
         const isDamage = formData.claimType === "damage"
         const isIncorrectDelivery = formData.claimType === "incorrectDelivery"
+
+        const MAX_PER_FILE_MB = 50
+
+        // Carrier-confirmed LIT: screenshot of carrier confirmation (required) + other docs (optional)
+        if (isCarrierConfirmedLIT) {
+          return (
+            <div className="space-y-5">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                  Screenshot Showing Carrier Confirmation
+                  {carrierScreenshot.length > 0 ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <span className="text-red-500">*</span>
+                  )}
+                </Label>
+                <FileUpload
+                  value={carrierScreenshot}
+                  onChange={setCarrierScreenshot}
+                  accept="image/png,image/jpeg,application/pdf"
+                  maxSizeMb={MAX_PER_FILE_MB}
+                  singleFile
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                </Label>
+                <FileUpload
+                  value={formData.attachments.otherDocs}
+                  onChange={(files) => setFormData(prev => ({
+                    ...prev,
+                    attachments: { ...prev.attachments, otherDocs: files },
+                  }))}
+                  accept="image/png,image/jpeg,application/pdf"
+                  maxSizeMb={MAX_PER_FILE_MB}
+                />
+              </div>
+            </div>
+          )
+        }
+
         const photoLabel = isDamage
           ? "Photo Showing Damaged Item(s)"
           : "Photo Showing Incorrect Item(s)"
         const docsRequired = !isIncorrectDelivery
-
-        const MAX_PER_FILE_MB = 50
 
         return (
           <div className="space-y-5">
@@ -1190,9 +1300,16 @@ export function ClaimSubmissionDialog({
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
               ) : litVerification && !litVerification.eligible ? (
-                <Button variant="outline" onClick={() => onOpenChange(false)}>
-                  Close
-                </Button>
+                carrierConfirmedOverride ? (
+                  <Button onClick={goNext}>
+                    Continue
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                ) : (
+                  <Button variant="outline" onClick={() => onOpenChange(false)}>
+                    Close
+                  </Button>
+                )
               ) : (
                 <Button disabled>
                   Waiting for Verification

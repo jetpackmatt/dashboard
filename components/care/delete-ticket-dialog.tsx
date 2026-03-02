@@ -20,6 +20,7 @@ interface DeleteTicketDialogProps {
   onOpenChange: (open: boolean) => void
   ticket: Ticket | null
   onDelete: () => Promise<void>
+  archiveOnly?: boolean
 }
 
 export function DeleteTicketDialog({
@@ -27,14 +28,17 @@ export function DeleteTicketDialog({
   onOpenChange,
   ticket,
   onDelete,
+  archiveOnly = false,
 }: DeleteTicketDialogProps) {
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [deleteType, setDeleteType] = React.useState<'archive' | 'permanent'>('archive')
+  const [error, setError] = React.useState<string | null>(null)
 
-  // Reset delete type when dialog closes
+  // Reset state when dialog closes
   React.useEffect(() => {
     if (!open) {
       setDeleteType('archive')
+      setError(null)
     }
   }, [open])
 
@@ -42,8 +46,10 @@ export function DeleteTicketDialog({
     if (!ticket) return
 
     setIsDeleting(true)
+    setError(null)
     try {
-      const url = deleteType === 'permanent'
+      const effectiveType = archiveOnly ? 'archive' : deleteType
+      const url = effectiveType === 'permanent'
         ? `/api/data/care-tickets/${ticket.id}?permanent=true`
         : `/api/data/care-tickets/${ticket.id}`
 
@@ -61,7 +67,7 @@ export function DeleteTicketDialog({
       onOpenChange(false)
     } catch (err) {
       console.error('Failed to delete ticket:', err)
-      throw err
+      setError(err instanceof Error ? err.message : 'Failed to delete ticket')
     } finally {
       setIsDeleting(false)
     }
@@ -71,9 +77,12 @@ export function DeleteTicketDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete Ticket</DialogTitle>
+          <DialogTitle>{archiveOnly ? 'Archive Ticket' : 'Delete Ticket'}</DialogTitle>
           <DialogDescription>
-            Choose how you want to delete this ticket.
+            {archiveOnly
+              ? 'Are you sure you want to archive this ticket?'
+              : 'Choose how you want to delete this ticket.'
+            }
           </DialogDescription>
         </DialogHeader>
         {ticket && (
@@ -95,79 +104,90 @@ export function DeleteTicketDialog({
               )}
             </div>
 
-            {/* Delete type selection */}
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={() => setDeleteType('archive')}
-                className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
-                  deleteType === 'archive'
-                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                    deleteType === 'archive' ? 'border-amber-500' : 'border-slate-400'
-                  }`}>
-                    {deleteType === 'archive' && (
-                      <div className="w-2 h-2 rounded-full bg-amber-500" />
-                    )}
+            {/* Delete type selection - only shown for non-brand users */}
+            {!archiveOnly && (
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteType('archive')}
+                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                    deleteType === 'archive'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      deleteType === 'archive' ? 'border-amber-500' : 'border-slate-400'
+                    }`}>
+                      {deleteType === 'archive' && (
+                        <div className="w-2 h-2 rounded-full bg-amber-500" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">Archive</p>
+                      <p className="text-xs text-muted-foreground">
+                        Hide from view but keep data. Can be recovered later.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">Archive</p>
-                    <p className="text-xs text-muted-foreground">
-                      Hide from view but keep data. Can be recovered later.
-                    </p>
-                  </div>
-                </div>
-              </button>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setDeleteType('permanent')}
-                className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
-                  deleteType === 'permanent'
-                    ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                    deleteType === 'permanent' ? 'border-red-500' : 'border-slate-400'
-                  }`}>
-                    {deleteType === 'permanent' && (
-                      <div className="w-2 h-2 rounded-full bg-red-500" />
-                    )}
+                <button
+                  type="button"
+                  onClick={() => setDeleteType('permanent')}
+                  className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
+                    deleteType === 'permanent'
+                      ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      deleteType === 'permanent' ? 'border-red-500' : 'border-slate-400'
+                    }`}>
+                      {deleteType === 'permanent' && (
+                        <div className="w-2 h-2 rounded-full bg-red-500" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm text-red-600 dark:text-red-400">Permanently Delete</p>
+                      <p className="text-xs text-muted-foreground">
+                        Remove ticket and all attached files forever. Cannot be undone.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-sm text-red-600 dark:text-red-400">Permanently Delete</p>
-                    <p className="text-xs text-muted-foreground">
-                      Remove ticket and all attached files forever. Cannot be undone.
-                    </p>
-                  </div>
-                </div>
-              </button>
-            </div>
+                </button>
+              </div>
+            )}
+
+            {archiveOnly && (
+              <p className="text-sm text-muted-foreground">
+                The ticket will be hidden from view but the data will be kept and can be recovered later.
+              </p>
+            )}
           </div>
+        )}
+        {error && (
+          <p className="text-sm text-destructive">{error}</p>
         )}
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
-            variant={deleteType === 'permanent' ? 'destructive' : 'default'}
+            variant={!archiveOnly && deleteType === 'permanent' ? 'destructive' : 'default'}
             onClick={handleDelete}
             disabled={isDeleting}
-            className={deleteType === 'archive' ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}
+            className={archiveOnly || deleteType === 'archive' ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''}
           >
             {isDeleting ? (
               <>
                 <JetpackLoader className="h-4 w-4 mr-2 animate-spin" />
-                {deleteType === 'permanent' ? 'Deleting...' : 'Archiving...'}
+                {!archiveOnly && deleteType === 'permanent' ? 'Deleting...' : 'Archiving...'}
               </>
             ) : (
-              deleteType === 'permanent' ? 'Permanently Delete' : 'Archive Ticket'
+              !archiveOnly && deleteType === 'permanent' ? 'Permanently Delete' : 'Archive Ticket'
             )}
           </Button>
         </DialogFooter>

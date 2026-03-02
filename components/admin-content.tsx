@@ -1292,6 +1292,11 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
     try {
       const response = await fetch('/api/admin/invoices/generate', { method: 'POST' })
       if (!response.ok) throw new Error('Failed to generate invoices')
+      const data = await response.json()
+      if (data.errors > 0) {
+        const details = data.errorDetails?.map((e: { client: string; error: string }) => `${e.client}: ${e.error}`).join('\n') || ''
+        throw new Error(`Invoice generation failed for ${data.errors} client(s):\n${details}`)
+      }
       await fetchInvoices()
       await fetchPreflightValidation()
     } catch (err) {

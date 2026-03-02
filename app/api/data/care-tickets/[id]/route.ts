@@ -193,9 +193,13 @@ export async function PATCH(
       clientId, // Attribute ticket to a client (admin/care_admin only)
       internalNote, // New internal note to add to timeline (singular - adds to array)
       eventNote, // Optional note for the event being created
+      editEventIndex, // Index of event to edit (admin/care_admin/care_team only)
+      editEventStatus, // New status for the edited event
+      editEventNote, // New note text for the edited event
+      deleteEventIndex, // Index of event to delete (admin/care_admin/care_team only)
     } = body
 
-    // Care Team users can only add internal notes - reject if trying to update other fields
+    // Care Team users can only add internal notes or edit/delete events - reject if trying to update other fields
     if (isCareTeam) {
       const hasOtherFields = ticketType !== undefined || issueType !== undefined ||
         status !== undefined || manager !== undefined || orderId !== undefined ||
@@ -208,7 +212,7 @@ export async function PATCH(
 
       if (hasOtherFields) {
         return NextResponse.json(
-          { error: 'Care Team users can only add internal notes' },
+          { error: 'Care Team users can only add internal notes or edit/delete events' },
           { status: 403 }
         )
       }
@@ -259,6 +263,41 @@ export async function PATCH(
 
       // Prepend new note (most recent first)
       updateData.internal_notes = [newInternalNote, ...currentInternalNotes]
+    }
+
+    // Handle editing a specific event (admin, care_admin, care_team only)
+    if (editEventIndex !== undefined && (isAdmin || isCareAdmin || isCareTeam)) {
+      const currentEvents = (existingTicket.events as Array<Record<string, unknown>>) || []
+      const idx = Number(editEventIndex)
+      if (idx < 0 || idx >= currentEvents.length) {
+        return NextResponse.json({ error: 'Invalid event index' }, { status: 400 })
+      }
+      // Don't allow editing "Ticket Created" events
+      if (currentEvents[idx].status === 'Ticket Created') {
+        return NextResponse.json({ error: 'Cannot edit the Ticket Created event' }, { status: 400 })
+      }
+      const updatedEvents = [...currentEvents]
+      const eventUpdate: Record<string, unknown> = { ...updatedEvents[idx] }
+      if (editEventNote !== undefined) eventUpdate.note = editEventNote || ''
+      if (editEventStatus) eventUpdate.status = editEventStatus
+      updatedEvents[idx] = eventUpdate
+      updateData.events = updatedEvents
+    }
+
+    // Handle deleting a specific event (admin, care_admin, care_team only)
+    if (deleteEventIndex !== undefined && (isAdmin || isCareAdmin || isCareTeam)) {
+      // Use events from updateData if already modified by editEventIndex above, else use existing
+      const currentEvents = (updateData.events as Array<Record<string, unknown>>) || (existingTicket.events as Array<Record<string, unknown>>) || []
+      const idx = Number(deleteEventIndex)
+      if (idx < 0 || idx >= currentEvents.length) {
+        return NextResponse.json({ error: 'Invalid event index' }, { status: 400 })
+      }
+      // Don't allow deleting "Ticket Created" events
+      if (currentEvents[idx].status === 'Ticket Created') {
+        return NextResponse.json({ error: 'Cannot delete the Ticket Created event' }, { status: 400 })
+      }
+      const updatedEvents = currentEvents.filter((_: unknown, i: number) => i !== idx)
+      updateData.events = updatedEvents
     }
 
     if (Object.keys(updateData).length === 0 && !eventNote) {
@@ -405,21 +444,32 @@ export async function DELETE(
 
     const userRole = user.user_metadata?.role as string | undefined
     const isAdmin = userRole === 'admin'
+    const isCareAdmin = userRole === 'care_admin'
+    const isCareTeam = userRole === 'care_team'
 
-    // Only admin users can delete tickets
-    if (!isAdmin) {
+    // Permanent delete: admin and care_admin only
+    // Archive (soft delete): admin, care_admin, and brand users (for their own tickets)
+    // Care team: cannot delete at all
+    if (permanent && !isAdmin && !isCareAdmin) {
       return NextResponse.json(
-        { error: 'Only administrators can delete tickets' },
+        { error: 'Only administrators can permanently delete tickets' },
+        { status: 403 }
+      )
+    }
+
+    if (isCareTeam) {
+      return NextResponse.json(
+        { error: 'Care team members cannot delete tickets' },
         { status: 403 }
       )
     }
 
     const supabase = createAdminClient()
 
-    // First, get the ticket to access attachments and shipment_id
+    // First, get the ticket to access attachments, shipment_id, and client_id
     const { data: ticket, error: fetchError } = await supabase
       .from('care_tickets')
-      .select('attachments, shipment_id, ticket_type')
+      .select('attachments, shipment_id, ticket_type, client_id')
       .eq('id', id)
       .single()
 
@@ -428,6 +478,20 @@ export async function DELETE(
         return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
       }
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
+    }
+
+    // Brand users can only archive their own tickets
+    if (!isAdmin && !isCareAdmin) {
+      const { data: userClient } = await supabase
+        .from('user_clients')
+        .select('client_id')
+        .eq('user_id', user.id)
+        .eq('client_id', ticket.client_id)
+        .single()
+
+      if (!userClient) {
+        return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+      }
     }
 
     if (permanent) {

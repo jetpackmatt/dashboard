@@ -531,6 +531,23 @@ export async function GET(request: NextRequest) {
           storeOrderIds = storeOrderMatches.map((o: any) => o.shipbob_order_id).filter(Boolean)
         }
 
+        // Pre-resolve return IDs → original_shipment_id from returns table
+        let returnShipmentIds: string[] = []
+        if (/^\d+$/.test(searchTerm)) {
+          const returnQuery = supabase
+            .from('returns')
+            .select('original_shipment_id')
+            .eq('shipbob_return_id', parseInt(searchTerm))
+            .limit(100)
+          if (clientId) {
+            returnQuery.eq('client_id', clientId)
+          }
+          const { data: returnMatches } = await returnQuery
+          if (returnMatches && returnMatches.length > 0) {
+            returnShipmentIds = returnMatches.map((r: any) => String(r.original_shipment_id)).filter(Boolean)
+          }
+        }
+
         // Use ILIKE for ID searches - supports partial matching
         const searchPattern = `%${searchTerm}%`
         let orFilter = `recipient_name.ilike.${searchPattern},shipbob_order_id.ilike.${searchPattern},shipment_id.ilike.${searchPattern},tracking_id.ilike.${searchPattern}`
@@ -538,6 +555,11 @@ export async function GET(request: NextRequest) {
         // Add store_order_id matches via their shipbob_order_ids
         if (storeOrderIds.length > 0) {
           orFilter += `,shipbob_order_id.in.(${storeOrderIds.join(',')})`
+        }
+
+        // Add return ID matches via their original_shipment_ids
+        if (returnShipmentIds.length > 0) {
+          orFilter += `,shipment_id.in.(${returnShipmentIds.join(',')})`
         }
 
         query = query.or(orFilter)
@@ -813,6 +835,23 @@ export async function GET(request: NextRequest) {
         const fbIds = fbStoreMatches.map((o: any) => o.shipbob_order_id).filter(Boolean)
         if (fbIds.length > 0) {
           fallbackOrFilter += `,shipbob_order_id.in.(${fbIds.join(',')})`
+        }
+      }
+
+      // Pre-resolve return IDs for fallback path too
+      if (/^\d+$/.test(searchQuery.trim())) {
+        const fbReturnQuery = supabase
+          .from('returns')
+          .select('original_shipment_id')
+          .eq('shipbob_return_id', parseInt(searchQuery.trim()))
+          .limit(100)
+        if (clientId) fbReturnQuery.eq('client_id', clientId)
+        const { data: fbReturnMatches } = await fbReturnQuery
+        if (fbReturnMatches && fbReturnMatches.length > 0) {
+          const fbReturnIds = fbReturnMatches.map((r: any) => String(r.original_shipment_id)).filter(Boolean)
+          if (fbReturnIds.length > 0) {
+            fallbackOrFilter += `,shipment_id.in.(${fbReturnIds.join(',')})`
+          }
         }
       }
 

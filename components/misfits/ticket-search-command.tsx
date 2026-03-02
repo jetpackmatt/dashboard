@@ -121,6 +121,9 @@ export function TicketSearchCommand({ onSelect, clientId, creditAmount }: Ticket
                     <span className="font-mono text-[11px] font-medium shrink-0">
                       #{ticket.ticketNumber}
                     </span>
+                    <span className="text-[10px] text-muted-foreground/70 shrink-0">
+                      {ticket.issueType || ticket.ticketType}
+                    </span>
                     <div className="flex items-center gap-1 shrink-0">
                       <span
                         className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_COLORS[ticket.status] || 'bg-zinc-400'}`}
