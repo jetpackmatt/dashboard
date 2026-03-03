@@ -114,8 +114,9 @@ export function EditTicketDialog({
   // Derived booleans for conditional field display
   const isClaim = editForm.ticketType === 'Claim'
   const isShipmentInquiry = editForm.ticketType === 'Shipment Inquiry'
+  const isAddressChange = editForm.ticketType === 'Address Change'
   const isRequest = editForm.ticketType === 'Request'
-  const hasShipmentFields = isClaim || isShipmentInquiry
+  const hasShipmentFields = isClaim || isShipmentInquiry || isAddressChange
   const hasIssueType = isClaim
   // Reshipping only for Incorrect Items (Pick Error) and Incorrect Qty (Short Ship)
   const hasReshipping = isClaim && (editForm.issueType === 'Pick Error' || editForm.issueType === 'Short Ship')
@@ -193,6 +194,7 @@ export function EditTicketDialog({
                 <SelectContent>
                   <SelectItem value="Claim">Claim</SelectItem>
                   <SelectItem value="Shipment Inquiry">Shipment Inquiry</SelectItem>
+                  <SelectItem value="Address Change">Address Change</SelectItem>
                   <SelectItem value="Request">Request</SelectItem>
                   <SelectItem value="Technical">Technical</SelectItem>
                   <SelectItem value="Inquiry">Inquiry</SelectItem>

@@ -59,6 +59,7 @@ export const STATUS_OPTIONS: FilterOption[] = [
 // Ticket type filter options - non-claim types first, then claim issues
 export const ISSUE_TYPE_OPTIONS: FilterOption[] = [
   { value: 'type:Shipment Inquiry', label: 'Shipment Inquiry' },
+  { value: 'type:Address Change', label: 'Address Change' },
   { value: 'type:Request', label: 'Request' },
   { value: 'type:Technical', label: 'Technical' },
   { value: 'type:Inquiry', label: 'Inquiry' },

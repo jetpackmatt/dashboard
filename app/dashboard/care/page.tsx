@@ -330,10 +330,21 @@ export default function CarePage() {
     }
   }
 
+  // Parse Address Change description into structured parts
+  const parseAddressChange = (description: string) => {
+    const origMatch = description.match(/Original Address:\n([\s\S]*?)(?:\n\nNew Address:|$)/)
+    const newMatch = description.match(/New Address:\n([\s\S]*?)(?:\n\nReturn to warehouse|$)/)
+    return {
+      originalLines: origMatch ? origMatch[1].trim().split('\n').filter(Boolean) : [],
+      newLines: newMatch ? newMatch[1].trim().split('\n').filter(Boolean) : [],
+      returnToWarehouse: description.includes('Return to warehouse if too late'),
+    }
+  }
+
   // Get the most relevant reference ID for a ticket based on its type
   const getReferenceId = (ticket: Ticket): string => {
-    // For Claims and Shipment Inquiry tickets, prioritize shipment ID, then order ID
-    if (ticket.ticketType === 'Claim' || ticket.ticketType === 'Shipment Inquiry') {
+    // For Claims, Shipment Inquiry, and Address Change tickets, prioritize shipment ID
+    if (ticket.ticketType === 'Claim' || ticket.ticketType === 'Shipment Inquiry' || ticket.ticketType === 'Address Change') {
       return ticket.shipmentId || ticket.orderId || String(ticket.ticketNumber)
     }
     // For Requests, use work order ID or inventory ID
@@ -970,7 +981,7 @@ export default function CarePage() {
               {/* New Ticket Button */}
               <Button size="sm" variant="ghost" className="h-[30px] bg-[#328bcb]/15 text-[#1a5f96] font-medium border-0 hover:bg-[#328bcb]/25 dark:bg-[#328bcb]/20 dark:text-[#5aa8dc] dark:hover:bg-[#328bcb]/30" onClick={() => setCreateDialogOpen(true)}>
                 <PlusIcon className="h-4 w-4 mr-1" />
-                <span className="hidden lg:inline">New Ticket</span>
+                <span className="hidden lg:inline">{isBrandUser ? 'Address Change' : 'New Ticket'}</span>
               </Button>
 
               {/* Columns button */}
@@ -1719,6 +1730,43 @@ export default function CarePage() {
                                             )
                                           })()}
 
+                                          {/* Address Change: Original Address / New Address / Return to Warehouse */}
+                                          {ticket.ticketType === 'Address Change' && (() => {
+                                            const parsed = parseAddressChange(ticket.description || '')
+                                            return (
+                                              <div className="grid grid-cols-3 border-b-2 border-white dark:border-b-white/15">
+                                                <div className="px-5 py-5 border-r-2 border-white dark:border-r-white/15">
+                                                  <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Original Address</div>
+                                                  <div className="text-[13px] leading-relaxed">
+                                                    {parsed.originalLines.length > 0
+                                                      ? parsed.originalLines.map((line, i) => (
+                                                          <div key={i} className={i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}>{line}</div>
+                                                        ))
+                                                      : <span className="text-muted-foreground">—</span>
+                                                    }
+                                                  </div>
+                                                </div>
+                                                <div className="px-5 py-5 border-r-2 border-white dark:border-r-white/15">
+                                                  <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">New Address</div>
+                                                  <div className="text-[13px] leading-relaxed">
+                                                    {parsed.newLines.length > 0
+                                                      ? parsed.newLines.map((line, i) => (
+                                                          <div key={i} className={i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}>{line}</div>
+                                                        ))
+                                                      : <span className="text-muted-foreground">—</span>
+                                                    }
+                                                  </div>
+                                                </div>
+                                                <div className="px-5 py-5">
+                                                  <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Return if Too Late</div>
+                                                  <div className={cn("text-[13px] font-medium", parsed.returnToWarehouse ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>
+                                                    {parsed.returnToWarehouse ? '↩ Yes, return' : 'No'}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            )
+                                          })()}
+
                                           {/* Claim-specific rows - varies by issue type */}
                                           {ticket.ticketType === 'Claim' && ticket.issueType !== 'Loss' && ticket.issueType !== 'Damage' ? (
                                             <>
@@ -1902,8 +1950,8 @@ export default function CarePage() {
 
                                       {/* Right section: Description and Activity */}
                                       <div className="flex-1 min-w-0 flex flex-col">
-                                        {/* Description section */}
-                                        {ticket.description && (
+                                        {/* Description section - hidden for Address Change (addresses shown in center column) */}
+                                        {ticket.description && ticket.ticketType !== 'Address Change' && (
                                           <div className="px-6 py-[calc(1.75rem-0.5px)] border-b-2 border-white dark:border-b-white/15 bg-white/25 dark:bg-black/20">
                                             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5">Description</div>
                                             <p className="text-[13px] text-foreground whitespace-pre-wrap break-words leading-relaxed">
@@ -2100,6 +2148,7 @@ export default function CarePage() {
         selectedClientId={selectedClientId}
         clients={clients}
         isAdmin={effectiveIsAdmin || effectiveIsCareUser}
+        isBrandUser={isBrandUser}
       />
 
       {/* Edit Ticket Dialog */}

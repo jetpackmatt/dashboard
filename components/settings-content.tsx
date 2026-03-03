@@ -449,7 +449,7 @@ export function SettingsContent() {
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
-          {isDev && (
+          {(isDev || isAdmin) && (
             <TabsTrigger value="dev">Dev Tools</TabsTrigger>
           )}
         </TabsList>
@@ -1048,7 +1048,7 @@ export function SettingsContent() {
         </TabsContent>
 
         {/* Dev Tools Tab - Development only */}
-        {isDev && (
+        {(isDev || isAdmin) && (
           <TabsContent value="dev" className="space-y-6">
             <Card className="border-orange-200 dark:border-orange-800">
               <CardHeader>

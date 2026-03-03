@@ -55,7 +55,10 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   const [devRole, setDevRoleState] = React.useState<DevRole>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(DEV_ROLE_KEY)
-      if (saved === 'admin' || saved === 'care_admin' || saved === 'care_team' || saved === 'client') return saved
+      // Note: 'client' is intentionally excluded - if stored, falls back to 'admin'
+      if (saved === 'admin' || saved === 'care_admin' || saved === 'care_team') return saved as DevRole
+      // Clear any stale 'client' value from storage
+      if (saved === 'client') localStorage.setItem(DEV_ROLE_KEY, 'admin')
     }
     return 'admin' // Default to admin in dev mode
   })
