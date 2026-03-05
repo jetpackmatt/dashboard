@@ -6178,6 +6178,7 @@ interface CommissionAssignmentRaw {
   user_id: string
   start_date: string
   is_active: boolean
+  include_all_clients?: boolean
   commission_type: {
     id: string
     name: string
@@ -6198,6 +6199,7 @@ interface CommissionAssignment {
   commission_type_name: string
   start_date: string
   is_active: boolean
+  include_all_clients: boolean
   clients: Array<{
     client_id: string
     client_name: string
@@ -6263,6 +6265,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
   const [selectedUserId, setSelectedUserId] = React.useState('')
   const [selectedCommissionTypeId, setSelectedCommissionTypeId] = React.useState('')
   const [selectedClientIds, setSelectedClientIds] = React.useState<string[]>([])
+  const [includeAllClients, setIncludeAllClients] = React.useState(false)
   const [startDate, setStartDate] = React.useState(() => {
     const today = new Date()
     return today.toISOString().split('T')[0]
@@ -6290,6 +6293,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
           commission_type_name: a.commission_type?.name || 'Unknown',
           start_date: a.start_date,
           is_active: a.is_active,
+          include_all_clients: a.include_all_clients || false,
           clients: (a.clients || [])
             .filter(c => c.client)
             .map(c => ({
@@ -6347,7 +6351,8 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
           user_id: selectedUserId.trim(),
           commission_type_id: selectedCommissionTypeId,
           start_date: startDate,
-          client_ids: selectedClientIds,
+          client_ids: includeAllClients ? [] : selectedClientIds,
+          include_all_clients: includeAllClients,
         }),
       })
 
@@ -6361,6 +6366,7 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
       setSelectedUserId('')
       setSelectedCommissionTypeId('')
       setSelectedClientIds([])
+      setIncludeAllClients(false)
       setStartDate(new Date().toISOString().split('T')[0])
       setIsDialogOpen(false)
 
@@ -6560,7 +6566,11 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
                     <TableCell>{assignment.start_date}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {assignment.clients.length === 0 ? (
+                        {assignment.include_all_clients ? (
+                          <Badge variant="default" className="text-xs">
+                            All Clients
+                          </Badge>
+                        ) : assignment.clients.length === 0 ? (
                           <span className="text-muted-foreground text-sm">None</span>
                         ) : (
                           assignment.clients.map((c) => (
@@ -6801,62 +6811,87 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">Assigned Brands</label>
-                {clients.filter(c => c.eshipper_id || c.merchant_id).length > 0 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs"
-                    onClick={() => {
-                      const eligibleClients = clients.filter(c => c.eshipper_id || c.merchant_id)
-                      const allSelected = eligibleClients.every(c => selectedClientIds.includes(c.id))
-                      if (allSelected) {
-                        setSelectedClientIds([])
-                      } else {
-                        setSelectedClientIds(eligibleClients.map(c => c.id))
-                      }
-                    }}
-                  >
-                    {clients.filter(c => c.eshipper_id || c.merchant_id).every(c => selectedClientIds.includes(c.id))
-                      ? 'Deselect All'
-                      : 'Select All'}
-                  </Button>
-                )}
               </div>
-              <div className="border rounded-md max-h-48 overflow-y-auto">
-                {clients.filter(c => c.eshipper_id || c.merchant_id).length === 0 ? (
-                  <p className="p-3 text-sm text-muted-foreground">
-                    No brands with partner IDs configured
-                  </p>
-                ) : (
-                  clients
-                    .filter(c => c.eshipper_id || c.merchant_id)
-                    .map((client) => (
-                      <div
-                        key={client.id}
-                        className="flex items-center gap-2 p-2 hover:bg-muted/50 cursor-pointer"
-                        onClick={() => toggleClient(client.id)}
+              <div
+                className="flex items-center gap-2 p-2 border rounded-md cursor-pointer hover:bg-muted/50"
+                onClick={() => {
+                  setIncludeAllClients(!includeAllClients)
+                  if (!includeAllClients) setSelectedClientIds([])
+                }}
+              >
+                <Checkbox
+                  checked={includeAllClients}
+                  onCheckedChange={(checked) => {
+                    setIncludeAllClients(!!checked)
+                    if (checked) setSelectedClientIds([])
+                  }}
+                />
+                <span className="text-sm font-medium">All Clients</span>
+                <span className="text-xs text-muted-foreground ml-1">
+                  Automatically includes new brands
+                </span>
+              </div>
+              {!includeAllClients && (
+                <>
+                  <div className="flex items-center justify-end">
+                    {clients.filter(c => c.eshipper_id || c.merchant_id).length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs"
+                        onClick={() => {
+                          const eligibleClients = clients.filter(c => c.eshipper_id || c.merchant_id)
+                          const allSelected = eligibleClients.every(c => selectedClientIds.includes(c.id))
+                          if (allSelected) {
+                            setSelectedClientIds([])
+                          } else {
+                            setSelectedClientIds(eligibleClients.map(c => c.id))
+                          }
+                        }}
                       >
-                        <Checkbox
-                          checked={selectedClientIds.includes(client.id)}
-                          onCheckedChange={() => toggleClient(client.id)}
-                        />
-                        <span className="text-sm">{client.company_name}</span>
-                        <div className="ml-auto flex gap-1">
-                          {client.merchant_id && (
-                            <Badge variant="outline" className="text-xs">ShipBob</Badge>
-                          )}
-                          {client.eshipper_id && (
-                            <Badge variant="outline" className="text-xs">eShipper</Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {selectedClientIds.length} brand(s) selected
-              </p>
+                        {clients.filter(c => c.eshipper_id || c.merchant_id).every(c => selectedClientIds.includes(c.id))
+                          ? 'Deselect All'
+                          : 'Select All'}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="border rounded-md max-h-48 overflow-y-auto">
+                    {clients.filter(c => c.eshipper_id || c.merchant_id).length === 0 ? (
+                      <p className="p-3 text-sm text-muted-foreground">
+                        No brands with partner IDs configured
+                      </p>
+                    ) : (
+                      clients
+                        .filter(c => c.eshipper_id || c.merchant_id)
+                        .map((client) => (
+                          <div
+                            key={client.id}
+                            className="flex items-center gap-2 p-2 hover:bg-muted/50 cursor-pointer"
+                            onClick={() => toggleClient(client.id)}
+                          >
+                            <Checkbox
+                              checked={selectedClientIds.includes(client.id)}
+                              onCheckedChange={() => toggleClient(client.id)}
+                            />
+                            <span className="text-sm">{client.company_name}</span>
+                            <div className="ml-auto flex gap-1">
+                              {client.merchant_id && (
+                                <Badge variant="outline" className="text-xs">ShipBob</Badge>
+                              )}
+                              {client.eshipper_id && (
+                                <Badge variant="outline" className="text-xs">eShipper</Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedClientIds.length} brand(s) selected
+                  </p>
+                </>
+              )}
             </div>
           </div>
 

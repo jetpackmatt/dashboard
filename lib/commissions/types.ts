@@ -124,6 +124,7 @@ export interface AssignCommissionRequest {
   commission_type_id: string
   start_date: string
   client_ids: string[]
+  include_all_clients?: boolean
 }
 
 export interface UpdateCommissionClientsRequest {

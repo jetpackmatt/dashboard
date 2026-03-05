@@ -143,17 +143,37 @@ export async function calculateUserCommission(
     return null
   }
 
-  // 2. Get assigned clients with their partner IDs
-  const { data: clientAssignments, error: caError } = await supabase
-    .from('user_commission_clients')
-    .select(`
-      client_id,
-      client:clients(id, company_name, merchant_id, eshipper_id, gofo_id)
-    `)
-    .eq('user_commission_id', userCommission.id)
+  // 2. Get clients — either all active clients or specifically assigned ones
+  let clients: ClientWithPartners[] = []
 
-  if (caError || !clientAssignments) {
-    return null
+  if (userCommission.include_all_clients) {
+    // "All Clients" mode: include every active, non-internal client
+    const { data: allClients, error: acError } = await supabase
+      .from('clients')
+      .select('id, company_name, merchant_id, eshipper_id, gofo_id')
+      .eq('is_active', true)
+      .eq('is_internal', false)
+
+    if (acError || !allClients) {
+      return null
+    }
+    clients = allClients as ClientWithPartners[]
+  } else {
+    // Specific client assignments
+    const { data: clientAssignments, error: caError } = await supabase
+      .from('user_commission_clients')
+      .select(`
+        client_id,
+        client:clients(id, company_name, merchant_id, eshipper_id, gofo_id)
+      `)
+      .eq('user_commission_id', userCommission.id)
+
+    if (caError || !clientAssignments) {
+      return null
+    }
+    clients = clientAssignments
+      .map(a => a.client as unknown as ClientWithPartners | null)
+      .filter((c): c is ClientWithPartners => c !== null)
   }
 
   // 3. Calculate period bounds
@@ -166,11 +186,7 @@ export async function calculateUserCommission(
   let totalShipments = 0
   let totalCommission = 0
 
-  for (const assignment of clientAssignments) {
-    // Supabase returns joined data as object for FK relationships
-    const clientData = assignment.client as unknown
-    const client = clientData as ClientWithPartners | null
-    if (!client) continue
+  for (const client of clients) {
 
     const { total, byPartner } = await countClientShipments(
       supabase,
@@ -266,7 +282,7 @@ export async function getLastShipmentDates(
   // Get user's commission assignment
   const { data: userCommission } = await supabase
     .from('user_commissions')
-    .select('id')
+    .select('id, include_all_clients')
     .eq('user_id', userId)
     .eq('is_active', true)
     .single()
@@ -275,17 +291,31 @@ export async function getLastShipmentDates(
     return { shipbob: null, eshipper: null }
   }
 
-  // Get assigned client IDs
-  const { data: clientAssignments } = await supabase
-    .from('user_commission_clients')
-    .select('client_id')
-    .eq('user_commission_id', userCommission.id)
+  // Get client IDs — either all active or specifically assigned
+  let clientIds: string[]
 
-  if (!clientAssignments || clientAssignments.length === 0) {
-    return { shipbob: null, eshipper: null }
+  if (userCommission.include_all_clients) {
+    const { data: allClients } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('is_active', true)
+      .eq('is_internal', false)
+
+    if (!allClients || allClients.length === 0) {
+      return { shipbob: null, eshipper: null }
+    }
+    clientIds = allClients.map(c => c.id)
+  } else {
+    const { data: clientAssignments } = await supabase
+      .from('user_commission_clients')
+      .select('client_id')
+      .eq('user_commission_id', userCommission.id)
+
+    if (!clientAssignments || clientAssignments.length === 0) {
+      return { shipbob: null, eshipper: null }
+    }
+    clientIds = clientAssignments.map(ca => ca.client_id)
   }
-
-  const clientIds = clientAssignments.map(ca => ca.client_id)
 
   // Get last eShipper file import timestamp across all assigned clients
   const { data: lastEshipper } = await supabase

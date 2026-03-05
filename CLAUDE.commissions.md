@@ -50,10 +50,11 @@ Links users to their commission assignments.
 | `start_date` | date | When commission tracking begins |
 | `end_date` | date | When commission tracking ends (NULL = ongoing) |
 | `is_active` | boolean | Active assignment flag |
+| `include_all_clients` | boolean | When true, auto-includes all active non-internal clients (ignores `user_commission_clients` rows) |
 
 ### `user_commission_clients`
 
-Maps which clients count toward a user's commission.
+Maps which clients count toward a user's commission. **Ignored when `include_all_clients` is true on the parent `user_commissions` row.**
 
 | Column | Type | Description |
 |--------|------|-------------|

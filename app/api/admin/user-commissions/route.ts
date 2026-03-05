@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
         commission_type_id: body.commission_type_id,
         start_date: body.start_date,
         is_active: true,
+        include_all_clients: body.include_all_clients || false,
       })
       .select()
       .single()
@@ -120,8 +121,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user commission' }, { status: 500 })
     }
 
-    // Add client assignments
-    if (body.client_ids && body.client_ids.length > 0) {
+    // Add client assignments (skip when include_all_clients is true)
+    if (!body.include_all_clients && body.client_ids && body.client_ids.length > 0) {
       const clientInserts = body.client_ids.map(clientId => ({
         user_commission_id: userCommission.id,
         client_id: clientId,
@@ -195,6 +196,7 @@ export async function PATCH(request: NextRequest) {
 
     if (body.end_date !== undefined) updates.end_date = body.end_date
     if (body.is_active !== undefined) updates.is_active = body.is_active
+    if (body.include_all_clients !== undefined) updates.include_all_clients = body.include_all_clients
 
     const { error: updateError } = await adminClient
       .from('user_commissions')

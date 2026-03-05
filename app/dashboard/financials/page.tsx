@@ -937,7 +937,7 @@ export default function CommissionsPage() {
                             <div
                               key={`${monthData.year}-${monthData.month}`}
                               onClick={() => setSelectedAggregateMonth(monthData)}
-                              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
+                              className={`group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                                 selectedAggregateMonth?.year === monthData.year && selectedAggregateMonth?.month === monthData.month
                                   ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/50 dark:border-emerald-800/30'
                                   : 'hover:bg-muted'
@@ -951,7 +951,18 @@ export default function CommissionsPage() {
                                   </Badge>
                                 )}
                               </div>
-                              <span className="font-medium tabular-nums">{formatCurrency(monthData.totalCommission)}</span>
+                              <div className="flex items-center gap-2">
+                                {!monthData.isCurrent && (
+                                  <button
+                                    onClick={(e) => handleRecalculateSnapshot(monthData.year, monthData.month, e)}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
+                                    title={`Recalculate ${monthNames[monthData.month - 1]} ${monthData.year} snapshot`}
+                                  >
+                                    <RefreshCw className={`h-3.5 w-3.5 ${recalculatingMonth === `${monthData.year}-${monthData.month}` ? 'animate-spin' : ''}`} />
+                                  </button>
+                                )}
+                                <span className="font-medium tabular-nums">{formatCurrency(monthData.totalCommission)}</span>
+                              </div>
                             </div>
                           ))}
                           {aggregateHistory.length === 0 && (
