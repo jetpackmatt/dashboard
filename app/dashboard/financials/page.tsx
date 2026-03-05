@@ -3,7 +3,7 @@
 import * as React from "react"
 import { SiteHeader } from "@/components/site-header"
 import { useClient } from "@/components/client-context"
-import { Eye, Users, TrendingUp, Activity } from "lucide-react"
+import { Eye, Users, TrendingUp, Activity, RefreshCw } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { differenceInMinutes, format } from "date-fns"
+import { toast } from "sonner"
 
 interface ClientBreakdown {
   clientId: string
@@ -369,6 +370,33 @@ export default function CommissionsPage() {
     setSelectedMonth({ year, month, shipments, commission, breakdown, isCurrent })
   }
 
+  // Recalculate a locked snapshot (admin only - use after uploading new eShipper data)
+  const [recalculatingMonth, setRecalculatingMonth] = React.useState<string | null>(null)
+
+  const handleRecalculateSnapshot = async (year: number, month: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const key = `${year}-${month}`
+    setRecalculatingMonth(key)
+    try {
+      const res = await fetch('/api/admin/recalculate-commission-snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, month }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        toast.error(data.error || 'Recalculation failed')
+      } else {
+        toast.success(`${monthNames[month - 1]} ${year} snapshot updated`)
+        fetchData()
+      }
+    } catch {
+      toast.error('Recalculation failed')
+    } finally {
+      setRecalculatingMonth(null)
+    }
+  }
+
   // Format currency
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-US', {
@@ -642,7 +670,7 @@ export default function CommissionsPage() {
                       snapshot.breakdown || [],
                       false
                     )}
-                    className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
+                    className={`group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors ${
                       isMonthSelected(snapshot.period_year, snapshot.period_month)
                         ? 'bg-muted'
                         : 'hover:bg-muted/50'
@@ -652,7 +680,18 @@ export default function CommissionsPage() {
                       <p className="font-medium">{monthNames[snapshot.period_month - 1]}</p>
                       <p className="text-xs text-muted-foreground">{snapshot.period_year}</p>
                     </div>
-                    <span className="font-medium tabular-nums">{formatCurrency(snapshot.commission_amount)}</span>
+                    <div className="flex items-center gap-2">
+                      {effectiveIsAdmin && (
+                        <button
+                          onClick={(e) => handleRecalculateSnapshot(snapshot.period_year, snapshot.period_month, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
+                          title={`Recalculate ${monthNames[snapshot.period_month - 1]} ${snapshot.period_year} snapshot`}
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${recalculatingMonth === `${snapshot.period_year}-${snapshot.period_month}` ? 'animate-spin' : ''}`} />
+                        </button>
+                      )}
+                      <span className="font-medium tabular-nums">{formatCurrency(snapshot.commission_amount)}</span>
+                    </div>
                   </div>
                 ))}
 
