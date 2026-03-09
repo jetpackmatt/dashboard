@@ -217,14 +217,29 @@ export default function CarePage() {
   }, [])
 
   // Auto-expand ticket from URL query param (e.g. ?ticket=1234)
+  // Populate search bar with ticket number so the user sees why only one ticket is showing
+  // and can clear search to return to all tickets
+  const ticketDeeplink = React.useRef<string | null>(null)
   React.useEffect(() => {
     const ticketParam = searchParams.get('ticket')
-    if (!ticketParam || tickets.length === 0) return
+    if (!ticketParam || ticketDeeplink.current) return
     const ticketNum = parseInt(ticketParam, 10)
     if (isNaN(ticketNum)) return
+    ticketDeeplink.current = ticketParam
+    setSearchInput(ticketParam)
+    setSearchQuery(ticketParam)
+  }, [searchParams])
+
+  // Once tickets load with the deeplink search active, auto-expand the match
+  React.useEffect(() => {
+    if (!ticketDeeplink.current || tickets.length === 0) return
+    const ticketNum = parseInt(ticketDeeplink.current, 10)
     const match = tickets.find(t => t.ticketNumber === ticketNum)
-    if (match) setExpandedRowId(match.id)
-  }, [searchParams, tickets])
+    if (match) {
+      setExpandedRowId(match.id)
+      ticketDeeplink.current = null // Only expand once
+    }
+  }, [tickets])
 
   // Client attribution state (admin/care_admin only)
   const [confirmAttribution, setConfirmAttribution] = React.useState<{ticketId: string, clientId: string, clientName: string} | null>(null)

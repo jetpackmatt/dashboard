@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
     const selectFields = 'id, transaction_id, client_id, merchant_id, reference_id, reference_type, cost, currency_code, charge_date, fee_type, transaction_type, fulfillment_center, tracking_id, care_ticket_id, dispute_status, matched_credit_id, additional_details, clients(company_name)'
 
     // Exclude transactions already handled through admin disputes workflow
-    const disputeExcludeFilter = 'dispute_status.is.null,dispute_status.not.in.(credited,ignored)'
+    // Only show undisputed transactions (dispute_status IS NULL)
+    const disputeExcludeFilter = 'dispute_status.is.null'
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any[] | null = null

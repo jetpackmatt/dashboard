@@ -56,6 +56,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { toast } from "sonner"
+import { BanIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useClient } from "@/components/client-context"
 import { ClientBadge, JETPACK_INTERNAL_ID } from "@/components/transactions/client-badge"
@@ -438,24 +439,61 @@ export default function MisfitsPage() {
     setIsBulkLinking(false)
   }
 
-  // Bulk dispute (move to disputes workflow)
-  async function handleBulkDispute() {
+  // Dispute dialog state
+  const [disputeDialogOpen, setDisputeDialogOpen] = React.useState(false)
+  const [disputeDialogTxIds, setDisputeDialogTxIds] = React.useState<Set<string>>(new Set())
+  const [disputeMode, setDisputeMode] = React.useState<'hold' | 'remove'>('hold')
+  const [isDisputing, setIsDisputing] = React.useState(false)
+
+  function openDisputeDialog() {
     if (selectedIds.size === 0) return
-    setIsBulkLinking(true)
+    setDisputeDialogTxIds(new Set(selectedIds))
+    setDisputeMode('hold')
+    setDisputeDialogOpen(true)
+  }
+
+  function toggleDisputeTx(txId: string) {
+    setDisputeDialogTxIds(prev => {
+      const next = new Set(prev)
+      if (next.has(txId)) next.delete(txId)
+      else next.add(txId)
+      return next
+    })
+  }
+
+  async function handleDisputeConfirm() {
+    if (disputeDialogTxIds.size === 0) return
+    setIsDisputing(true)
     try {
-      const promises = Array.from(selectedIds).map(transactionId =>
-        fetch(`/api/admin/transactions/${transactionId}/dispute`, {
+      let disputed = 0
+      let failed = 0
+
+      for (const txId of disputeDialogTxIds) {
+        const res = await fetch('/api/admin/disputes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transaction_id: txId,
+            status: 'disputed',
+            reason: 'Disputed from Misfits page',
+            move_to_jetpack: disputeMode === 'remove',
+          }),
         })
-      )
-      await Promise.all(promises)
-      toast.success(`Moved ${selectedIds.size} transaction(s) to Disputes`)
+        if (res.ok) disputed++
+        else failed++
+      }
+
+      if (failed > 0) {
+        toast.error(`Disputed ${disputed}, ${failed} failed`)
+      } else {
+        toast.success(`Disputed ${disputed} transaction(s)`)
+      }
+      setDisputeDialogOpen(false)
       fetchMisfits()
     } catch {
       toast.error('Failed to dispute transactions')
     }
-    setIsBulkLinking(false)
+    setIsDisputing(false)
   }
 
   // Copy to clipboard
@@ -572,10 +610,11 @@ export default function MisfitsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 px-3 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
-                  onClick={handleBulkDispute}
+                  className="h-7 px-3 text-xs bg-red-100 text-red-700 border-red-200 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/50"
+                  onClick={openDisputeDialog}
                   disabled={isBulkLinking}
                 >
+                  <BanIcon className="mr-1 h-3 w-3" />
                   Dispute
                 </Button>
 
@@ -1118,6 +1157,96 @@ export default function MisfitsPage() {
               }}
             >
               {isAttributing ? 'Attributing...' : 'Attribute'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dispute Dialog */}
+      <AlertDialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Dispute {disputeDialogTxIds.size} Transaction{disputeDialogTxIds.size !== 1 ? 's' : ''}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4">
+                <p>Uncheck any transactions you don&apos;t want to dispute. Disputed transactions are excluded from invoices.</p>
+                <div className="rounded-md border divide-y max-h-[300px] overflow-y-auto">
+                  {misfits.filter(tx => selectedIds.has(tx.transactionId)).map(tx => (
+                    <label
+                      key={tx.transactionId}
+                      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={disputeDialogTxIds.has(tx.transactionId)}
+                        onCheckedChange={() => toggleDisputeTx(tx.transactionId)}
+                      />
+                      <span className="flex-1 text-sm text-foreground min-w-0">
+                        <span className="block">{tx.feeType}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {tx.referenceId && tx.referenceId !== '0' ? tx.referenceId : 'No ref'} · {formatDateFixed(tx.chargeDate)}
+                          {tx.clientName && ` · ${tx.clientName}`}
+                        </span>
+                      </span>
+                      <span className={cn("text-sm font-medium tabular-nums shrink-0", tx.cost < 0 ? "text-emerald-600 dark:text-emerald-500" : "text-foreground")}>
+                        {formatCurrency(tx.cost)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {disputeDialogTxIds.size > 0 && (
+                  <div className="flex justify-between px-3 text-sm font-medium text-foreground">
+                    <span>Total</span>
+                    <span className="tabular-nums">
+                      {formatCurrency(
+                        misfits
+                          .filter(tx => disputeDialogTxIds.has(tx.transactionId))
+                          .reduce((sum, tx) => sum + tx.cost, 0)
+                      )}
+                    </span>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">What should happen to these transactions?</p>
+                  <div className="space-y-1.5">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-md border px-3 py-2.5 hover:bg-muted/50 transition-colors has-[:checked]:border-amber-500 has-[:checked]:bg-amber-50 dark:has-[:checked]:bg-amber-950/20">
+                      <input
+                        type="radio"
+                        name="misfitsDisputeMode"
+                        checked={disputeMode === 'hold'}
+                        onChange={() => setDisputeMode('hold')}
+                        className="mt-0.5 accent-amber-600"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-foreground">Hold for rebilling</div>
+                        <div className="text-xs text-muted-foreground">Keep on client, exclude from invoices until resolved.</div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-md border px-3 py-2.5 hover:bg-muted/50 transition-colors has-[:checked]:border-red-500 has-[:checked]:bg-red-50 dark:has-[:checked]:bg-red-950/20">
+                      <input
+                        type="radio"
+                        name="misfitsDisputeMode"
+                        checked={disputeMode === 'remove'}
+                        onChange={() => setDisputeMode('remove')}
+                        className="mt-0.5 accent-red-600"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-foreground">Remove from client</div>
+                        <div className="text-xs text-muted-foreground">Move to Jetpack. Client will no longer see these transactions.</div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDisputing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDisputeConfirm}
+              disabled={isDisputing || disputeDialogTxIds.size === 0}
+              className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+            >
+              {isDisputing ? 'Disputing...' : `Dispute ${disputeDialogTxIds.size} Transaction${disputeDialogTxIds.size !== 1 ? 's' : ''}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
