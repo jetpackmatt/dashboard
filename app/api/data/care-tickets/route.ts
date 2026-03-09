@@ -266,6 +266,7 @@ export async function POST(request: NextRequest) {
       attachments,
       initialNote,
       carrierConfirmedLoss,
+      isBrandSubmission,
     } = body
 
     // Validate required fields
@@ -390,8 +391,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Slack alert: brand users submitting Address Change tickets
-    const isBrandUser = !isAdmin && !isCareAdmin && !isCareTeam
-    if (isBrandUser && ticketType === 'Address Change') {
+    if (isBrandSubmission && ticketType === 'Address Change') {
       // Get client name for the alert
       const { data: clientRow } = await supabase
         .from('clients')
@@ -400,8 +400,11 @@ export async function POST(request: NextRequest) {
         .single()
       const brandName = clientRow?.company_name || 'Unknown Brand'
 
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://localhost:3000'
+      const ticketUrl = `${baseUrl}/dashboard/care?ticket=${ticket.ticket_number}`
+
       sendSlackAlert(
-        `📦 *Address Change Request* — Ticket #${ticket.ticket_number}\n` +
+        `📦 *Address Change Request* — <${ticketUrl}|Ticket #${ticket.ticket_number}>\n` +
         `Brand: ${brandName}\n` +
         `Shipment: ${shipmentId || 'N/A'}\n` +
         `Submitted by: ${userName}`

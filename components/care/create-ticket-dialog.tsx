@@ -264,6 +264,7 @@ export function CreateTicketDialog({
           initialNote: createForm.initialNote.trim() || null,
           attachments: createForm.attachments.length > 0 ? createForm.attachments : null,
           ...(submittedStatus ? { status: submittedStatus } : {}),
+          ...(isBrandUser ? { isBrandSubmission: true } : {}),
         }),
       })
 

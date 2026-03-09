@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   ColumnsIcon,
@@ -151,6 +152,7 @@ function SortableHeader({ columnId, children, className, onClick }: SortableHead
 
 export default function CarePage() {
   const { selectedClientId, isAdmin, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, clients } = useClient()
+  const searchParams = useSearchParams()
   const canViewAllBrands = effectiveIsAdmin || effectiveIsCareUser
   const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser && !effectiveIsCareAdmin
   const canDeleteTickets = effectiveIsAdmin || effectiveIsCareAdmin
@@ -213,6 +215,16 @@ export default function CarePage() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Auto-expand ticket from URL query param (e.g. ?ticket=1234)
+  React.useEffect(() => {
+    const ticketParam = searchParams.get('ticket')
+    if (!ticketParam || tickets.length === 0) return
+    const ticketNum = parseInt(ticketParam, 10)
+    if (isNaN(ticketNum)) return
+    const match = tickets.find(t => t.ticketNumber === ticketNum)
+    if (match) setExpandedRowId(match.id)
+  }, [searchParams, tickets])
 
   // Client attribution state (admin/care_admin only)
   const [confirmAttribution, setConfirmAttribution] = React.useState<{ticketId: string, clientId: string, clientName: string} | null>(null)
