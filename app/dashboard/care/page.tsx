@@ -883,6 +883,14 @@ export default function CarePage() {
                   onChange={(e) => {
                     setSearchInput(e.target.value)
                     debouncedSearch(e.target.value)
+                    // Strip ?ticket= param when search is cleared by typing
+                    if (!e.target.value) {
+                      const url = new URL(window.location.href)
+                      if (url.searchParams.has('ticket')) {
+                        url.searchParams.delete('ticket')
+                        window.history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : ''))
+                      }
+                    }
                   }}
                   className="h-[30px] pl-9 text-sm bg-background border-border text-muted-foreground placeholder:text-muted-foreground/60"
                 />
@@ -891,6 +899,12 @@ export default function CarePage() {
                     onClick={() => {
                       setSearchInput("")
                       setSearchQuery("")
+                      // Strip ?ticket= param from URL if present
+                      const url = new URL(window.location.href)
+                      if (url.searchParams.has('ticket')) {
+                        url.searchParams.delete('ticket')
+                        window.history.replaceState(null, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : ''))
+                      }
                     }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
