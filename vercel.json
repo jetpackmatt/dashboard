@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron/sync-invoices",
-      "schedule": "8 13 * * *"
+      "schedule": "0 10 * * 1"
     },
     {
       "path": "/api/cron/sync-older-nightly",

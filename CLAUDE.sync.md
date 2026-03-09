@@ -28,7 +28,7 @@ See [CLAUDE.billing.md](CLAUDE.billing.md) for full explanation of invoice struc
 | `/api/cron/sync-timelines` | Every 1 min | Updates timeline events for undelivered shipments (1000/run, 14-day window) |
 | `/api/cron/sync-transactions` | Every 1 min | Syncs ALL transaction types using **parent token** (3-min lookback) |
 | `/api/cron/sync-reconcile` | Every hour | Orders/shipments (20-day lookback) + transactions (3-day lookback) + soft-delete detection |
-| `/api/cron/sync-invoices` | Daily 1:36 AM UTC | Syncs ShipBob invoice metadata |
+| `/api/cron/sync-invoices` | Mondays 5 AM EST (10:00 UTC) | Syncs ShipBob invoice metadata |
 
 ---
 

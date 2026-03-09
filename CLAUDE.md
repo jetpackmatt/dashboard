@@ -97,7 +97,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/sync-timelines` | Every 1 min | - | Timeline events (0-14d, per-client parallel, auto-scales) |
 | `/api/cron/sync-transactions` | Every 1 min | 300s | All billing transactions + tracking backfill (parent token) |
 | `/api/cron/sync-reconcile` | Every hour | 300s | Orders/shipments (45d) + transactions (3d) + soft-delete |
-| `/api/cron/sync-invoices` | Daily 1 PM EST | - | ShipBob invoice sync |
+| `/api/cron/sync-invoices` | Mondays 5 AM EST | - | ShipBob invoice sync |
 | `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | 300s | Full refresh for older shipments (14-45 days) |
 | `/api/cron/sync-products` | Daily 4:00 AM UTC | - | Products with variants (for inventory_id → client/SKU mapping) |
 | `/api/cron/sync-sftp-costs` | Daily 5 AM EST | 300s | SFTP shipping breakdown (base_cost, surcharge_details) |
