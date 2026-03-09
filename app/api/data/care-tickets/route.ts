@@ -5,6 +5,7 @@ import {
   isCareAdminRole,
 } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { sendSlackAlert } from '@/lib/slack'
 import { NextRequest, NextResponse } from 'next/server'
 
 interface MappedTicket {
@@ -386,6 +387,25 @@ export async function POST(request: NextRequest) {
           console.log(`Auto-linked ${autoLinkedCount} credit transaction(s) to ticket #${ticket.ticket_number}`)
         }
       }
+    }
+
+    // Slack alert: brand users submitting Address Change tickets
+    const isBrandUser = !isAdmin && !isCareAdmin && !isCareTeam
+    if (isBrandUser && ticketType === 'Address Change') {
+      // Get client name for the alert
+      const { data: clientRow } = await supabase
+        .from('clients')
+        .select('company_name')
+        .eq('id', clientId)
+        .single()
+      const brandName = clientRow?.company_name || 'Unknown Brand'
+
+      sendSlackAlert(
+        `📦 *Address Change Request* — Ticket #${ticket.ticket_number}\n` +
+        `Brand: ${brandName}\n` +
+        `Shipment: ${shipmentId || 'N/A'}\n` +
+        `Submitted by: ${userName}`
+      )
     }
 
     return NextResponse.json({

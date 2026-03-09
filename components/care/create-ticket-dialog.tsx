@@ -289,7 +289,7 @@ export function CreateTicketDialog({
           <DialogTitle>{isBrandUser ? 'Request an Address Change' : 'Create New Ticket'}</DialogTitle>
           <DialogDescription>
             {isBrandUser
-              ? 'Enter the shipment ID and new address details below.'
+              ? 'Address change requests are not guaranteed. Each carrier will attempt to accommodate at their discretion.'
               : 'Create a support ticket for shipment inquiries, requests, technical issues, or general inquiries.'
             }
           </DialogDescription>
