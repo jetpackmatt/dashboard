@@ -515,6 +515,8 @@ export interface Shipment {
   clientId?: string | null
   // Voided status (duplicate shipping transaction that was recreated)
   isVoided?: boolean
+  // Dispute status (transaction held for rebilling or removed from client)
+  disputeStatus?: string | null
   // Claim eligibility status (for At Risk / File a Claim badges)
   claimEligibilityStatus?: 'at_risk' | 'eligible' | null
   claimDaysRemaining?: number | null
@@ -986,7 +988,12 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
   },
 
   charge: (row) => (
-    <div>{row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>}</div>
+    <div className="flex items-center gap-1.5">
+      {row.disputeStatus
+        ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">Disputed</span>
+        : row.charge != null ? `$${row.charge.toFixed(2)}` : <span className="text-muted-foreground">-</span>
+      }
+    </div>
   ),
 
   qty: (row) => (

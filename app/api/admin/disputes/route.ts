@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { createAdminClient, isCareAdminRole } from '@/lib/supabase/admin'
+
+function isDisputeAuthorized(role: string | undefined): boolean {
+  return role === 'admin' || isCareAdminRole(role)
+}
 
 // GET /api/admin/disputes - List disputed transactions
 export async function GET(request: NextRequest) {
   try {
-    // Verify admin access
+    // Verify admin or care_admin access
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
-    if (!user || user.user_metadata?.role !== 'admin') {
+    if (!user || !isDisputeAuthorized(user.user_metadata?.role)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -296,11 +300,11 @@ export async function GET(request: NextRequest) {
 // POST /api/admin/disputes - Mark transaction as disputed/invalid
 export async function POST(request: NextRequest) {
   try {
-    // Verify admin access
+    // Verify admin or care_admin access
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
-    if (!user || user.user_metadata?.role !== 'admin') {
+    if (!user || !isDisputeAuthorized(user.user_metadata?.role)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

@@ -879,7 +879,7 @@ export async function GET(request: NextRequest) {
     const shipmentIds = (shipmentsData || []).map((s: any) => s.shipment_id)
     const trackingIds = (shipmentsData || []).map((s: any) => s.tracking_id).filter(Boolean)
     let itemCounts: Record<string, number> = {}
-    let billingMap: Record<string, { totalCost: number | null }> = {}
+    let billingMap: Record<string, { totalCost: number | null; disputeStatus: string | null }> = {}
     let refundedTrackingIds: Set<string> = new Set()
     let voidedTrackingIds: Set<string> = new Set()
     let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null; substatusCategory: string | null; lastScanDescription: string | null; lastScanDate: string | null }> = {}
@@ -909,7 +909,7 @@ export async function GET(request: NextRequest) {
           ? batchedInQuery(
               supabase,
               'transactions',
-              'tracking_id, reference_id, total_charge, base_charge, surcharge, fee_type, transaction_type, is_voided',
+              'tracking_id, reference_id, total_charge, base_charge, surcharge, fee_type, transaction_type, is_voided, dispute_status',
               'tracking_id',
               trackingIds
             )
@@ -951,14 +951,14 @@ export async function GET(request: NextRequest) {
       if (billingData.length > 0) {
         // Get total_charge from Shipping transactions only (excludes pick fees, insurance)
         // CRITICAL: Only show charge if total_charge is set (has preview or invoice markup)
-        billingMap = billingData.reduce((acc: Record<string, { totalCost: number | null }>, tx: any) => {
+        billingMap = billingData.reduce((acc: Record<string, { totalCost: number | null; disputeStatus: string | null }>, tx: any) => {
           if (tx.tracking_id && tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund') {
             // total_charge = base_charge + surcharge (marked up shipping cost)
             // Returns null if not yet calculated (UI shows "-")
             const amount = tx.total_charge !== null && tx.total_charge !== undefined
               ? parseFloat(tx.total_charge) || 0
               : null
-            acc[tx.tracking_id] = { totalCost: amount }
+            acc[tx.tracking_id] = { totalCost: amount, disputeStatus: tx.dispute_status || null }
           }
           return acc
         }, {})
@@ -1130,6 +1130,8 @@ export async function GET(request: NextRequest) {
         clientId: row.client_id || null,
         // Voided status (duplicate shipping transaction that was recreated)
         isVoided: isVoided || false,
+        // Dispute status (transaction held for rebilling or removed)
+        disputeStatus: billing?.disputeStatus || null,
         // Claim eligibility status (for At Risk / File a Claim badges)
         claimEligibilityStatus: claimEligibilityMap[row.shipment_id]?.status || null,
         claimDaysRemaining: claimEligibilityMap[row.shipment_id]?.daysRemaining || null,

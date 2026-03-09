@@ -5,6 +5,7 @@ import { format } from "date-fns"
 import {
   AlertTriangleIcon,
   ArrowLeftIcon,
+  BanIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ExternalLinkIcon,
@@ -25,7 +26,20 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Checkbox } from "@/components/ui/checkbox"
 import { JetpackLoader } from "@/components/jetpack-loader"
+import { useClient } from "@/components/client-context"
+import { toast } from "sonner"
 import { getCarrierDisplayName, getTrackingUrl } from "./transactions/cell-renderers"
 import { TrackingLink } from "@/components/tracking-link"
 import { ClaimSubmissionDialog } from "./claims/claim-submission-dialog"
@@ -162,6 +176,7 @@ interface ShipmentDetails {
     totalCharge?: number | null
     insuranceCharge?: number | null
     isPreview?: boolean
+    disputeStatus?: string | null
   }>
   chargesBreakdown: {
     baseFulfillmentFees: number | null
@@ -818,6 +833,116 @@ export function ShipmentDetailsDrawer({
   const [eligibility, setEligibility] = React.useState<ClaimEligibilityResult | null>(null)
   const [isLoadingEligibility, setIsLoadingEligibility] = React.useState(false)
 
+  // Dispute state
+  const { effectiveIsAdmin, effectiveIsCareAdmin } = useClient()
+  const [disputeDialogOpen, setDisputeDialogOpen] = React.useState(false)
+  const [isDisputing, setIsDisputing] = React.useState(false)
+  const [selectedDisputeTxIds, setSelectedDisputeTxIds] = React.useState<Set<string>>(new Set())
+  const [disputeMode, setDisputeMode] = React.useState<'hold' | 'remove'>('hold')
+  const canDispute = effectiveIsAdmin || effectiveIsCareAdmin
+
+  // When dialog opens, check = "should be disputed" (includes already-disputed)
+  const openDisputeDialog = () => {
+    if (data?.transactions) {
+      // Pre-check: already disputed stay checked, undisputed are all checked too
+      setSelectedDisputeTxIds(new Set(data.transactions.map(tx => tx.transactionId)))
+    }
+    setDisputeMode('hold')
+    setDisputeDialogOpen(true)
+  }
+
+  const toggleDisputeTx = (txId: string) => {
+    setSelectedDisputeTxIds(prev => {
+      const next = new Set(prev)
+      if (next.has(txId)) next.delete(txId)
+      else next.add(txId)
+      return next
+    })
+  }
+
+  const handleDisputeConfirm = async () => {
+    if (!data?.transactions?.length) return
+    setIsDisputing(true)
+
+    try {
+      let disputed = 0
+      let undisputed = 0
+      let failed = 0
+
+      for (const tx of data.transactions) {
+        const isSelected = selectedDisputeTxIds.has(tx.transactionId)
+        const isAlreadyDisputed = !!tx.disputeStatus
+
+        if (isSelected && !isAlreadyDisputed) {
+          // Newly checked → dispute it
+          const res = await fetch('/api/admin/disputes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transaction_id: tx.transactionId,
+              status: 'invalid',
+              reason: `Disputed from shipment ${data.shipmentId} slideout`,
+              move_to_jetpack: disputeMode === 'remove',
+            }),
+          })
+          if (res.ok) disputed++
+          else failed++
+        } else if (!isSelected && isAlreadyDisputed) {
+          // Unchecked a previously disputed tx → un-dispute it
+          const res = await fetch('/api/admin/disputes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transaction_id: tx.transactionId,
+              status: null,
+              reason: null,
+            }),
+          })
+          if (res.ok) undisputed++
+          else failed++
+        }
+        // else: no change needed
+      }
+
+      const messages: string[] = []
+      if (disputed > 0) messages.push(`disputed ${disputed}`)
+      if (undisputed > 0) messages.push(`un-disputed ${undisputed}`)
+      if (failed > 0) messages.push(`${failed} failed`)
+
+      if (failed > 0) {
+        toast.error(`Transaction update: ${messages.join(', ')}`)
+      } else if (messages.length > 0) {
+        toast.success(`Transaction update: ${messages.join(', ')}`)
+      }
+
+      // Refresh drawer data to show updated dispute status
+      refreshShipmentData()
+    } catch {
+      toast.error('Failed to update transactions')
+    } finally {
+      setIsDisputing(false)
+      setDisputeDialogOpen(false)
+    }
+  }
+
+  // Refetch shipment data (used on initial load and after dispute)
+  const refreshShipmentData = React.useCallback(() => {
+    if (!effectiveShipmentId) return
+    fetch(`/api/data/shipments/${effectiveShipmentId}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load shipment")
+        return res.json()
+      })
+      .then((data) => {
+        setData(data)
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        setError(err.message)
+        setIsLoading(false)
+      })
+  }, [effectiveShipmentId])
+
   // Fetch shipment details when opened
   React.useEffect(() => {
     if (open && effectiveShipmentId) {
@@ -825,20 +950,7 @@ export function ShipmentDetailsDrawer({
       setIsLoadingEligibility(true)
       setError(null)
 
-      // Fetch shipment details
-      fetch(`/api/data/shipments/${effectiveShipmentId}`)
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to load shipment")
-          return res.json()
-        })
-        .then((data) => {
-          setData(data)
-          setIsLoading(false)
-        })
-        .catch((err) => {
-          setError(err.message)
-          setIsLoading(false)
-        })
+      refreshShipmentData()
 
       // Fetch claim eligibility (separate request, non-blocking)
       fetch(`/api/data/shipments/${effectiveShipmentId}/claim-eligibility`)
@@ -975,6 +1087,37 @@ export function ShipmentDetailsDrawer({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Dispute button or Disputed badge - admin/care_admin only */}
+                  {canDispute && data.transactions?.length > 0 && (
+                    data.transactions.every(tx => tx.disputeStatus) ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                        <BanIcon className="h-3.5 w-3.5" />
+                        Disputed
+                      </span>
+                    ) : data.transactions.some(tx => tx.disputeStatus) ? (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-8"
+                        onClick={openDisputeDialog}
+                        disabled={isDisputing}
+                      >
+                        <BanIcon className="mr-1.5 h-3.5 w-3.5" />
+                        Partially Disputed
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-8"
+                        onClick={openDisputeDialog}
+                        disabled={isDisputing}
+                      >
+                        <BanIcon className="mr-1.5 h-3.5 w-3.5" />
+                        Dispute
+                      </Button>
+                    )
+                  )}
                   {/* Claim Dropdown - only shows if at least one claim type is eligible */}
                   <ClaimDropdown
                     eligibility={eligibility}
@@ -1630,6 +1773,11 @@ export function ShipmentDetailsDrawer({
                                           Est.
                                         </span>
                                       )}
+                                      {tx.disputeStatus && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                          Disputed
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="col-span-4 text-right tabular-nums text-foreground">
                                       ${(tx.billedAmount || tx.cost || 0).toFixed(2)}
@@ -1769,6 +1917,99 @@ export function ShipmentDetailsDrawer({
         shipmentId={shipmentId || undefined}
         preselectedClaimType={selectedClaimType}
       />
+
+      {/* Dispute Confirmation Dialog */}
+      <AlertDialog open={disputeDialogOpen} onOpenChange={setDisputeDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Dispute Transactions for Shipment {data?.shipmentId}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4">
+                <p>Checked transactions will be disputed. Uncheck to un-dispute. Disputed transactions are excluded from invoices.</p>
+                <div className="rounded-md border divide-y">
+                  {data?.transactions?.map(tx => (
+                    <label
+                      key={tx.transactionId}
+                      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={selectedDisputeTxIds.has(tx.transactionId)}
+                        onCheckedChange={() => toggleDisputeTx(tx.transactionId)}
+                      />
+                      <span className="flex-1 text-sm text-foreground flex items-center gap-1.5">
+                        {tx.feeType}
+                        {tx.disputeStatus && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                            Disputed
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-sm font-medium text-foreground tabular-nums">
+                        ${(tx.totalCharge ?? tx.cost).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {selectedDisputeTxIds.size > 0 && (
+                  <div className="flex justify-between px-3 text-sm font-medium text-foreground">
+                    <span>Total disputed</span>
+                    <span className="tabular-nums">
+                      ${Math.abs(
+                        data?.transactions
+                          ?.filter(tx => selectedDisputeTxIds.has(tx.transactionId))
+                          .reduce((sum, tx) => sum + (tx.totalCharge ?? tx.cost), 0) || 0
+                      ).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {data?.transactions?.some(tx => selectedDisputeTxIds.has(tx.transactionId) && !tx.disputeStatus) && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">What should happen to newly disputed transactions?</p>
+                  <div className="space-y-1.5">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-md border px-3 py-2.5 hover:bg-muted/50 transition-colors has-[:checked]:border-amber-500 has-[:checked]:bg-amber-50 dark:has-[:checked]:bg-amber-950/20">
+                      <input
+                        type="radio"
+                        name="disputeMode"
+                        checked={disputeMode === 'hold'}
+                        onChange={() => setDisputeMode('hold')}
+                        className="mt-0.5 accent-amber-600"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-foreground">Hold for rebilling</div>
+                        <div className="text-xs text-muted-foreground">Keep on client, exclude from invoices. Client can still see and track the shipment.</div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-md border px-3 py-2.5 hover:bg-muted/50 transition-colors has-[:checked]:border-red-500 has-[:checked]:bg-red-50 dark:has-[:checked]:bg-red-950/20">
+                      <input
+                        type="radio"
+                        name="disputeMode"
+                        checked={disputeMode === 'remove'}
+                        onChange={() => setDisputeMode('remove')}
+                        className="mt-0.5 accent-red-600"
+                      />
+                      <div>
+                        <div className="text-sm font-medium text-foreground">Remove from client</div>
+                        <div className="text-xs text-muted-foreground">Move to Jetpack. Client will no longer see these transactions or shipment.</div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDisputing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDisputeConfirm}
+              disabled={isDisputing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDisputing ? 'Saving...' : 'Save Changes'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   )
 }

@@ -1191,6 +1191,10 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
   const [isApproving, setIsApproving] = React.useState<string | null>(null)
   const [isResending, setIsResending] = React.useState<string | null>(null)
 
+  // Revise state
+  const [reviseDialogOpen, setReviseDialogOpen] = React.useState(false)
+  const [isRevising, setIsRevising] = React.useState<string | null>(null)
+
   // CC charge state
   const [chargeCcDialogOpen, setChargeCcDialogOpen] = React.useState(false)
   const [chargeCcInvoice, setChargeCcInvoice] = React.useState<JetpackInvoice | null>(null)
@@ -1566,6 +1570,29 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
       setIsRegenerating(null)
       setRegenerateDialogOpen(false)
       setSelectedInvoiceId(null)
+    }
+  }
+
+  async function handleReviseInvoice(invoiceId: string) {
+    setIsRevising(invoiceId)
+    try {
+      const response = await fetch(`/api/admin/invoices/${invoiceId}/revise`, {
+        method: 'POST',
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to revise invoice')
+      }
+      toast.success(`Invoice returned to draft (${data.transactionsReset} transactions reset)`)
+      setReviseDialogOpen(false)
+      setSelectedInvoiceId(null)
+      await fetchInvoices()
+      fetchPreflightValidation()
+    } catch (err) {
+      console.error('Error revising invoice:', err)
+      toast.error(err instanceof Error ? err.message : 'Failed to revise invoice')
+    } finally {
+      setIsRevising(null)
     }
   }
 
@@ -2266,6 +2293,7 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                     <TableHead className="w-[90px] text-center">Email</TableHead>
                     <TableHead className="w-[60px] text-center">View</TableHead>
                     <TableHead className="w-[60px] text-center">Download</TableHead>
+                    <TableHead className="w-[60px] text-center">Revise</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2431,6 +2459,31 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                onClick={() => {
+                                  setSelectedInvoiceId(invoice.id)
+                                  setReviseDialogOpen(true)
+                                }}
+                                disabled={isRevising === invoice.id}
+                              >
+                                {isRevising === invoice.id ? (
+                                  <JetpackLoader size="sm" />
+                                ) : (
+                                  <RotateCcw className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Revise invoice (return to draft)</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     )
@@ -2613,6 +2666,34 @@ function InvoicingContent({ clients }: { clients: Client[] }) {
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 Yes, Resend Email
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Revise Invoice Confirmation Dialog */}
+        <AlertDialog open={reviseDialogOpen} onOpenChange={setReviseDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Revise Invoice?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will return the invoice to draft status and un-mark all transactions, allowing you to make changes (e.g. dispute transactions) and then regenerate.
+                {(() => {
+                  const inv = invoices.find(i => i.id === selectedInvoiceId)
+                  return inv?.paid_status === 'paid'
+                    ? ' This invoice has already been paid — you will need to handle the refund separately.'
+                    : ''
+                })()}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setSelectedInvoiceId(null)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => selectedInvoiceId && handleReviseInvoice(selectedInvoiceId)}
+                disabled={isRevising !== null}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                {isRevising ? 'Revising...' : 'Yes, Revise Invoice'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

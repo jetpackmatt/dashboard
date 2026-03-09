@@ -305,7 +305,7 @@ export async function GET(
     if (shipment.tracking_id) {
       const { data: txData } = await supabase
         .from('transactions')
-        .select('id, transaction_id, cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp, base_charge, surcharge, total_charge, insurance_charge, markup_is_preview, taxes, taxes_charge')
+        .select('id, transaction_id, cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp, base_charge, surcharge, total_charge, insurance_charge, markup_is_preview, taxes, taxes_charge, dispute_status')
         .eq('tracking_id', shipment.tracking_id)
         .order('charge_date', { ascending: false })
 
@@ -547,6 +547,7 @@ export async function GET(
         totalCharge: tx.total_charge,
         insuranceCharge: tx.insurance_charge,
         isPreview: tx.markup_is_preview === true,
+        disputeStatus: tx.dispute_status || null,
       })),
 
       // Charges breakdown for display (computed from transactions)

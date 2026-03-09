@@ -400,7 +400,7 @@ export async function POST(request: NextRequest) {
         .single()
       const brandName = clientRow?.company_name || 'Unknown Brand'
 
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://localhost:3000'
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.shipwithjetpack.com'
       const ticketUrl = `${baseUrl}/dashboard/care?ticket=${ticket.ticket_number}`
 
       sendSlackAlert(

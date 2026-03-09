@@ -589,7 +589,7 @@ export interface CreateWebhookParams {
  * Get the webhook URL for the current environment
  */
 export function getWebhookUrl(): string {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.jetpack.com'
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.shipwithjetpack.com'
   return `${baseUrl}/api/webhooks/shipbob`
 }
 

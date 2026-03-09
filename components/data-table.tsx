@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams, useRouter, usePathname } from "next/navigation"
+import { useSearchParams, usePathname } from "next/navigation"
 import { VisibilityState } from "@tanstack/react-table"
 import {
   AlertCircleIcon,
@@ -335,13 +335,17 @@ export function DataTable({
   // Export trigger ref - set by active table component
   const exportTriggerRef = React.useRef<((options: { format: ExportFormat; scope: ExportScope }) => void | Promise<void>) | null>(null)
   const [filtersSheetOpen, setFiltersSheetOpen] = React.useState(false)
-  const [filtersExpanded, setFiltersExpanded] = React.useState(false)
   const [searchExpanded, setSearchExpanded] = React.useState(false)
 
   // Tab state with URL persistence (supports controlled mode via props)
   const searchParams = useSearchParams()
-  const router = useRouter()
   const pathname = usePathname()
+
+  // Auto-expand filters if URL has filter params (must be after searchParams)
+  const [filtersExpanded, setFiltersExpanded] = React.useState(() => {
+    const filterParams = ['status', 'age', 'type', 'channel', 'carrier', 'dest', 'feeType', 'billingStatus', 'returnStatus', 'returnType', 'rcStatus', 'fc', 'locationType', 'creditReason']
+    return filterParams.some(p => searchParams.has(p))
+  })
   const validTabs = ["shipments", "unfulfilled", "additional-services", "returns", "receiving", "storage", "credits"]
   const tabFromUrl = searchParams.get("tab")
   const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : "shipments"
@@ -373,11 +377,7 @@ export function DataTable({
     setSearchQuery('')
     setSearchExpanded(false)
 
-    // Update URL - remove search param when switching tabs
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("tab", newTab)
-    params.delete("search")
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    // URL is updated by the unified filter sync useEffect (triggered by currentTab change)
 
     // Get saved position from click handler, or save now if not available
     const scrollContainer = scrollContainerRef.current
@@ -416,18 +416,49 @@ export function DataTable({
 
     // Start RAF monitoring
     requestAnimationFrame(checkAndRestore)
-  }, [searchParams, router, pathname, isControlled, controlledOnTabChange])
+  }, [searchParams, pathname, isControlled, controlledOnTabChange]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Helper to read comma-separated URL param as array
+  const getParamArray = (key: string): string[] => {
+    const val = searchParams.get(key)
+    return val ? val.split(',').filter(Boolean) : []
+  }
+
+  // Helper to read date range from URL params
+  const getParamDateRange = (preset: DateRangePreset | undefined, defaultPreset: DateRangePreset): { range: DateRange | undefined; preset: DateRangePreset | undefined } => {
+    if (!preset || preset === defaultPreset) {
+      const range = getDateRangeFromPreset(defaultPreset)
+      return { range: range ? { from: range.from, to: range.to } : undefined, preset: defaultPreset }
+    }
+    if (preset === 'custom') {
+      const from = searchParams.get('dateFrom')
+      const to = searchParams.get('dateTo')
+      if (from && to) {
+        const [fy, fm, fd] = from.split('-').map(Number)
+        const [ty, tm, td] = to.split('-').map(Number)
+        return { range: { from: new Date(fy, fm - 1, fd), to: new Date(ty, tm - 1, td) }, preset: 'custom' }
+      }
+      const range = getDateRangeFromPreset(defaultPreset)
+      return { range: range ? { from: range.from, to: range.to } : undefined, preset: defaultPreset }
+    }
+    const range = getDateRangeFromPreset(preset)
+    return { range: range ? { from: range.from, to: range.to } : undefined, preset }
+  }
+
+  const isUnfulfilledTab = initialTab === 'unfulfilled'
+  const isShipmentsTab = initialTab === 'shipments'
 
   // Unfulfilled tab filter state (lifted from UnfulfilledTable for header integration)
   // Now using arrays for multi-select support
-  const [unfulfilledStatusFilter, setUnfulfilledStatusFilter] = React.useState<string[]>([])
-  const [unfulfilledAgeFilter, setUnfulfilledAgeFilter] = React.useState<string[]>([])
-  const [unfulfilledTypeFilter, setUnfulfilledTypeFilter] = React.useState<string[]>([])
-  const [unfulfilledChannelFilter, setUnfulfilledChannelFilter] = React.useState<string[]>([])
-  const [unfulfilledDestinationFilter, setUnfulfilledDestinationFilter] = React.useState<string[]>([])
+  const [unfulfilledStatusFilter, setUnfulfilledStatusFilter] = React.useState<string[]>(() => isUnfulfilledTab ? getParamArray('status') : [])
+  const [unfulfilledAgeFilter, setUnfulfilledAgeFilter] = React.useState<string[]>(() => isUnfulfilledTab ? getParamArray('age') : [])
+  const [unfulfilledTypeFilter, setUnfulfilledTypeFilter] = React.useState<string[]>(() => isUnfulfilledTab ? getParamArray('type') : [])
+  const [unfulfilledChannelFilter, setUnfulfilledChannelFilter] = React.useState<string[]>(() => isUnfulfilledTab ? getParamArray('channel') : [])
+  const [unfulfilledDestinationFilter, setUnfulfilledDestinationFilter] = React.useState<string[]>(() => isUnfulfilledTab ? getParamArray('dest') : [])
   const [unfulfilledDateRange, setUnfulfilledDateRange] = React.useState<DateRange | undefined>(() => {
-    const range = getDateRangeFromPreset('all')
-    return range ? { from: range.from, to: range.to } : undefined
+    const urlPreset = isUnfulfilledTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    const { range } = getParamDateRange(urlPreset || undefined, 'all')
+    return range
   })
   const [availableChannels, setAvailableChannels] = React.useState<string[]>(unfulfilledChannels)
   const [isUnfulfilledLoading, setIsUnfulfilledLoading] = React.useState(unfulfilledLoading)
@@ -447,19 +478,24 @@ export function DataTable({
   // Column visibility and page size are now persisted via useTablePreferences hooks above
 
   // Shipments tab filter state - now using arrays for multi-select
-  const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>([])
+  const [shipmentsStatusFilter, setShipmentsStatusFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('status') : [])
   // Claims filter removed - now handled by Delivery IQ page
-  const [shipmentsAgeFilter, setShipmentsAgeFilter] = React.useState<string[]>([])
-  const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>([])
-  const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>([])
-  const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>([])
-  const [shipmentsDestinationFilter, setShipmentsDestinationFilter] = React.useState<string[]>([])
-  // Initialize shipments date range to 60 days for better performance
+  const [shipmentsAgeFilter, setShipmentsAgeFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('age') : [])
+  const [shipmentsTypeFilter, setShipmentsTypeFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('type') : [])
+  const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('channel') : [])
+  const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('carrier') : [])
+  const [shipmentsDestinationFilter, setShipmentsDestinationFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('dest') : [])
+  // Initialize shipments date range — use URL preset if available, else 60 days default
+  const shipmentsUrlPreset = isShipmentsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
   const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
+    if (shipmentsUrlPreset) {
+      const { range } = getParamDateRange(shipmentsUrlPreset, 'all')
+      return range
+    }
     const range = getDateRangeFromPreset('60d')
     return range ? { from: range.from, to: range.to } : undefined
   })
-  const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>(shipmentsUrlPreset || 'all')
   const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>(prefetchedShipmentsChannels)
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
   const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)
@@ -535,13 +571,18 @@ export function DataTable({
   }, 300)
 
   // Additional Services tab filter state
-  const [additionalServicesTypeFilter, setAdditionalServicesTypeFilter] = React.useState<string>("all")
-  const [additionalServicesStatusFilter, setAdditionalServicesStatusFilter] = React.useState<string>("all")
+  const isAdditionalServicesTab = initialTab === 'additional-services'
+  const [additionalServicesTypeFilter, setAdditionalServicesTypeFilter] = React.useState<string>(() => (isAdditionalServicesTab && searchParams.get('feeType')) || "all")
+  const [additionalServicesStatusFilter, setAdditionalServicesStatusFilter] = React.useState<string>(() => (isAdditionalServicesTab && searchParams.get('billingStatus')) || "all")
   const [additionalServicesDateRange, setAdditionalServicesDateRange] = React.useState<DateRange | undefined>(() => {
-    const range = getDateRangeFromPreset('all')
-    return range ? { from: range.from, to: range.to } : undefined
+    const urlPreset = isAdditionalServicesTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    const { range } = getParamDateRange(urlPreset || undefined, 'all')
+    return range
   })
-  const [additionalServicesDatePreset, setAdditionalServicesDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [additionalServicesDatePreset, setAdditionalServicesDatePreset] = React.useState<DateRangePreset | undefined>(() => {
+    const urlPreset = isAdditionalServicesTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    return urlPreset || 'all'
+  })
   const [additionalServicesFeeTypes, setAdditionalServicesFeeTypes] = React.useState<string[]>([])
 
   // Memoize the status filter array to prevent infinite re-render loops
@@ -639,42 +680,171 @@ export function DataTable({
   }, [clientId])
 
   // Returns tab filter state
-  const [returnStatusFilter, setReturnStatusFilter] = React.useState<string>("all")
-  const [returnTypeFilter, setReturnTypeFilter] = React.useState<string>("all")
+  const isReturnsTab = initialTab === 'returns'
+  const [returnStatusFilter, setReturnStatusFilter] = React.useState<string>(() => (isReturnsTab && searchParams.get('returnStatus')) || "all")
+  const [returnTypeFilter, setReturnTypeFilter] = React.useState<string>(() => (isReturnsTab && searchParams.get('returnType')) || "all")
   const [returnsDateRange, setReturnsDateRange] = React.useState<DateRange | undefined>(() => {
-    const range = getDateRangeFromPreset('all')
-    return range ? { from: range.from, to: range.to } : undefined
+    const urlPreset = isReturnsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    const { range } = getParamDateRange(urlPreset || undefined, 'all')
+    return range
   })
-  const [returnsDatePreset, setReturnsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [returnsDatePreset, setReturnsDatePreset] = React.useState<DateRangePreset | undefined>(() => {
+    const urlPreset = isReturnsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    return urlPreset || 'all'
+  })
   const [returnStatuses, setReturnStatuses] = React.useState<string[]>([])
   const [returnTypes, setReturnTypes] = React.useState<string[]>([])
 
   // Receiving tab filter state
-  const [receivingStatusFilter, setReceivingStatusFilter] = React.useState<string>("all")
+  const isReceivingTab = initialTab === 'receiving'
+  const [receivingStatusFilter, setReceivingStatusFilter] = React.useState<string>(() => (isReceivingTab && searchParams.get('rcStatus')) || "all")
   const [receivingDateRange, setReceivingDateRange] = React.useState<DateRange | undefined>(() => {
-    const range = getDateRangeFromPreset('all')
-    return range ? { from: range.from, to: range.to } : undefined
+    const urlPreset = isReceivingTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    const { range } = getParamDateRange(urlPreset || undefined, 'all')
+    return range
   })
-  const [receivingDatePreset, setReceivingDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [receivingDatePreset, setReceivingDatePreset] = React.useState<DateRangePreset | undefined>(() => {
+    const urlPreset = isReceivingTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    return urlPreset || 'all'
+  })
   const [receivingStatuses, setReceivingStatuses] = React.useState<string[]>([])
 
   // Storage tab filter state
-  const [storageFcFilter, setStorageFcFilter] = React.useState<string>("all")
-  const [storageLocationTypeFilter, setStorageLocationTypeFilter] = React.useState<string>("all")
+  const isStorageTab = initialTab === 'storage'
+  const [storageFcFilter, setStorageFcFilter] = React.useState<string>(() => (isStorageTab && searchParams.get('fc')) || "all")
+  const [storageLocationTypeFilter, setStorageLocationTypeFilter] = React.useState<string>(() => (isStorageTab && searchParams.get('locationType')) || "all")
   const [storageFcs, setStorageFcs] = React.useState<string[]>([])
   const [storageLocationTypes, setStorageLocationTypes] = React.useState<string[]>([])
 
   // Credits tab filter state
-  const [creditsReasonFilter, setCreditsReasonFilter] = React.useState<string>("all")
+  const isCreditsTab = initialTab === 'credits'
+  const [creditsReasonFilter, setCreditsReasonFilter] = React.useState<string>(() => (isCreditsTab && searchParams.get('creditReason')) || "all")
   const [creditsDateRange, setCreditsDateRange] = React.useState<DateRange | undefined>(() => {
-    const range = getDateRangeFromPreset('all')
-    return range ? { from: range.from, to: range.to } : undefined
+    const urlPreset = isCreditsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    const { range } = getParamDateRange(urlPreset || undefined, 'all')
+    return range
   })
-  const [creditsDatePreset, setCreditsDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [creditsDatePreset, setCreditsDatePreset] = React.useState<DateRangePreset | undefined>(() => {
+    const urlPreset = isCreditsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    return urlPreset || 'all'
+  })
   const [creditReasons, setCreditReasons] = React.useState<string[]>([])
 
   // Date preset state for unfulfilled filter
-  const [unfulfilledDatePreset, setUnfulfilledDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [unfulfilledDatePreset, setUnfulfilledDatePreset] = React.useState<DateRangePreset | undefined>(() => {
+    const urlPreset = isUnfulfilledTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
+    return urlPreset || 'all'
+  })
+
+  // ============================================================================
+  // URL SYNC: Write filter state to URL params (survives page refresh)
+  // Uses replaceState to avoid triggering Next.js router re-renders
+  // ============================================================================
+  const formatDateParam = (d: Date): string => {
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  React.useEffect(() => {
+    const params = new URLSearchParams()
+    params.set('tab', currentTab)
+
+    if (searchQuery) params.set('search', searchQuery)
+
+    // Write current tab's filters to URL
+    if (currentTab === 'unfulfilled') {
+      if (unfulfilledStatusFilter.length) params.set('status', unfulfilledStatusFilter.join(','))
+      if (unfulfilledAgeFilter.length) params.set('age', unfulfilledAgeFilter.join(','))
+      if (unfulfilledTypeFilter.length) params.set('type', unfulfilledTypeFilter.join(','))
+      if (unfulfilledChannelFilter.length) params.set('channel', unfulfilledChannelFilter.join(','))
+      if (unfulfilledDestinationFilter.length) params.set('dest', unfulfilledDestinationFilter.join(','))
+      if (unfulfilledDatePreset && unfulfilledDatePreset !== 'all') {
+        params.set('datePreset', unfulfilledDatePreset)
+        if (unfulfilledDatePreset === 'custom' && unfulfilledDateRange?.from && unfulfilledDateRange?.to) {
+          params.set('dateFrom', formatDateParam(unfulfilledDateRange.from))
+          params.set('dateTo', formatDateParam(unfulfilledDateRange.to))
+        }
+      }
+    } else if (currentTab === 'shipments') {
+      if (shipmentsStatusFilter.length) params.set('status', shipmentsStatusFilter.join(','))
+      if (shipmentsAgeFilter.length) params.set('age', shipmentsAgeFilter.join(','))
+      if (shipmentsTypeFilter.length) params.set('type', shipmentsTypeFilter.join(','))
+      if (shipmentsChannelFilter.length) params.set('channel', shipmentsChannelFilter.join(','))
+      if (shipmentsCarrierFilter.length) params.set('carrier', shipmentsCarrierFilter.join(','))
+      if (shipmentsDestinationFilter.length) params.set('dest', shipmentsDestinationFilter.join(','))
+      if (shipmentsDatePreset && shipmentsDatePreset !== 'all') {
+        params.set('datePreset', shipmentsDatePreset)
+        if (shipmentsDatePreset === 'custom' && shipmentsDateRange?.from && shipmentsDateRange?.to) {
+          params.set('dateFrom', formatDateParam(shipmentsDateRange.from))
+          params.set('dateTo', formatDateParam(shipmentsDateRange.to))
+        }
+      }
+    } else if (currentTab === 'additional-services') {
+      if (additionalServicesTypeFilter !== 'all') params.set('feeType', additionalServicesTypeFilter)
+      if (additionalServicesStatusFilter !== 'all') params.set('billingStatus', additionalServicesStatusFilter)
+      if (additionalServicesDatePreset && additionalServicesDatePreset !== 'all') {
+        params.set('datePreset', additionalServicesDatePreset)
+        if (additionalServicesDatePreset === 'custom' && additionalServicesDateRange?.from && additionalServicesDateRange?.to) {
+          params.set('dateFrom', formatDateParam(additionalServicesDateRange.from))
+          params.set('dateTo', formatDateParam(additionalServicesDateRange.to))
+        }
+      }
+    } else if (currentTab === 'returns') {
+      if (returnStatusFilter !== 'all') params.set('returnStatus', returnStatusFilter)
+      if (returnTypeFilter !== 'all') params.set('returnType', returnTypeFilter)
+      if (returnsDatePreset && returnsDatePreset !== 'all') {
+        params.set('datePreset', returnsDatePreset)
+        if (returnsDatePreset === 'custom' && returnsDateRange?.from && returnsDateRange?.to) {
+          params.set('dateFrom', formatDateParam(returnsDateRange.from))
+          params.set('dateTo', formatDateParam(returnsDateRange.to))
+        }
+      }
+    } else if (currentTab === 'receiving') {
+      if (receivingStatusFilter !== 'all') params.set('rcStatus', receivingStatusFilter)
+      if (receivingDatePreset && receivingDatePreset !== 'all') {
+        params.set('datePreset', receivingDatePreset)
+        if (receivingDatePreset === 'custom' && receivingDateRange?.from && receivingDateRange?.to) {
+          params.set('dateFrom', formatDateParam(receivingDateRange.from))
+          params.set('dateTo', formatDateParam(receivingDateRange.to))
+        }
+      }
+    } else if (currentTab === 'storage') {
+      if (storageFcFilter !== 'all') params.set('fc', storageFcFilter)
+      if (storageLocationTypeFilter !== 'all') params.set('locationType', storageLocationTypeFilter)
+    } else if (currentTab === 'credits') {
+      if (creditsReasonFilter !== 'all') params.set('creditReason', creditsReasonFilter)
+      if (creditsDatePreset && creditsDatePreset !== 'all') {
+        params.set('datePreset', creditsDatePreset)
+        if (creditsDatePreset === 'custom' && creditsDateRange?.from && creditsDateRange?.to) {
+          params.set('dateFrom', formatDateParam(creditsDateRange.from))
+          params.set('dateTo', formatDateParam(creditsDateRange.to))
+        }
+      }
+    }
+
+    // Use replaceState to avoid triggering Next.js router re-renders
+    window.history.replaceState(null, '', `${pathname}?${params.toString()}`)
+  }, [
+    pathname, currentTab, searchQuery,
+    // Unfulfilled
+    unfulfilledStatusFilter, unfulfilledAgeFilter, unfulfilledTypeFilter,
+    unfulfilledChannelFilter, unfulfilledDestinationFilter, unfulfilledDatePreset, unfulfilledDateRange,
+    // Shipments
+    shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter,
+    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsDatePreset, shipmentsDateRange,
+    // Additional Services
+    additionalServicesTypeFilter, additionalServicesStatusFilter, additionalServicesDatePreset, additionalServicesDateRange,
+    // Returns
+    returnStatusFilter, returnTypeFilter, returnsDatePreset, returnsDateRange,
+    // Receiving
+    receivingStatusFilter, receivingDatePreset, receivingDateRange,
+    // Storage
+    storageFcFilter, storageLocationTypeFilter,
+    // Credits
+    creditsReasonFilter, creditsDatePreset, creditsDateRange,
+  ])
 
   // Check if unfulfilled filters are active and count them (now using arrays)
   // Note: Date range is NOT counted as a filter since it has its own indicator
