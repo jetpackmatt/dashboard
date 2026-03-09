@@ -473,6 +473,7 @@ export async function runPreflightValidation(
       .select('id, reference_id, tracking_id, fulfillment_center, cost')
       .eq('client_id', clientId)
       .eq('reference_type', 'Return')
+      .neq('fee_type', 'Credit') // Exclude credits with reference_type=Return (those go in Credits section)
       .in('invoice_id_sb', invoiceIds)
       .is('dispute_status', null)
       .range(returnsOffset, returnsOffset + PAGE_SIZE - 1)
@@ -590,9 +591,10 @@ export async function runPreflightValidation(
 
   // For shipping: use base_cost + surcharge (SFTP) if available, else cost
   // Helper to sum taxes from JSONB array: [{tax_type, tax_rate, tax_amount}, ...]
+  // Round each tax_amount to 2dp to match ShipBob's invoice rounding
   const sumTaxes = (taxes: unknown): number => {
     if (!taxes || !Array.isArray(taxes)) return 0
-    return taxes.reduce((sum, t) => sum + (parseFloat(t?.tax_amount) || 0), 0)
+    return taxes.reduce((sum, t) => sum + Math.round((parseFloat(t?.tax_amount) || 0) * 100) / 100, 0)
   }
 
   const sumShippingCost = (txs: Record<string, unknown>[]) =>
@@ -601,7 +603,14 @@ export async function runPreflightValidation(
       const surcharge = parseNum(tx.surcharge)
       const taxes = sumTaxes(tx.taxes)
       if (baseCost !== 0 || surcharge !== 0) {
-        return sum + baseCost + surcharge + taxes
+        // Defensive: ensure SFTP breakdown sign matches cost sign
+        // (refund backfill previously stored positive base_cost for negative cost)
+        const sftpTotal = baseCost + surcharge + taxes
+        const cost = parseNum(tx.cost)
+        if (cost < 0 && sftpTotal > 0) {
+          return sum - Math.abs(sftpTotal)
+        }
+        return sum + sftpTotal
       }
       // Fallback to cost column (which already includes taxes from API)
       return sum + parseNum(tx.cost)

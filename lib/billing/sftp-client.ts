@@ -761,13 +761,20 @@ export async function updateTransactionsWithDailyBreakdown(
         const sftpRow = sftpByShipment.get(tx.reference_id)
         if (!sftpRow) return Promise.resolve({ success: true, shipmentId: tx.reference_id })
 
+        // Negate amounts for refund transactions — SFTP only has positive values
+        // but refund transactions have negative cost, so breakdown must match
+        const negatedDetails = sftpRow.surcharge_details.map(d => ({
+          ...d,
+          amount: -Math.abs(d.amount),
+        }))
+
         return supabase
           .from('transactions')
           .update({
-            base_cost: sftpRow.base_cost,
-            surcharge: sftpRow.surcharge,
-            surcharge_details: sftpRow.surcharge_details.length > 0 ? sftpRow.surcharge_details : null,
-            insurance_cost: sftpRow.insurance_cost,
+            base_cost: -Math.abs(sftpRow.base_cost),
+            surcharge: -Math.abs(sftpRow.surcharge),
+            surcharge_details: negatedDetails.length > 0 ? negatedDetails : null,
+            insurance_cost: sftpRow.insurance_cost ? -Math.abs(sftpRow.insurance_cost) : sftpRow.insurance_cost,
           })
           .eq('id', tx.id)
           .then(({ error }) => {
