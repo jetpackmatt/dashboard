@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams, useRouter, usePathname } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   ColumnsIcon,
@@ -153,8 +153,6 @@ function SortableHeader({ columnId, children, className, onClick }: SortableHead
 export default function CarePage() {
   const { selectedClientId, isAdmin, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, clients } = useClient()
   const searchParams = useSearchParams()
-  const router = useRouter()
-  const pathname = usePathname()
   const canViewAllBrands = effectiveIsAdmin || effectiveIsCareUser
   const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser && !effectiveIsCareAdmin
   const canDeleteTickets = effectiveIsAdmin || effectiveIsCareAdmin
@@ -888,7 +886,7 @@ export default function CarePage() {
                     // Strip ?ticket= param when search is cleared by typing
                     if (!e.target.value && searchParams.has('ticket')) {
                       setExpandedRowId(null)
-                      router.replace(pathname, { scroll: false })
+                      window.history.replaceState(null, '', window.location.pathname)
                     }
                   }}
                   className="h-[30px] pl-9 text-sm bg-background border-border text-muted-foreground placeholder:text-muted-foreground/60"
@@ -899,9 +897,9 @@ export default function CarePage() {
                       setSearchInput("")
                       setSearchQuery("")
                       setExpandedRowId(null)
-                      // Strip ?ticket= param from URL via router (triggers proper Next.js re-render)
+                      // Strip ?ticket= param from URL (cosmetic — state change triggers re-fetch)
                       if (searchParams.has('ticket')) {
-                        router.replace(pathname, { scroll: false })
+                        window.history.replaceState(null, '', window.location.pathname)
                       }
                     }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
