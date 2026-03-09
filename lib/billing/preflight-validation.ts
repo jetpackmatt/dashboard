@@ -515,7 +515,7 @@ export async function runPreflightValidation(
   while (hasMoreReceiving) {
     const { data: receivingBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, fee_type, transaction_type, charge_date, cost')
+      .select('id, reference_id, fee_type, transaction_type, charge_date, cost, taxes')
       .eq('client_id', clientId)
       .eq('reference_type', 'WRO')
       .like('fee_type', 'WRO%')  // Only actual WRO fees (WRO Receiving Fee, etc.)
@@ -538,7 +538,7 @@ export async function runPreflightValidation(
   while (hasMoreUro) {
     const { data: uroBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, fee_type, transaction_type, charge_date, cost')
+      .select('id, reference_id, fee_type, transaction_type, charge_date, cost, taxes')
       .eq('client_id', clientId)
       .eq('reference_type', 'URO')
       .in('invoice_id_sb', invoiceIds)
@@ -620,6 +620,10 @@ export async function runPreflightValidation(
   const sumCost = (txs: Record<string, unknown>[]) =>
     txs.reduce((sum, tx) => sum + parseNum(tx.cost), 0)
 
+  // For receiving (WRO/URO): cost is pre-tax, taxes must be added separately
+  const sumCostPlusTaxes = (txs: Record<string, unknown>[]) =>
+    txs.reduce((sum, tx) => sum + parseNum(tx.cost) + sumTaxes(tx.taxes), 0)
+
   const summary: ValidationSummary = {
     shippingTransactions: shippingTransactions.length,
     shippingCost: sumShippingCost(shippingTransactions),
@@ -630,7 +634,7 @@ export async function runPreflightValidation(
     returnsTransactions: returnsTransactions.length,
     returnsCost: sumCost(returnsTransactions),
     receivingTransactions: receivingTransactions.length,
-    receivingCost: sumCost(receivingTransactions),
+    receivingCost: sumCostPlusTaxes(receivingTransactions),
     creditsTransactions: creditsTransactions.length,
     creditsCost: sumCost(creditsTransactions),
 
