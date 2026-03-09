@@ -650,6 +650,7 @@ export async function collectBillingTransactionsByInvoiceIds(
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
         .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
+        .is('dispute_status', null) // Exclude disputed transactions
         .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination
@@ -2425,6 +2426,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         .eq('client_id', clientId)
         .eq('invoice_id_sb', invoiceId)
         .eq('invoiced_status_jp', false) // Only include uninvoiced transactions
+        .is('dispute_status', null) // Exclude disputed transactions
         .or('is_voided.is.null,is_voided.eq.false') // Exclude voided transactions
         .order('charge_date', { ascending: true })
         .order('id', { ascending: true }) // Secondary sort for stable pagination

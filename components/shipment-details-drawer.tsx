@@ -1096,9 +1096,9 @@ export function ShipmentDetailsDrawer({
                       </span>
                     ) : data.transactions.some(tx => tx.disputeStatus) ? (
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="sm"
-                        className="h-8"
+                        className="h-8 bg-red-100 text-red-700 border-red-200 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/50"
                         onClick={openDisputeDialog}
                         disabled={isDisputing}
                       >
@@ -1107,9 +1107,9 @@ export function ShipmentDetailsDrawer({
                       </Button>
                     ) : (
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="sm"
-                        className="h-8"
+                        className="h-8 bg-red-100 text-red-700 border-red-200 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/50"
                         onClick={openDisputeDialog}
                         disabled={isDisputing}
                       >
