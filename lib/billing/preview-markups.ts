@@ -103,6 +103,7 @@ interface TransactionRow {
   markup_is_preview: boolean | null
   billed_amount: number | null
   taxes: TaxEntry[] | null
+  fulfillment_center: string | null
 }
 
 export interface PreviewMarkupResult {
@@ -150,7 +151,8 @@ export async function calculatePreviewMarkups(
         invoiced_status_jp,
         markup_is_preview,
         billed_amount,
-        taxes
+        taxes,
+        fulfillment_center
       `)
       // Must have client attribution (can't calculate markup without knowing which client)
       .not('client_id', 'is', null)
@@ -277,6 +279,19 @@ export async function calculatePreviewMarkups(
       }
     }
 
+    // Build FC name → country map for origin country markup rules
+    const fcCountryMap = new Map<string, string>()
+    const fcNames = [...new Set(processable.map(tx => tx.fulfillment_center).filter((fc): fc is string => !!fc))]
+    if (fcNames.length > 0) {
+      const { data: fcs } = await supabase
+        .from('fulfillment_centers')
+        .select('name, country')
+        .in('name', fcNames)
+      for (const fc of fcs || []) {
+        fcCountryMap.set(fc.name, fc.country || 'US')
+      }
+    }
+
     // Build contexts for batch markup calculation
     const txContexts = processable.map(tx => {
       const feeType = tx.fee_type || ''
@@ -306,6 +321,9 @@ export async function calculatePreviewMarkups(
         ? getShipmentFeeType(shipmentCtx?.orderType === 'FBA' ? 'FBA' : shipmentCtx?.orderType === 'VAS' ? 'VAS' : null)
         : feeType
 
+      // Determine origin country from FC name
+      const originCountry = tx.fulfillment_center ? (fcCountryMap.get(tx.fulfillment_center) || 'US') : undefined
+
       return {
         id: tx.id,
         baseAmount,
@@ -319,6 +337,7 @@ export async function calculatePreviewMarkups(
           weightOz: shipmentCtx?.weightOz ?? undefined,
           state: shipmentCtx?.state ?? undefined,
           country: shipmentCtx?.country ?? undefined,
+          originCountry,
         } as TransactionContext,
         // Carry forward for update
         originalTx: tx,

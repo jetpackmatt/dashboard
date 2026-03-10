@@ -224,6 +224,7 @@ export interface MarkupRuleFormData {
   fee_type: string | null
   order_category: string | null
   ship_option_id: string | null
+  origin_country: string | null
   markup_type: 'percentage' | 'fixed'
   markup_value: number
   priority: number
@@ -239,3 +240,12 @@ export interface MarkupRuleFormData {
     ship_option_ids?: string[]
   } | null
 }
+
+// Supported origin countries for markup rules
+export const ORIGIN_COUNTRIES = [
+  { value: 'CA', label: 'Canada' },
+  { value: 'UK', label: 'United Kingdom' },
+  { value: 'NL', label: 'Netherlands' },
+  { value: 'ES', label: 'Spain' },
+  { value: 'AU', label: 'Australia' },
+] as const

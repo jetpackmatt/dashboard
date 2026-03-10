@@ -79,6 +79,7 @@ export interface DetailedShipmentFee {
   fee_type: string | null
   amount: number | null
   transaction_date: string | null
+  fc_name?: string | null
   taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
@@ -103,6 +104,7 @@ export interface DetailedReceiving {
   amount: number | null
   transaction_type: string | null
   transaction_date: string | null
+  fc_name?: string | null
   taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
@@ -124,6 +126,7 @@ export interface DetailedCredit {
   transaction_date: string | null
   credit_reason: string | null
   credit_amount: number | null
+  fc_name?: string | null
   taxes?: TaxInfo[] // GST/HST for Canadian transactions
 }
 
@@ -156,6 +159,8 @@ export interface InvoiceLineItem {
   taxType?: string // e.g., "GST"
   taxes?: TaxInfo[] // Full taxes array for calculating taxes_charge
   creditShippingPortion?: number | null // From sync-time classification (credit_shipping_portion column)
+  fcName?: string | null         // Fulfillment center name (for Excel + origin country lookup)
+  originCountry?: string | null  // Derived from FC → fulfillment_centers.country
 }
 
 export interface InvoiceData {
@@ -254,20 +259,20 @@ function extractTaxInfo(taxes: TaxInfo[] | null | undefined): { taxType?: string
   }
 }
 
-// Cache for fulfillment center tax info (loaded from DB)
-let fcTaxCache: Map<string, { taxType: string; taxRate: number } | null> | null = null
+// Cache for fulfillment center info (loaded from DB) - includes country and tax info
+let fcTaxCache: Map<string, { taxType: string; taxRate: number; country: string } | null> | null = null
 
 /**
- * Load fulfillment center tax info from the database.
+ * Load fulfillment center info from the database (country + tax data).
  * Uses the fulfillment_centers table which is configured via admin panel.
  */
-async function loadFCTaxCache(): Promise<Map<string, { taxType: string; taxRate: number } | null>> {
+async function loadFCTaxCache(): Promise<Map<string, { taxType: string; taxRate: number; country: string } | null>> {
   if (fcTaxCache) return fcTaxCache
 
   const supabase = createAdminClient()
   const { data: fcs } = await supabase
     .from('fulfillment_centers')
-    .select('name, tax_rate, tax_type')
+    .select('name, country, tax_rate, tax_type')
 
   fcTaxCache = new Map()
   for (const fc of fcs || []) {
@@ -275,13 +280,24 @@ async function loadFCTaxCache(): Promise<Map<string, { taxType: string; taxRate:
       fcTaxCache.set(fc.name, {
         taxType: fc.tax_type,
         taxRate: Number(fc.tax_rate),
+        country: fc.country || 'US',
       })
     } else {
-      fcTaxCache.set(fc.name, null) // Explicitly no tax
+      fcTaxCache.set(fc.name, { taxType: '', taxRate: 0, country: fc.country || 'US' })
     }
   }
 
   return fcTaxCache
+}
+
+/**
+ * Get origin country for a fulfillment center name.
+ * Must call loadFCTaxCache() first. Defaults to 'US' if not found.
+ */
+function getFCCountry(fcName: string | null): string {
+  if (!fcName || !fcTaxCache) return 'US'
+  const fc = fcTaxCache.get(fcName)
+  return fc?.country || 'US'
 }
 
 /**
@@ -314,7 +330,7 @@ async function extractStorageTaxInfoAsync(
     const cache = await loadFCTaxCache()
     const fcTax = cache.get(fulfillmentCenter)
 
-    if (fcTax) {
+    if (fcTax && fcTax.taxRate > 0) {
       const taxAmount = Math.round(cost * (fcTax.taxRate / 100) * 100) / 100
       return {
         taxType: fcTax.taxType,
@@ -346,7 +362,7 @@ function extractStorageTaxInfo(
   if (fulfillmentCenter && fcTaxCache) {
     const fcTax = fcTaxCache.get(fulfillmentCenter)
 
-    if (fcTax) {
+    if (fcTax && fcTax.taxRate > 0) {
       const taxAmount = Math.round(cost * (fcTax.taxRate / 100) * 100) / 100
       return {
         taxType: fcTax.taxType,
@@ -396,6 +412,8 @@ export async function collectBillingTransactions(
     const transactionFee = tx.fee_type || ''
     const details = (tx.additional_details as Record<string, unknown>) || {}
     const baseAmount = Number(tx.cost) || 0
+    const txFulfillmentCenter = String(tx.fulfillment_center || '')
+    const txOriginCountry = getFCCountry(txFulfillmentCenter || null)
 
     // Skip if no cost
     if (baseAmount === 0) continue
@@ -420,6 +438,8 @@ export async function collectBillingTransactions(
         orderNumber: tx.reference_id,
         // Stored classification from sync-time Sixth Pass
         creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
       })
     } else if (referenceType === 'Shipment') {
       if (transactionFee === 'Shipping') {
@@ -443,6 +463,8 @@ export async function collectBillingTransactions(
           trackingNumber: tx.tracking_id,
           feeType,
           transactionDate: tx.charge_date,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -469,6 +491,8 @@ export async function collectBillingTransactions(
           orderNumber: tx.reference_id,
           feeType: transactionFee,
           transactionDate: tx.charge_date,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -489,6 +513,8 @@ export async function collectBillingTransactions(
           orderNumber: tx.reference_id,
           feeType: transactionFee || 'Unknown',
           transactionDate: tx.charge_date,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -512,6 +538,8 @@ export async function collectBillingTransactions(
         periodLabel: tx.charge_date ? formatStoragePeriod(new Date(tx.charge_date), new Date(tx.charge_date)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
         ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, tx.fulfillment_center as string, baseAmount),
       })
@@ -530,6 +558,8 @@ export async function collectBillingTransactions(
         description: tx.transaction_type || 'Return',
         feeType: tx.transaction_type,
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -549,6 +579,8 @@ export async function collectBillingTransactions(
         description: `WRO ${tx.reference_id || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -567,6 +599,8 @@ export async function collectBillingTransactions(
         description: `${referenceType || 'WRO'} ${tx.reference_id || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -593,6 +627,8 @@ export async function collectBillingTransactions(
         orderNumber: tx.reference_id,
         feeType: transactionFee,
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -613,6 +649,8 @@ export async function collectBillingTransactions(
         orderNumber: tx.reference_id,
         feeType: transactionFee || 'Unknown',
         transactionDate: tx.charge_date,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -675,6 +713,7 @@ export async function collectBillingTransactionsByInvoiceIds(
     const txReferenceId = String(tx.reference_id || '')
     const txTrackingId = String(tx.tracking_id || '')
     const txFulfillmentCenter = String(tx.fulfillment_center || '')
+    const txOriginCountry = getFCCountry(txFulfillmentCenter || null)
     const txTransactionType = String(tx.transaction_type || '')
     const txInvoiceIdSb = tx.invoice_id_sb ? Number(tx.invoice_id_sb) : undefined
 
@@ -701,6 +740,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         orderNumber: txReferenceId,
         // Stored classification from sync-time Sixth Pass
         creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -732,6 +773,8 @@ export async function collectBillingTransactionsByInvoiceIds(
           trackingNumber: txTrackingId,
           feeType,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -758,6 +801,8 @@ export async function collectBillingTransactionsByInvoiceIds(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -779,6 +824,8 @@ export async function collectBillingTransactionsByInvoiceIds(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -802,6 +849,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         periodLabel: txChargeDate ? formatStoragePeriod(new Date(txChargeDate), new Date(txChargeDate)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
         ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, txFulfillmentCenter, baseAmount),
       })
@@ -820,6 +869,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: txTransactionType || 'Return',
         feeType: txTransactionType,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -839,6 +890,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -858,6 +911,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         description: `${referenceType || 'WRO'} ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -878,6 +933,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         orderNumber: txReferenceId,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -901,6 +958,8 @@ export async function collectBillingTransactionsByInvoiceIds(
         orderNumber: txReferenceId,
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -958,6 +1017,7 @@ export async function collectUnprocessedBillingTransactions(
     const txReferenceId = String(tx.reference_id || '')
     const txTrackingId = String(tx.tracking_id || '')
     const txFulfillmentCenter = String(tx.fulfillment_center || '')
+    const txOriginCountry = getFCCountry(txFulfillmentCenter || null)
     const txTransactionType = String(tx.transaction_type || '')
     const txInvoiceIdSb = tx.invoice_id_sb ? Number(tx.invoice_id_sb) : undefined
 
@@ -982,6 +1042,8 @@ export async function collectUnprocessedBillingTransactions(
         orderNumber: txReferenceId,
         // Stored classification from sync-time Sixth Pass
         creditShippingPortion: tx.credit_shipping_portion != null ? Number(tx.credit_shipping_portion) : null,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1013,6 +1075,8 @@ export async function collectUnprocessedBillingTransactions(
           trackingNumber: txTrackingId,
           feeType,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -1039,6 +1103,8 @@ export async function collectUnprocessedBillingTransactions(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -1060,6 +1126,8 @@ export async function collectUnprocessedBillingTransactions(
           orderNumber: txReferenceId,
           feeType: transactionFee,
           transactionDate: txChargeDate,
+          fcName: txFulfillmentCenter || null,
+          originCountry: txOriginCountry,
           ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
@@ -1083,6 +1151,8 @@ export async function collectUnprocessedBillingTransactions(
         periodLabel: txChargeDate ? formatStoragePeriod(new Date(txChargeDate), new Date(txChargeDate)) : undefined,
         feeType: locationType || 'Storage',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         // Use extractStorageTaxInfo to calculate Canadian FC taxes if not already in DB
         ...extractStorageTaxInfo(tx.taxes as TaxInfo[] | undefined, txFulfillmentCenter, baseAmount),
       })
@@ -1101,6 +1171,8 @@ export async function collectUnprocessedBillingTransactions(
         description: txTransactionType || 'Return',
         feeType: txTransactionType,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1120,6 +1192,8 @@ export async function collectUnprocessedBillingTransactions(
         description: `WRO ${txReferenceId || 'N/A'} - ${getFeeTypeDisplayName(transactionFee)}`,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1139,6 +1213,8 @@ export async function collectUnprocessedBillingTransactions(
         description: `${referenceType || 'WRO'} ${txReferenceId || 'N/A'} - ${transactionFee || 'Receiving'}`,
         feeType: transactionFee || 'Receiving',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1159,6 +1235,8 @@ export async function collectUnprocessedBillingTransactions(
         orderNumber: txReferenceId,
         feeType: transactionFee,
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1182,6 +1260,8 @@ export async function collectUnprocessedBillingTransactions(
         orderNumber: txReferenceId,
         feeType: transactionFee || 'Unknown',
         transactionDate: txChargeDate,
+        fcName: txFulfillmentCenter || null,
+        originCountry: txOriginCountry,
         ...extractTaxInfo(tx.taxes as TaxInfo[] | undefined),
           taxes: tx.taxes as TaxInfo[] | undefined,
       })
@@ -1240,6 +1320,7 @@ export async function applyMarkupsToLineItems(
       weightOz: undefined,
       state: undefined,
       country: undefined,
+      originCountry: item.originCountry || undefined,
     } as TransactionContext,
   }))
 
@@ -1684,7 +1765,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   // Check if any fee has taxes
   const feesHasTaxes = detailedData.shipmentFees.some(f => f.taxes && f.taxes.length > 0)
 
-  const feesBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Fee Type', 'Total Charge', 'Transaction Date']
+  const feesBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Fee Type', 'Total Charge', 'FC Name', 'Transaction Date']
   feesSheet.getRow(1).values = feesHasTaxes
     ? [...feesBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
     : feesBaseHeaders
@@ -1711,6 +1792,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       f.order_id || f.id,
       getFeeTypeDisplayName(f.fee_type) || '',
       billedAmt,
+      f.fc_name || '',
       f.transaction_date ? formatExcelDate(f.transaction_date) : ''
     ]
 
@@ -1726,9 +1808,9 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   }
   const feesTotalRow = addTotalRow(feesSheet, row, 5, feesTotal)
   // Set column widths individually
-  const feesWidths = feesHasTaxes ? [12, 20, 15, 25, 15, 20, 10, 12, 12] : [12, 20, 15, 25, 15, 20]
+  const feesWidths = feesHasTaxes ? [12, 20, 15, 25, 15, 18, 20, 10, 12, 12] : [12, 20, 15, 25, 15, 18, 20]
   for (let i = 0; i < feesWidths.length; i++) feesSheet.getColumn(i + 1).width = feesWidths[i]
-  const feesColCount = feesHasTaxes ? 9 : 6
+  const feesColCount = feesHasTaxes ? 10 : 7
 
   // 3. RETURNS SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1797,7 +1879,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   // Check if any receiving has taxes
   const receivingHasTaxes = detailedData.receiving.some(r => r.taxes && r.taxes.length > 0)
 
-  const receivingBaseHeaders = ['User ID', 'Merchant Name', 'WRO ID', 'Fee Type', 'Total Charge', 'Transaction Type', 'Transaction Date']
+  const receivingBaseHeaders = ['User ID', 'Merchant Name', 'WRO ID', 'Fee Type', 'Total Charge', 'Transaction Type', 'FC Name', 'Transaction Date']
   receivingSheet.getRow(1).values = receivingHasTaxes
     ? [...receivingBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
     : receivingBaseHeaders
@@ -1825,6 +1907,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       getFeeTypeDisplayName(r.fee_type) || 'WRO Receiving Fee',
       billedAmt,
       r.transaction_type || '',
+      r.fc_name || '',
       r.transaction_date ? formatExcelDate(r.transaction_date) : ''
     ]
 
@@ -1840,9 +1923,9 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   }
   const receivingTotalRow = addTotalRow(receivingSheet, row, 5, receivingTotal)
   // Set column widths individually
-  const receivingWidths = receivingHasTaxes ? [12, 20, 15, 20, 15, 15, 20, 10, 12, 12] : [12, 20, 15, 20, 15, 15, 20]
+  const receivingWidths = receivingHasTaxes ? [12, 20, 15, 20, 15, 15, 18, 20, 10, 12, 12] : [12, 20, 15, 20, 15, 15, 18, 20]
   for (let i = 0; i < receivingWidths.length; i++) receivingSheet.getColumn(i + 1).width = receivingWidths[i]
-  const receivingColCount = receivingHasTaxes ? 10 : 7
+  const receivingColCount = receivingHasTaxes ? 11 : 8
 
   // 5. STORAGE SHEET
   // Client-facing columns only - NO internal costs or markup percentages
@@ -1905,7 +1988,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   // Check if any credit has taxes
   const creditsHasTaxes = detailedData.credits.some(c => c.taxes && c.taxes.length > 0)
 
-  const creditsBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Transaction Date', 'Credit Reason', 'Credit Amount']
+  const creditsBaseHeaders = ['User ID', 'Merchant Name', 'Reference ID', 'Transaction Date', 'FC Name', 'Credit Reason', 'Credit Amount']
   creditsSheet.getRow(1).values = creditsHasTaxes
     ? [...creditsBaseHeaders, 'Tax Type', 'Tax Rate (%)', 'Tax Amount']
     : creditsBaseHeaders
@@ -1931,6 +2014,7 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
       data.client.company_name,
       c.reference_id || c.id,
       c.transaction_date ? formatExcelDate(c.transaction_date) : '',
+      c.fc_name || '',
       c.credit_reason || '',
       billedAmt
     ]
@@ -1945,10 +2029,10 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
     }
     row++
   }
-  const creditsTotalRow = addTotalRow(creditsSheet, row, 6, creditsTotal)
-  const creditsWidths = creditsHasTaxes ? [12, 20, 15, 20, 30, 15, 10, 12, 12] : [12, 20, 15, 20, 30, 15]
+  const creditsTotalRow = addTotalRow(creditsSheet, row, 7, creditsTotal)
+  const creditsWidths = creditsHasTaxes ? [12, 20, 15, 20, 18, 30, 15, 10, 12, 12] : [12, 20, 15, 20, 18, 30, 15]
   for (let i = 0; i < creditsWidths.length; i++) creditsSheet.getColumn(i + 1).width = creditsWidths[i]
-  const creditsColCount = creditsHasTaxes ? 9 : 6
+  const creditsColCount = creditsHasTaxes ? 10 : 7
   // NOTE: Column-level numFmt removed to prevent phantom rows in Excel
 
   // Format cells row-by-row (not entire columns) to prevent phantom blank rows in Excel
@@ -1970,24 +2054,24 @@ export async function generateExcelInvoice(data: InvoiceData, detailedData: Deta
   formatCells(shipmentsSheet, [10, 11, 12, 13], shipmentsTotalRow, '#,##0.00')
   formatCells(shipmentsSheet, [7, 30, 31, 32], shipmentsTotalRow, dateTimeFormat)
 
-  // Fees sheet - col 5=Total Charge (currency), col 6=Transaction Date
+  // Fees sheet - col 5=Total Charge (currency), col 6=FC Name, col 7=Transaction Date
   formatCells(feesSheet, [5], feesTotalRow, '#,##0.00')
-  formatCells(feesSheet, [6], feesTotalRow, dateTimeFormat)
+  formatCells(feesSheet, [7], feesTotalRow, dateTimeFormat)
 
   // Returns sheet - col 6=Total Charge (currency), col 10=Return Date
   formatCells(returnsSheet, [6], returnsTotalRow, '#,##0.00')
   formatCells(returnsSheet, [10], returnsTotalRow, dateTimeFormat)
 
-  // Receiving sheet - col 5=Total Charge (currency), col 7=Transaction Date
+  // Receiving sheet - col 5=Total Charge (currency), col 7=FC Name, col 8=Transaction Date
   formatCells(receivingSheet, [5], receivingTotalRow, '#,##0.00')
-  formatCells(receivingSheet, [7], receivingTotalRow, dateTimeFormat)
+  formatCells(receivingSheet, [8], receivingTotalRow, dateTimeFormat)
 
   // Storage sheet - col 7=Total Charge (currency), col 3=Charge Date (date only)
   formatCells(storageSheet, [7], storageTotalRow, '#,##0.00')
   formatCells(storageSheet, [3], storageTotalRow, dateOnlyFormat)
 
-  // Credits sheet - col 6=Credit Amount (currency), col 4=Transaction Date
-  formatCells(creditsSheet, [6], creditsTotalRow, '#,##0.00')
+  // Credits sheet - col 7=Credit Amount (currency), col 4=Transaction Date
+  formatCells(creditsSheet, [7], creditsTotalRow, '#,##0.00')
   formatCells(creditsSheet, [4], creditsTotalRow, dateTimeFormat)
 
   // Add auto-filter to define the exact data range (prevents Excel from showing blank rows as data)
@@ -2240,6 +2324,7 @@ export async function collectDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
@@ -2289,6 +2374,7 @@ export async function collectDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
@@ -2299,6 +2385,7 @@ export async function collectDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
@@ -2353,6 +2440,7 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
@@ -2365,6 +2453,7 @@ export async function collectDetailedBillingData(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
@@ -2375,6 +2464,7 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id) || tx.charge_date,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
@@ -2386,6 +2476,7 @@ export async function collectDetailedBillingData(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
@@ -2625,6 +2716,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
@@ -2698,6 +2790,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
@@ -2708,6 +2801,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date as string,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
@@ -2761,6 +2855,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
@@ -2773,6 +2868,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type as string || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
@@ -2783,6 +2879,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
@@ -2794,6 +2891,7 @@ export async function collectDetailedBillingDataByInvoiceIds(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }
@@ -2890,6 +2988,7 @@ export async function collectUnprocessedDetailedBillingData(
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
         credit_reason: String(details.Comment || details.CreditReason || ''),
         credit_amount: cost,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'Shipment') {
@@ -2938,6 +3037,7 @@ export async function collectUnprocessedDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       } else {
@@ -2948,6 +3048,7 @@ export async function collectUnprocessedDetailedBillingData(
           fee_type: transactionFee,
           amount: cost,
           transaction_date: tx.charge_date as string,
+          fc_name: tx.fulfillment_center as string || '',
           taxes: tx.taxes as TaxInfo[] | undefined,
         })
       }
@@ -3001,6 +3102,7 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'WRO' || referenceType === 'URO' || transactionFee.includes('Receiving')) {
@@ -3013,6 +3115,7 @@ export async function collectUnprocessedDetailedBillingData(
         // Transaction Type - falls back to transaction_fee (e.g., "WRO Receiving Fee")
         transaction_type: tx.transaction_type as string || transactionFee,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else if (referenceType === 'TicketNumber' && ADDITIONAL_SERVICE_FEES.includes(transactionFee)) {
@@ -3023,6 +3126,7 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee,
         amount: cost,
         transaction_date: decodeUlidTimestamp(tx.transaction_id as string) || tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     } else {
@@ -3034,6 +3138,7 @@ export async function collectUnprocessedDetailedBillingData(
         fee_type: transactionFee || referenceType || 'Unknown',
         amount: cost,
         transaction_date: tx.charge_date as string,
+        fc_name: tx.fulfillment_center as string || '',
         taxes: tx.taxes as TaxInfo[] | undefined,
       })
     }

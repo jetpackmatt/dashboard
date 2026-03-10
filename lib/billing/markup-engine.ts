@@ -28,6 +28,7 @@ export interface MarkupRule {
   ship_option_id: string | null
   billing_category: string | null
   order_category: string | null
+  origin_country: string | null
   conditions: MarkupConditions | null
   markup_type: 'percentage' | 'fixed'
   markup_value: number
@@ -75,6 +76,7 @@ export interface TransactionContext {
   weightOz?: number
   state?: string
   country?: string
+  originCountry?: string
 }
 
 export type BillingCategory =
@@ -191,6 +193,15 @@ export function ruleMatchesContext(
     return false
   }
 
+  // Origin country match
+  // NULL = catchall (matches all origin countries including US)
+  // Non-null = only match transactions from warehouses in that country
+  if (rule.origin_country !== null && rule.origin_country !== undefined) {
+    if (!context.originCountry || rule.origin_country !== context.originCountry) {
+      return false
+    }
+  }
+
   // Conditions check
   if (rule.conditions) {
     const conditions = rule.conditions
@@ -235,9 +246,12 @@ export function ruleMatchesContext(
  * More conditions = more specific rule
  *
  * Counted as conditions:
- * - ship_option_id specified: +1
- * - weight bracket specified: +1
  * - client-specific (vs global): +1 (always takes precedence)
+ * - ship_option_id specified: +1
+ * - origin_country specified: +2 (country-specific rules always beat
+ *   catchall rules with ship_option/weight conditions, because catchall
+ *   rules were designed for US and shouldn't override country overrides)
+ * - weight bracket specified: +1
  */
 export function countRuleConditions(rule: MarkupRule): number {
   let count = 0
@@ -250,6 +264,15 @@ export function countRuleConditions(rule: MarkupRule): number {
   // Ship option specified
   if (rule.ship_option_id) {
     count += 1
+  }
+
+  // Origin country specified — weighted +2 so country-specific rules
+  // always beat catchall rules that have ship_option or weight conditions.
+  // A "Standard (CA)" rule (3 points) beats "Standard (Ship 146)" (2 points)
+  // for Canadian shipments, which is correct because the Ship 146 rule
+  // was designed for US and shouldn't leak into country-specific billing.
+  if (rule.origin_country) {
+    count += 2
   }
 
   // Weight conditions specified

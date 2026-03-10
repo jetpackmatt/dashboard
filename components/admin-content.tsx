@@ -115,7 +115,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { useClient } from '@/components/client-context'
-import { FEE_TYPE_CATEGORIES, WEIGHT_BRACKETS } from '@/lib/billing/types'
+import { FEE_TYPE_CATEGORIES, WEIGHT_BRACKETS, ORIGIN_COUNTRIES } from '@/lib/billing/types'
 import type { MarkupRuleFormData } from '@/lib/billing/types'
 
 /**
@@ -139,6 +139,7 @@ interface MarkupRule {
   billing_category: string | null
   order_category: string | null
   ship_option_id: string | null
+  origin_country: string | null
   conditions: Record<string, unknown> | null
   markup_type: 'percentage' | 'fixed'
   markup_value: number
@@ -372,6 +373,7 @@ function MarkupTablesContent({ clients }: { clients: Client[] }) {
       billing_category: null,
       order_category: null,
       ship_option_id: null,
+      origin_country: null,
       conditions: null,
       markup_type: 'percentage',
       markup_value: 0,
@@ -603,6 +605,7 @@ function RuleSection({
                     <TableRow>
                       <TableHead>Fee Type</TableHead>
                       <TableHead>Category</TableHead>
+                      <TableHead>Origin</TableHead>
                       <TableHead>Markup</TableHead>
                       <TableHead>Effective</TableHead>
                       <TableHead className="w-[100px]">Actions</TableHead>
@@ -637,6 +640,15 @@ function RuleSection({
                           <Badge variant="outline">
                             {rule.billing_category || 'All'}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {rule.origin_country ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {ORIGIN_COUNTRIES.find(c => c.value === rule.origin_country)?.label || rule.origin_country}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">All</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {rule.markup_type === 'percentage' ? (
@@ -730,6 +742,7 @@ function MarkupRuleDialog({
     fee_type: null,
     order_category: null,
     ship_option_id: null,
+    origin_country: null,
     markup_type: 'percentage',
     markup_value: 0,
     priority: 0,
@@ -752,6 +765,7 @@ function MarkupRuleDialog({
         fee_type: rule.fee_type,
         order_category: rule.order_category,
         ship_option_id: rule.ship_option_id,
+        origin_country: rule.origin_country,
         markup_type: rule.markup_type,
         markup_value: rule.markup_value,
         priority: rule.priority,
@@ -776,15 +790,16 @@ function MarkupRuleDialog({
         throw new Error('Category and Fee Type are required')
       }
 
-      // Check for duplicate - must match fee_type, ship_option_id, AND weight conditions
+      // Check for duplicate - must match fee_type, ship_option_id, origin_country, AND weight conditions
       const duplicateRule = existingRules.find(r => {
         if (r.id === rule?.id) return false
         if (r.client_id !== formData.client_id) return false
         if (r.fee_type !== formData.fee_type) return false
         if (!r.is_active) return false
 
-        // Also compare ship_option_id and weight conditions
+        // Also compare ship_option_id, origin_country, and weight conditions
         if (r.ship_option_id !== formData.ship_option_id) return false
+        if (r.origin_country !== formData.origin_country) return false
 
         // Compare weight conditions
         const existingMinOz = (r.conditions as any)?.weight_min_oz
@@ -810,6 +825,9 @@ function MarkupRuleDialog({
       // Auto-generate name from fee_type + conditions
       let name = formData.fee_type || ''
       const nameParts: string[] = []
+      if (formData.origin_country) {
+        nameParts.push(formData.origin_country)
+      }
       if (formData.ship_option_id) {
         nameParts.push(`Ship ${formData.ship_option_id}`)
       }
@@ -998,6 +1016,34 @@ function MarkupRuleDialog({
                   Applies markup only to shipments in this weight range.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Origin Country */}
+          {formData.billing_category && (
+            <div className="space-y-2">
+              <Label htmlFor="originCountry">Origin Country</Label>
+              <Select
+                value={formData.origin_country || 'all'}
+                onValueChange={v =>
+                  setFormData({ ...formData, origin_country: v === 'all' ? null : v })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Countries (Default)</SelectItem>
+                  {ORIGIN_COUNTRIES.map(c => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Apply this markup only to transactions from warehouses in a specific country. Default applies to all countries.
+              </p>
             </div>
           )}
 

@@ -80,7 +80,7 @@ export async function PATCH(
     const updateData: Record<string, unknown> = {}
     const allowedFields = [
       'name', 'client_id', 'billing_category', 'fee_type', 'order_category',
-      'ship_option_id', 'markup_type', 'markup_value', 'priority', 'is_additive',
+      'ship_option_id', 'origin_country', 'markup_type', 'markup_value', 'priority', 'is_additive',
       'effective_from', 'effective_to', 'description', 'conditions', 'is_active'
     ]
 
