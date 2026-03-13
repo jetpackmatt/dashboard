@@ -126,6 +126,7 @@ export function ClaimSubmissionDialog({
   // Shipment data from lookup
   const [shipmentSummary, setShipmentSummary] = React.useState<ShipmentSummary | null>(null)
   const [eligibility, setEligibility] = React.useState<ClaimEligibilityResult | null>(null)
+  const [existingClaim, setExistingClaim] = React.useState<{ ticketNumber: number; issueType: string; status: string } | null>(null)
 
   // Lost in Transit verification state
   const [isVerifyingLIT, setIsVerifyingLIT] = React.useState(false)
@@ -202,6 +203,7 @@ export function ClaimSubmissionDialog({
       })
       setShipmentSummary(null)
       setEligibility(null)
+      setExistingClaim(null)
       setError(null)
       setSubmitSuccess(false)
       setTicketNumber(null)
@@ -276,6 +278,7 @@ export function ClaimSubmissionDialog({
 
       if (eligibilityData) {
         setEligibility(eligibilityData)
+        setExistingClaim(eligibilityData.existingClaim || null)
         // Note: LIT verification is triggered automatically by the useEffect
         // when the user lands on the verification step, regardless of entry path
       }
@@ -343,6 +346,7 @@ export function ClaimSubmissionDialog({
 
       if (eligibilityData) {
         setEligibility(eligibilityData)
+        setExistingClaim(eligibilityData.existingClaim || null)
       }
 
       // Advance to next step (issue type selection)
@@ -753,7 +757,9 @@ export function ClaimSubmissionDialog({
             {/* Check if any claim types are eligible */}
             {(() => {
               const allClaimTypes: ClaimType[] = ["lostInTransit", "incorrectDelivery", "damage", "incorrectItems", "incorrectQuantity"]
-              const hasAnyEligible = allClaimTypes.some(type => eligibility?.eligibility[type]?.eligible)
+              // Claim types that are blocked if a claim already exists (incorrectDelivery is NOT a claim)
+              const isClaimType = (type: ClaimType) => type !== "incorrectDelivery"
+              const hasAnyEligible = allClaimTypes.some(type => eligibility?.eligibility[type]?.eligible && !(existingClaim && isClaimType(type)))
 
               if (!hasAnyEligible && eligibility) {
                 // No claim types eligible - show friendly message
@@ -797,23 +803,38 @@ export function ClaimSubmissionDialog({
               return (
                 <>
                   <p className="text-muted-foreground">What seems to be the trouble?</p>
+                  {existingClaim && (
+                    <Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+                      <AlertCircle className="h-4 w-4 text-amber-600" />
+                      <AlertDescription className="text-amber-800 dark:text-amber-200">
+                        A claim (#{existingClaim.ticketNumber} — {existingClaim.issueType}) has already been filed for this shipment. Only non-claim ticket types can be submitted.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   <div className="grid gap-2">
                     {allClaimTypes.map((type) => {
                       const typeEligibility = eligibility?.eligibility[type]
-                      const isEligible = typeEligibility?.eligible ?? false
+                      const blockedByClaim = existingClaim && isClaimType(type)
+                      const isEligible = (typeEligibility?.eligible ?? false) && !blockedByClaim
 
                       return (
                         <button
                           key={type}
+                          disabled={!isEligible}
                           className={cn(
                             "flex items-center justify-between p-4 rounded-lg border text-left transition-colors",
                             formData.claimType === type && "border-primary bg-primary/5",
-                            !isEligible && "opacity-60",
+                            !isEligible && "opacity-60 cursor-not-allowed",
                             isEligible && formData.claimType !== type && "hover:border-muted-foreground/50"
                           )}
-                          onClick={() => handleClaimTypeSelect(type)}
+                          onClick={() => isEligible && handleClaimTypeSelect(type)}
                         >
-                          <span className="font-medium">{getClaimTypeLabel(type)}</span>
+                          <div>
+                            <span className="font-medium">{getClaimTypeLabel(type)}</span>
+                            {blockedByClaim && (
+                              <span className="text-xs text-muted-foreground block mt-0.5">Claim already filed</span>
+                            )}
+                          </div>
                           {!isEligible && (
                             <AlertCircle className="h-4 w-4 text-muted-foreground" />
                           )}
@@ -1130,18 +1151,59 @@ export function ClaimSubmissionDialog({
           : "Photo Showing Incorrect Item(s)"
         const docsRequired = !isIncorrectDelivery
 
+        // Incorrect Delivery: no photo field, just customer complaint + other docs (both optional)
+        if (isIncorrectDelivery) {
+          return (
+            <div className="space-y-5">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                  Screenshot of Customer Complaint
+                  {formData.attachments.customerComplaint.length > 0 ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  ) : (
+                    <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                  )}
+                </Label>
+                <FileUpload
+                  value={formData.attachments.customerComplaint}
+                  onChange={(files) => setFormData(prev => ({
+                    ...prev,
+                    attachments: { ...prev.attachments, customerComplaint: files }
+                  }))}
+                  accept="image/png,image/jpeg,application/pdf"
+                  maxSizeMb={MAX_PER_FILE_MB}
+                  singleFile
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                </Label>
+                <FileUpload
+                  value={formData.attachments.otherDocs}
+                  onChange={(files) => setFormData(prev => ({
+                    ...prev,
+                    attachments: { ...prev.attachments, otherDocs: files }
+                  }))}
+                  accept="image/png,image/jpeg,application/pdf,.xlsx,.xls,.csv"
+                  maxSizeMb={MAX_PER_FILE_MB}
+                />
+              </div>
+            </div>
+          )
+        }
+
         return (
           <div className="space-y-5">
-            {/* Field 1: Photo - REQUIRED for damage/pick error/short ship, OPTIONAL for incorrect delivery */}
+            {/* Field 1: Photo - REQUIRED for damage/pick error/short ship */}
             <div className="space-y-1.5">
               <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 {photoLabel}
                 {formData.attachments.photo.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : docsRequired ? (
-                  <span className="text-red-500">*</span>
                 ) : (
-                  <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                  <span className="text-red-500">*</span>
                 )}
               </Label>
               <FileUpload
@@ -1156,16 +1218,14 @@ export function ClaimSubmissionDialog({
               />
             </div>
 
-            {/* Field 2: Customer Complaint - REQUIRED for damage/pick error/short ship, OPTIONAL for incorrect delivery */}
+            {/* Field 2: Customer Complaint - REQUIRED for damage/pick error/short ship */}
             <div className="space-y-1.5">
               <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 Screenshot of Customer Complaint
                 {formData.attachments.customerComplaint.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
-                ) : docsRequired ? (
-                  <span className="text-red-500">*</span>
                 ) : (
-                  <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                  <span className="text-red-500">*</span>
                 )}
               </Label>
               <FileUpload

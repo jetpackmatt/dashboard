@@ -369,6 +369,14 @@ export class ShipBobClient {
       const query = searchParams.toString()
       return this.request<ShipBobOrder[]>(`/order${query ? `?${query}` : ''}`)
     },
+
+    /**
+     * Cancel an order by ShipBob order ID
+     * Only works for orders that haven't been picked yet (unfulfilled)
+     */
+    cancelOrder: async (orderId: number): Promise<void> => {
+      await this.request<void>(`/order/${orderId}/cancel`, { method: 'POST' })
+    },
   }
 
   /**

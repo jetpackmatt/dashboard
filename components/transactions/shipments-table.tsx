@@ -9,11 +9,26 @@ import { TransactionsTable, PrefixColumn } from "./transactions-table"
 import { Shipment, createShipmentCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
+import { CreateTicketDialog } from "@/components/care/create-ticket-dialog"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
+import { useWatchlist } from "@/hooks/use-watchlist"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 import { useExport } from "@/components/export-context"
+import { toast } from "sonner"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 
 interface ShipmentsTableProps {
   clientId: string
@@ -29,6 +44,7 @@ interface ShipmentsTableProps {
   channelFilter?: string[]
   carrierFilter?: string[]
   destinationFilter?: string[]
+  fcFilter?: string[]
   dateRange?: DateRange
   // Search query for real-time search
   searchQuery?: string
@@ -36,6 +52,8 @@ interface ShipmentsTableProps {
   onChannelsChange?: (channels: string[]) => void
   // Callback to notify parent of available carriers
   onCarriersChange?: (carriers: string[]) => void
+  // Callback to notify parent of available FCs
+  onFcsChange?: (fcs: string[]) => void
   // Callback to notify parent of available destinations
   onDestinationsChange?: (countries: string[], statesByCountry: Record<string, string[]>) => void
   // Callback to notify parent of loading state changes
@@ -48,6 +66,12 @@ interface ShipmentsTableProps {
   onPageSizeChange?: (pageSize: number) => void
   // Export handler registration
   onExportTriggerReady?: (trigger: (options: { format: ExportFormat; scope: ExportScope }) => void) => void
+  // Watchlist filter: if provided, only show these shipment IDs
+  watchlistIds?: string[]
+  // Notes filter: if true, only show shipments with notes
+  hasNotes?: boolean
+  // Callback to notify parent of noted shipment count (supports functional updates)
+  onNotedCountChange?: (countOrUpdater: number | ((prev: number) => number)) => void
 }
 
 export function ShipmentsTable({
@@ -61,10 +85,12 @@ export function ShipmentsTable({
   channelFilter = [],
   carrierFilter = [],
   destinationFilter = [],
+  fcFilter = [],
   dateRange,
   searchQuery = "",
   onChannelsChange,
   onCarriersChange,
+  onFcsChange,
   onDestinationsChange,
   onLoadingChange,
   initialData,
@@ -72,9 +98,13 @@ export function ShipmentsTable({
   initialPageSize = 50,
   onPageSizeChange,
   onExportTriggerReady,
+  watchlistIds,
+  hasNotes,
+  onNotedCountChange,
 }: ShipmentsTableProps) {
   // Check if admin/care viewing all clients (for client badge prefix column)
-  const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
+  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, selectedClientId, clients } = useClient()
+  const isAdminOrCare = effectiveIsAdmin || effectiveIsCareUser
   const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
 
   // Use initial data if provided, otherwise start empty
@@ -99,22 +129,74 @@ export function ShipmentsTable({
   const [claimShipmentId, setClaimShipmentId] = React.useState<string | null>(null)
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
 
+  // Ticket dialog state (admin/care: opens CreateTicketDialog with shipment pre-filled)
+  const [ticketDialogOpen, setTicketDialogOpen] = React.useState(false)
+  const [ticketShipmentId, setTicketShipmentId] = React.useState<string | null>(null)
+
+  // Reship dialog state
+  const [reshipDialogOpen, setReshipDialogOpen] = React.useState(false)
+  const [reshipTargetId, setReshipTargetId] = React.useState<string | null>(null)
+  const [reshipInput, setReshipInput] = React.useState("")
+  const [reshipSaving, setReshipSaving] = React.useState(false)
+
+  // Note dialog state
+  const [noteDialogOpen, setNoteDialogOpen] = React.useState(false)
+  const [noteTargetId, setNoteTargetId] = React.useState<string | null>(null)
+  const [noteInput, setNoteInput] = React.useState("")
+  const [noteSaving, setNoteSaving] = React.useState(false)
+
+  // Watchlist hook — filter to current client
+  const { isWatched, toggleWatch } = useWatchlist(clientId)
+
+  // Wrap toggleWatch with toast feedback
+  const handleWatchlistToggle = React.useCallback((shipmentId: string) => {
+    const wasWatched = isWatched(shipmentId)
+    toggleWatch(shipmentId, clientId)
+    if (wasWatched) {
+      toast("Removed from Watchlist", { description: `Shipment ${shipmentId}` })
+    } else {
+      toast("Added to Watchlist", { description: `Shipment ${shipmentId}` })
+    }
+  }, [isWatched, toggleWatch, clientId])
+
   // Handle "File a Claim" badge click
   const handleFileClaimClick = React.useCallback((shipmentId: string) => {
     setClaimShipmentId(shipmentId)
     setClaimDialogOpen(true)
   }, [])
 
-  // Handle "Cancel" click (placeholder - opens drawer for now)
-  const handleCancelClick = React.useCallback((shipmentId: string) => {
-    setSelectedShipmentId(shipmentId)
-    setDrawerOpen(true)
+  // Handle "Ticket" click (admin/care)
+  const handleTicketClick = React.useCallback((shipmentId: string) => {
+    setTicketShipmentId(shipmentId)
+    setTicketDialogOpen(true)
   }, [])
 
-  // Create cell renderers with the claim + cancel click handlers
+  // Handle "Mark as Reshipped" click
+  const handleMarkReshipClick = React.useCallback((shipmentId: string) => {
+    setReshipTargetId(shipmentId)
+    setReshipInput("")
+    setReshipDialogOpen(true)
+  }, [])
+
+  // Handle "Add a Note" click
+  const handleAddNoteClick = React.useCallback((shipmentId: string) => {
+    setNoteTargetId(shipmentId)
+    setNoteInput("")
+    setNoteDialogOpen(true)
+  }, [])
+
+  // Create cell renderers with role-based action handlers
   const cellRenderers = React.useMemo(
-    () => createShipmentCellRenderers({ onFileClaimClick: handleFileClaimClick, onCancelClick: handleCancelClick }),
-    [handleFileClaimClick, handleCancelClick]
+    () => createShipmentCellRenderers({
+      onFileClaimClick: handleFileClaimClick,
+      onTicketClick: handleTicketClick,
+      onMarkReshipClick: handleMarkReshipClick,
+      onAddNoteClick: handleAddNoteClick,
+      onWatchlistToggle: handleWatchlistToggle,
+      isWatched,
+      isAdminOrCare,
+    }),
+    [handleFileClaimClick, handleTicketClick, handleMarkReshipClick, handleAddNoteClick, handleWatchlistToggle, isWatched, isAdminOrCare]
   )
 
   // Pagination state - use initialPageSize from props for persistence
@@ -207,6 +289,11 @@ export function ShipmentsTable({
         params.set('carrier', carrierFilter.join(','))
       }
 
+      // Add FC/origin filter (server-side)
+      if (fcFilter.length > 0) {
+        params.set('fc', fcFilter.join(','))
+      }
+
       // Add destination filter (server-side - country and country:state pairs)
       if (destinationFilter.length > 0) {
         params.set('destination', destinationFilter.join(','))
@@ -220,6 +307,16 @@ export function ShipmentsTable({
       // Add search query (server-side)
       if (searchQuery) {
         params.set('search', searchQuery)
+      }
+
+      // Add watchlist filter
+      if (watchlistIds && watchlistIds.length > 0) {
+        params.set('watchlist', watchlistIds.join(','))
+      }
+
+      // Add notes filter
+      if (hasNotes) {
+        params.set('hasNotes', 'true')
       }
 
       // Add sort params - map column ID to database column via sortKey
@@ -268,6 +365,14 @@ export function ShipmentsTable({
         }
       }
 
+      // Extract unique FCs from API response and notify parent
+      if (fcFilter.length === 0) {
+        const fcs = result.fcs || [...new Set(filteredData.map((d: Shipment) => d.fcName).filter(Boolean))]
+        if (fcs.length > 0 && onFcsChange) {
+          onFcsChange(fcs as string[])
+        }
+      }
+
       // Extract unique destinations from API response and notify parent
       if (destinationFilter.length === 0 && onDestinationsChange) {
         const destinations = result.destinations || [...new Set(filteredData.map((d: Shipment) => d.destCountry).filter(Boolean))]
@@ -280,6 +385,11 @@ export function ShipmentsTable({
       // All filtering (including age) is done server-side
       setData(filteredData)
       setTotalCount(result.totalCount || 0)
+
+      // Report noted shipment count to parent
+      if (onNotedCountChange && result.notedShipmentCount !== undefined) {
+        onNotedCountChange(result.notedShipmentCount)
+      }
     } catch (err) {
       console.error('Error fetching shipments:', err)
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -288,7 +398,7 @@ export function ShipmentsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection, onChannelsChange, onCarriersChange, onDestinationsChange])
+  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes, onChannelsChange, onCarriersChange, onFcsChange, onDestinationsChange])
 
   // Initial load and on filter/page change
   React.useEffect(() => {
@@ -298,12 +408,69 @@ export function ShipmentsTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save reshipment (defined after fetchData so we can refresh)
+  const handleReshipSave = React.useCallback(async () => {
+    if (!reshipTargetId || !reshipInput.trim()) return
+    setReshipSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${reshipTargetId}/reshipment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reshipmentId: reshipInput.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save')
+      }
+      toast.success('Marked as reshipped')
+      setReshipDialogOpen(false)
+      fetchData(pageIndex, pageSize)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save reshipment')
+    } finally {
+      setReshipSaving(false)
+    }
+  }, [reshipTargetId, reshipInput, fetchData, pageIndex, pageSize])
+
+  // Save note
+  const handleNoteSave = React.useCallback(async () => {
+    if (!noteTargetId || !noteInput.trim()) return
+    setNoteSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${noteTargetId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: noteInput.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save')
+      }
+      toast.success('Note added')
+      setNoteDialogOpen(false)
+      // Optimistically update noteCount on the row and tally
+      const row = data.find(r => r.shipmentId === noteTargetId)
+      if (row && (row.noteCount ?? 0) === 0) {
+        onNotedCountChange?.((prev: number) => prev + 1)
+      }
+      setData(prev => prev.map(r =>
+        r.shipmentId === noteTargetId
+          ? { ...r, noteCount: (r.noteCount ?? 0) + 1 }
+          : r
+      ))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add note')
+    } finally {
+      setNoteSaving(false)
+    }
+  }, [noteTargetId, noteInput, onNotedCountChange])
 
   // Reset page when filter or sort changes
   React.useEffect(() => {
     setPageIndex(0)
-  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, dateRange, searchQuery, sortField, sortDirection])
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes])
 
   // Handle page changes
   const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {
@@ -343,6 +510,7 @@ export function ShipmentsTable({
           type: typeFilter.length > 0 ? typeFilter : undefined,
           channel: channelFilter.length > 0 ? channelFilter : undefined,
           carrier: carrierFilter.length > 0 ? carrierFilter : undefined,
+          fc: fcFilter.length > 0 ? fcFilter : undefined,
           age: ageFilter.length > 0 ? ageFilter : undefined,
           search: searchQuery || undefined,
           format: exportFormat,
@@ -360,7 +528,7 @@ export function ShipmentsTable({
       filename: 'shipments',
       ...toExportMapping(SHIPMENTS_INVOICE_COLUMNS),
     })
-  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, ageFilter, searchQuery, totalCount, startStreamingExport])
+  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, fcFilter, ageFilter, searchQuery, totalCount, startStreamingExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -417,6 +585,17 @@ export function ShipmentsTable({
         shipmentId={selectedShipmentId}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
+        onNotesChanged={(sid, delta) => {
+          const row = data.find(r => r.shipmentId === sid)
+          const oldCount = row?.noteCount ?? 0
+          const newCount = Math.max(0, oldCount + delta)
+          setData(prev => prev.map(r =>
+            r.shipmentId === sid ? { ...r, noteCount: newCount } : r
+          ))
+          if (oldCount > 0 && newCount === 0) {
+            onNotedCountChange?.((prev: number) => Math.max(0, prev - 1))
+          }
+        }}
       />
       {/* Claim submission dialog - opened via "File a Claim" badge */}
       <ClaimSubmissionDialog
@@ -425,6 +604,74 @@ export function ShipmentsTable({
         onOpenChange={setClaimDialogOpen}
         preselectedClaimType="lostInTransit"
       />
+      {/* Ticket dialog - admin/care opens CreateTicketDialog with shipment pre-filled */}
+      {isAdminOrCare && (
+        <CreateTicketDialog
+          open={ticketDialogOpen}
+          onOpenChange={setTicketDialogOpen}
+          onCreated={async () => {
+            toast.success('Care ticket created')
+          }}
+          selectedClientId={selectedClientId || clientId}
+          clients={clients.map(c => ({ id: c.id, company_name: c.company_name, merchant_id: c.merchant_id }))}
+          isAdmin={effectiveIsAdmin || effectiveIsCareUser}
+          initialShipmentId={ticketShipmentId || undefined}
+        />
+      )}
+      {/* Reship dialog - brand users mark a shipment as reshipped */}
+      <Dialog open={reshipDialogOpen} onOpenChange={setReshipDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Mark as Reshipped</DialogTitle>
+            <DialogDescription>
+              Enter the new shipment ID for the reshipment of #{reshipTargetId}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="reship-id">Reshipment Shipment ID</Label>
+            <Input
+              id="reship-id"
+              value={reshipInput}
+              onChange={(e) => setReshipInput(e.target.value)}
+              placeholder="e.g. 330867617"
+              className="mt-1.5"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReshipDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleReshipSave} disabled={reshipSaving || !reshipInput.trim()}>
+              {reshipSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Note dialog - brand users add a note to a shipment */}
+      <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Add a Note</DialogTitle>
+            <DialogDescription>
+              Add a note to shipment #{noteTargetId}. Max 500 characters.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Textarea
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value.slice(0, 500))}
+              placeholder="Type your note here..."
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-xs text-muted-foreground mt-1">{noteInput.length}/500</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoteDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleNoteSave} disabled={noteSaving || !noteInput.trim()}>
+              {noteSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

@@ -111,7 +111,7 @@ export function SavedViewsBar({
             className="h-[30px] px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
           >
             <PlusIcon className="h-3.5 w-3.5" />
-            {views.length === 0 ? 'Save Preset' : 'Save'}
+            {views.length === 0 ? 'Save View' : 'Save'}
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[220px] p-3" align="start">
@@ -132,7 +132,7 @@ export function SavedViewsBar({
                     <span className="w-full border-t" />
                   </div>
                   <div className="relative flex justify-center text-xs">
-                    <span className="bg-popover px-2 text-muted-foreground">or save new preset</span>
+                    <span className="bg-popover px-2 text-muted-foreground">or save new view</span>
                   </div>
                 </div>
               </>
@@ -142,7 +142,7 @@ export function SavedViewsBar({
               value={viewName}
               onChange={(e) => setViewName(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Preset name..."
+              placeholder="View name..."
               className="h-[30px] text-xs"
               maxLength={30}
             />
@@ -152,7 +152,7 @@ export function SavedViewsBar({
               onClick={handleSave}
               disabled={!viewName.trim() || views.length >= 10}
             >
-              {views.length >= 10 ? 'Max 10 presets' : 'Save Preset'}
+              {views.length >= 10 ? 'Max 10 views' : 'Save View'}
             </Button>
 
           </div>

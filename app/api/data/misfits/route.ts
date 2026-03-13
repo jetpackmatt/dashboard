@@ -31,16 +31,21 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
   const search = searchParams.get('search')?.trim().toLowerCase()
-  const filterType = searchParams.get('type') // 'credit' | 'unattributed' | 'pending_credits' | null (all)
+  const filterType = searchParams.get('type') // 'credit' | 'unattributed' | null (all)
   const feeType = searchParams.get('feeType') // e.g. 'Shipping', 'Storage', 'Credit'
   const referenceType = searchParams.get('referenceType') // e.g. 'Shipment', 'Return', 'Default'
 
   try {
-    const selectFields = 'id, transaction_id, client_id, merchant_id, reference_id, reference_type, cost, currency_code, charge_date, fee_type, transaction_type, fulfillment_center, tracking_id, care_ticket_id, dispute_status, matched_credit_id, additional_details, clients(company_name)'
+    const selectFields = 'id, transaction_id, client_id, merchant_id, reference_id, reference_type, cost, currency_code, charge_date, fee_type, transaction_type, fulfillment_center, tracking_id, care_ticket_id, dispute_status, matched_credit_id, additional_details, credit_shipping_portion, billed_amount, markup_is_preview, clients(company_name), care_tickets(id, ticket_number, issue_type, compensation_request, reshipment_status, reshipment_id, shipment_id)'
 
     // Exclude transactions already handled through admin disputes workflow
     // Only show undisputed transactions (dispute_status IS NULL)
     const disputeExcludeFilter = 'dispute_status.is.null'
+
+    // Common search filter used across all query branches
+    const searchOrFilter = search
+      ? `reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`
+      : null
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any[] | null = null
@@ -48,53 +53,57 @@ export async function GET(request: NextRequest) {
     let count: number = 0
 
     // PostgREST doesn't support nested and() inside or(), so we use two queries
-    // and merge results for the "all" filter
-    if (filterType === 'pending_credits') {
-      // Credits pending manual review (markup_is_preview=true, billed_amount=NULL)
-      // These are credits the sync-time classification couldn't auto-resolve
-      const pendingSelect = selectFields + ', credit_shipping_portion, billed_amount, markup_is_preview, care_tickets(id, ticket_number, issue_type, compensation_request, reshipment_status, reshipment_id, shipment_id)'
-      let query = supabase
+    // and merge results for multi-condition filters
+    if (filterType === 'credit') {
+      // Credit misfits: missing ticket OR pending markup
+      // Two queries merged and deduplicated
+      let q1 = supabase
         .from('transactions')
-        .select(pendingSelect, { count: 'exact' })
-        .eq('is_voided', false)
-        .eq('fee_type', 'Credit')
-        .eq('markup_is_preview', true)
-        .is('billed_amount', null)
-
-      if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`)
-      }
-
-      const result = await query
-        .order('charge_date', { ascending: false })
-        .range(offset, offset + limit - 1)
-
-      data = result.data
-      fetchError = result.error
-      count = result.count || 0
-
-    } else if (filterType === 'credit') {
-      // Credits without care ticket
-      let query = supabase
-        .from('transactions')
-        .select(selectFields, { count: 'exact' })
+        .select(selectFields)
         .eq('is_voided', false)
         .eq('fee_type', 'Credit')
         .is('care_ticket_id', null)
         .or(disputeExcludeFilter)
+        .order('charge_date', { ascending: false })
+        .limit(500)
 
-      if (referenceType) query = query.eq('reference_type', referenceType)
-      if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`)
+      let q2 = supabase
+        .from('transactions')
+        .select(selectFields)
+        .eq('is_voided', false)
+        .eq('fee_type', 'Credit')
+        .eq('markup_is_preview', true)
+        .is('billed_amount', null)
+        .or(disputeExcludeFilter)
+        .order('charge_date', { ascending: false })
+        .limit(500)
+
+      if (referenceType) { q1 = q1.eq('reference_type', referenceType); q2 = q2.eq('reference_type', referenceType) }
+      if (searchOrFilter) { q1 = q1.or(searchOrFilter); q2 = q2.or(searchOrFilter) }
+
+      const [result1, result2] = await Promise.all([q1, q2])
+
+      if (result1.error) {
+        console.error('Error fetching credit misfits:', result1.error)
+        return NextResponse.json({ error: 'Failed to fetch misfits' }, { status: 500 })
+      }
+      if (result2.error) {
+        console.error('Error fetching pending markup misfits:', result2.error)
+        return NextResponse.json({ error: 'Failed to fetch misfits' }, { status: 500 })
       }
 
-      const result = await query
-        .order('charge_date', { ascending: false })
-        .range(offset, offset + limit - 1)
-
-      data = result.data
-      fetchError = result.error
-      count = result.count || 0
+      const seen = new Set<string>()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const merged: any[] = []
+      for (const tx of [...(result1.data || []), ...(result2.data || [])]) {
+        if (!seen.has(tx.id)) {
+          seen.add(tx.id)
+          merged.push(tx)
+        }
+      }
+      merged.sort((a, b) => (b.charge_date || '').localeCompare(a.charge_date || ''))
+      data = merged.slice(offset, offset + limit)
+      count = merged.length
 
     } else if (filterType === 'unattributed') {
       // Unattributed brand
@@ -108,9 +117,7 @@ export async function GET(request: NextRequest) {
 
       if (feeType) query = query.eq('fee_type', feeType)
       if (referenceType) query = query.eq('reference_type', referenceType)
-      if (search) {
-        query = query.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`)
-      }
+      if (searchOrFilter) query = query.or(searchOrFilter)
 
       const result = await query
         .order('charge_date', { ascending: false })
@@ -121,8 +128,8 @@ export async function GET(request: NextRequest) {
       count = result.count || 0
 
     } else {
-      // All misfits: two queries merged and deduplicated
-      // Query 1: unattributed (client_id IS NULL)
+      // All misfits: three queries merged and deduplicated
+      // Q1: unattributed (client_id IS NULL)
       let q1 = supabase
         .from('transactions')
         .select(selectFields)
@@ -135,11 +142,9 @@ export async function GET(request: NextRequest) {
 
       if (feeType) q1 = q1.eq('fee_type', feeType)
       if (referenceType) q1 = q1.eq('reference_type', referenceType)
-      if (search) {
-        q1 = q1.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`)
-      }
+      if (searchOrFilter) q1 = q1.or(searchOrFilter)
 
-      // Query 2: credits without care ticket
+      // Q2: credits without care ticket
       let q2 = supabase
         .from('transactions')
         .select(selectFields)
@@ -153,11 +158,25 @@ export async function GET(request: NextRequest) {
       // feeType filter: if user filters by a non-Credit fee type, q2 returns nothing (fine)
       if (feeType && feeType !== 'Credit') q2 = q2.eq('fee_type', feeType)
       if (referenceType) q2 = q2.eq('reference_type', referenceType)
-      if (search) {
-        q2 = q2.or(`reference_id.ilike.%${search}%,transaction_id.ilike.%${search}%,tracking_id.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%`)
-      }
+      if (searchOrFilter) q2 = q2.or(searchOrFilter)
 
-      const [result1, result2] = await Promise.all([q1, q2])
+      // Q3: pending markup credits (markup_is_preview=true, billed_amount=NULL)
+      let q3 = supabase
+        .from('transactions')
+        .select(selectFields)
+        .eq('is_voided', false)
+        .eq('fee_type', 'Credit')
+        .eq('markup_is_preview', true)
+        .is('billed_amount', null)
+        .or(disputeExcludeFilter)
+        .order('charge_date', { ascending: false })
+        .limit(500)
+
+      if (feeType && feeType !== 'Credit') q3 = q3.eq('fee_type', feeType)
+      if (referenceType) q3 = q3.eq('reference_type', referenceType)
+      if (searchOrFilter) q3 = q3.or(searchOrFilter)
+
+      const [result1, result2, result3] = await Promise.all([q1, q2, q3])
 
       if (result1.error) {
         console.error('Error fetching unattributed misfits:', result1.error)
@@ -167,12 +186,16 @@ export async function GET(request: NextRequest) {
         console.error('Error fetching credit misfits:', result2.error)
         return NextResponse.json({ error: 'Failed to fetch misfits' }, { status: 500 })
       }
+      if (result3.error) {
+        console.error('Error fetching pending markup misfits:', result3.error)
+        return NextResponse.json({ error: 'Failed to fetch misfits' }, { status: 500 })
+      }
 
       // Merge and deduplicate by id
       const seen = new Set<string>()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const merged: any[] = []
-      for (const tx of [...(result1.data || []), ...(result2.data || [])]) {
+      for (const tx of [...(result1.data || []), ...(result2.data || []), ...(result3.data || [])]) {
         if (!seen.has(tx.id)) {
           seen.add(tx.id)
           merged.push(tx)
@@ -220,10 +243,8 @@ export async function GET(request: NextRequest) {
         missingBrand: !tx.client_id,
         missingTicket: isCreditType && !tx.care_ticket_id,
         missingShipment: isCreditType && (!tx.reference_id || tx.reference_type === 'Default'),
-        // Pending credit context (only populated for pending_credits filter)
-        isPendingCredit: tx.markup_is_preview === true && tx.billed_amount === null,
+        pendingMarkup: isCreditType && tx.markup_is_preview === true && tx.billed_amount === null,
         creditShippingPortion: tx.credit_shipping_portion != null ? parseFloat(tx.credit_shipping_portion) : null,
-        // Care ticket join data (from pending_credits query)
         careTicket: tx.care_tickets ? {
           id: tx.care_tickets.id,
           ticketNumber: tx.care_tickets.ticket_number,

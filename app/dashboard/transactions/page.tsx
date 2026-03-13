@@ -98,10 +98,10 @@ export default function TransactionsPage() {
 
   // Determine which client to fetch data for
   // For admins/care users: 'all' = all brands, specific ID = single brand
-  // For regular users: null = let API determine from user's assigned clients
+  // For regular users: use selectedClientId (dev role simulator) or null (let API determine)
   const effectiveClientId = (effectiveIsAdmin || effectiveIsCareUser)
     ? (selectedClientId || 'all')  // null means "All Brands" for admins/care users
-    : null  // Let API verify user's access and use their assigned client
+    : (selectedClientId || null)  // Brand users: use selected client, or let API determine
 
   // Helper to build URL with optional clientId
   const buildUrl = (base: string, params: Record<string, string | number | null>) => {

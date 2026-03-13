@@ -18,9 +18,11 @@ import {
   ClockIcon,
   ColumnsIcon,
   DownloadIcon,
+  EyeIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
-  FilterIcon,
+  SlidersHorizontalIcon,
+  StickyNoteIcon,
   LoaderIcon,
   MoreVerticalIcon,
   PackageIcon,
@@ -66,6 +68,8 @@ import { buildDestinationOptions } from "@/lib/destination-data"
 import { useDebouncedShipmentsFilters, useDebouncedUnfulfilledFilters } from "@/hooks/use-debounced-filters"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
 import { useSavedViews } from "@/hooks/use-saved-views"
+import { useWatchlist } from "@/hooks/use-watchlist"
+import { useClient } from "@/components/client-context"
 import { SavedViewsBar } from "@/components/saved-views-bar"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { useUserSettings } from "@/hooks/use-user-settings"
@@ -351,6 +355,13 @@ export function DataTable({
   const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : "shipments"
   const [internalTab, setInternalTab] = React.useState(initialTab)
 
+  // Watchlist & notes filter buttons (available to all roles)
+  const { watchedIds, count: watchlistCount } = useWatchlist(clientId || undefined)
+  const [watchlistActive, setWatchlistActive] = React.useState(false)
+  const [noteFilterActive, setNoteFilterActive] = React.useState(false)
+  const [notedShipmentCount, setNotedShipmentCount] = React.useState(0)
+  const { effectiveIsAdmin, effectiveIsCareUser } = useClient()
+
   // Use controlled tab if provided, otherwise use internal state
   const currentTab = controlledTab ?? internalTab
   const isControlled = controlledTab !== undefined
@@ -485,6 +496,7 @@ export function DataTable({
   const [shipmentsChannelFilter, setShipmentsChannelFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('channel') : [])
   const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('carrier') : [])
   const [shipmentsDestinationFilter, setShipmentsDestinationFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('dest') : [])
+  const [shipmentsFcFilter, setShipmentsFcFilter] = React.useState<string[]>(() => isShipmentsTab ? getParamArray('fc') : [])
   // Initialize shipments date range — use URL preset if available, else 60 days default
   const shipmentsUrlPreset = isShipmentsTab ? (searchParams.get('datePreset') as DateRangePreset | null) : null
   const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
@@ -498,6 +510,7 @@ export function DataTable({
   const [shipmentsDatePreset, setShipmentsDatePreset] = React.useState<DateRangePreset | undefined>(shipmentsUrlPreset || 'all')
   const [shipmentsChannels, setShipmentsChannels] = React.useState<string[]>(prefetchedShipmentsChannels)
   const [shipmentsCarriers, setShipmentsCarriers] = React.useState<string[]>(prefetchedShipmentsCarriers)
+  const [shipmentsFcs, setShipmentsFcs] = React.useState<string[]>([])
   const [isShipmentsLoading, setIsShipmentsLoading] = React.useState(prefetchedShipmentsLoading)
 
   // Destination data (countries + states extracted from API responses)
@@ -529,6 +542,7 @@ export function DataTable({
     channelFilter: shipmentsChannelFilter,
     carrierFilter: expandedCarrierFilter,
     destinationFilter: shipmentsDestinationFilter,
+    fcFilter: shipmentsFcFilter,
     dateRange: shipmentsDateRange,
   })
 
@@ -774,6 +788,7 @@ export function DataTable({
       if (shipmentsChannelFilter.length) params.set('channel', shipmentsChannelFilter.join(','))
       if (shipmentsCarrierFilter.length) params.set('carrier', shipmentsCarrierFilter.join(','))
       if (shipmentsDestinationFilter.length) params.set('dest', shipmentsDestinationFilter.join(','))
+      if (shipmentsFcFilter.length) params.set('fc', shipmentsFcFilter.join(','))
       if (shipmentsDatePreset && shipmentsDatePreset !== 'all') {
         params.set('datePreset', shipmentsDatePreset)
         if (shipmentsDatePreset === 'custom' && shipmentsDateRange?.from && shipmentsDateRange?.to) {
@@ -833,7 +848,7 @@ export function DataTable({
     unfulfilledChannelFilter, unfulfilledDestinationFilter, unfulfilledDatePreset, unfulfilledDateRange,
     // Shipments
     shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter,
-    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsDatePreset, shipmentsDateRange,
+    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange,
     // Additional Services
     additionalServicesTypeFilter, additionalServicesStatusFilter, additionalServicesDatePreset, additionalServicesDateRange,
     // Returns
@@ -878,14 +893,15 @@ export function DataTable({
   const hasShipmentsFilters = shipmentsStatusFilter.length > 0 ||
     shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
     shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0 ||
-    shipmentsDestinationFilter.length > 0
+    shipmentsDestinationFilter.length > 0 || shipmentsFcFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
     shipmentsAgeFilter.length +
     shipmentsTypeFilter.length +
     shipmentsChannelFilter.length +
     shipmentsCarrierFilter.length +
-    shipmentsDestinationFilter.length
+    shipmentsDestinationFilter.length +
+    shipmentsFcFilter.length
 
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
@@ -895,6 +911,7 @@ export function DataTable({
     setShipmentsChannelFilter([])
     setShipmentsCarrierFilter([])
     setShipmentsDestinationFilter([])
+    setShipmentsFcFilter([])
   }
 
   // ============================================================================
@@ -930,12 +947,13 @@ export function DataTable({
     channel: shipmentsChannelFilter,
     carrier: shipmentsCarrierFilter,
     destination: shipmentsDestinationFilter,
+    fc: shipmentsFcFilter,
     datePreset: shipmentsDatePreset,
     dateRange: shipmentsDateRange ? {
       from: shipmentsDateRange.from?.toISOString(),
       to: shipmentsDateRange.to?.toISOString(),
     } : undefined,
-  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsDatePreset, shipmentsDateRange])
+  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange])
 
   // Apply a saved view's filters to unfulfilled tab
   const applyUnfulfilledFilters = React.useCallback((filters: Record<string, unknown>) => {
@@ -968,6 +986,7 @@ export function DataTable({
     setShipmentsChannelFilter((filters.channel as string[]) || [])
     setShipmentsCarrierFilter((filters.carrier as string[]) || [])
     setShipmentsDestinationFilter((filters.destination as string[]) || [])
+    setShipmentsFcFilter((filters.fc as string[]) || [])
     // Restore date range
     const preset = filters.datePreset as DateRangePreset | undefined
     if (preset && preset !== 'custom') {
@@ -995,7 +1014,7 @@ export function DataTable({
     if (currentTab === 'shipments') {
       shipmentsSavedViews.checkIfModified(getShipmentsFilterSnapshot())
     }
-  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Additional Services tab computed values
   // Note: Date range is NOT counted as a filter since it has its own indicator
@@ -1359,8 +1378,38 @@ export function DataTable({
 
             </div>
 
-            {/* RIGHT SIDE: Filters toggle + Export + Columns */}
+            {/* RIGHT SIDE: Watchlist + Filters toggle + Export + Columns */}
             <div className="flex items-center gap-2">
+              {/* Watchlist eye icon - shipments tab, when watchlist has items */}
+              {currentTab === "shipments" && watchlistCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setWatchlistActive(!watchlistActive)}
+                  className={cn(
+                    "h-[30px] flex-shrink-0 gap-1.5 text-muted-foreground",
+                    watchlistActive && "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900/50"
+                  )}
+                >
+                  <EyeIcon className="h-3.5 w-3.5" />
+                  <span className="text-xs">{watchlistCount}</span>
+                </Button>
+              )}
+              {/* Notes filter - shipments tab, when notes exist */}
+              {currentTab === "shipments" && notedShipmentCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setNoteFilterActive(!noteFilterActive)}
+                  className={cn(
+                    "h-[30px] flex-shrink-0 gap-1.5 text-muted-foreground",
+                    noteFilterActive && "bg-amber-50 text-amber-600 border-amber-300 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900/50"
+                  )}
+                >
+                  <StickyNoteIcon className="h-3.5 w-3.5" />
+                  <span className="text-xs">{notedShipmentCount}</span>
+                </Button>
+              )}
               {/* Filters button with badge - for all tabs */}
               <Button
                 variant="outline"
@@ -1371,7 +1420,7 @@ export function DataTable({
                   filtersExpanded && "bg-accent text-accent-foreground"
                 )}
               >
-                <FilterIcon className="h-4 w-4" />
+                <SlidersHorizontalIcon className="h-3.5 w-3.5" />
                 <span className="hidden lg:inline">Filters</span>
                 {currentTabFilters.hasFilters && (
                   <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-medium rounded-full bg-muted text-muted-foreground">
@@ -1569,12 +1618,7 @@ export function DataTable({
                       onSelectionChange={setUnfulfilledTypeFilter}
                       placeholder="Type"
                     />
-                    <MultiSelectFilter
-                      options={availableChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
-                      selected={unfulfilledChannelFilter}
-                      onSelectionChange={setUnfulfilledChannelFilter}
-                      placeholder="Channel"
-                    />
+                    {/* Channel filter hidden — rarely used, takes up space */}
                     <DestinationFilter
                       options={buildDestinationOptions(unfulfilledDestinations, unfulfilledDestStates)}
                       selected={unfulfilledDestinationFilter}
@@ -1605,17 +1649,18 @@ export function DataTable({
                       onSelectionChange={setShipmentsTypeFilter}
                       placeholder="Type"
                     />
-                    <MultiSelectFilter
-                      options={shipmentsChannels.map(c => ({ value: c, label: normalizeChannelName(c) }))}
-                      selected={shipmentsChannelFilter}
-                      onSelectionChange={setShipmentsChannelFilter}
-                      placeholder="Channel"
-                    />
+                    {/* Channel filter hidden — rarely used, takes up space */}
                     <MultiSelectFilter
                       options={consolidatedCarrierOptions.map(c => ({ value: c, label: c }))}
                       selected={shipmentsCarrierFilter}
                       onSelectionChange={setShipmentsCarrierFilter}
                       placeholder="Carrier"
+                    />
+                    <MultiSelectFilter
+                      options={shipmentsFcs.map(fc => ({ value: fc, label: fc }))}
+                      selected={shipmentsFcFilter}
+                      onSelectionChange={setShipmentsFcFilter}
+                      placeholder="Origin"
                     />
                     <DestinationFilter
                       options={buildDestinationOptions(shipmentsDestinations, shipmentsDestStates)}
@@ -1799,10 +1844,12 @@ export function DataTable({
             channelFilter={debouncedShipmentsFilters.channelFilter}
             carrierFilter={debouncedShipmentsFilters.carrierFilter}
             destinationFilter={debouncedShipmentsFilters.destinationFilter}
+            fcFilter={debouncedShipmentsFilters.fcFilter}
             dateRange={debouncedShipmentsFilters.dateRange}
             searchQuery={searchQuery}
             onChannelsChange={setShipmentsChannels}
             onCarriersChange={setShipmentsCarriers}
+            onFcsChange={setShipmentsFcs}
             onDestinationsChange={(countries, states) => {
               setShipmentsDestinations(countries)
               setShipmentsDestStates(states)
@@ -1818,6 +1865,10 @@ export function DataTable({
             onExportTriggerReady={(trigger) => {
               if (currentTab === 'shipments') exportTriggerRef.current = trigger
             }}
+            // Watchlist filter
+            watchlistIds={watchlistActive ? watchedIds : undefined}
+            hasNotes={noteFilterActive}
+            onNotedCountChange={setNotedShipmentCount}
           />
         )}
       </TabsContent>

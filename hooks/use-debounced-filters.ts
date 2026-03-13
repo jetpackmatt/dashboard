@@ -49,6 +49,7 @@ export interface ShipmentsFilters {
   channelFilter: string[]
   carrierFilter: string[]
   destinationFilter: string[]
+  fcFilter: string[]
   dateRange: DateRange | undefined
 }
 

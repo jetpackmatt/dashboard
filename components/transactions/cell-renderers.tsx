@@ -22,6 +22,7 @@ import {
   TruckIcon,
   ExternalLinkIcon,
   ShieldAlertIcon,
+  StickyNoteIcon,
   XCircleIcon,
   XIcon,
 } from "lucide-react"
@@ -41,6 +42,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
 import { CellRenderer } from "./transactions-table"
 import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
 import { TrackingLink } from "@/components/tracking-link"
@@ -398,6 +404,21 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
 // SHIPMENTS TYPES & RENDERERS
 // ============================================
 
+// Canadian province full names → 2-char codes
+// Data comes in mixed format (some already codes, some full names)
+const PROVINCE_CODES: Record<string, string> = {
+  'alberta': 'AB', 'british columbia': 'BC', 'manitoba': 'MB',
+  'new brunswick': 'NB', 'newfoundland and labrador': 'NL', 'newfoundland': 'NL',
+  'northwest territories': 'NT', 'nova scotia': 'NS', 'nunavut': 'NU',
+  'ontario': 'ON', 'prince edward island': 'PE', 'quebec': 'QC',
+  'saskatchewan': 'SK', 'yukon': 'YT',
+}
+
+function toProvinceCode(state: string): string {
+  if (state.length <= 2) return state.toUpperCase()
+  return PROVINCE_CODES[state.toLowerCase()] || state
+}
+
 // Carrier display names for proper formatting and brevity
 // Maps raw DB carrier values to user-friendly display names
 // Multiple DB values may map to the same display name (for consolidation)
@@ -505,9 +526,11 @@ export interface Shipment {
   // New optional fields for additional columns
   destCountry?: string
   destState?: string
+  destCity?: string
   orderDate?: string
   fcName?: string
   shipOption?: string
+  carrierService?: string
   storeOrderId?: string
   // Computed field (for export - also used in cell renderer)
   age?: number | null
@@ -528,6 +551,10 @@ export interface Shipment {
   claimTicketNumber?: number | null
   claimTicketStatus?: string | null
   claimCreditAmount?: number | null
+  // Reshipment info (from shipments table)
+  reshipmentId?: string | null
+  // Note count (from shipment_notes table)
+  noteCount?: number
 }
 
 // ============================================
@@ -996,6 +1023,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     </div>
   ),
 
+
   qty: (row) => (
     <div className="text-center">{row.qty}</div>
   ),
@@ -1135,6 +1163,24 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
     <div className="truncate">{row.destCountry || "-"}</div>
   ),
 
+  destination: (row) => {
+    if (!row.destCity && !row.destState && !row.destCountry) return <span className="text-muted-foreground">-</span>
+    const country = row.destCountry || ''
+    const isNorthAmerica = country === 'US' || country === 'CA'
+    let label = ''
+    if (isNorthAmerica) {
+      // Toronto, ON, CA  or  New York, NY, US
+      const stateCode = row.destState ? toProvinceCode(row.destState) : ''
+      const parts = [row.destCity, stateCode, country].filter(Boolean)
+      label = parts.join(', ')
+    } else {
+      // Paris, FR
+      const parts = [row.destCity, country].filter(Boolean)
+      label = parts.join(', ')
+    }
+    return <div className="truncate">{label || '-'}</div>
+  },
+
   orderDate: (row) => {
     if (!row.orderDate) return <span className="text-muted-foreground">-</span>
     return (
@@ -1150,6 +1196,10 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 
   shipOption: (row) => (
     <div className="truncate">{row.shipOption || "-"}</div>
+  ),
+
+  carrierService: (row) => (
+    <div className="truncate">{row.carrierService || "-"}</div>
   ),
 
   deliveredDate: (row) => {
@@ -1169,16 +1219,92 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
 }
 
 /**
+ * Note icon with hover card that lazily fetches and displays all notes for a shipment.
+ */
+function ShipmentNoteHover({ shipmentId, noteCount }: { shipmentId: string; noteCount: number }) {
+  const [notes, setNotes] = React.useState<Array<{ id: string; userName: string | null; userAvatarUrl: string | null; userEmail: string; note: string; createdAt: string }> | null>(null)
+  const [loading, setLoading] = React.useState(false)
+  const fetchedRef = React.useRef(false)
+
+  const handleOpen = (open: boolean) => {
+    if (open && !fetchedRef.current) {
+      fetchedRef.current = true
+      setLoading(true)
+      fetch(`/api/data/shipments/${shipmentId}/notes`)
+        .then(res => res.json())
+        .then(json => setNotes(json.data || []))
+        .catch(() => setNotes([]))
+        .finally(() => setLoading(false))
+    }
+  }
+
+  return (
+    <HoverCard openDelay={200} closeDelay={100} onOpenChange={handleOpen}>
+      <HoverCardTrigger asChild>
+        <button
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center shrink-0"
+        >
+          <StickyNoteIcon className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent side="left" align="start" className="w-72 p-0 bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800/50" onClick={(e) => e.stopPropagation()}>
+        <div className="px-3 py-2 border-b border-amber-200/60 dark:border-amber-800/40">
+          <span className="text-xs font-semibold text-amber-800 dark:text-amber-300">{noteCount} {noteCount === 1 ? 'Note' : 'Notes'}</span>
+        </div>
+        <div className="max-h-48 overflow-y-auto divide-y divide-amber-200/50 dark:divide-amber-800/30">
+          {loading ? (
+            <div className="px-3 py-3 text-xs text-muted-foreground">Loading...</div>
+          ) : notes && notes.length > 0 ? (
+            notes.map((n) => {
+              const displayName = n.userName || n.userEmail
+              const initials = n.userName
+                ? n.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+                : n.userEmail[0].toUpperCase()
+              return (
+                <div key={n.id} className="px-3 py-2 flex gap-2">
+                  {n.userAvatarUrl ? (
+                    <img src={n.userAvatarUrl} alt={displayName} className="shrink-0 mt-0.5 h-5 w-5 rounded-full object-cover" />
+                  ) : (
+                    <div className="shrink-0 mt-0.5 h-5 w-5 rounded-full bg-amber-200 dark:bg-amber-800/60 flex items-center justify-center">
+                      <span className="text-[8px] font-semibold text-amber-800 dark:text-amber-200">{initials}</span>
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[10px] font-medium text-amber-900 dark:text-amber-200">{displayName}</span>
+                      <span className="text-[10px] text-muted-foreground">{format(new Date(n.createdAt), 'MMM d, h:mm a')}</span>
+                    </div>
+                    <p className="text-xs text-foreground whitespace-pre-wrap">{n.note}</p>
+                  </div>
+                </div>
+              )
+            })
+          ) : (
+            <div className="px-3 py-3 text-xs text-muted-foreground">No notes</div>
+          )}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+/**
  * Factory function to create shipment cell renderers with click handlers
  * Use this when you need interactive "File a Claim" badges
  */
 export function createShipmentCellRenderers(options?: {
   onFileClaimClick?: (shipmentId: string) => void
-  onCancelClick?: (shipmentId: string) => void
+  onTicketClick?: (shipmentId: string) => void
+  onMarkReshipClick?: (shipmentId: string) => void
+  onAddNoteClick?: (shipmentId: string) => void
+  onWatchlistToggle?: (shipmentId: string) => void
+  isWatched?: (shipmentId: string) => boolean
+  isAdminOrCare?: boolean
 }): Record<string, CellRenderer<Shipment>> {
   return {
     ...shipmentCellRenderers,
-    // Actions column with Track, Claim, Cancel buttons
+    // Actions column with Track, Claim, and role-based third button
     actions: (row) => {
       const hasTracking = !!row.trackingId && !!getTrackingUrl(row.carrier, row.trackingId)
       return (
@@ -1205,15 +1331,45 @@ export function createShipmentCellRenderers(options?: {
           >
             Claim
           </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              options?.onCancelClick?.(row.shipmentId)
-            }}
-            className="px-2 py-0.5 rounded text-[11px] font-medium text-red-500 hover:bg-red-100 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/50 dark:hover:text-red-300 transition-colors"
-          >
-            Cancel
-          </button>
+          {options?.isAdminOrCare ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                options?.onTicketClick?.(row.shipmentId)
+              }}
+              className="px-2 py-0.5 rounded text-[11px] font-medium text-violet-600 hover:bg-violet-100 hover:text-violet-800 dark:text-violet-400 dark:hover:bg-violet-900/50 dark:hover:text-violet-300 transition-colors"
+            >
+              Ticket
+            </button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  className="px-2 py-0.5 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900/50 dark:hover:text-slate-300 transition-colors"
+                >
+                  Mark
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem
+                  onClick={() => options?.onMarkReshipClick?.(row.shipmentId)}
+                  disabled={!!row.reshipmentId}
+                >
+                  {row.reshipmentId ? 'Already Reshipped' : 'Mark as Reshipped'}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => options?.onAddNoteClick?.(row.shipmentId)}>
+                  Add a Note
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => options?.onWatchlistToggle?.(row.shipmentId)}>
+                  {options?.isWatched?.(row.shipmentId) ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {(row.noteCount ?? 0) > 0 && (
+            <ShipmentNoteHover shipmentId={row.shipmentId} noteCount={row.noteCount!} />
+          )}
         </div>
       )
     },
@@ -2198,9 +2354,9 @@ export function getTrackingUrl(carrier: string, trackingId: string): string | nu
     return `https://track.passportshipping.com/${trackingId}`
   }
 
-  // Canada Post
-  if (carrierLower.includes('canada post')) {
-    return `https://www.canadapost-postescanada.ca/track-reperage/en#/search?searchFor=${trackingId}`
+  // Canada Post (stored as "CanadaPost" in DB)
+  if (carrierLower.includes('canadapost') || carrierLower.includes('canada post')) {
+    return `https://www.canadapost-postescanada.ca/track-reperage/en#/details/${trackingId}`
   }
 
   // TForce / TForce Freight
@@ -2218,8 +2374,13 @@ export function getTrackingUrl(carrier: string, trackingId: string): string | nu
     return `https://www.gofoexpress.com/tracking?number=${trackingId}`
   }
 
-  // ShipBob internal / PrePaid - no external tracking URL
-  if (carrierLower.includes('shipbob') || carrierLower.includes('prepaid')) {
+  // ShipBob internal tracking portal
+  if (carrierLower.includes('shipbob')) {
+    return `https://track.shipbob.com/${trackingId}`
+  }
+
+  // PrePaid - no external tracking URL
+  if (carrierLower.includes('prepaid')) {
     return null
   }
 

@@ -6,9 +6,12 @@ import {
   AlertTriangleIcon,
   ArrowLeftIcon,
   BanIcon,
+  CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ExternalLinkIcon,
+  PencilIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react"
 
@@ -188,6 +191,14 @@ interface ShipmentDetails {
     taxes: number | null
     total: number | null
     isPreview: boolean
+    // Admin-only: raw costs and markup (omitted from response for non-admins)
+    adminCosts?: {
+      baseFulfillmentCost: number | null
+      surchargesCost: number | null
+      fulfillmentMarkupPct: number | null
+      pickFeeCost: number | null
+      pickFeeMarkupPct: number | null
+    }
   }
   returns: Array<{
     id: string
@@ -237,12 +248,25 @@ interface ShipmentDetails {
     confidence: number
   } | null
   claimEligibilityStatus: 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | null
+  reshipmentId: string | null
+  reshipmentDate: string | null
+  notes: Array<{
+    id: string
+    userId: string
+    userName: string | null
+    userAvatarUrl: string | null
+    userEmail: string
+    note: string
+    createdAt: string
+  }>
+  currentUserEmail: string | null
 }
 
 interface ShipmentDetailsDrawerProps {
   shipmentId: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  onNotesChanged?: (shipmentId: string, delta: number) => void
 }
 
 // ============================================
@@ -807,6 +831,7 @@ export function ShipmentDetailsDrawer({
   shipmentId,
   open,
   onOpenChange,
+  onNotesChanged,
 }: ShipmentDetailsDrawerProps) {
   const [data, setData] = React.useState<ShipmentDetails | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
@@ -840,6 +865,81 @@ export function ShipmentDetailsDrawer({
   const [selectedDisputeTxIds, setSelectedDisputeTxIds] = React.useState<Set<string>>(new Set())
   const [disputeMode, setDisputeMode] = React.useState<'hold' | 'remove'>('hold')
   const canDispute = effectiveIsAdmin || effectiveIsCareAdmin
+
+  // Cancel state (unfulfilled shipments only)
+  const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false)
+  const [isCancelling, setIsCancelling] = React.useState(false)
+  const canCancel = data && !data.dates.labeled && data.status !== 'Cancelled'
+
+  // Note edit/delete state
+  const [editingNoteId, setEditingNoteId] = React.useState<string | null>(null)
+  const [editingNoteText, setEditingNoteText] = React.useState('')
+  const [isDeletingNoteId, setIsDeletingNoteId] = React.useState<string | null>(null)
+
+  const handleCancelConfirm = async () => {
+    if (!data) return
+    setIsCancelling(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${data.shipmentId}/cancel`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to cancel')
+      }
+      toast.success('Shipment cancelled successfully')
+      setCancelDialogOpen(false)
+      // Refresh the drawer data
+      refreshShipmentData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to cancel shipment')
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
+  const handleNoteEditSave = async (noteId: string) => {
+    if (!data || !editingNoteText.trim()) return
+    try {
+      const res = await fetch(`/api/data/shipments/${data.shipmentId}/notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId, note: editingNoteText }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to update note')
+      }
+      toast.success('Note updated')
+      setEditingNoteId(null)
+      refreshShipmentData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update note')
+    }
+  }
+
+  const handleNoteDelete = async (noteId: string) => {
+    if (!data) return
+    setIsDeletingNoteId(noteId)
+    try {
+      const res = await fetch(`/api/data/shipments/${data.shipmentId}/notes`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to delete note')
+      }
+      toast.success('Note deleted')
+      onNotesChanged?.(data.shipmentId, -1)
+      refreshShipmentData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete note')
+    } finally {
+      setIsDeletingNoteId(null)
+    }
+  }
 
   // When dialog opens, check = "should be disputed" (includes already-disputed)
   const openDisputeDialog = () => {
@@ -1087,6 +1187,18 @@ export function ShipmentDetailsDrawer({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Cancel button - unfulfilled shipments only (no label created) */}
+                  {canCancel && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 bg-red-100 text-red-700 border-red-200 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/50"
+                      onClick={() => setCancelDialogOpen(true)}
+                    >
+                      <XIcon className="mr-1 h-3.5 w-3.5" />
+                      Cancel
+                    </Button>
+                  )}
                   {/* Dispute button or Disputed badge - admin/care_admin only */}
                   {canDispute && data.transactions?.length > 0 && (
                     data.transactions.every(tx => tx.disputeStatus) ? (
@@ -1163,6 +1275,29 @@ export function ShipmentDetailsDrawer({
 
                 {/* Issue Alert - shows for problematic statuses */}
                 <IssueAlert data={data} />
+
+                {/* Reshipment Alert - shows when shipment has been reshipped */}
+                {data.reshipmentId && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-800/50 dark:bg-emerald-900/20">
+                    <div className="flex items-start gap-2.5">
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                          Reshipped
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          This shipment was reshipped{data.reshipmentDate ? ` on ${format(new Date(data.reshipmentDate), 'MMM d, yyyy')}` : ''}.
+                          Reshipment:{' '}
+                          <button
+                            className="text-emerald-600 hover:underline dark:text-emerald-400 font-medium"
+                            onClick={() => navigateToShipment(data.reshipmentId!)}
+                          >
+                            #{data.reshipmentId}
+                          </button>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Claim Status Card - shows when a claim is filed */}
                 {data.claimTicket && (
@@ -1586,6 +1721,16 @@ export function ShipmentDetailsDrawer({
 
                     {data.chargesBreakdown.total !== null ? (
                       <div className="divide-y divide-border/30">
+                        {/* Admin 3-column header row */}
+                        {effectiveIsAdmin && data.chargesBreakdown.adminCosts && (
+                          <div className="px-4 py-1.5 grid grid-cols-12 gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                            <div className="col-span-6"></div>
+                            <div className="col-span-2 text-right">Cost</div>
+                            <div className="col-span-2 text-right">Markup</div>
+                            <div className="col-span-2 text-right pr-[11px]">Charge</div>
+                          </div>
+                        )}
+
                         {/* SECTION: Fulfillment Charges */}
                         {(data.chargesBreakdown.baseFulfillmentFees !== null || data.chargesBreakdown.surcharges !== null) && (
                           <div className="bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-950/20 dark:to-transparent">
@@ -1594,20 +1739,54 @@ export function ShipmentDetailsDrawer({
                             </div>
                             <div className="px-4 py-1">
                               {data.chargesBreakdown.baseFulfillmentFees !== null && (
-                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
-                                  <span className="text-sm text-muted-foreground">Base Fulfillment</span>
-                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
-                                    ${data.chargesBreakdown.baseFulfillmentFees.toFixed(2)}
-                                  </span>
-                                </div>
+                                effectiveIsAdmin && data.chargesBreakdown.adminCosts ? (
+                                  <div className="grid grid-cols-12 gap-1 py-1.5 pr-[11px]">
+                                    <span className="col-span-6 text-sm text-muted-foreground">Base Fulfillment</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.baseFulfillmentCost != null
+                                        ? `$${data.chargesBreakdown.adminCosts.baseFulfillmentCost.toFixed(2)}`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.fulfillmentMarkupPct != null
+                                        ? `${data.chargesBreakdown.adminCosts.fulfillmentMarkupPct}%`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-foreground text-right">
+                                      ${data.chargesBreakdown.baseFulfillmentFees.toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <span className="text-sm text-muted-foreground">Base Fulfillment</span>
+                                    <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                      ${data.chargesBreakdown.baseFulfillmentFees.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )
                               )}
                               {data.chargesBreakdown.surcharges !== null && (
-                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
-                                  <span className="text-sm text-muted-foreground">Carrier Surcharges</span>
-                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
-                                    ${data.chargesBreakdown.surcharges.toFixed(2)}
-                                  </span>
-                                </div>
+                                effectiveIsAdmin && data.chargesBreakdown.adminCosts ? (
+                                  <div className="grid grid-cols-12 gap-1 py-1.5 pr-[11px]">
+                                    <span className="col-span-6 text-sm text-muted-foreground">Carrier Surcharges</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.surchargesCost != null
+                                        ? `$${data.chargesBreakdown.adminCosts.surchargesCost.toFixed(2)}`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">-</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-foreground text-right">
+                                      ${data.chargesBreakdown.surcharges.toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <span className="text-sm text-muted-foreground">Carrier Surcharges</span>
+                                    <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                      ${data.chargesBreakdown.surcharges.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )
                               )}
                             </div>
                           </div>
@@ -1635,20 +1814,50 @@ export function ShipmentDetailsDrawer({
                             </div>
                             <div className="px-4 py-1">
                               {data.chargesBreakdown.pickFees !== null && (
-                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
-                                  <span className="text-sm text-muted-foreground">Pick Fees</span>
-                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
-                                    ${data.chargesBreakdown.pickFees.toFixed(2)}
-                                  </span>
-                                </div>
+                                effectiveIsAdmin && data.chargesBreakdown.adminCosts ? (
+                                  <div className="grid grid-cols-12 gap-1 py-1.5 pr-[11px]">
+                                    <span className="col-span-6 text-sm text-muted-foreground">Pick Fees</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.pickFeeCost != null
+                                        ? `$${data.chargesBreakdown.adminCosts.pickFeeCost.toFixed(2)}`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.pickFeeMarkupPct != null
+                                        ? `${data.chargesBreakdown.adminCosts.pickFeeMarkupPct}%`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-foreground text-right">
+                                      ${data.chargesBreakdown.pickFees.toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <span className="text-sm text-muted-foreground">Pick Fees</span>
+                                    <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                      ${data.chargesBreakdown.pickFees.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )
                               )}
                               {data.chargesBreakdown.insurance !== null && data.chargesBreakdown.insurance > 0 && (
-                                <div className="flex items-center justify-between py-1.5 pr-[11px]">
-                                  <span className="text-sm text-muted-foreground">Insurance</span>
-                                  <span className="text-sm tabular-nums text-foreground text-right w-14">
-                                    ${data.chargesBreakdown.insurance.toFixed(2)}
-                                  </span>
-                                </div>
+                                effectiveIsAdmin && data.chargesBreakdown.adminCosts ? (
+                                  <div className="grid grid-cols-12 gap-1 py-1.5 pr-[11px]">
+                                    <span className="col-span-6 text-sm text-muted-foreground">Insurance</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">-</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">-</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-foreground text-right">
+                                      ${data.chargesBreakdown.insurance.toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <span className="text-sm text-muted-foreground">Insurance</span>
+                                    <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                      ${data.chargesBreakdown.insurance.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )
                               )}
                             </div>
                           </div>
@@ -1904,11 +2113,126 @@ export function ShipmentDetailsDrawer({
                   </div>
                 )}
 
+                {/* Notes Section - shows if notes exist */}
+                {data.notes && data.notes.length > 0 && (
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/40 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-amber-200/60 dark:border-amber-800/40">
+                      <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Notes ({data.notes.length})</h3>
+                    </div>
+                    <div className="divide-y divide-amber-200/50 dark:divide-amber-800/30">
+                      {data.notes.map((note) => {
+                        const isOwn = data.currentUserEmail === note.userEmail
+                        const isEditing = editingNoteId === note.id
+                        const isDeleting = isDeletingNoteId === note.id
+                        const displayName = note.userName || note.userEmail
+                        const initials = note.userName
+                          ? note.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+                          : note.userEmail[0].toUpperCase()
+
+                        return (
+                          <div key={note.id} className="px-4 py-3 group">
+                            <div className="flex gap-2.5">
+                              {note.userAvatarUrl ? (
+                                <img src={note.userAvatarUrl} alt={displayName} className="shrink-0 mt-0.5 h-7 w-7 rounded-full object-cover" />
+                              ) : (
+                                <div className="shrink-0 mt-0.5 h-7 w-7 rounded-full bg-amber-200 dark:bg-amber-800/60 flex items-center justify-center">
+                                  <span className="text-[10px] font-semibold text-amber-800 dark:text-amber-200">{initials}</span>
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-0.5">
+                                  <span className="text-xs font-medium text-foreground">{displayName}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    {isOwn && !isEditing && (
+                                      <>
+                                        <button
+                                          onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.note) }}
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-amber-200/60 dark:hover:bg-amber-800/40"
+                                          title="Edit note"
+                                        >
+                                          <PencilIcon className="h-3 w-3 text-muted-foreground" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleNoteDelete(note.id)}
+                                          disabled={isDeleting}
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30"
+                                          title="Delete note"
+                                        >
+                                          <Trash2Icon className="h-3 w-3 text-muted-foreground hover:text-red-600" />
+                                        </button>
+                                      </>
+                                    )}
+                                    <span className="text-[10px] text-muted-foreground">{format(new Date(note.createdAt), 'MMM d, yyyy h:mm a')}</span>
+                                  </div>
+                                </div>
+                                {isEditing ? (
+                                  <div className="flex gap-1.5 items-start">
+                                    <textarea
+                                      value={editingNoteText}
+                                      onChange={(e) => setEditingNoteText(e.target.value)}
+                                      className="flex-1 text-sm border rounded px-2 py-1.5 bg-background resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                                      rows={2}
+                                      maxLength={500}
+                                      autoFocus
+                                    />
+                                    <div className="flex flex-col gap-1">
+                                      <button
+                                        onClick={() => handleNoteEditSave(note.id)}
+                                        disabled={!editingNoteText.trim()}
+                                        className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
+                                        title="Save"
+                                      >
+                                        <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingNoteId(null)}
+                                        className="p-1 rounded hover:bg-muted"
+                                        title="Cancel"
+                                      >
+                                        <XIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-foreground whitespace-pre-wrap">{note.note}</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
               </div>
             </ScrollArea>
           </>
         ) : null}
       </SheetContent>
+
+      {/* Cancel Confirmation Dialog */}
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Shipment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will cancel the order with ShipBob. This action cannot be undone.
+              Only works for shipments that haven&apos;t been labeled or picked yet.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCancelling}>Keep Shipment</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelConfirm}
+              disabled={isCancelling}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isCancelling ? 'Cancelling...' : 'Cancel Shipment'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Claim Submission Dialog */}
       <ClaimSubmissionDialog

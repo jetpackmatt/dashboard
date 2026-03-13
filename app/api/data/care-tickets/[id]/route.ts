@@ -407,6 +407,28 @@ export async function PATCH(
       return NextResponse.json({ error: updateError.message }, { status: 500 })
     }
 
+    // Propagate reshipment_id to the linked shipment (if set)
+    if (reshipmentId !== undefined && updatedTicket.shipment_id) {
+      if (reshipmentId) {
+        await supabase
+          .from('shipments')
+          .update({
+            reshipment_id: reshipmentId,
+            reshipment_date: new Date().toISOString(),
+          })
+          .eq('shipment_id', updatedTicket.shipment_id)
+      } else {
+        // Clear reshipment if ID was removed
+        await supabase
+          .from('shipments')
+          .update({
+            reshipment_id: null,
+            reshipment_date: null,
+          })
+          .eq('shipment_id', updatedTicket.shipment_id)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       ticket: updatedTicket,

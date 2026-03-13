@@ -35,6 +35,7 @@ interface CreateTicketDialogProps {
   clients: { id: string; company_name: string; merchant_id: string | null }[]
   isAdmin: boolean
   isBrandUser?: boolean
+  initialShipmentId?: string
 }
 
 interface CreateForm {
@@ -65,6 +66,7 @@ export function CreateTicketDialog({
   clients,
   isAdmin,
   isBrandUser = false,
+  initialShipmentId,
 }: CreateTicketDialogProps) {
   const defaultTicketType = isBrandUser ? 'Address Change' : 'Shipment Inquiry'
   const [createForm, setCreateForm] = React.useState<CreateForm>({
@@ -105,7 +107,7 @@ export function CreateTicketDialog({
     } | null
   } | null>(null)
 
-  // Reset form when dialog closes
+  // Reset form when dialog closes, pre-fill initialShipmentId when it opens
   React.useEffect(() => {
     if (!open) {
       setCreateForm({
@@ -130,8 +132,11 @@ export function CreateTicketDialog({
       setShipmentLookupError(null)
       setShipmentVerified(false)
       setVerifiedShipmentData(null)
+    } else if (initialShipmentId) {
+      setCreateForm(prev => ({ ...prev, shipmentId: initialShipmentId }))
+      lookupShipment(initialShipmentId)
     }
-  }, [open])
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced shipment lookup to verify shipment and auto-populate data
   const lookupShipment = useDebouncedCallback(async (shipmentId: string) => {

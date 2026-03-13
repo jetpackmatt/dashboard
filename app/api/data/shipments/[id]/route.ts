@@ -1,4 +1,5 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Types for ShipBob Order API response
@@ -242,11 +243,18 @@ export async function GET(
     }
 
     // CRITICAL SECURITY: Verify user has access to this shipment's client
+    var isAdmin = false // eslint-disable-line no-var
     try {
-      await verifyClientAccess(shipmentCheck.client_id)
+      const access = await verifyClientAccess(shipmentCheck.client_id)
+      isAdmin = access.isAdmin
     } catch (error) {
       return handleAccessError(error)
     }
+
+    // Get current user email for note authorship checks
+    const supabaseAuth = await createClient()
+    const { data: { user: currentUser } } = await supabaseAuth.auth.getUser()
+    const currentUserEmail = currentUser?.email || null
 
     // Fetch the shipment with all details
     const { data: shipment, error: shipmentError } = await supabase
@@ -305,7 +313,7 @@ export async function GET(
     if (shipment.tracking_id) {
       const { data: txData } = await supabase
         .from('transactions')
-        .select('id, transaction_id, cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp, base_charge, surcharge, total_charge, insurance_charge, markup_is_preview, taxes, taxes_charge, dispute_status')
+        .select('id, transaction_id, cost, base_cost, billed_amount, fee_type, transaction_type, charge_date, invoice_id_jp, base_charge, surcharge, total_charge, insurance_charge, markup_percentage, markup_applied, markup_is_preview, taxes, taxes_charge, dispute_status')
         .eq('tracking_id', shipment.tracking_id)
         .order('charge_date', { ascending: false })
 
@@ -327,6 +335,13 @@ export async function GET(
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    // Fetch shipment notes
+    const { data: shipmentNotes } = await supabase
+      .from('shipment_notes')
+      .select('id, user_id, user_name, user_avatar_url, user_email, note, created_at')
+      .eq('shipment_id', id)
+      .order('created_at', { ascending: false })
 
     // Build timeline from event_* columns, event_logs, and claim ticket events
     const timeline = buildTimeline(shipment, careTicket)
@@ -563,6 +578,18 @@ export async function GET(
           .filter((tx: any) => tx.fee_type === 'Per Pick Fee' && tx.transaction_type !== 'Refund')
           .reduce((sum: number, tx: any) => sum + (parseFloat(tx.billed_amount) || 0), 0)
 
+        // Raw costs (admin-only — base_cost is from SFTP, the actual carrier cost before markup)
+        const rawShippingCost = shippingTx?.base_cost != null ? parseFloat(shippingTx.base_cost) : null
+        const rawPickFeeCost = transactions
+          .filter((tx: any) => tx.fee_type === 'Per Pick Fee' && tx.transaction_type !== 'Refund')
+          .reduce((sum: number, tx: any) => sum + (parseFloat(tx.cost) || 0), 0)
+        // Markup percentages from DB (stored as decimals: 0.35 = 35%)
+        const shippingMarkupPct = shippingTx?.markup_percentage != null
+          ? Math.round(parseFloat(shippingTx.markup_percentage) * 100) : null
+        const pickFeeTx = transactions.find((tx: any) => tx.fee_type === 'Per Pick Fee' && tx.transaction_type !== 'Refund')
+        const pickFeeMarkupPctDb = pickFeeTx?.markup_percentage != null
+          ? Math.round(parseFloat(pickFeeTx.markup_percentage) * 100) : null
+
         // Get individual breakdown fields from shipping transaction
         const baseCharge = shippingTx?.base_charge != null ? parseFloat(shippingTx.base_charge) : null
         const surcharge = shippingTx?.surcharge != null ? parseFloat(shippingTx.surcharge) : null
@@ -600,6 +627,9 @@ export async function GET(
         // Check if markup is preview (not yet invoiced)
         const isPreview = shippingTx?.markup_is_preview === true
 
+        // Admin-only: surcharges pass through at cost (no markup), so raw cost = charge value
+        const rawSurchargeCost = surcharge
+
         return {
           baseFulfillmentFees: baseCharge,
           surcharges: surcharge,
@@ -610,6 +640,16 @@ export async function GET(
           taxes,
           total,
           isPreview,
+          // SECURITY: Admin-only raw cost data — never sent to non-admins
+          ...(isAdmin ? {
+            adminCosts: {
+              baseFulfillmentCost: rawShippingCost,
+              surchargesCost: rawSurchargeCost,
+              fulfillmentMarkupPct: shippingMarkupPct,
+              pickFeeCost: rawPickFeeCost > 0 ? rawPickFeeCost : null,
+              pickFeeMarkupPct: pickFeeMarkupPctDb,
+            }
+          } : {}),
         }
       })(),
 
@@ -632,6 +672,22 @@ export async function GET(
         totalRefunds: transactions.filter((tx: any) => tx.transaction_type === 'Refund')
           .reduce((sum: number, tx: any) => sum + Math.abs(parseFloat(tx.billed_amount) || 0), 0),
       },
+
+      // Reshipment info
+      reshipmentId: shipment.reshipment_id || null,
+      reshipmentDate: shipment.reshipment_date || null,
+
+      // User notes
+      notes: (shipmentNotes || []).map((n: { id: string; user_id: string; user_name: string | null; user_avatar_url: string | null; user_email: string; note: string; created_at: string }) => ({
+        id: n.id,
+        userId: n.user_id,
+        userName: n.user_name,
+        userAvatarUrl: n.user_avatar_url,
+        userEmail: n.user_email,
+        note: n.note,
+        createdAt: n.created_at,
+      })),
+      currentUserEmail,
 
       // Associated claim ticket info (if any)
       claimTicket: careTicket ? {

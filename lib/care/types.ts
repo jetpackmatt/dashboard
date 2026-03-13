@@ -83,4 +83,4 @@ export interface Ticket {
 }
 
 // Date range presets for filtering
-export type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'
+export type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'gt5d' | 'gt10d' | 'all' | 'custom'

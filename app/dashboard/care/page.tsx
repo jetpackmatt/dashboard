@@ -19,6 +19,7 @@ import {
   DownloadIcon,
   CopyIcon,
   CheckCircle2Icon,
+  SlidersHorizontalIcon,
 } from "lucide-react"
 import { DateRange } from "react-day-picker"
 import { useDebouncedCallback } from "use-debounce"
@@ -99,6 +100,8 @@ import {
 import { useTablePreferences } from "@/hooks/use-table-preferences"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import { useColumnOrder } from "@/hooks/use-responsive-table"
+import { useSavedViews } from "@/hooks/use-saved-views"
+import { SavedViewsBar } from "@/components/saved-views-bar"
 
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
@@ -181,6 +184,7 @@ export default function CarePage() {
   const [datePreset, setDatePreset] = React.useState<DateRangePreset | undefined>('all')
 
   // Filter state - multi-select arrays
+  const [showFilters, setShowFilters] = React.useState(false)
   const [statusFilter, setStatusFilter] = React.useState<string[]>([])
   const [typeFilter, setTypeFilter] = React.useState<string[]>([])
   const [issueFilter, setIssueFilter] = React.useState<string[]>([])
@@ -420,6 +424,56 @@ export default function CarePage() {
   // Compute filter counts
   const hasFilters = statusFilter.length > 0 || typeFilter.length > 0 || issueFilter.length > 0
   const filterCount = statusFilter.length + typeFilter.length + issueFilter.length
+
+  // Saved views
+  const careSavedViews = useSavedViews('care-tickets')
+  const carePreviousFilters = React.useRef<Record<string, unknown> | null>(null)
+
+  const getCareFilterSnapshot = React.useCallback((): Record<string, unknown> => ({
+    status: statusFilter,
+    type: typeFilter,
+    issue: issueFilter,
+    datePreset,
+    dateRange: dateRange ? {
+      from: dateRange.from?.toISOString(),
+      to: dateRange.to?.toISOString(),
+    } : undefined,
+  }), [statusFilter, typeFilter, issueFilter, datePreset, dateRange])
+
+  const applyCareFilters = React.useCallback((filters: Record<string, unknown>) => {
+    setStatusFilter((filters.status as string[]) || [])
+    setTypeFilter((filters.type as string[]) || [])
+    setIssueFilter((filters.issue as string[]) || [])
+    // Restore date range
+    const preset = filters.datePreset as DateRangePreset | undefined
+    if (preset && preset !== 'custom') {
+      setDatePreset(preset)
+      if (preset === 'all') {
+        setDateRange(undefined)
+      } else {
+        const range = getDateRangeFromPreset(preset)
+        if (range) setDateRange({ from: range.from, to: range.to })
+      }
+    } else if (preset === 'custom' && filters.dateRange) {
+      const dr = filters.dateRange as { from?: string; to?: string }
+      setDatePreset('custom')
+      setDateRange({
+        from: dr.from ? new Date(dr.from) : undefined,
+        to: dr.to ? new Date(dr.to) : undefined,
+      })
+    }
+    setCurrentPage(1)
+    // Auto-expand filters if the view has status/type/issue selections
+    const hasViewFilters = ((filters.status as string[]) || []).length > 0 ||
+      ((filters.type as string[]) || []).length > 0 ||
+      ((filters.issue as string[]) || []).length > 0
+    if (hasViewFilters) setShowFilters(true)
+  }, [])
+
+  // Track if active saved view has been modified
+  React.useEffect(() => {
+    careSavedViews.checkIfModified(getCareFilterSnapshot())
+  }, [statusFilter, typeFilter, issueFilter, datePreset, dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Calculate actual rendered column count (for colSpan)
   const actualColumnCount =
@@ -947,7 +1001,7 @@ export default function CarePage() {
 
             </div>
 
-            {/* RIGHT SIDE: Status + Ticket Type filters + New Ticket + Columns */}
+            {/* RIGHT SIDE: Filters toggle + New Ticket + Columns */}
             <div className="flex items-center gap-2">
               {/* Clear filters */}
               {hasFilters && (
@@ -988,26 +1042,29 @@ export default function CarePage() {
                 </DropdownMenu>
               )}
 
-              {/* Status Filter */}
-              <MultiSelectFilter
-                options={STATUS_OPTIONS}
-                selected={statusFilter}
-                onSelectionChange={(values) => {
-                  setStatusFilter(values)
-                  setCurrentPage(1)
-                }}
-                placeholder="Status"
-                className="w-[120px]"
-              />
-
-              {/* Ticket Type Filter */}
-              <MultiSelectFilter
-                options={ISSUE_TYPE_OPTIONS}
-                selected={issueTypeSelection}
-                onSelectionChange={handleIssueTypeChange}
-                placeholder="Ticket Type"
-                className="w-[140px]"
-              />
+              {/* Filters toggle */}
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 h-[30px] px-2.5 rounded-md border text-xs transition-colors",
+                  showFilters || statusFilter.length > 0 || issueTypeSelection.length > 0
+                    ? "bg-background border-border text-foreground"
+                    : "bg-background border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )}
+              >
+                <SlidersHorizontalIcon className="h-3.5 w-3.5" />
+                <span>Filters</span>
+                {(statusFilter.length > 0 || issueTypeSelection.length > 0) && (
+                  <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-foreground/10 text-[10px] font-medium">
+                    {statusFilter.length + issueTypeSelection.length}
+                  </span>
+                )}
+                {showFilters ? (
+                  <ChevronUpIcon className="h-3.5 w-3.5 ml-0.5" />
+                ) : (
+                  <ChevronDownIcon className="h-3.5 w-3.5 ml-0.5" />
+                )}
+              </button>
 
               {/* Submit a Claim Button */}
               <Button size="sm" variant="ghost" className="h-[30px] bg-[#eb9458]/20 text-[#c06520] font-medium border-0 hover:bg-[#eb9458]/30 dark:bg-[#eb9458]/25 dark:text-[#f0a868] dark:hover:bg-[#eb9458]/35" onClick={() => setClaimDialogOpen(true)}>
@@ -1104,6 +1161,57 @@ export default function CarePage() {
               </DropdownMenu>
             </div>
           </div>
+
+          {/* Collapsible filter row */}
+          {showFilters && (
+            <div className="px-4 lg:px-6 pb-3 -mt-1 flex items-center justify-between gap-4 animate-in slide-in-from-top-2 duration-200">
+              {/* Left: Saved Views */}
+              <SavedViewsBar
+                views={careSavedViews.views}
+                activeViewId={careSavedViews.activeViewId}
+                isModified={careSavedViews.isModified}
+                onLoad={(id) => {
+                  if (!careSavedViews.activeViewId) {
+                    carePreviousFilters.current = getCareFilterSnapshot()
+                  }
+                  const view = careSavedViews.loadView(id)
+                  if (view) applyCareFilters(view.filters)
+                }}
+                onSave={(name) => careSavedViews.saveView(name, getCareFilterSnapshot())}
+                onUpdate={(id) => careSavedViews.updateView(id, getCareFilterSnapshot())}
+                onDelete={(id) => careSavedViews.deleteView(id)}
+                onDeselect={() => {
+                  careSavedViews.setActiveViewId(null)
+                  if (carePreviousFilters.current) {
+                    applyCareFilters(carePreviousFilters.current)
+                    carePreviousFilters.current = null
+                  } else {
+                    clearFilters()
+                  }
+                }}
+              />
+              {/* Right: Filter dropdowns */}
+              <div className="flex items-center gap-2">
+                <MultiSelectFilter
+                  options={STATUS_OPTIONS}
+                  selected={statusFilter}
+                  onSelectionChange={(values) => {
+                    setStatusFilter(values)
+                    setCurrentPage(1)
+                  }}
+                  placeholder="Status"
+                  className="w-[120px]"
+                />
+                <MultiSelectFilter
+                  options={ISSUE_TYPE_OPTIONS}
+                  selected={issueTypeSelection}
+                  onSelectionChange={handleIssueTypeChange}
+                  placeholder="Ticket Type"
+                  className="w-[140px]"
+                />
+              </div>
+            </div>
+          )}
 
         </div>
 

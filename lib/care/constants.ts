@@ -35,6 +35,8 @@ export const CARRIER_OPTIONS = [
 // Date range presets for filtering
 export const DATE_RANGE_PRESETS: { value: DateRangePreset; label: string }[] = [
   { value: 'today', label: 'Today' },
+  { value: 'gt5d', label: '> 5D' },
+  { value: 'gt10d', label: '> 10D' },
   { value: '7d', label: '7D' },
   { value: '30d', label: '30D' },
   { value: '60d', label: '60D' },

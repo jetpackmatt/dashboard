@@ -66,10 +66,25 @@ export async function GET(
       return NextResponse.json({ error: shipmentError.message }, { status: 500 })
     }
 
+    // Check for existing claim tickets on this shipment
+    // Claim issue types that block further claims (Incorrect Delivery is NOT a claim for this purpose)
+    const claimIssueTypes = ['Loss', 'Damage', 'Pick Error', 'Short Ship', 'Incorrect Items', 'Claim']
+    const { data: existingClaims } = await supabase
+      .from('care_tickets')
+      .select('id, ticket_number, issue_type, status')
+      .eq('shipment_id', id)
+      .eq('ticket_type', 'Claim')
+      .in('issue_type', claimIssueTypes)
+      .limit(1)
+
+    const existingClaim = existingClaims && existingClaims.length > 0
+      ? { ticketNumber: existingClaims[0].ticket_number, issueType: existingClaims[0].issue_type, status: existingClaims[0].status }
+      : null
+
     // Calculate eligibility
     const eligibilityResult = calculateEligibility(shipment as ShipmentData)
 
-    return NextResponse.json(eligibilityResult)
+    return NextResponse.json({ ...eligibilityResult, existingClaim })
   } catch (err) {
     console.error('Claim eligibility API error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

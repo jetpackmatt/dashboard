@@ -22,6 +22,7 @@ export interface TableConfig {
   // Breakpoints define max priority visible at each screen size
   // Columns with priority > threshold are hidden
   breakpoints: {
+    '2xl': number // 1500px+ (wide monitors)
     xl: number   // 1280px+ (e.g., 10 = show all)
     lg: number   // 1024px
     md: number   // 768px
@@ -54,6 +55,7 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
     { id: 'shipOption',     header: 'Ship Option',   width: 12, priority: 14, defaultVisible: false },
   ],
   breakpoints: {
+    '2xl': 14, // 1500px+: All columns including optional
     xl: 11,  // 1280px+: All 11 columns (including Shipment ID)
     lg: 8,   // 1024px: Hide Channel, Store ID, Shipment ID
     md: 6,   // 768px: Also hide Type, SLA Date
@@ -75,25 +77,28 @@ export const SHIPMENTS_TABLE_CONFIG: TableConfig = {
     { id: 'orderId',      header: 'Order ID',      width: 10, priority: 1, defaultVisible: false },
     { id: 'customerName', header: 'Customer',      width: 11, priority: 5, sortable: true, sortKey: 'recipient_name', extraPaddingLeft: true },
     { id: 'carrier',      header: 'Carrier',       width: 9,  priority: 9, sortable: true, sortKey: 'carrier' },
+    { id: 'fcName',       header: 'Origin',        width: 10, priority: 13 },
+    { id: 'destination',  header: 'Destination',   width: 12, priority: 13 },
     { id: 'trackingId',   header: 'Tracking ID',   width: 10, priority: 3, maxWidth: 160, defaultVisible: false },
     { id: 'charge',       header: 'Charge',        width: 6,  priority: 4, align: 'center', shrinkToFit: true },
     { id: 'qty',          header: 'Qty',           width: 5,  priority: 8, align: 'center', shrinkToFit: true },
     { id: 'transitTimeDays', header: 'Transit',    width: 6,  priority: 7, align: 'center', sortable: true, sortKey: 'transit_time_days', shrinkToFit: true },
     { id: 'age',          header: 'Age',           width: 5,  priority: 11, align: 'center', sortable: true, sortKey: 'event_labeled', shrinkToFit: true },
     { id: 'actions',      header: '',              width: 10, priority: 1, shrinkToFit: true, tinted: true },
-    // Optional columns (not visible by default) - priority 13+
-    { id: 'orderType',    header: 'Type',          width: 6,  priority: 13, defaultVisible: false },
-    { id: 'channelName',  header: 'Channel',       width: 5,  priority: 14, defaultVisible: false },
-    { id: 'destCountry',  header: 'Dest. Country', width: 8,  priority: 15, defaultVisible: false },
-    { id: 'orderDate',    header: 'Order Date',    width: 12, priority: 16, defaultVisible: false },
-    { id: 'fcName',       header: 'FC',            width: 10, priority: 17, defaultVisible: false },
-    { id: 'shipOption',   header: 'Ship Option',   width: 12, priority: 18, defaultVisible: false },
-    { id: 'deliveredDate', header: 'Delivered On',  width: 12, priority: 19, defaultVisible: false },
-    { id: 'storeOrderId', header: 'Store Order',   width: 10, priority: 20, maxWidth: 130, defaultVisible: false },
+    // Optional columns (not visible by default) - priority 14+
+    { id: 'orderType',    header: 'Type',          width: 6,  priority: 14, defaultVisible: false },
+    { id: 'channelName',  header: 'Channel',       width: 5,  priority: 15, defaultVisible: false },
+    { id: 'destCountry',  header: 'Dest. Country', width: 8,  priority: 16, defaultVisible: false },
+    { id: 'orderDate',    header: 'Order Date',    width: 12, priority: 17, defaultVisible: false },
+    { id: 'shipOption',      header: 'Ship Option',      width: 12, priority: 18, defaultVisible: false },
+    { id: 'carrierService',  header: 'Carrier Service',  width: 12, priority: 19, defaultVisible: false },
+    { id: 'deliveredDate',   header: 'Delivered On',     width: 12, priority: 20, defaultVisible: false },
+    { id: 'storeOrderId',    header: 'Store Order',      width: 10, priority: 21, maxWidth: 130, defaultVisible: false },
   ],
   breakpoints: {
-    xl: 20,  // 1280px+: All columns (up to priority 20)
-    lg: 12,  // 1024px: Default columns only (11 columns including Age and Shipment ID)
+    '2xl': 21, // 1500px+: All columns including Origin & Destination
+    xl: 12,  // 1280px: Default columns only (hide Origin, Destination, and optional)
+    lg: 12,  // 1024px: Default columns only
     md: 6,   // 768px: Hide Transit, Items, Carrier, Age
     sm: 4,   // 640px: Also hide Customer, Cost
     xs: 3,   // <640px: Just Order ID, Status, Tracking
@@ -114,6 +119,7 @@ export const ADDITIONAL_SERVICES_TABLE_CONFIG: TableConfig = {
     { id: 'invoiceNumber',   header: 'Invoice',          width: 14, priority: 2 },
   ],
   breakpoints: {
+    '2xl': 6,
     xl: 6,
     lg: 5,
     md: 4,
@@ -139,6 +145,7 @@ export const RETURNS_TABLE_CONFIG: TableConfig = {
     { id: 'fcName',             header: 'FC',                width: 11, priority: 9, defaultVisible: false },
   ],
   breakpoints: {
+    '2xl': 9,
     xl: 8,
     lg: 6,
     md: 5,
@@ -162,6 +169,7 @@ export const RECEIVING_TABLE_CONFIG: TableConfig = {
     { id: 'contents',         header: 'Contents',         width: 31, priority: 7 },
   ],
   breakpoints: {
+    '2xl': 7,
     xl: 7,
     lg: 5,
     md: 4,
@@ -187,6 +195,7 @@ export const STORAGE_TABLE_CONFIG: TableConfig = {
     { id: 'comment',         header: 'Comment',        width: 12, priority: 8, defaultVisible: false },
   ],
   breakpoints: {
+    '2xl': 8,
     xl: 7,
     lg: 6,
     md: 5,
@@ -210,6 +219,7 @@ export const CREDITS_TABLE_CONFIG: TableConfig = {
     { id: 'creditReason',        header: 'Credit Reason',    width: 23, priority: 7 },
   ],
   breakpoints: {
+    '2xl': 7,
     xl: 7,
     lg: 5,
     md: 4,
@@ -235,6 +245,7 @@ export const SHIPPED_TABLE_CONFIG: TableConfig = {
     { id: 'charge',        header: 'Charge',       width: 8,  priority: 10 },
   ],
   breakpoints: {
+    '2xl': 10,
     xl: 10,
     lg: 8,
     md: 6,
@@ -263,6 +274,7 @@ export const INVOICES_TABLE_CONFIG: TableConfig = {
     { id: 'download',      header: '',               width: 3,  priority: 1, align: 'center' },
   ],
   breakpoints: {
+    '2xl': 3,
     xl: 2,
     lg: 2,
     md: 1,
@@ -279,6 +291,7 @@ export const INVOICES_TABLE_CONFIG: TableConfig = {
  * Get the current breakpoint based on window width
  */
 export function getCurrentBreakpoint(width: number): keyof TableConfig['breakpoints'] {
+  if (width >= 1500) return '2xl'
   if (width >= 1280) return 'xl'
   if (width >= 1024) return 'lg'
   if (width >= 768) return 'md'
@@ -323,6 +336,7 @@ export const CARE_TABLE_CONFIG: TableConfig = {
     { id: 'latestNotes',  header: 'Description',  width: 50, priority: 6 },  // Gets ~40% at base, absorbs expansion
   ],
   breakpoints: {
+    '2xl': 6, // Show all
     xl: 6,  // Show all
     lg: 6,  // Show all
     md: 5,  // Hide credit

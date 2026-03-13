@@ -14,7 +14,7 @@ import {
 /**
  * Date range preset options for filtering tickets
  */
-export type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'
+export type DateRangePreset = 'today' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'gt5d' | 'gt10d' | 'all' | 'custom'
 
 /**
  * Converts a date range preset into actual from/to dates
@@ -45,6 +45,16 @@ export function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; t
     case 'ytd':
       const yearStart = new Date(today.getFullYear(), 0, 1)
       return { from: yearStart, to: today }
+    case 'gt5d': {
+      const fiveDaysAgo = new Date(today)
+      fiveDaysAgo.setDate(today.getDate() - 5)
+      return { from: new Date(2020, 0, 1), to: fiveDaysAgo }
+    }
+    case 'gt10d': {
+      const tenDaysAgo = new Date(today)
+      tenDaysAgo.setDate(today.getDate() - 10)
+      return { from: new Date(2020, 0, 1), to: tenDaysAgo }
+    }
     case 'all':
       return null
     case 'custom':

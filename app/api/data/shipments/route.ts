@@ -72,6 +72,9 @@ export async function GET(request: NextRequest) {
   // Status filter (comma-separated)
   const statusFilter = searchParams.get('status')?.split(',').filter(Boolean) || []
 
+  // "Has Note" filter - separate param, filters to shipments with notes
+  const hasNoteFilter = searchParams.get('hasNotes') === 'true'
+
   // Type filter (DTC, B2B, etc. - comma-separated)
   const typeFilter = searchParams.get('type')?.split(',').filter(Boolean) || []
 
@@ -81,11 +84,17 @@ export async function GET(request: NextRequest) {
   // Carrier filter (comma-separated) - filters by shipping carrier
   const carrierFilter = searchParams.get('carrier')?.split(',').filter(Boolean) || []
 
+  // FC/Origin filter (comma-separated) - filters by fulfillment center name
+  const fcFilter = searchParams.get('fc')?.split(',').filter(Boolean) || []
+
   // Destination filter (comma-separated country codes and country:state pairs)
   const destinationFilter = searchParams.get('destination')?.split(',').filter(Boolean) || []
 
   // Search query for real-time search across multiple fields
   const searchQuery = searchParams.get('search')?.trim() || ''
+
+  // Watchlist filter - comma-separated shipment IDs
+  const watchlistFilter = searchParams.get('watchlist')?.split(',').filter(Boolean) || []
 
   // Age filter - comma-separated age ranges like "0-1,1-2,7+"
   const ageFilter = searchParams.get('age')?.split(',').filter(Boolean) || []
@@ -109,6 +118,24 @@ export async function GET(request: NextRequest) {
     const parsedDestination = destinationFilter.length > 0 ? parseDestinationFilter(destinationFilter) : null
     const hasStateFilter = parsedDestination ? Object.keys(parsedDestination.statesByCountry).length > 0 : false
     const hasOrderFilters = startDate || endDate || searchQuery || ageFilter.length > 0 || hasStateFilter
+
+    // Pre-fetch shipment IDs that have notes (for "Has Note" filter)
+    let noteShipmentIds: string[] | null = null
+    if (hasNoteFilter) {
+      let noteQuery = supabase
+        .from('shipment_notes')
+        .select('shipment_id')
+      if (clientId) {
+        noteQuery = noteQuery.eq('client_id', clientId)
+      }
+      const { data: noteRows } = await noteQuery
+      const ids = (noteRows || []).map((r: { shipment_id: string }) => r.shipment_id)
+      noteShipmentIds = [...new Set<string>(ids)]
+      if (noteShipmentIds!.length === 0) {
+        // No notes exist — return empty result immediately
+        return NextResponse.json({ data: [], totalCount: 0, channels: [], carriers: [], fcs: [], destinations: [] })
+      }
+    }
 
     // =========================================================================
     // SINGLE QUERY WITH JOIN - Let the database do the filtering properly
@@ -140,6 +167,7 @@ export async function GET(request: NextRequest) {
         application_name,
         destination_country,
         ship_option_id,
+        ship_option_name,
         zone_used,
         actual_weight_oz,
         dim_weight_oz,
@@ -187,6 +215,7 @@ export async function GET(request: NextRequest) {
         application_name,
         destination_country,
         ship_option_id,
+        ship_option_name,
         zone_used,
         actual_weight_oz,
         dim_weight_oz,
@@ -354,6 +383,7 @@ export async function GET(request: NextRequest) {
         totalCount: 0,
         hasMore: false,
         carriers: [],
+        fcs: [],
       })
     }
 
@@ -469,6 +499,21 @@ export async function GET(request: NextRequest) {
     // Apply carrier filter (filters on shipments.carrier column)
     if (carrierFilter.length > 0) {
       query = query.in('carrier', carrierFilter)
+    }
+
+    // Apply FC/origin filter (filters on shipments.fc_name column)
+    if (fcFilter.length > 0) {
+      query = query.in('fc_name', fcFilter)
+    }
+
+    // Apply watchlist filter (brand-only, filters to specific shipment IDs)
+    if (watchlistFilter.length > 0) {
+      query = query.in('shipment_id', watchlistFilter)
+    }
+
+    // Apply "Has Note" filter
+    if (noteShipmentIds) {
+      query = query.in('shipment_id', noteShipmentIds)
     }
 
     // Apply destination filter
@@ -589,11 +634,12 @@ export async function GET(request: NextRequest) {
       }))
 
       // Try RPC function first (database-level filtering - very fast!)
+      // Skip RPC when hasNoteFilter or watchlistFilter is active since RPC doesn't support shipment ID filtering
       const rpcStartTime = Date.now()
-      // Convert status filter values to lowercase to match RPC function expectations
       const statusFilterLower = statusFilter.map(s => s.toLowerCase())
+      const skipRpc = hasNoteFilter || watchlistFilter.length > 0 || fcFilter.length > 0
 
-      const { data: rpcData, error: rpcError } = await supabase.rpc('get_shipments_by_age', {
+      const { data: rpcData, error: rpcError } = skipRpc ? { data: null, error: { message: 'skipped for shipment ID filter' } as any } : await supabase.rpc('get_shipments_by_age', {
         p_client_id: clientId || null,
         p_age_ranges: ageRangesJsonb,
         p_limit: limit,
@@ -617,6 +663,7 @@ export async function GET(request: NextRequest) {
             totalCount: 0,
             hasMore: false,
             carriers: [],
+            fcs: [],
           })
         }
 
@@ -673,6 +720,9 @@ export async function GET(request: NextRequest) {
           if (typeFilter.length > 0) batchQuery = batchQuery.in('order_type', typeFilter)
           if (channelFilter.length > 0) batchQuery = batchQuery.in('application_name', channelFilter)
           if (carrierFilter.length > 0) batchQuery = batchQuery.in('carrier', carrierFilter)
+          if (fcFilter.length > 0) batchQuery = batchQuery.in('fc_name', fcFilter)
+          if (watchlistFilter.length > 0) batchQuery = batchQuery.in('shipment_id', watchlistFilter)
+          if (noteShipmentIds) batchQuery = batchQuery.in('shipment_id', noteShipmentIds)
 
           return batchQuery
         }
@@ -688,6 +738,9 @@ export async function GET(request: NextRequest) {
           countQuery = countQuery.eq('client_id', clientId)
         }
         if (carrierFilter.length > 0) countQuery = countQuery.in('carrier', carrierFilter)
+        if (fcFilter.length > 0) countQuery = countQuery.in('fc_name', fcFilter)
+        if (watchlistFilter.length > 0) countQuery = countQuery.in('shipment_id', watchlistFilter)
+        if (noteShipmentIds) countQuery = countQuery.in('shipment_id', noteShipmentIds)
 
         const { count: totalRecords, error: countError } = await countQuery
 
@@ -759,6 +812,7 @@ export async function GET(request: NextRequest) {
             totalCount: 0,
             hasMore: false,
             carriers: [],
+            fcs: [],
           })
         }
 
@@ -817,6 +871,9 @@ export async function GET(request: NextRequest) {
       if (typeFilter.length > 0) fallbackQuery = fallbackQuery.in('order_type', typeFilter)
       if (channelFilter.length > 0) fallbackQuery = fallbackQuery.in('application_name', channelFilter)
       if (carrierFilter.length > 0) fallbackQuery = fallbackQuery.in('carrier', carrierFilter)
+      if (fcFilter.length > 0) fallbackQuery = fallbackQuery.in('fc_name', fcFilter)
+      if (watchlistFilter.length > 0) fallbackQuery = fallbackQuery.in('shipment_id', watchlistFilter)
+      if (noteShipmentIds) fallbackQuery = fallbackQuery.in('shipment_id', noteShipmentIds)
 
       // Apply ILIKE search fallback - visible columns including Tracking ID
       const searchPattern = `%${searchQuery}%`
@@ -888,12 +945,13 @@ export async function GET(request: NextRequest) {
     let billingExportMap: Record<string, { baseCharge: number | null; surchargeAmount: number | null; transactionType: string }> = {}
     let insuranceMap: Record<string, number> = {}
     let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
+    let noteCountMap: Record<string, number> = {}
 
     if (shipmentIds.length > 0) {
       // Run item counts, billing, claim eligibility, and claim tickets queries IN PARALLEL
       // NOTE: shipment_items and transactions queries use batchedInQuery to avoid
       // Supabase's 1000-row limit when exporting large pages (1000 shipments per page)
-      const [itemData, billingData, claimEligibilityResult, claimTicketsResult, insuranceResult, clientInfoResult] = await Promise.all([
+      const [itemData, billingData, claimEligibilityResult, claimTicketsResult, insuranceResult, clientInfoResult, noteCountResult] = await Promise.all([
         // Query 1: Items per shipment (with name+quantity for export)
         // Batched: each shipment can have multiple items → easily exceeds 1000 rows
         batchedInQuery(
@@ -937,6 +995,11 @@ export async function GET(request: NextRequest) {
         isExport
           ? supabase.from('clients').select('id, merchant_id, company_name')
           : Promise.resolve({ data: null }),
+        // Query 7: Note counts per shipment (lightweight - just shipment_id)
+        supabase
+          .from('shipment_notes')
+          .select('shipment_id')
+          .in('shipment_id', shipmentIds),
       ])
 
       // Process item counts (itemData is a flat array from batchedInQuery)
@@ -951,7 +1014,7 @@ export async function GET(request: NextRequest) {
       if (billingData.length > 0) {
         // Get total_charge from Shipping transactions only (excludes pick fees, insurance)
         // CRITICAL: Only show charge if total_charge is set (has preview or invoice markup)
-        billingMap = billingData.reduce((acc: Record<string, { totalCost: number | null; disputeStatus: string | null }>, tx: any) => {
+        billingMap = billingData.reduce((acc: typeof billingMap, tx: any) => {
           if (tx.tracking_id && tx.fee_type === 'Shipping' && tx.transaction_type !== 'Refund') {
             // total_charge = base_charge + surcharge (marked up shipping cost)
             // Returns null if not yet calculated (UI shows "-")
@@ -1011,6 +1074,15 @@ export async function GET(request: NextRequest) {
               status: ticket.status,
               creditAmount: ticket.credit_amount,
             }
+          }
+        }
+      }
+
+      // Process note counts
+      if (noteCountResult.data) {
+        for (const n of noteCountResult.data) {
+          if (n.shipment_id) {
+            noteCountMap[n.shipment_id] = (noteCountMap[n.shipment_id] || 0) + 1
           }
         }
       }
@@ -1123,7 +1195,8 @@ export async function GET(request: NextRequest) {
         orderDate: order?.purchase_date || null,
         destCountry: row.destination_country || '',
         destState: order?.state || '',
-        shipOption: row.carrier_service || '',
+        destCity: order?.city || '',
+        shipOption: row.ship_option_name || '',
         // Computed field for export
         age: age,
         // Client identification (for admin badge)
@@ -1143,6 +1216,8 @@ export async function GET(request: NextRequest) {
         claimTicketNumber: claimTicketMap[row.shipment_id]?.ticketNumber || null,
         claimTicketStatus: claimTicketMap[row.shipment_id]?.status || null,
         claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,
+        reshipmentId: row.reshipment_id || null,
+        noteCount: noteCountMap[row.shipment_id] || 0,
         // Export-only fields (invoice format)
         ...(isExport ? {
           merchantId: clientInfoMap[row.client_id]?.merchantId || '',
@@ -1214,6 +1289,9 @@ export async function GET(request: NextRequest) {
       allCarriers = [...new Set(shipments.map((s: any) => s.carrier).filter(Boolean))].sort() as string[]
     }
 
+    // Extract unique FCs from current page data
+    const allFcs = [...new Set(shipments.map((s: any) => s.fcName).filter(Boolean))].sort() as string[]
+
     // Extract unique destinations (countries + states) from current page data
     const allDestinationCountries = [...new Set(shipments.map((s: any) => s.destCountry).filter(Boolean))].sort() as string[]
     // Build country → states map from current data
@@ -1230,13 +1308,25 @@ export async function GET(request: NextRequest) {
     // Use the pre-computed filtered count if age filter was applied, otherwise use DB count
     const finalTotalCount = filteredTotalCount !== null ? filteredTotalCount : (count || 0)
 
+    // Count distinct shipments that have notes (for the notes filter badge)
+    let notedQuery = supabase
+      .from('shipment_notes')
+      .select('shipment_id')
+    if (clientId) {
+      notedQuery = notedQuery.eq('client_id', clientId)
+    }
+    const { data: notedRows } = await notedQuery
+    const notedShipmentCount = new Set((notedRows || []).map((r: { shipment_id: string }) => r.shipment_id)).size
+
     return NextResponse.json({
       data: shipments,
       totalCount: finalTotalCount,
       hasMore: (offset + limit) < finalTotalCount,
       carriers: allCarriers,
+      fcs: allFcs,
       destinations: allDestinationCountries,
       destinationStates,
+      notedShipmentCount: notedShipmentCount || 0,
     })
   } catch (err) {
     console.error('Shipments API error:', err)

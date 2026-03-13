@@ -100,6 +100,7 @@ export interface TransactionsTableProps<T> {
   // Column reordering - when provided, headers become draggable
   columnOrder?: string[]
   onColumnOrderChange?: (order: string[]) => void
+
 }
 
 // ============================================

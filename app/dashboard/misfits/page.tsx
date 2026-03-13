@@ -87,8 +87,8 @@ interface MisfitTransaction {
   missingBrand: boolean
   missingTicket: boolean
   missingShipment: boolean
-  // Pending credit fields
-  isPendingCredit?: boolean
+  // Pending markup (credit needs classification)
+  pendingMarkup?: boolean
   creditShippingPortion?: number | null
   careTicket?: {
     id: string
@@ -188,7 +188,6 @@ const TYPE_FILTERS = [
   { value: '', label: 'All' },
   { value: 'credit', label: 'Credits' },
   { value: 'unattributed', label: 'Unattributed' },
-  { value: 'pending_credits', label: 'Pending Credits' },
 ] as const
 
 
@@ -644,10 +643,10 @@ export default function MisfitsPage() {
                   )}
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Date</th>
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Reference ID</th>
+                  <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Detail</th>
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Ref Type</th>
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Amount</th>
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Fee Type</th>
-                  <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">Detail</th>
                   <th className="px-2 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap">SB Ticket</th>
                   <th className="px-3 pr-4 lg:pr-6 text-left align-middle text-[10px] font-medium text-zinc-500 uppercase tracking-wide whitespace-nowrap border-l border-border/40">Actions</th>
                 </tr>
@@ -753,6 +752,44 @@ export default function MisfitsPage() {
                         </div>
                       </td>
 
+                      {/* Detail — Issue indicator tags + contextual info */}
+                      <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          {tx.missingBrand && (
+                            <span className="inline-flex px-1 py-px rounded text-[9px] font-medium bg-red-100 text-red-600 dark:bg-red-950/30 dark:text-red-400">Brand</span>
+                          )}
+                          {tx.missingTicket && (
+                            <span className="inline-flex px-1 py-px rounded text-[9px] font-medium bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">Ticket</span>
+                          )}
+                          {tx.pendingMarkup && (
+                            <span className="inline-flex px-1 py-px rounded text-[9px] font-medium bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">Markup</span>
+                          )}
+                          {tx.careTicket ? (
+                            <span className="text-[11px]">
+                              {tx.careTicket.issueType || 'Unknown'}
+                              {tx.careTicket.reshipmentId && <span className="text-muted-foreground/50"> · Reship</span>}
+                            </span>
+                          ) : tx.creditReason ? (
+                            <span className="text-[11px]">{tx.creditReason}</span>
+                          ) : tx.comment ? (
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex items-center justify-center w-6 h-5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-default">
+                                    <MessageSquareIcon className="h-3 w-3" />
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-xs">
+                                  {tx.comment}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            !tx.missingBrand && !tx.missingTicket && !tx.pendingMarkup && <span className="text-muted-foreground/30">—</span>
+                          )}
+                        </div>
+                      </td>
+
                       {/* Reference Type */}
                       <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
                         {tx.referenceType && tx.referenceType !== 'Default' ? tx.referenceType : <span className="text-muted-foreground/30">—</span>}
@@ -770,35 +807,6 @@ export default function MisfitsPage() {
                         {tx.feeType}
                       </td>
 
-                      {/* Detail — Credit Reason for credits, Comment icon for non-credits */}
-                      <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
-                        {tx.isPendingCredit && tx.careTicket ? (
-                          <span className="text-[11px]">
-                            {tx.careTicket.issueType || 'Unknown'}
-                            {tx.careTicket.reshipmentId && <span className="text-muted-foreground/50"> · Reship</span>}
-                          </span>
-                        ) : tx.isPendingCredit && !tx.careTicketId ? (
-                          <span className="text-amber-600 dark:text-amber-400 text-[11px]">No ticket</span>
-                        ) : tx.creditReason ? (
-                          tx.creditReason
-                        ) : tx.comment ? (
-                          <TooltipProvider delayDuration={200}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="inline-flex items-center justify-center w-6 h-5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-default">
-                                  <MessageSquareIcon className="h-3 w-3" />
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="top" className="max-w-xs text-xs">
-                                {tx.comment}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          <span className="text-muted-foreground/30">—</span>
-                        )}
-                      </td>
-
                       {/* SB Ticket */}
                       <td className="px-2 align-middle text-muted-foreground whitespace-nowrap font-mono">
                         {tx.sbTicketRef || <span className="text-muted-foreground/30">—</span>}
@@ -806,14 +814,7 @@ export default function MisfitsPage() {
 
                       {/* Actions */}
                       <td className="px-3 pr-4 lg:pr-6 align-middle whitespace-nowrap border-l border-border/40">
-                        {tx.isPendingCredit && canEdit ? (
-                          <CreditClassifyActions
-                            transactionId={tx.id}
-                            cost={tx.cost}
-                            careTicket={tx.careTicket}
-                            onClassified={() => fetchMisfits()}
-                          />
-                        ) : tx.feeType === 'Credit' && tx.missingTicket && canEdit ? (() => {
+                        {tx.missingTicket && canEdit ? (() => {
                           const suggestion = suggestionMap.get(tx.transactionId)
 
                           // New Ticket popover (shared between both states)
@@ -1047,7 +1048,14 @@ export default function MisfitsPage() {
                               {newTicketBtn}
                             </div>
                           )
-                        })() : null}
+                        })() : tx.pendingMarkup && canEdit ? (
+                          <CreditClassifyActions
+                            transactionId={tx.id}
+                            cost={tx.cost}
+                            careTicket={tx.careTicket}
+                            onClassified={() => fetchMisfits()}
+                          />
+                        ) : null}
                       </td>
                     </tr>
                   ))
