@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+export const maxDuration = 120
+
 /**
  * Cron endpoint to refresh pre-aggregated analytics summaries.
  *
@@ -51,24 +53,38 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Process queue in batches of 200
-    const { data, error } = await supabase.rpc('refresh_analytics_summaries', {
-      p_batch_size: 200,
-    })
+    // Process in small batches to stay under Supabase statement timeout (8s)
+    // Each batch of 10 takes ~2-4s depending on data volume
+    const BATCH_SIZE = 10
+    const MAX_BATCHES = 20  // Cap at 200 total per cron run
+    let totalProcessed = 0
 
-    if (error) {
-      console.error('[Cron RefreshAnalytics] Error processing queue:', error.message)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    for (let i = 0; i < MAX_BATCHES; i++) {
+      const { data, error } = await supabase.rpc('refresh_analytics_summaries', {
+        p_batch_size: BATCH_SIZE,
+      })
+
+      if (error) {
+        console.error(`[Cron RefreshAnalytics] Error on batch ${i + 1}:`, error.message)
+        // If we already processed some, report partial success
+        if (totalProcessed > 0) break
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      const batchProcessed = data?.processed ?? 0
+      totalProcessed += batchProcessed
+
+      // If batch returned fewer than requested, queue is empty
+      if (batchProcessed < BATCH_SIZE) break
     }
 
-    const processed = data?.processed ?? 0
     const duration = Date.now() - startTime
-    console.log(`[Cron RefreshAnalytics] Completed in ${duration}ms: ${processed} (client, date) pairs refreshed`)
+    console.log(`[Cron RefreshAnalytics] Completed in ${duration}ms: ${totalProcessed} (client, date) pairs refreshed`)
 
     return NextResponse.json({
       success: true,
       duration: `${duration}ms`,
-      processed,
+      processed: totalProcessed,
       queueDepth,
     })
   } catch (error) {
