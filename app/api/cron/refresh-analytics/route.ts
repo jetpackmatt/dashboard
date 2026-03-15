@@ -53,10 +53,10 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Process in small batches to stay under Supabase statement timeout (8s)
-    // Each batch of 10 takes ~2-4s depending on data volume
-    const BATCH_SIZE = 10
-    const MAX_BATCHES = 20  // Cap at 200 total per cron run
+    // Process in small batches — function has 60s statement_timeout set via ALTER FUNCTION.
+    // Busy dates can have 300-400 shipments with complex JOINs, so keep batches small.
+    const BATCH_SIZE = 5
+    const MAX_BATCHES = 20  // Cap at 100 total per cron run
     let totalProcessed = 0
 
     for (let i = 0; i < MAX_BATCHES; i++) {
