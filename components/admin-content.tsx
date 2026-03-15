@@ -43,11 +43,10 @@ import {
   UserPlus,
   Shield,
   ShieldCheck,
-  BarChart3,
-  ExternalLink,
 } from 'lucide-react'
 import { JetpackLoader } from '@/components/jetpack-loader'
 import { SiteHeader } from '@/components/site-header'
+import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -59,7 +58,7 @@ import {
 } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -203,22 +202,61 @@ export function AdminContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const validTabs = ['markup', 'invoicing', 'brands', 'disputes', 'orphans', 'sync-health', 'warehouses', 'care-team']
+  const ADMIN_SECTIONS = [
+    { value: 'markup', label: 'Markups' },
+    { value: 'invoicing', label: 'Invoicing' },
+    { value: 'brands', label: 'Brands' },
+    { value: 'disputes', label: 'Disputes' },
+    { value: 'orphans', label: 'Orphans' },
+    { value: 'sync-health', label: 'Sync Health' },
+    { value: 'warehouses', label: 'Warehouses' },
+    { value: 'care-team', label: 'Care Team' },
+    { value: 'commissions', label: 'Commissions' },
+    { value: 'delivery-iq', label: 'Delivery IQ' },
+  ] as const
+  type AdminTab = typeof ADMIN_SECTIONS[number]['value']
+  const validTabs = ADMIN_SECTIONS.map(s => s.value) as readonly string[]
   const tabFromUrl = searchParams.get('tab')
-  const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'markup'
-  const [activeTab, setActiveTab] = React.useState(initialTab)
+  const resolvedTab = (tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'markup') as AdminTab
+  const [activeTab, setActiveTab] = React.useState<AdminTab>(resolvedTab)
+
+  // Sync tab state when URL param changes (e.g. sidebar nav click)
+  React.useEffect(() => {
+    if (resolvedTab !== activeTab) {
+      setActiveTab(resolvedTab)
+    }
+  }, [resolvedTab])
 
   // Sync tab to URL when it changes
   const handleTabChange = React.useCallback((newTab: string) => {
-    setActiveTab(newTab)
+    if (newTab === 'delivery-iq') {
+      router.push('/dashboard/admin/delivery-iq')
+      return
+    }
+    setActiveTab(newTab as AdminTab)
     const params = new URLSearchParams(searchParams.toString())
     params.set('tab', newTab)
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
   }, [searchParams, router, pathname])
 
+  const currentSectionLabel = ADMIN_SECTIONS.find(s => s.value === activeTab)?.label || 'Markups'
+
   return (
     <>
     <SiteHeader sectionName="Admin">
+      <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4 bg-muted-foreground/30" />
+      <Select value={activeTab} onValueChange={handleTabChange}>
+        <SelectTrigger className="h-7 w-auto gap-1.5 border-0 bg-transparent px-2 text-base font-medium text-foreground hover:bg-accent focus:ring-0 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-50">
+          <SelectValue>{currentSectionLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {ADMIN_SECTIONS.map((section) => (
+            <SelectItem key={section.value} value={section.value}>
+              {section.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {isClientLoading && (
         <div className="flex items-center gap-1.5 ml-[10px]">
           <JetpackLoader size="md" />
@@ -226,26 +264,9 @@ export function AdminContent() {
         </div>
       )}
     </SiteHeader>
+    <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
     <div className="p-4 lg:p-6">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="markup">Markups</TabsTrigger>
-          <TabsTrigger value="invoicing">Invoicing</TabsTrigger>
-          <TabsTrigger value="brands">Brands</TabsTrigger>
-          <TabsTrigger value="disputes">Disputes</TabsTrigger>
-          <TabsTrigger value="orphans">Orphans</TabsTrigger>
-          <TabsTrigger value="sync-health">Sync Health</TabsTrigger>
-          <TabsTrigger value="warehouses">Warehouses</TabsTrigger>
-          <TabsTrigger value="care-team">Care Team</TabsTrigger>
-          <TabsTrigger value="commissions">Commissions</TabsTrigger>
-          <TabsTrigger value="delivery-iq" asChild>
-            <a href="/dashboard/admin/delivery-iq" className="inline-flex items-center gap-1.5">
-              <BarChart3 className="h-4 w-4" />
-              Delivery IQ
-              <ExternalLink className="h-3 w-3 opacity-50" />
-            </a>
-          </TabsTrigger>
-        </TabsList>
 
         {/* Markup Tables Tab */}
         <TabsContent value="markup" className="space-y-6">
@@ -292,6 +313,7 @@ export function AdminContent() {
           <CommissionsContent clients={clients} />
         </TabsContent>
       </Tabs>
+    </div>
     </div>
     </>
   )

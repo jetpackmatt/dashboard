@@ -5,7 +5,8 @@ import { DateRange } from "react-day-picker"
 
 import { ADDITIONAL_SERVICES_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable, PrefixColumn } from "./transactions-table"
-import { AdditionalService, additionalServicesCellRenderers } from "./cell-renderers"
+import { AdditionalService, createAdditionalServicesCellRenderers } from "./cell-renderers"
+import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
@@ -56,6 +57,20 @@ export function AdditionalServicesTable({
   // Check if admin/care viewing all clients (for client badge prefix column)
   const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
   const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
+
+  // Shipment details drawer state
+  const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
+
+  const handleShipmentClick = React.useCallback((shipmentId: string) => {
+    setSelectedShipmentId(shipmentId)
+    setDrawerOpen(true)
+  }, [])
+
+  const cellRenderers = React.useMemo(
+    () => createAdditionalServicesCellRenderers(handleShipmentClick),
+    [handleShipmentClick]
+  )
 
   // Use stable reference for empty array
   const effectiveStatusFilter = statusFilter ?? EMPTY_STATUS_FILTER
@@ -253,27 +268,34 @@ export function AdditionalServicesTable({
     : undefined
 
   return (
-    <TransactionsTable
-      config={ADDITIONAL_SERVICES_TABLE_CONFIG}
-      data={data}
-      cellRenderers={additionalServicesCellRenderers}
-      getRowKey={(row) => row.id.toString()}
-      isLoading={isLoading}
-      isPageLoading={isPageLoading}
-      totalCount={totalCount}
-      pageIndex={pageIndex}
-      pageSize={pageSize}
-      onPageChange={handlePageChange}
-      userColumnVisibility={userColumnVisibility}
-      columnOrder={columnOrder}
-      onColumnOrderChange={onColumnOrderChange}
-      emptyMessage="No additional services found."
-      itemName="services"
-      integratedHeader={true}
-      prefixColumn={clientBadgePrefixColumn}
-      sortField={sortField}
-      sortDirection={sortDirection}
-      onSortChange={handleSortChange}
-    />
+    <>
+      <TransactionsTable
+        config={ADDITIONAL_SERVICES_TABLE_CONFIG}
+        data={data}
+        cellRenderers={cellRenderers}
+        getRowKey={(row) => row.id.toString()}
+        isLoading={isLoading}
+        isPageLoading={isPageLoading}
+        totalCount={totalCount}
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        onPageChange={handlePageChange}
+        userColumnVisibility={userColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={onColumnOrderChange}
+        emptyMessage="No additional services found."
+        itemName="services"
+        integratedHeader={true}
+        prefixColumn={clientBadgePrefixColumn}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
+      />
+      <ShipmentDetailsDrawer
+        shipmentId={selectedShipmentId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
+    </>
   )
 }

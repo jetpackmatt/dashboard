@@ -372,7 +372,7 @@ export function TransactionsTable<T>({
             })()}
             <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
             <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
-              <tr className="h-[45px] bg-muted/60 dark:bg-zinc-900/60">
+              <tr className="h-[45px] bg-muted dark:bg-zinc-900">
                 {/* Prefix column header (empty) */}
                 {prefixColumn && (
                   <th

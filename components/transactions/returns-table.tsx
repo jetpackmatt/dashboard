@@ -5,7 +5,8 @@ import { DateRange } from "react-day-picker"
 
 import { RETURNS_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable, PrefixColumn } from "./transactions-table"
-import { Return, returnsCellRenderers } from "./cell-renderers"
+import { Return, createReturnsCellRenderers } from "./cell-renderers"
+import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
@@ -47,6 +48,20 @@ export function ReturnsTable({
   // Check if admin/care viewing all clients (for client badge prefix column)
   const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
   const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
+
+  // Shipment details drawer state
+  const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
+
+  const handleShipmentClick = React.useCallback((shipmentId: string) => {
+    setSelectedShipmentId(shipmentId)
+    setDrawerOpen(true)
+  }, [])
+
+  const cellRenderers = React.useMemo(
+    () => createReturnsCellRenderers(handleShipmentClick),
+    [handleShipmentClick]
+  )
 
   // Convert "all" to undefined for API
   const effectiveStatusFilter = returnStatusFilter === "all" ? undefined : returnStatusFilter
@@ -219,27 +234,34 @@ export function ReturnsTable({
     : undefined
 
   return (
-    <TransactionsTable
-      config={RETURNS_TABLE_CONFIG}
-      data={data}
-      cellRenderers={returnsCellRenderers}
-      getRowKey={(row) => row.id.toString()}
-      isLoading={isLoading}
-      isPageLoading={isPageLoading}
-      totalCount={totalCount}
-      pageIndex={pageIndex}
-      pageSize={pageSize}
-      onPageChange={handlePageChange}
-      userColumnVisibility={userColumnVisibility}
-      columnOrder={columnOrder}
-      onColumnOrderChange={onColumnOrderChange}
-      emptyMessage="No returns found."
-      itemName="returns"
-      integratedHeader={true}
-      prefixColumn={clientBadgePrefixColumn}
-      sortField={sortField}
-      sortDirection={sortDirection}
-      onSortChange={handleSortChange}
-    />
+    <>
+      <TransactionsTable
+        config={RETURNS_TABLE_CONFIG}
+        data={data}
+        cellRenderers={cellRenderers}
+        getRowKey={(row) => row.id.toString()}
+        isLoading={isLoading}
+        isPageLoading={isPageLoading}
+        totalCount={totalCount}
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        onPageChange={handlePageChange}
+        userColumnVisibility={userColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={onColumnOrderChange}
+        emptyMessage="No returns found."
+        itemName="returns"
+        integratedHeader={true}
+        prefixColumn={clientBadgePrefixColumn}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
+      />
+      <ShipmentDetailsDrawer
+        shipmentId={selectedShipmentId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
+    </>
   )
 }

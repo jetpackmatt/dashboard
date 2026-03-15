@@ -198,7 +198,7 @@ export default function LookoutPage() {
       <div className="flex flex-1 flex-col overflow-hidden bg-background rounded-t-xl">
         <div className="flex flex-col h-[calc(100vh-64px)] px-4 lg:px-6">
           {/* Sticky header with filters - matches Transactions styling */}
-          <div className="flex-shrink-0 -mx-4 lg:-mx-6 mb-3 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
+          <div className="flex-shrink-0 -mx-4 lg:-mx-6 mb-3 bg-muted dark:bg-zinc-900 rounded-t-xl font-roboto text-xs">
             <div className="flex items-center justify-between gap-4 px-4 lg:px-6 h-[70px]">
               <QuickFilters
                 value={quickFilter}

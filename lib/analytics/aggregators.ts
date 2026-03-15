@@ -1,6 +1,7 @@
 // Analytics Data Aggregation Utilities
 
 import usCitiesData from './us-cities-coords.json'
+import { normalizeRegionCode, getRegionName } from './geo-config'
 import type {
   ShipmentData,
   AdditionalServiceData,
@@ -49,6 +50,7 @@ import type {
   UndeliveredByStatus,
   UndeliveredByAge,
   UndeliveredByState,
+  DeliverySpeedTrendData,
 } from './types'
 
 // Build city coordinates lookup map (module-level, computed once)
@@ -144,8 +146,8 @@ export function getDateRangeFromPreset(preset: string): DateRange {
   let from: Date
 
   switch (preset) {
-    case '7d':
-      from = getDaysAgo(7)
+    case '14d':
+      from = getDaysAgo(14)
       break
     case '30d':
       from = getDaysAgo(30)
@@ -157,10 +159,13 @@ export function getDateRangeFromPreset(preset: string): DateRange {
       from = getDaysAgo(90)
       break
     case '6mo':
-      from = getDaysAgo(182) // ~6 months
+      from = getDaysAgo(182)
       break
     case '1yr':
       from = getDaysAgo(365)
+      break
+    case 'all':
+      from = getDaysAgo(365 * 3) // ~3 years back
       break
     default:
       from = getDaysAgo(30)
@@ -188,9 +193,10 @@ export function calculateKPIs(
 
   const totalCost = currentShipments.reduce((sum, s) => sum + s.originalInvoice, 0)
   const orderCount = currentShipments.length
+  const deliveredCurrent = currentShipments.filter(s => s.deliveredDate !== null && s.transitTimeDays !== null)
   const avgTransitTime =
-    currentShipments.reduce((sum, s) => sum + (s.transitTimeDays || 0), 0) /
-    (currentShipments.filter(s => s.transitTimeDays !== null).length || 1)
+    deliveredCurrent.reduce((sum, s) => sum + (s.transitTimeDays || 0), 0) /
+    (deliveredCurrent.length || 1)
 
   const slaMetrics = calculateSLAMetrics(currentShipments)
   const slaPercent = slaMetrics.onTimePercent
@@ -204,9 +210,10 @@ export function calculateKPIs(
 
   const prevTotalCost = previousShipments.reduce((sum, s) => sum + s.originalInvoice, 0)
   const prevOrderCount = previousShipments.length
+  const deliveredPrev = previousShipments.filter(s => s.deliveredDate !== null && s.transitTimeDays !== null)
   const prevAvgTransitTime =
-    previousShipments.reduce((sum, s) => sum + (s.transitTimeDays || 0), 0) /
-    (previousShipments.filter(s => s.transitTimeDays !== null).length || 1)
+    deliveredPrev.reduce((sum, s) => sum + (s.transitTimeDays || 0), 0) /
+    (deliveredPrev.length || 1)
   const prevSlaMetrics = calculateSLAMetrics(previousShipments)
   const prevSlaPercent = prevSlaMetrics.onTimePercent
   const prevLateOrders = prevSlaMetrics.breachedCount
@@ -397,7 +404,7 @@ export function aggregateCarrierPerformance(
       const data = carrierMap.get(s.carrier)!
       data.orderCount++
       data.totalCost += s.originalInvoice
-      if (s.transitTimeDays !== null) {
+      if (s.transitTimeDays !== null && s.deliveredDate !== null) {
         data.totalTransitTime += s.transitTimeDays
         data.transitTimeCount++
       }
@@ -458,7 +465,7 @@ export function aggregateShipOptions(
       data.orderCount++
       data.totalCost += s.fulfillmentWithoutSurcharge
       data.totalCostWithSurcharge += s.originalInvoice
-      if (s.transitTimeDays !== null) {
+      if (s.transitTimeDays !== null && s.deliveredDate !== null) {
         data.totalTransitTime += s.transitTimeDays
         data.transitTimeCount++
       }
@@ -505,7 +512,7 @@ export function aggregateZoneMetrics(
       const data = zoneMap.get(s.zoneUsed)!
       data.orderCount++
       data.totalCost += s.originalInvoice
-      if (s.transitTimeDays !== null) {
+      if (s.transitTimeDays !== null && s.deliveredDate !== null) {
         data.totalTransitTime += s.transitTimeDays
         data.transitTimeCount++
       }
@@ -636,58 +643,130 @@ const STATE_NAMES: Record<string, string> = {
 
 export function aggregateStatePerformance(
   shipments: ShipmentData[],
-  dateRange: DateRange
+  dateRange: DateRange,
+  country?: string
 ): StatePerformance[] {
-  const stateMap = new Map<string, {
+  const regionMap = new Map<string, {
     orderCount: number
     shippedCount: number
     deliveredCount: number
     totalDeliveryTime: number
     deliveredWithTimeCount: number
+    totalFulfillTimeHours: number
+    fulfillTimeCount: number
+    totalRegionalMileDays: number
+    regionalMileCount: number
+    totalCarrierTransitDays: number
+    carrierTransitCount: number
   }>()
 
+  const countryCode = country || 'US'
+
+  // Only include delivered shipments — undelivered skew performance metrics
   shipments
     .filter(s => isWithinDateRange(s.transactionDate, dateRange))
+    .filter(s => !country || s.destinationCountry === country)
+    .filter(s => s.deliveredDate !== null)
     .forEach(s => {
-      if (!stateMap.has(s.state)) {
-        stateMap.set(s.state, {
+      // Normalize region code (handles "Ontario" → "ON" etc.)
+      const regionCode = normalizeRegionCode(s.state, countryCode)
+      if (!regionCode) return
+
+      if (!regionMap.has(regionCode)) {
+        regionMap.set(regionCode, {
           orderCount: 0,
           shippedCount: 0,
           deliveredCount: 0,
           totalDeliveryTime: 0,
           deliveredWithTimeCount: 0,
+          totalFulfillTimeHours: 0,
+          fulfillTimeCount: 0,
+          totalRegionalMileDays: 0,
+          regionalMileCount: 0,
+          totalCarrierTransitDays: 0,
+          carrierTransitCount: 0,
         })
       }
-      const data = stateMap.get(s.state)!
+      const data = regionMap.get(regionCode)!
       data.orderCount++
+      data.deliveredCount++
+
+      // Detect misordered timeline: label was backfilled after carrier already scanned
+      // regionalMile < 0 means event_intransit happened before event_labeled
+      let hasValidTimeline = true
+      if (s.transitTimeDays != null && s.transitTimeDays > 0 && s.labelGenerationTimestamp && s.deliveredDate) {
+        const labelGen = new Date(s.labelGenerationTimestamp).getTime()
+        const delivered = new Date(s.deliveredDate).getTime()
+        const labelToDeliveryDays = (delivered - labelGen) / (1000 * 60 * 60 * 24)
+        if (labelToDeliveryDays - s.transitTimeDays < 0) {
+          hasValidTimeline = false
+        }
+      }
 
       // Shipped if label was generated
       if (s.labelGenerationTimestamp) {
         data.shippedCount++
+
+        // Fulfill Time: Order Import → Label Generated (hours) — skip misordered
+        if (s.orderInsertTimestamp && hasValidTimeline) {
+          const orderInsert = new Date(s.orderInsertTimestamp)
+          const labelGen = new Date(s.labelGenerationTimestamp)
+          const fulfillHours = (labelGen.getTime() - orderInsert.getTime()) / (1000 * 60 * 60)
+          if (fulfillHours >= 0) {
+            data.totalFulfillTimeHours += fulfillHours
+            data.fulfillTimeCount++
+          }
+        }
       }
 
-      // Delivered if has delivery date
-      if (s.deliveredDate) {
-        data.deliveredCount++
-
-        // Calculate time from order insert to delivery
+      // Order-to-Delivery Time: Order Import → Delivered (days) — skip misordered
+      if (s.orderInsertTimestamp && hasValidTimeline) {
         const orderInsert = new Date(s.orderInsertTimestamp)
-        const delivered = new Date(s.deliveredDate)
+        const delivered = new Date(s.deliveredDate!)
         const deliveryTimeDays = (delivered.getTime() - orderInsert.getTime()) / (1000 * 60 * 60 * 24)
-        data.totalDeliveryTime += deliveryTimeDays
-        data.deliveredWithTimeCount++
+        if (deliveryTimeDays >= 0) {
+          data.totalDeliveryTime += deliveryTimeDays
+          data.deliveredWithTimeCount++
+        }
+      }
+
+      // Carrier Transit Time: uses pre-computed transit_time_days (intransit → delivered)
+      if (s.transitTimeDays != null && s.transitTimeDays > 0) {
+        data.totalCarrierTransitDays += s.transitTimeDays
+        data.carrierTransitCount++
+
+        // Regional Mile: label → intransit = (label → delivered) - (intransit → delivered)
+        if (s.labelGenerationTimestamp && s.deliveredDate && hasValidTimeline) {
+          const labelGen = new Date(s.labelGenerationTimestamp).getTime()
+          const delivered = new Date(s.deliveredDate).getTime()
+          const labelToDeliveryDays = (delivered - labelGen) / (1000 * 60 * 60 * 24)
+          const regionalMileDays = labelToDeliveryDays - s.transitTimeDays
+          if (regionalMileDays >= 0) {
+            data.totalRegionalMileDays += regionalMileDays
+            data.regionalMileCount++
+          }
+        }
       }
     })
 
-  return Array.from(stateMap.entries())
-    .map(([state, data]) => ({
-      state,
-      stateName: STATE_NAMES[state] || state,
+  return Array.from(regionMap.entries())
+    .map(([regionCode, data]) => ({
+      state: regionCode,
+      stateName: getRegionName(regionCode, countryCode) || STATE_NAMES[regionCode] || regionCode,
       orderCount: data.orderCount,
       shippedCount: data.shippedCount,
       deliveredCount: data.deliveredCount,
       avgDeliveryTimeDays: data.deliveredWithTimeCount > 0
         ? data.totalDeliveryTime / data.deliveredWithTimeCount
+        : 0,
+      avgFulfillTimeHours: data.fulfillTimeCount > 0
+        ? data.totalFulfillTimeHours / data.fulfillTimeCount
+        : 0,
+      avgRegionalMileDays: data.regionalMileCount > 0
+        ? data.totalRegionalMileDays / data.regionalMileCount
+        : 0,
+      avgCarrierTransitDays: data.carrierTransitCount > 0
+        ? data.totalCarrierTransitDays / data.carrierTransitCount
         : 0,
       shippedPercent: data.orderCount > 0
         ? (data.shippedCount / data.orderCount) * 100
@@ -923,7 +1002,7 @@ export function aggregateShipOptionPerformance(
       data.totalCost += s.fulfillmentWithoutSurcharge + s.surchargeApplied
       data.orderCount++
 
-      if (s.transitTimeDays !== null && s.transitTimeDays > 0) {
+      if (s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null) {
         data.totalTransitTime += s.transitTimeDays
         data.transitTimeCount++
       }
@@ -959,7 +1038,7 @@ export function aggregateCostVsTransit(
 
   shipments
     .filter(s => isWithinDateRange(s.transactionDate, dateRange))
-    .filter(s => s.transitTimeDays !== null && s.transitTimeDays > 0)
+    .filter(s => s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null)
     .forEach(s => {
       const key = `${s.carrier}|${s.carrierService}`
 
@@ -976,11 +1055,8 @@ export function aggregateCostVsTransit(
       const data = serviceMap.get(key)!
       data.totalCost += s.fulfillmentWithoutSurcharge + s.surchargeApplied
       data.orderCount++
-
-      if (s.transitTimeDays !== null && s.transitTimeDays > 0) {
-        data.totalTransitTime += s.transitTimeDays
-        data.transitTimeCount++
-      }
+      data.totalTransitTime += s.transitTimeDays!
+      data.transitTimeCount++
     })
 
   return Array.from(serviceMap.entries())
@@ -1008,7 +1084,7 @@ export function aggregateTransitTimeDistribution(
 
   shipments
     .filter(s => isWithinDateRange(s.transactionDate, dateRange))
-    .filter(s => s.transitTimeDays !== null && s.transitTimeDays > 0)
+    .filter(s => s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null)
     .forEach(s => {
       const carrier = s.carrier || 'Unknown'
 
@@ -1070,7 +1146,7 @@ export function aggregateCostSpeedTrend(
       data.totalCost += s.fulfillmentWithoutSurcharge + s.surchargeApplied
       data.orderCount++
 
-      if (s.transitTimeDays !== null && s.transitTimeDays > 0) {
+      if (s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null) {
         data.totalTransitTime += s.transitTimeDays
         data.transitTimeCount++
       }
@@ -1086,6 +1162,91 @@ export function aggregateCostSpeedTrend(
       orderCount: data.orderCount,
     }))
     .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+}
+
+/**
+ * Aggregates all 3 delivery speed metrics by day:
+ * - Fulfill Time (hours): order import → label generated
+ * - Order-to-Delivery (days): order import → delivered
+ * - Carrier Transit (days): uses transit_time_days (label → delivered)
+ */
+export function aggregateDeliverySpeedTrend(
+  shipments: ShipmentData[],
+  dateRange: DateRange
+): DeliverySpeedTrendData[] {
+  const dailyMap = new Map<string, {
+    fulfillTimes: number[]
+    orderToDeliveryTimes: number[]
+    carrierTransitTimes: number[]
+    orderCount: number
+  }>()
+
+  shipments
+    .filter(s => isWithinDateRange(s.transactionDate, dateRange))
+    .forEach(s => {
+      const day = s.transactionDate.split('T')[0]
+
+      if (!dailyMap.has(day)) {
+        dailyMap.set(day, {
+          fulfillTimes: [],
+          orderToDeliveryTimes: [],
+          carrierTransitTimes: [],
+          orderCount: 0,
+        })
+      }
+
+      const data = dailyMap.get(day)!
+      data.orderCount++
+
+      // Fulfill Time: order import → label generated (hours)
+      const orderInsert = new Date(s.orderInsertTimestamp)
+      const labelGen = new Date(s.labelGenerationTimestamp)
+      if (orderInsert.getTime() > 0 && labelGen.getTime() > 0) {
+        const fulfillHours = (labelGen.getTime() - orderInsert.getTime()) / (1000 * 60 * 60)
+        if (fulfillHours >= 0 && fulfillHours < 720) { // sanity: < 30 days
+          data.fulfillTimes.push(fulfillHours)
+        }
+      }
+
+      // Order-to-Delivery: order import → delivered (days)
+      if (s.deliveredDate) {
+        const delivered = new Date(s.deliveredDate)
+        if (delivered.getTime() > 0) {
+          const deliveryDays = (delivered.getTime() - orderInsert.getTime()) / (1000 * 60 * 60 * 24)
+          if (deliveryDays >= 0 && deliveryDays < 60) { // sanity: < 60 days
+            data.orderToDeliveryTimes.push(deliveryDays)
+          }
+        }
+      }
+
+      // Carrier Transit: transit_time_days (label → delivered) — only for delivered shipments
+      if (s.transitTimeDays !== null && s.transitTimeDays > 0 && s.transitTimeDays < 60 && s.deliveredDate !== null) {
+        data.carrierTransitTimes.push(s.transitTimeDays)
+      }
+    })
+
+  return Array.from(dailyMap.entries())
+    .map(([date, data]) => {
+      const avgFulfill = data.fulfillTimes.length > 0
+        ? data.fulfillTimes.reduce((sum, t) => sum + t, 0) / data.fulfillTimes.length
+        : 0
+      const avgOTD = data.orderToDeliveryTimes.length > 0
+        ? data.orderToDeliveryTimes.reduce((sum, t) => sum + t, 0) / data.orderToDeliveryTimes.length
+        : 0
+      const avgTransit = data.carrierTransitTimes.length > 0
+        ? data.carrierTransitTimes.reduce((sum, t) => sum + t, 0) / data.carrierTransitTimes.length
+        : 0
+
+      return {
+        date,
+        avgFulfillTimeHours: avgFulfill,
+        avgOrderToDeliveryDays: avgOTD,
+        avgCarrierTransitDays: avgTransit,
+        orderCount: data.orderCount,
+        deliveredCount: data.orderToDeliveryTimes.length,
+      }
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 }
 
 // Order Volume Analysis Aggregators
@@ -1528,7 +1689,7 @@ export function aggregateStateCostSpeed(
     const data = stateMap.get(state)!
     data.totalCost += s.originalInvoice
     data.count++
-    if (s.transitTimeDays !== null && s.transitTimeDays > 0) {
+    if (s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null) {
       data.totalTransit += s.transitTimeDays
       data.transitCount++
     }
@@ -1565,7 +1726,7 @@ export function aggregateCostByZone(
     const data = zoneMap.get(zone)!
     data.totalCost += s.originalInvoice
     data.count++
-    if (s.transitTimeDays !== null && s.transitTimeDays > 0) {
+    if (s.transitTimeDays !== null && s.transitTimeDays > 0 && s.deliveredDate !== null) {
       data.totalTransit += s.transitTimeDays
       data.transitCount++
     }

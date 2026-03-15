@@ -167,7 +167,7 @@ export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProp
                   {formatValue(metric === 'cost' ? stateData.avgCost : stateData.avgTransitTime)}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {metric === 'cost' ? 'Avg shipping cost' : 'Avg transit time'}
+                  {metric === 'cost' ? 'Avg shipping cost' : 'Avg final mile'}
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1.5 border-t text-xs">
                   <div>
@@ -176,7 +176,7 @@ export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProp
                   </div>
                   <div>
                     <div className="text-muted-foreground">
-                      {metric === 'cost' ? 'Avg Transit' : 'Avg Cost'}
+                      {metric === 'cost' ? 'Final Mile' : 'Avg Cost'}
                     </div>
                     <div className="font-semibold tabular-nums">
                       {metric === 'cost'

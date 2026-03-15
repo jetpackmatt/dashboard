@@ -36,6 +36,7 @@ export interface ShipmentData {
   transitTimeDays: number | null
   fcName: string
   orderCategory: string
+  fulfillmentStatus?: string
 }
 
 export interface AdditionalServiceData {
@@ -194,7 +195,7 @@ export interface ChartDataPoint {
 
 // Date Range Types
 
-export type DateRangePreset = '7d' | '30d' | '60d' | '90d' | '6mo' | '1yr' | 'custom'
+export type DateRangePreset = '14d' | '30d' | '60d' | '90d' | '6mo' | '1yr' | 'all' | 'custom'
 
 // Granularity for time-series charts based on date range
 export type ChartGranularity = 'daily' | 'weekly' | 'monthly'
@@ -202,7 +203,7 @@ export type ChartGranularity = 'daily' | 'weekly' | 'monthly'
 // Helper to determine appropriate granularity based on date range
 export function getGranularityForRange(preset: DateRangePreset): ChartGranularity {
   switch (preset) {
-    case '7d':
+    case '14d':
     case '30d':
       return 'daily'
     case '60d':
@@ -210,6 +211,7 @@ export function getGranularityForRange(preset: DateRangePreset): ChartGranularit
       return 'weekly'
     case '6mo':
     case '1yr':
+    case 'all':
     case 'custom':
     default:
       return 'monthly'
@@ -263,7 +265,10 @@ export interface StatePerformance {
   orderCount: number
   shippedCount: number
   deliveredCount: number
-  avgDeliveryTimeDays: number
+  avgDeliveryTimeDays: number       // Order Import → Delivered (days)
+  avgFulfillTimeHours: number       // Order Import → Label Generated (hours)
+  avgRegionalMileDays: number       // Label Generated → Carrier First Scan (days)
+  avgCarrierTransitDays: number     // Carrier First Scan → Delivered (days) — uses transit_time_days
   shippedPercent: number
   deliveredPercent: number
 }
@@ -315,6 +320,15 @@ export interface CostSpeedTrendData {
   avgCost: number
   avgTransitTime: number
   orderCount: number
+}
+
+export interface DeliverySpeedTrendData {
+  date: string
+  avgFulfillTimeHours: number
+  avgOrderToDeliveryDays: number
+  avgCarrierTransitDays: number
+  orderCount: number
+  deliveredCount: number
 }
 
 // Order Volume Analysis Types

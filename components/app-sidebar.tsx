@@ -46,16 +46,34 @@ const baseNavItems = [
     title: "Transactions",
     url: "/dashboard/transactions",
     icon: ListIcon,
-  },
-  {
-    title: "Delivery IQ",
-    url: "/dashboard/lookout",
-    icon: BinocularsIcon,
+    items: [
+      { title: "Unfulfilled", value: "unfulfilled" },
+      { title: "Shipments", value: "shipments" },
+      { title: "Additional Services", value: "additional-services" },
+      { title: "Returns", value: "returns" },
+      { title: "Receiving", value: "receiving" },
+      { title: "Storage", value: "storage" },
+      { title: "Credits", value: "credits" },
+    ],
   },
   {
     title: "Analytics",
     url: "/dashboard/analytics",
     icon: BarChartIcon,
+    items: [
+      { title: "Performance", value: "state-performance" },
+      { title: "Cost + Speed", value: "cost-speed" },
+      { title: "Order Volume", value: "order-volume" },
+      { title: "Carriers", value: "carriers-zones" },
+      { title: "Financials", value: "financials" },
+      { title: "Fulfillment", value: "sla" },
+      { title: "Undelivered", value: "undelivered" },
+    ],
+  },
+  {
+    title: "Delivery IQ",
+    url: "/dashboard/lookout",
+    icon: BinocularsIcon,
   },
   {
     title: "Invoices",
@@ -146,6 +164,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     title: "Admin",
     url: "/dashboard/admin",
     icon: ShieldIcon,
+    items: [
+      { title: "Markups", value: "markup" },
+      { title: "Invoicing", value: "invoicing" },
+      { title: "Brands", value: "brands" },
+      { title: "Disputes", value: "disputes" },
+      { title: "Orphans", value: "orphans" },
+      { title: "Sync Health", value: "sync-health" },
+      { title: "Warehouses", value: "warehouses" },
+      { title: "Care Team", value: "care-team" },
+      { title: "Commissions", value: "commissions" },
+      { title: "Delivery IQ", value: "delivery-iq" },
+    ],
   }
 
   // Build nav items based on user role
@@ -182,7 +212,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   // Dynamically set isActive based on current pathname
   const navMainWithActive = allNavItems.map((item) => ({
     ...item,
-    isActive: pathname === item.url || pathname.startsWith(item.url + '/'),
+    isActive: item.url === '/dashboard'
+      ? pathname === '/dashboard'
+      : pathname === item.url || pathname.startsWith(item.url + '/'),
   }))
 
   // Build navSecondary items with onClick handler for Submit a Claim
@@ -210,34 +242,24 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     <>
       <Sidebar collapsible="offcanvas" {...props}>
         <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                asChild
-                className="data-[slot=sidebar-menu-button]:!p-1.5"
-              >
-                <Link href="/dashboard" prefetch={false} className="flex items-center gap-2">
-                  {/* Render both logos, use CSS to show correct one based on theme class - no flash */}
-                  <Image
-                    src="/logos/jetpack-dark.svg"
-                    alt="Jetpack"
-                    width={120}
-                    height={30}
-                    className="h-[30px] w-[120px] -ml-[3px] dark:hidden"
-                    priority
-                  />
-                  <Image
-                    src="/logos/jetpack-light.svg"
-                    alt="Jetpack"
-                    width={121}
-                    height={33}
-                    className="h-[33px] w-[121px] -ml-[3px] hidden dark:block"
-                    priority
-                  />
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <Link href="/dashboard" prefetch={false} className="flex items-center px-2 py-1 transition-[filter] hover:brightness-75">
+            <Image
+              src="/logos/jetpack-dark.svg"
+              alt="Jetpack"
+              width={120}
+              height={30}
+              className="h-[30px] w-[120px] dark:hidden"
+              priority
+            />
+            <Image
+              src="/logos/jetpack-light.svg"
+              alt="Jetpack"
+              width={121}
+              height={33}
+              className="h-[33px] w-[121px] hidden dark:block"
+              priority
+            />
+          </Link>
         </SidebarHeader>
         <SidebarContent>
           <NavMain items={navMainWithActive} />

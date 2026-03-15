@@ -56,24 +56,18 @@
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
 
-    /* === SIDEBAR OPTIONS === */
-    /* Option A (original - neutral grey): */
-    /* --sidebar-background: 220 10% 93%; */
-    /* Option B (warm grey): */
-    /* --sidebar-background: 30 15% 93%; */
-    /* Option C (slight blue tint - ACTIVE): */
-    --sidebar-background: 217 20% 94%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
+    /* Sidebar - subtle blue tint, edge-to-edge hover strips for clarity */
+    --sidebar-background: 217 20% 93%;
+    --sidebar-foreground: 217 15% 25%;
     --sidebar-primary: 217 85% 50%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217 25% 95%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 217 20% 90%;
+    --sidebar-accent: 217 25% 90%;
+    --sidebar-accent-foreground: 217 15% 12%;
+    --sidebar-border: 217 20% 88%;
     --sidebar-ring: 217 85% 50%;
     /* Interface surfaces - tab bars, sticky headers, etc. */
-    --surface: 217 20% 98%;
-    --surface-elevated: 217 25% 95%;
+    --surface: 217 20% 96%;
+    --surface-elevated: 217 25% 93%;
   }
   .dark {
     /* Dark background - neutral grey with subtle cool undertone */
@@ -120,14 +114,14 @@
     --chart-4: 280 70% 60%;
     --chart-5: 340 80% 60%;
 
-    /* Sidebar - slightly lighter for softer visual hierarchy */
-    --sidebar-background: 220 8% 6%;
-    --sidebar-foreground: 220 8% 65%;
+    /* Sidebar - deep with clear hover/active hierarchy */
+    --sidebar-background: 220 12% 7%;
+    --sidebar-foreground: 220 10% 68%;
     --sidebar-primary: 217 91% 60%;
     --sidebar-primary-foreground: 220 12% 8%;
-    --sidebar-accent: 220 8% 14%;
-    --sidebar-accent-foreground: 220 10% 82%;
-    --sidebar-border: 220 8% 14%;
+    --sidebar-accent: 220 10% 15%;
+    --sidebar-accent-foreground: 220 10% 88%;
+    --sidebar-border: 220 8% 16%;
     --sidebar-ring: 217 91% 60%;
 
     /* Interface surfaces - tab bars, sticky headers, etc. */

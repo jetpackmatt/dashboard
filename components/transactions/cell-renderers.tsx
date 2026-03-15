@@ -1773,12 +1773,61 @@ export interface AdditionalService {
   id: string
   clientId?: string
   referenceId: string
+  referenceType: string
   feeType: string
   charge: number
   transactionDate: string
   invoiceNumber: string
   invoiceDate: string
   status: string
+}
+
+// Factory: creates cell renderers with shipment click callback
+export function createAdditionalServicesCellRenderers(
+  onShipmentClick?: (shipmentId: string) => void
+): Record<string, CellRenderer<AdditionalService>> {
+  return {
+    ...additionalServicesCellRenderers,
+    referenceId: (row) => {
+      const isShipment = row.referenceType === 'Shipment' && !!row.referenceId
+      const handleCopy = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        navigator.clipboard.writeText(row.referenceId)
+        toast.success("Reference ID copied")
+      }
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (isShipment && onShipmentClick) {
+          onShipmentClick(row.referenceId)
+        }
+      }
+      return (
+        <div className="group/cell flex items-center gap-1.5">
+          {isShipment && onShipmentClick ? (
+            <span
+              onClick={handleClick}
+              className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+            >
+              {row.referenceId}
+            </span>
+          ) : (
+            <span className="truncate">{row.referenceId || '-'}</span>
+          )}
+          {row.referenceId && (
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
+              title="Copy Reference ID"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )
+    },
+  }
 }
 
 export const additionalServicesCellRenderers: Record<string, CellRenderer<AdditionalService>> = {
@@ -1971,6 +2020,56 @@ export const returnsCellRenderers: Record<string, CellRenderer<Return>> = {
       <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
+}
+
+export function createReturnsCellRenderers(
+  onShipmentClick?: (shipmentId: string) => void
+): Record<string, CellRenderer<Return>> {
+  return {
+    ...returnsCellRenderers,
+    originalShipmentId: (row) => {
+      const handleCopy = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        navigator.clipboard.writeText(row.originalShipmentId)
+        toast.success("Shipment ID copied")
+      }
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (onShipmentClick) {
+          onShipmentClick(row.originalShipmentId)
+        }
+      }
+      return (
+        <div className="group/cell flex items-center gap-1.5">
+          {row.originalShipmentId ? (
+            <>
+              {onShipmentClick ? (
+                <span
+                  onClick={handleClick}
+                  className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+                >
+                  {row.originalShipmentId}
+                </span>
+              ) : (
+                <span className="truncate">{row.originalShipmentId}</span>
+              )}
+              <button
+                onClick={handleCopy}
+                className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover/cell:opacity-100"
+                title="Copy Shipment ID"
+              >
+                <CopyIcon className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </div>
+      )
+    },
+  }
 }
 
 // ============================================
@@ -2176,6 +2275,7 @@ export interface Credit {
   id: string
   clientId?: string
   referenceId: string
+  referenceType: string
   transactionDate: string
   sbTicketReference: string
   creditInvoiceNumber: string
@@ -2254,6 +2354,53 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
       <span className="whitespace-nowrap">{formatDateFixed(row.invoiceDate)}</span>
     ) : <PendingBadge />
   ),
+}
+
+export function createCreditsCellRenderers(
+  onShipmentClick?: (shipmentId: string) => void
+): Record<string, CellRenderer<Credit>> {
+  return {
+    ...creditsCellRenderers,
+    referenceId: (row) => {
+      const isShipment = row.referenceType === 'Shipment' && !!row.referenceId
+      const handleCopy = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        navigator.clipboard.writeText(row.referenceId)
+        toast.success("Reference ID copied")
+      }
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (isShipment && onShipmentClick) {
+          onShipmentClick(row.referenceId)
+        }
+      }
+      return (
+        <div className="group/cell flex items-center gap-1.5">
+          {isShipment && onShipmentClick ? (
+            <span
+              onClick={handleClick}
+              className="truncate text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+            >
+              {row.referenceId}
+            </span>
+          ) : (
+            <span>{row.referenceId || '-'}</span>
+          )}
+          {row.referenceId && (
+            <button
+              onClick={handleCopy}
+              className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
+              title="Copy Reference ID"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )
+    },
+  }
 }
 
 // ============================================

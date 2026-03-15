@@ -99,6 +99,7 @@ export async function GET(request: NextRequest) {
         id: row.id,
         clientId: row.client_id,
         referenceId: String(row.reference_id || ''),
+        referenceType: String(row.reference_type || ''),
         transactionDate: row.charge_date,
         sbTicketReference: String(details.TicketReference || ''),
         creditInvoiceNumber: row.invoice_id_jp?.toString() || '',

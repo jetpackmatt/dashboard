@@ -5,7 +5,8 @@ import { DateRange } from "react-day-picker"
 
 import { CREDITS_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable, PrefixColumn } from "./transactions-table"
-import { Credit, creditsCellRenderers } from "./cell-renderers"
+import { Credit, createCreditsCellRenderers } from "./cell-renderers"
+import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
@@ -45,6 +46,20 @@ export function CreditsTable({
   // Check if admin/care viewing all clients (for client badge prefix column)
   const { effectiveIsAdmin, effectiveIsCareUser, selectedClientId } = useClient()
   const showClientBadge = (effectiveIsAdmin || effectiveIsCareUser) && !selectedClientId
+
+  // Shipment details drawer state
+  const [selectedShipmentId, setSelectedShipmentId] = React.useState<string | null>(null)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
+
+  const handleShipmentClick = React.useCallback((shipmentId: string) => {
+    setSelectedShipmentId(shipmentId)
+    setDrawerOpen(true)
+  }, [])
+
+  const cellRenderers = React.useMemo(
+    () => createCreditsCellRenderers(handleShipmentClick),
+    [handleShipmentClick]
+  )
 
   // Convert "all" to undefined for API
   const effectiveReasonFilter = creditReasonFilter === "all" ? undefined : creditReasonFilter
@@ -209,27 +224,34 @@ export function CreditsTable({
     : undefined
 
   return (
-    <TransactionsTable
-      config={CREDITS_TABLE_CONFIG}
-      data={data}
-      cellRenderers={creditsCellRenderers}
-      getRowKey={(row) => row.id.toString()}
-      isLoading={isLoading}
-      isPageLoading={isPageLoading}
-      totalCount={totalCount}
-      pageIndex={pageIndex}
-      pageSize={pageSize}
-      onPageChange={handlePageChange}
-      userColumnVisibility={userColumnVisibility}
-      columnOrder={columnOrder}
-      onColumnOrderChange={onColumnOrderChange}
-      emptyMessage="No credits found."
-      itemName="credits"
-      integratedHeader={true}
-      prefixColumn={clientBadgePrefixColumn}
-      sortField={sortField}
-      sortDirection={sortDirection}
-      onSortChange={handleSortChange}
-    />
+    <>
+      <TransactionsTable
+        config={CREDITS_TABLE_CONFIG}
+        data={data}
+        cellRenderers={cellRenderers}
+        getRowKey={(row) => row.id.toString()}
+        isLoading={isLoading}
+        isPageLoading={isPageLoading}
+        totalCount={totalCount}
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        onPageChange={handlePageChange}
+        userColumnVisibility={userColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={onColumnOrderChange}
+        emptyMessage="No credits found."
+        itemName="credits"
+        integratedHeader={true}
+        prefixColumn={clientBadgePrefixColumn}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
+      />
+      <ShipmentDetailsDrawer
+        shipmentId={selectedShipmentId}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
+    </>
   )
 }

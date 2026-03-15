@@ -1301,7 +1301,7 @@ export function DataTable({
       onValueChange={handleTabChange}
     >
         {/* Sticky header with controls */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted dark:bg-zinc-900 rounded-t-xl font-roboto text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + Export + Columns (right) */}
           <div className="px-4 lg:px-6 py-[19.5px] flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}

@@ -55,10 +55,17 @@ export default function TransactionsPage() {
   const router = useRouter()
   const pathname = usePathname()
 
-  // Tab state - initialized from URL or default to "shipments"
+  // Tab state - synced from URL param
   const tabFromUrl = searchParams.get("tab")
-  const initialTab = isValidTab(tabFromUrl) ? tabFromUrl : "shipments"
-  const [currentTab, setCurrentTab] = React.useState<TabValue>(initialTab)
+  const resolvedTab = isValidTab(tabFromUrl) ? tabFromUrl : "shipments"
+  const [currentTab, setCurrentTab] = React.useState<TabValue>(resolvedTab)
+
+  // Sync tab state when URL param changes (e.g. sidebar nav click)
+  React.useEffect(() => {
+    if (resolvedTab !== currentTab) {
+      setCurrentTab(resolvedTab)
+    }
+  }, [resolvedTab])
 
   // Handle tab change - update state and URL
   const handleTabChange = React.useCallback((newTab: string) => {

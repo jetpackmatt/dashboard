@@ -923,7 +923,7 @@ export default function CarePage() {
         )}
 
         {/* Sticky header with filter bar */}
-        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted/60 dark:bg-zinc-900/60 rounded-t-xl font-roboto text-xs">
+        <div className="sticky top-0 z-20 -mx-4 lg:-mx-6 bg-muted dark:bg-zinc-900 rounded-t-xl font-roboto text-xs">
           {/* Controls row: Search + Date Range (left) | Filters + New Ticket + Columns (right) */}
           <div className="px-4 lg:px-6 py-[19.5px] flex items-center justify-between gap-4">
             {/* LEFT SIDE: Search + Date Range */}
@@ -1230,7 +1230,7 @@ export default function CarePage() {
                       items={orderedDraggableColumns.map(c => c.id)}
                       strategy={horizontalListSortingStrategy}
                     >
-                      <tr className={cn("h-[45px] bg-muted/60 dark:bg-zinc-900/60 transition-opacity duration-200", expandedRowId ? 'opacity-30' : 'opacity-100')}>
+                      <tr className={cn("h-[45px] bg-muted dark:bg-zinc-900 transition-opacity duration-200", expandedRowId ? 'opacity-30' : 'opacity-100')}>
                         {/* Fixed columns - NOT wrapped in SortableHeader */}
                         {/* Client column - only visible for admins viewing all clients */}
                         {columnVisibility.client && canViewAllBrands && !selectedClientId && (

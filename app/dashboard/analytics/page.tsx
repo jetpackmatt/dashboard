@@ -3,14 +3,9 @@
 export const dynamic = 'force-dynamic'
 
 import * as React from "react"
-import { useDeferredValue } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { format } from "date-fns"
-import {
-  CalendarIcon,
-  DownloadIcon,
-  ChevronDownIcon,
-} from "lucide-react"
+import { DownloadIcon } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Area,
@@ -31,20 +26,20 @@ import {
 } from "recharts"
 
 import { SiteHeader } from "@/components/site-header"
-import { USStateMap } from "@/components/analytics/us-state-map"
+import { Separator } from "@/components/ui/separator"
+import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
+import { PerformanceMap } from "@/components/analytics/performance-map"
+import { COUNTRY_CONFIGS } from "@/lib/analytics/geo-config"
 import { StateDetailsPanel } from "@/components/analytics/state-details-panel"
 import { StateVolumeDetailsPanel } from "@/components/analytics/state-volume-details-panel"
 import { NationalVolumeOverviewPanel } from "@/components/analytics/national-volume-overview-panel"
 import { NationalPerformanceOverviewPanel } from "@/components/analytics/national-performance-overview-panel"
 import { LayeredVolumeHeatMap } from "@/components/analytics/layered-volume-heat-map"
 import { CostSpeedStateMap } from "@/components/analytics/cost-speed-state-map"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   ChartContainer,
   ChartTooltip,
@@ -52,48 +47,70 @@ import {
   ChartLegend,
   ChartLegendContent,
 } from "@/components/ui/chart"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import { sampleShipments, sampleAdditionalServices } from "@/lib/analytics/sample-data"
-import {
-  getDateRangeFromPreset,
-  calculateKPIs,
-  calculateSLAMetrics,
-  aggregateCarrierPerformance,
-  aggregateStatePerformance,
-  aggregateFulfillmentTrend,
-  aggregateFCFulfillmentMetrics,
-  aggregateCostTrend,
-  aggregateShipOptionPerformance,
-  aggregateTransitTimeDistribution,
-  aggregateOrderVolumeByHour,
-  aggregateOrderVolumeByDayOfWeek,
-  aggregateOrderVolumeByFC,
-  aggregateOrderVolumeByStore,
-  aggregateDailyOrderVolume,
-  aggregateStateVolume,
-  aggregateCityVolumeByState,
-  aggregateCityVolume,
-  aggregateStateCostSpeed,
-  aggregateCostByZone,
-  // Billing aggregators
-  calculateBillingSummary,
-  calculateBillingCategoryBreakdown,
-  calculateBillingTrend,
-  calculatePickPackDistribution,
-  calculateCostPerOrderTrend,
-  calculateShippingCostByZone,
-  calculateAdditionalServicesBreakdown,
-  calculateBillingEfficiencyMetrics,
-  // Undelivered aggregators
-  getUndeliveredShipments,
-  getUndeliveredSummary,
-  getUndeliveredByCarrier,
-  getUndeliveredByStatus,
-  getUndeliveredByAge,
-} from "@/lib/analytics/aggregators"
-import type { DateRangePreset, StateVolumeData, CityVolumeData, ZipCodeVolumeData } from "@/lib/analytics/types"
+import { useClient } from "@/components/client-context"
+import type {
+  SLAMetrics,
+  DateRangePreset,
+  StateVolumeData,
+  CityVolumeData,
+  ZipCodeVolumeData,
+  StatePerformance,
+  KPIMetrics,
+  CostTrendData,
+  DeliverySpeedTrendData,
+  ShipOptionPerformanceData,
+  TransitTimeDistributionData,
+  StateCostSpeedData,
+  ZoneCostData,
+  OrderVolumeByHour,
+  OrderVolumeByDayOfWeek,
+  OrderVolumeByFC,
+  OrderVolumeByStore,
+  DailyOrderVolume,
+  CarrierPerformance,
+  BillingSummary,
+  BillingCategoryBreakdown,
+  MonthlyBillingTrend,
+  PickPackDistribution,
+  CostPerOrderTrend,
+  ShippingCostByZone,
+  AdditionalServicesBreakdown,
+  BillingEfficiencyMetrics,
+  FulfillmentTrendData,
+  FCFulfillmentMetrics,
+  UndeliveredShipment,
+  UndeliveredSummary,
+  UndeliveredByCarrier,
+  UndeliveredByStatus,
+  UndeliveredByAge,
+} from "@/lib/analytics/types"
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
+import { getDateRangeFromPreset } from "@/lib/analytics/aggregators"
 
+
+const ANALYTICS_TABS = [
+  { value: "state-performance", label: "Performance" },
+  { value: "cost-speed", label: "Cost + Speed" },
+  { value: "order-volume", label: "Order Volume" },
+  { value: "carriers-zones", label: "Carriers + Zones" },
+  { value: "financials", label: "Financials" },
+  { value: "sla", label: "Fulfillment SLAs" },
+  { value: "undelivered", label: "Undelivered" },
+]
+
+const DATE_RANGE_PRESETS = [
+  { value: '14d', label: '14 Days' },
+  { value: '30d', label: '30 Days' },
+  { value: '60d', label: '60 Days' },
+  { value: '90d', label: '90 Days' },
+  { value: '6mo', label: '6 Months' },
+  { value: '1yr', label: '1 Year' },
+  { value: 'all', label: 'All Time' },
+  { value: 'custom', label: 'Custom' },
+]
 
 export default function AnalyticsPage() {
   const router = useRouter()
@@ -105,30 +122,40 @@ export default function AnalyticsPage() {
     setIsMounted(true)
   }, [])
 
+  // Client context for brand filtering
+  const { selectedClientId } = useClient()
+
+  // Pre-aggregated analytics data from server
+  const [analyticsData, setAnalyticsData] = React.useState<any>(null)
+  const [isLoadingData, setIsLoadingData] = React.useState(false)
+  const [dataError, setDataError] = React.useState<string | null>(null)
 
   // Initialize active tab from URL or default to 'state-performance'
   const [activeTab, setActiveTab] = React.useState(() => {
     return searchParams.get('tab') || 'state-performance'
   })
 
+  // Sync tab state when URL search params change (e.g. sidebar link navigation)
+  React.useEffect(() => {
+    const tabFromUrl = searchParams.get('tab')
+    if (tabFromUrl && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl)
+    }
+  }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const [dateRange, setDateRange] = React.useState<DateRangePreset>('30d')
-  // Committed custom range - only updated when user completes a valid selection
+  // Custom date range for InlineDateRangePicker
   const [customDateRange, setCustomDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({
     from: undefined,
     to: undefined,
   })
-  // Picker range - temporary state for the calendar, always starts fresh when opening
-  const [pickerDateRange, setPickerDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({
-    from: undefined,
-    to: undefined,
-  })
-  const [isCustomRangeOpen, setIsCustomRangeOpen] = React.useState(false)
 
-  // Deferred date values for heavy calculations - calendar updates instantly, charts update in background
-  const deferredDateRange = useDeferredValue(dateRange)
-  const deferredCustomDateRange = useDeferredValue(customDateRange)
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
+  const [selectedCountry, setSelectedCountry] = React.useState('US')
   const [selectedVolumeState, setSelectedVolumeState] = React.useState<string | null>(null)
+
+  // Delay exclusion toggle — default: exclude delayed orders from averages
+  const [includeDelayedOrders, setIncludeDelayedOrders] = React.useState(false)
 
   // SLA-specific filters
   const [selectedFulfillmentCenters, setSelectedFulfillmentCenters] = React.useState<string[]>([])
@@ -138,104 +165,124 @@ export default function AnalyticsPage() {
   // Calculate real KPI data from sample shipments
   // Uses deferred values so calendar UI updates instantly while charts calculate in background
   const currentDateRange = React.useMemo(() => {
-    if (deferredDateRange === 'custom' && deferredCustomDateRange.from && deferredCustomDateRange.to) {
+    if (dateRange === 'custom' && customDateRange.from && customDateRange.to) {
       return {
-        from: deferredCustomDateRange.from,
-        to: deferredCustomDateRange.to,
+        from: customDateRange.from,
+        to: customDateRange.to,
         preset: 'custom' as DateRangePreset,
       }
     }
-    return getDateRangeFromPreset(deferredDateRange)
-  }, [deferredDateRange, deferredCustomDateRange])
-  const previousDateRange = React.useMemo(() => {
-    const daysMap: Record<string, number> = { '7d': 7, '30d': 30, '60d': 60, '90d': 90, '6mo': 182, '1yr': 365 }
-    const days = daysMap[deferredDateRange] || 30
-    const from = new Date(currentDateRange.from)
-    from.setDate(from.getDate() - days)
-    const to = new Date(currentDateRange.from)
-    to.setDate(to.getDate() - 1)
-    return { from, to, preset: deferredDateRange }
-  }, [currentDateRange, deferredDateRange])
+    return getDateRangeFromPreset(dateRange)
+  }, [dateRange, customDateRange])
+  // Previous date range is now computed server-side for period-over-period comparisons
 
-  const kpiData = React.useMemo(() =>
-    calculateKPIs(
-      sampleShipments,
-      [],
-      [],
-      [],
-      [],
-      [],
-      currentDateRange,
-      previousDateRange
-    ),
-    [currentDateRange, previousDateRange]
-  )
+  // Fetch pre-aggregated data from server when client, date range, or country changes
+  React.useEffect(() => {
+    if (!isMounted || !selectedClientId || selectedClientId === 'all') {
+      setAnalyticsData(null)
+      setIsLoadingData(false)
+      return
+    }
 
-  // Calculate SLA metrics for current period
-  const slaMetrics = React.useMemo(() => {
-    const filteredShipments = sampleShipments.filter(s =>
-      new Date(s.transactionDate) >= currentDateRange.from &&
-      new Date(s.transactionDate) <= currentDateRange.to
-    )
-    return calculateSLAMetrics(filteredShipments)
-  }, [currentDateRange])
+    let cancelled = false
 
-  // Calculate carrier performance
-  const carrierPerformance = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateCarrierPerformance(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+    async function fetchData() {
+      setIsLoadingData(true)
+      setAnalyticsData(null)
+      setDataError(null)
 
-  const statePerformance = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateStatePerformance(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+      const startDate = currentDateRange.from.toISOString().split('T')[0]
+      const endDate = currentDateRange.to.toISOString().split('T')[0]
+      const params = new URLSearchParams({
+        clientId: selectedClientId!,
+        startDate,
+        endDate,
+        datePreset: dateRange,
+        country: selectedCountry,
+      })
 
-  // Calculate fulfillment trend data
-  const fulfillmentTrendData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateFulfillmentTrend(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+      try {
+        const res = await fetch(`/api/data/analytics/tab-data?${params}`)
 
-  // Calculate FC fulfillment metrics
-  const fcFulfillmentMetrics = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateFCFulfillmentMetrics(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+        if (cancelled) return
 
-  // Cost + Speed Analysis data
-  const costTrendData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateCostTrend(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          setDataError(err.error || 'Failed to load analytics data')
+          setAnalyticsData(null)
+          setIsLoadingData(false)
+          return
+        }
 
-  // Calculate dynamic moving average window size based on date range
+        const data = await res.json()
+
+        if (cancelled) return
+
+        setAnalyticsData(data)
+      } catch (err) {
+        if (!cancelled) {
+          setDataError('Network error loading analytics data')
+          setAnalyticsData(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingData(false)
+        }
+      }
+    }
+
+    fetchData()
+    return () => { cancelled = true }
+  }, [isMounted, selectedClientId, currentDateRange, dateRange, selectedCountry])
+
+  // ── ALL DATA IS NOW PRE-AGGREGATED SERVER-SIDE ──
+  // No client-side aggregation needed. Data comes from /api/data/analytics/tab-data
+
+  // Helper: check if we have data loaded
+  const hasData = !!analyticsData
+
+  // === state-performance tab ===
+  // When includeDelayedOrders is toggled, swap to _withDelayed variants
+  const statePerformance: StatePerformance[] = React.useMemo(() => {
+    const raw = analyticsData?.statePerformance || []
+    if (!includeDelayedOrders) return raw
+    return raw.map((s: any) => ({
+      ...s,
+      avgDeliveryTimeDays: s.avgDeliveryTimeDaysWithDelayed ?? s.avgDeliveryTimeDays,
+      avgFulfillTimeHours: s.avgFulfillTimeHoursWithDelayed ?? s.avgFulfillTimeHours,
+      avgRegionalMileDays: (s.avgDeliveryTimeDaysWithDelayed ?? s.avgDeliveryTimeDays) > 0
+        ? Math.max(0, (s.avgDeliveryTimeDaysWithDelayed ?? s.avgDeliveryTimeDays) - (s.avgFulfillTimeHoursWithDelayed ?? s.avgFulfillTimeHours) / 24 - s.avgCarrierTransitDays)
+        : 0,
+    }))
+  }, [analyticsData?.statePerformance, includeDelayedOrders])
+
+  const delayImpact = analyticsData?.delayImpact || null
+
+  const kpiData: KPIMetrics = analyticsData?.kpis || {
+    totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0,
+    periodChange: { totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0 }
+  }
+
+  // === cost-speed tab ===
+  const costTrendData: CostTrendData[] = analyticsData?.costTrend || []
+
   const maWindowSize = React.useMemo(() => {
     const totalDays = Math.round(
       (currentDateRange.to.getTime() - currentDateRange.from.getTime()) / (1000 * 60 * 60 * 24)
     )
-    // Formula: ~1/5 of total days, min 1, max 30
     return Math.max(1, Math.min(30, Math.round(totalDays / 5)))
   }, [currentDateRange])
 
-  // Add dynamic moving average to cost trend data
   const costTrendDataWithMA = React.useMemo(() => {
     if (costTrendData.length === 0) return []
-
     return costTrendData.map((item, index) => {
-      // Calculate moving average for avgCostWithSurcharge
       const start = Math.max(0, index - maWindowSize + 1)
       const window = costTrendData.slice(start, index + 1)
       const movingAvg = window.reduce((sum, d) => sum + d.avgCostWithSurcharge, 0) / window.length
-
-      return {
-        ...item,
-        movingAverage: movingAvg,
-      }
+      return { ...item, movingAverage: movingAvg }
     })
   }, [costTrendData, maWindowSize])
 
-  // Calculate overall average cost for the timeframe
   const overallAvgCost = React.useMemo(() => {
     if (costTrendData.length === 0) return null
     const totalCost = costTrendData.reduce((sum, d) => sum + d.avgCostWithSurcharge * d.orderCount, 0)
@@ -243,22 +290,16 @@ export default function AnalyticsPage() {
     return totalOrders > 0 ? totalCost / totalOrders : null
   }, [costTrendData])
 
-  // Compute Y-axis domain and ticks for cost chart (10% bottom padding, 5% top padding, 4 ticks)
   const costYAxisConfig = React.useMemo(() => {
     if (costTrendData.length === 0) return { domain: [8, 9.5] as [number, number], ticks: [8, 8.5, 9, 9.5] }
-
     const allValues = costTrendData.flatMap(d => [d.avgCostBase, d.avgCostWithSurcharge])
     const minVal = Math.min(...allValues)
     const maxVal = Math.max(...allValues)
     const range = maxVal - minVal
-    const bottomPadding = range * 0.10 // 10% padding below
-    const topPadding = range * 0.05 // 5% padding above
-
-    // Round to nice values for domain
-    const domainMin = Math.floor((minVal - bottomPadding) * 20) / 20 // Round down to nearest 0.05
-    const domainMax = Math.ceil((maxVal + topPadding) * 20) / 20 // Round up to nearest 0.05
-
-    // Generate 4 evenly spaced ticks
+    const bottomPadding = range * 0.10
+    const topPadding = range * 0.05
+    const domainMin = Math.floor((minVal - bottomPadding) * 20) / 20
+    const domainMax = Math.ceil((maxVal + topPadding) * 20) / 20
     const tickRange = domainMax - domainMin
     const tickStep = tickRange / 3
     const ticks = [
@@ -267,44 +308,39 @@ export default function AnalyticsPage() {
       Math.round((domainMin + tickStep * 2) * 100) / 100,
       Math.round(domainMax * 100) / 100,
     ]
-
     return { domain: [domainMin, domainMax] as [number, number], ticks }
   }, [costTrendData])
 
-  const shipOptionPerformanceData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateShipOptionPerformance(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  const stateCostSpeedData: StateCostSpeedData[] = analyticsData?.stateCostSpeed || []
+  const zoneCostData: ZoneCostData[] = analyticsData?.zoneCost || []
+  const deliverySpeedTrendData: DeliverySpeedTrendData[] = React.useMemo(() => {
+    const raw = analyticsData?.deliverySpeedTrend || []
+    if (!includeDelayedOrders) return raw
+    return raw.map((d: any) => ({
+      ...d,
+      avgOrderToDeliveryDays: d.avgOrderToDeliveryDaysWithDelayed ?? d.avgOrderToDeliveryDays,
+      avgFulfillTimeHours: d.avgFulfillTimeHoursWithDelayed ?? d.avgFulfillTimeHours,
+    }))
+  }, [analyticsData?.deliverySpeedTrend, includeDelayedOrders])
+  const transitTimeDistributionData: TransitTimeDistributionData[] = analyticsData?.transitDistribution || []
+  const shipOptionPerformanceData: ShipOptionPerformanceData[] = analyticsData?.shipOptionPerformance || []
 
-  const transitTimeDistributionData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateTransitTimeDistribution(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // === order-volume tab ===
+  const orderVolumeByHour: OrderVolumeByHour[] = analyticsData?.volumeByHour || []
+  const orderVolumeByDayOfWeek: OrderVolumeByDayOfWeek[] = analyticsData?.volumeByDayOfWeek || []
+  const orderVolumeByFC: OrderVolumeByFC[] = analyticsData?.volumeByFC || []
+  const orderVolumeByStore: OrderVolumeByStore[] = analyticsData?.volumeByStore || []
+  const dailyOrderVolume: DailyOrderVolume[] = analyticsData?.dailyVolume || []
 
-  // Geography Cost + Speed data
-  const stateCostSpeedData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateStateCostSpeed(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // === carriers-zones tab ===
+  const carrierPerformance: CarrierPerformance[] = analyticsData?.carrierPerformance || []
 
-  const zoneCostData = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateCostByZone(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // === financials tab ===
+  const billingSummary: BillingSummary = analyticsData?.billingSummary || {
+    totalCost: 0, orderCount: 0, costPerOrder: 0, periodChange: { totalCost: 0, orderCount: 0, costPerOrder: 0 }
+  }
+  const billingCategoryBreakdown: BillingCategoryBreakdown[] = analyticsData?.billingCategoryBreakdown || []
 
-  // Billing Analytics data
-  const billingSummary = React.useMemo(() => {
-    if (!isMounted) return { totalCost: 0, orderCount: 0, costPerOrder: 0, periodChange: { totalCost: 0, orderCount: 0, costPerOrder: 0 } }
-    return calculateBillingSummary(sampleShipments, currentDateRange, previousDateRange)
-  }, [isMounted, currentDateRange, previousDateRange])
-
-  const billingCategoryBreakdown = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculateBillingCategoryBreakdown(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  // Calculate billing granularity based on selected date range
-  // For custom ranges, calculate based on actual number of days
   const billingGranularity = React.useMemo(() => {
     if (dateRange === 'custom' && customDateRange.from && customDateRange.to) {
       const days = Math.round((customDateRange.to.getTime() - customDateRange.from.getTime()) / (1000 * 60 * 60 * 24))
@@ -315,183 +351,89 @@ export default function AnalyticsPage() {
     return getGranularityForRange(dateRange as any)
   }, [dateRange, customDateRange])
 
-  const billingTrendData = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculateBillingTrend(sampleShipments, currentDateRange, billingGranularity)
-  }, [isMounted, currentDateRange, billingGranularity])
+  const billingTrendData: MonthlyBillingTrend[] = analyticsData?.billingTrend || []
+  const pickPackDistribution: PickPackDistribution[] = analyticsData?.pickPackDistribution || []
+  const costPerOrderTrend: CostPerOrderTrend[] = analyticsData?.costPerOrderTrend || []
+  const shippingCostByZone: ShippingCostByZone[] = analyticsData?.shippingCostByZone || []
+  const additionalServicesBreakdown: AdditionalServicesBreakdown[] = analyticsData?.additionalServicesBreakdown || []
+  const billingEfficiencyMetrics: BillingEfficiencyMetrics = analyticsData?.billingEfficiency ?? {
+    costPerItem: 0, avgItemsPerOrder: 0, shippingAsPercentOfTotal: 0, surchargeRate: 0, insuranceRate: 0
+  }
 
-  const pickPackDistribution = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculatePickPackDistribution(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // === sla tab ===
+  const slaMetrics = React.useMemo(() => {
+    if (!analyticsData?.slaMetrics) {
+      return { onTimePercent: 0, breachedCount: 0, totalShipments: 0, shipments: [] as SLAMetrics[] }
+    }
+    return {
+      onTimePercent: analyticsData.slaMetrics.onTimePercent,
+      breachedCount: analyticsData.slaMetrics.breachedCount,
+      totalShipments: analyticsData.slaMetrics.totalShipments,
+      shipments: [
+        ...(analyticsData.slaMetrics.breachedShipments || []),
+        ...(analyticsData.slaMetrics.onTimeShipments || []),
+      ] as SLAMetrics[],
+    }
+  }, [analyticsData?.slaMetrics])
 
-  const costPerOrderTrend = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculateCostPerOrderTrend(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  const fulfillmentTrendData: FulfillmentTrendData[] = React.useMemo(() => {
+    const raw = analyticsData?.fulfillmentTrend || []
+    if (!includeDelayedOrders) return raw
+    return raw.map((d: any) => ({
+      ...d,
+      avgFulfillmentHours: d.avgFulfillmentHoursWithDelayed ?? d.avgFulfillmentHours,
+      medianFulfillmentHours: d.avgFulfillmentHoursWithDelayed ?? d.medianFulfillmentHours,
+      p90FulfillmentHours: d.avgFulfillmentHoursWithDelayed ?? d.p90FulfillmentHours,
+    }))
+  }, [analyticsData?.fulfillmentTrend, includeDelayedOrders])
+  const fcFulfillmentMetrics: FCFulfillmentMetrics[] = analyticsData?.fcFulfillmentMetrics || []
 
-  const shippingCostByZone = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculateShippingCostByZone(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // === undelivered tab ===
+  const undeliveredSummary: UndeliveredSummary = analyticsData?.undeliveredSummary || {
+    totalUndelivered: 0, avgDaysInTransit: 0, criticalCount: 0, warningCount: 0, onTrackCount: 0, oldestDays: 0
+  }
+  const undeliveredByCarrier: UndeliveredByCarrier[] = analyticsData?.undeliveredByCarrier || []
+  const undeliveredByStatus: UndeliveredByStatus[] = analyticsData?.undeliveredByStatus || []
+  const undeliveredByAge: UndeliveredByAge[] = analyticsData?.undeliveredByAge || []
+  const undeliveredShipments: UndeliveredShipment[] = analyticsData?.undeliveredShipments || []
 
-  const additionalServicesBreakdown = React.useMemo(() => {
-    if (!isMounted) return []
-    return calculateAdditionalServicesBreakdown(sampleAdditionalServices, currentDateRange)
-  }, [isMounted, currentDateRange])
+  // Volume data from server (state + city volumes)
+  // City-by-state detail is derived client-side from the full city volume data
+  const volumeData = React.useMemo(() => {
+    if (!analyticsData) return { stateData: [] as StateVolumeData[], zipCodeData: [] as ZipCodeVolumeData[], cityData: [] as CityVolumeData[], calculatedFor: currentDateRange }
 
-  const billingEfficiencyMetrics = React.useMemo(() => {
-    if (!isMounted) return { costPerItem: 0, avgItemsPerOrder: 0, shippingAsPercentOfTotal: 0, surchargeRate: 0, insuranceRate: 0 }
-    return calculateBillingEfficiencyMetrics(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
+    const allCities = (analyticsData.cityVolume || []) as Array<CityVolumeData & { lon: number; lat: number }>
 
-  // Undelivered Shipments data (current state, not date-filtered)
-  const undeliveredSummary = React.useMemo(() => {
-    if (!isMounted) return { totalUndelivered: 0, avgDaysInTransit: 0, criticalCount: 0, warningCount: 0, onTrackCount: 0, oldestDays: 0 }
-    return getUndeliveredSummary(sampleShipments)
-  }, [isMounted])
-
-  const undeliveredByCarrier = React.useMemo(() => {
-    if (!isMounted) return []
-    return getUndeliveredByCarrier(sampleShipments)
-  }, [isMounted])
-
-  const undeliveredByStatus = React.useMemo(() => {
-    if (!isMounted) return []
-    return getUndeliveredByStatus(sampleShipments)
-  }, [isMounted])
-
-  const undeliveredByAge = React.useMemo(() => {
-    if (!isMounted) return []
-    return getUndeliveredByAge(sampleShipments)
-  }, [isMounted])
-
-  const undeliveredShipments = React.useMemo(() => {
-    if (!isMounted) return []
-    return getUndeliveredShipments(sampleShipments)
-  }, [isMounted])
-
-  // Order Volume Analysis data
-  const orderVolumeByHour = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateOrderVolumeByHour(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  const orderVolumeByDayOfWeek = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateOrderVolumeByDayOfWeek(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  const orderVolumeByFC = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateOrderVolumeByFC(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  const orderVolumeByStore = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateOrderVolumeByStore(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  const dailyOrderVolume = React.useMemo(() => {
-    if (!isMounted) return []
-    return aggregateDailyOrderVolume(sampleShipments, currentDateRange)
-  }, [isMounted, currentDateRange])
-
-  // Combine all volume data into a single state object to ensure atomic updates
-  // Include the date range this data was calculated for to prevent rendering stale data
-  const [volumeData, setVolumeData] = React.useState<{
-    stateData: StateVolumeData[]
-    zipCodeData: ZipCodeVolumeData[]
-    cityData: CityVolumeData[]
-    calculatedFor: { from: Date; to: Date } | null
-  }>({
-    stateData: [],
-    zipCodeData: [],
-    cityData: [],
-    calculatedFor: null
-  })
-
-  // Calculate all volume data atomically in a single effect
-  React.useEffect(() => {
-    if (!isMounted) {
-      setVolumeData({ stateData: [], zipCodeData: [], cityData: [], calculatedFor: null })
-      return
+    // Derive city-by-state from the full city volume data
+    let cityByState: CityVolumeData[] = []
+    if (selectedVolumeState) {
+      const stateCities = allCities.filter((c: any) => c.state === selectedVolumeState)
+      const totalInState = stateCities.reduce((sum: number, c: any) => sum + c.orderCount, 0)
+      cityByState = stateCities
+        .map((c: any) => ({
+          city: c.city,
+          state: c.state,
+          zipCode: c.zipCode || '',
+          orderCount: c.orderCount,
+          percent: totalInState > 0 ? (c.orderCount / totalInState) * 100 : 0,
+        }))
+        .sort((a: CityVolumeData, b: CityVolumeData) => b.orderCount - a.orderCount)
+        .slice(0, 10)
     }
 
-    try {
-      // Calculate state and city data together
-      // Using city-level aggregation for better scalability (works with 140k+ shipments)
-      const stateResult = aggregateStateVolume(sampleShipments, currentDateRange)
-      const cityResult = aggregateCityVolume(sampleShipments, currentDateRange)
-
-      // Calculate top cities for selected state (for drill-down view)
-      const stateCityResult = selectedVolumeState
-        ? aggregateCityVolumeByState(sampleShipments, currentDateRange, selectedVolumeState)
-        : []
-
-      // Update all data with the date range it was calculated for
-      // Note: Using cityResult as zipCodeData for backward compatibility with LayeredVolumeHeatMap
-      setVolumeData({
-        stateData: Array.isArray(stateResult) ? stateResult : [],
-        zipCodeData: Array.isArray(cityResult) ? cityResult : [], // City data with coordinates
-        cityData: Array.isArray(stateCityResult) ? stateCityResult : [],
-        calculatedFor: currentDateRange
-      })
-    } catch (error) {
-      console.error('Error aggregating volume data:', error)
-      setVolumeData({ stateData: [], zipCodeData: [], cityData: [], calculatedFor: null })
+    return {
+      stateData: (analyticsData.stateVolume || []) as StateVolumeData[],
+      zipCodeData: allCities as ZipCodeVolumeData[],
+      cityData: cityByState,
+      calculatedFor: currentDateRange,
     }
-  }, [isMounted, currentDateRange, selectedVolumeState])
+  }, [analyticsData, currentDateRange, selectedVolumeState])
 
-  // Generate daily on-time percentage trend data
-  const onTimeTrendData = React.useMemo(() => {
-    if (!isMounted) return []
-
-    const filteredShipments = sampleShipments.filter(s =>
-      new Date(s.transactionDate) >= currentDateRange.from &&
-      new Date(s.transactionDate) <= currentDateRange.to
-    )
-
-    // Group shipments by day
-    const dailyGroups = filteredShipments.reduce((acc, shipment) => {
-      const date = shipment.transactionDate
-      if (!acc[date]) {
-        acc[date] = []
-      }
-      acc[date].push(shipment)
-      return acc
-    }, {} as Record<string, typeof filteredShipments>)
-
-    // Calculate daily on-time percentages, filtering out days with too few shipments
-    const dailyData = Object.entries(dailyGroups)
-      .filter(([_, shipments]) => shipments.length >= 5) // Only include days with 5+ shipments
-      .map(([date, shipments]) => {
-        const slaResults = calculateSLAMetrics(shipments)
-        return {
-          date,
-          onTimePercent: Math.max(90, slaResults.onTimePercent), // Clamp to minimum 90%
-          shipmentCount: shipments.length,
-        }
-      })
-
-    // Sort by date
-    return dailyData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-  }, [isMounted, currentDateRange, sampleShipments])
+  // On-time trend data from server
+  const onTimeTrendData = analyticsData?.onTimeTrend || []
 
   // Y-axis domain - hardcoded to 90-100 for SLA chart
-  const yAxisDomain = React.useMemo(() => {
-    return [90, 100]
-  }, [])
-
-  // Date range options
-  const dateRangeOptions = [
-    { label: '7D', value: '7d' },
-    { label: '30D', value: '30d' },
-    { label: '60D', value: '60d' },
-    { label: '90D', value: '90d' },
-    { label: '6M', value: '6mo' },
-    { label: '1Y', value: '1yr' },
-  ]
+  const yAxisDomain = [90, 100]
 
   // Get human-readable label for selected date range
   const dateRangeDisplayLabel = React.useMemo(() => {
@@ -499,45 +441,29 @@ export default function AnalyticsPage() {
       return `${format(customDateRange.from, 'MMM d')} - ${format(customDateRange.to, 'MMM d, yyyy')}`
     }
     const labels: Record<string, string> = {
-      '7d': 'Last 7 Days',
+      '14d': 'Last 14 Days',
       '30d': 'Last 30 Days',
       '60d': 'Last 60 Days',
       '90d': 'Last 90 Days',
       '6mo': 'Last 6 Months',
-      '1yr': 'Last 12 Months',
+      '1yr': 'Last Year',
+      'all': 'All Time',
     }
     return labels[dateRange] || 'Last 30 Days'
   }, [dateRange, customDateRange])
 
-  // Handle custom range selection - picker state is separate from committed state
-  // Only commit to customDateRange and close when selection is complete
-  const handleCustomRangeSelect = (range: { from: Date | undefined; to: Date | undefined }) => {
-    // Update picker state for display
-    setPickerDateRange(range)
-
-    // If we have a complete range with both dates different, commit and close
-    if (range.from && range.to && range.from.getTime() !== range.to.getTime()) {
-      setCustomDateRange(range)
+  // Handle date preset change from Select dropdown
+  const handleDatePresetChange = (value: string) => {
+    if (value === 'custom') {
       setDateRange('custom' as DateRangePreset)
-      setIsCustomRangeOpen(false)
+    } else {
+      setDateRange(value as DateRangePreset)
+      setCustomDateRange({ from: undefined, to: undefined })
     }
   }
 
-  // Format custom range display
-  const customRangeLabel = React.useMemo(() => {
-    if (customDateRange.from && customDateRange.to) {
-      return `${format(customDateRange.from, 'MMM d')} - ${format(customDateRange.to, 'MMM d, yyyy')}`
-    }
-    return 'Custom Range'
-  }, [customDateRange])
-
-  // Check if volume data is current (matches the active date range)
-  // This prevents rendering with stale data during recalculation
-  const isVolumeDataCurrent = React.useMemo(() => {
-    return volumeData.calculatedFor &&
-      volumeData.calculatedFor.from.getTime() === currentDateRange.from.getTime() &&
-      volumeData.calculatedFor.to.getTime() === currentDateRange.to.getTime()
-  }, [volumeData.calculatedFor, currentDateRange])
+  // Volume data is always current since it comes pre-computed from the server
+  const isVolumeDataCurrent = hasData
 
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
@@ -550,310 +476,60 @@ export default function AnalyticsPage() {
   return (
     <>
       <SiteHeader sectionName="Analytics">
-        {(!isMounted || !isVolumeDataCurrent) && (
+        <Separator
+          orientation="vertical"
+          className="mx-1 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
+        />
+        <Select value={activeTab} onValueChange={handleTabChange}>
+          <SelectTrigger className="h-7 w-auto gap-1.5 border-0 bg-transparent px-2 text-base font-medium text-foreground hover:bg-accent focus:ring-0 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-50">
+            <SelectValue>{ANALYTICS_TABS.find(t => t.value === activeTab)?.label || "Performance"}</SelectValue>
+          </SelectTrigger>
+          <SelectContent align="start">
+            {ANALYTICS_TABS.map((tab) => (
+              <SelectItem key={tab.value} value={tab.value}>
+                {tab.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {(!isMounted || !isVolumeDataCurrent || isLoadingData) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
             <JetpackLoader size="md" />
             <span className="text-xs text-muted-foreground">Loading</span>
           </div>
         )}
       </SiteHeader>
-      <div className="flex flex-1 flex-col overflow-x-clip bg-background rounded-t-xl">
-        <div className="@container/main flex flex-1 flex-col w-full">
-          <div className="flex flex-col gap-4 w-full px-4 lg:px-6">
+      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
+        <div className="@container/main flex flex-1 flex-col w-full font-roboto">
+          <div className="flex flex-col w-full px-4 lg:px-6">
             {/* Tabs for Different Reports */}
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-              {/* Sticky Header: Tabs + Date Filter */}
-              <div className="sticky top-0 z-20 bg-surface pb-4 -mx-4 px-4 lg:-mx-6 lg:px-6 pt-4">
-                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-7 h-auto gap-1 bg-surface-elevated border border-border">
-                  <TabsTrigger value="state-performance" className="text-xs sm:text-sm">
-                    Performance by State
-                  </TabsTrigger>
-                  <TabsTrigger value="cost-speed" className="text-xs sm:text-sm">
-                    Cost + Speed
-                  </TabsTrigger>
-                  <TabsTrigger value="order-volume" className="text-xs sm:text-sm">
-                    Order Volume
-                  </TabsTrigger>
-                  <TabsTrigger value="carriers-zones" className="text-xs sm:text-sm">
-                    Carriers + Zones
-                  </TabsTrigger>
-                  <TabsTrigger value="financials" className="text-xs sm:text-sm">
-                    Financials
-                  </TabsTrigger>
-                  <TabsTrigger value="sla" className="text-xs sm:text-sm">
-                    Fulfillment SLAs
-                  </TabsTrigger>
-                  <TabsTrigger value="undelivered" className="text-xs sm:text-sm">
-                    Undelivered
-                  </TabsTrigger>
-                </TabsList>
+              {/* Top spacing */}
+              <div className="pt-5" />
 
-                {/* Shared Date Filter */}
-                <div className="flex items-center gap-2 mt-4 px-1">
-                  {/* Date Range Filter - Desktop (inline buttons) */}
-                  <div className="hidden lg:flex items-center gap-2">
-                    <span className="text-sm font-medium text-muted-foreground">Date:</span>
-                    <div className="inline-flex rounded-md border border-border overflow-hidden">
-                      {dateRangeOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => {
-                            setDateRange(option.value as any)
-                            setCustomDateRange({ from: undefined, to: undefined })
-                            setIsCustomRangeOpen(false)
-                          }}
-                          className={cn(
-                            "px-2.5 py-1 text-sm font-medium transition-all border-r border-border last:border-r-0",
-                            dateRange === option.value
-                              ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                              : "bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                      <Popover
-                        open={isCustomRangeOpen}
-                        onOpenChange={(open) => {
-                          if (open) {
-                            // Clear picker state when opening - always start fresh selection
-                            setPickerDateRange({ from: undefined, to: undefined })
-                            setIsCustomRangeOpen(true)
-                          } else {
-                            // Closing without completing - just close (customDateRange unchanged)
-                            setIsCustomRangeOpen(false)
-                          }
-                        }}
-                        modal={false}
-                      >
-                        <PopoverTrigger asChild>
-                          <button
-                            className={cn(
-                              "px-2.5 py-1 text-sm font-medium transition-all",
-                              dateRange === 'custom'
-                                ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
-                                : "bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
-                            )}
-                          >
-                            {dateRange === 'custom' ? customRangeLabel : 'Custom'}
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          className="w-auto p-3"
-                          align="start"
-                          onInteractOutside={(e) => e.preventDefault()}
-                          onPointerDownOutside={(e) => e.preventDefault()}
-                          onFocusOutside={(e) => e.preventDefault()}
-                        >
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium">Select Date Range</span>
-                            </div>
-                            {(pickerDateRange.from || pickerDateRange.to) && (
-                              <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
-                                <div className="flex-1 text-xs">
-                                  <span className="text-muted-foreground">From: </span>
-                                  <span className="font-medium">
-                                    {pickerDateRange.from ? format(pickerDateRange.from, 'MMM d, yyyy') : '—'}
-                                  </span>
-                                </div>
-                                <div className="flex-1 text-xs">
-                                  <span className="text-muted-foreground">To: </span>
-                                  <span className="font-medium">
-                                    {pickerDateRange.to ? format(pickerDateRange.to, 'MMM d, yyyy') : '—'}
-                                  </span>
-                                </div>
-                                <button
-                                  onClick={() => {
-                                    setPickerDateRange({ from: undefined, to: undefined })
-                                    setCustomDateRange({ from: undefined, to: undefined })
-                                    setDateRange('30d')
-                                    setIsCustomRangeOpen(false)
-                                  }}
-                                  className="px-2 py-1 text-xs bg-background hover:bg-muted rounded border text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                  Reset
-                                </button>
-                              </div>
-                            )}
-                            <div className="text-[11px] text-muted-foreground px-1">
-                              {pickerDateRange.from && !pickerDateRange.to
-                                ? "Click a date to select end date"
-                                : "Click a date to select start date"}
-                            </div>
-                            <Calendar
-                              mode="range"
-                              selected={{
-                                from: pickerDateRange.from,
-                                to: pickerDateRange.to,
-                              }}
-                              onSelect={(range) => handleCustomRangeSelect({ from: range?.from, to: range?.to })}
-                              numberOfMonths={2}
-                            />
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                  </div>
+              {/* Inline error / empty messages (loading handled by SiteHeader loader) */}
+              {!isLoadingData && dataError && (
+                <p className="text-sm text-destructive px-1">{dataError}</p>
+              )}
+              {!isLoadingData && !dataError && (!selectedClientId || selectedClientId === 'all') && (
+                <p className="text-sm text-muted-foreground px-1">Select a brand to view analytics.</p>
+              )}
+              {!isLoadingData && !dataError && selectedClientId && selectedClientId !== 'all' && !hasData && (
+                <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
+              )}
 
-                  {/* Date Range Filter - Mobile/Tablet (dropdown) */}
-                  <div className="lg:hidden">
-                    <Button variant="outline" size="sm" className="h-8"
-                      onClick={() => {
-                        // Simple mobile date picker - cycle through presets
-                        const presets = ['7d', '30d', '60d', '90d', '6mo', '1yr'] as const
-                        const currentIndex = presets.indexOf(dateRange as any)
-                        const nextIndex = (currentIndex + 1) % presets.length
-                        setDateRange(presets[nextIndex])
-                        setCustomDateRange({ from: undefined, to: undefined })
-                      }}
-                    >
-                      <CalendarIcon className="mr-1 h-4 w-4" />
-                      <span className="text-sm">{dateRangeOptions.find(o => o.value === dateRange)?.label || 'Date'}</span>
-                    </Button>
-                  </div>
-
-                  {/* Conditional Filters - Shown based on active tab */}
-                  {/* Fulfillment Center Filter - SLA, Undelivered tabs */}
-                  {(activeTab === 'sla' || activeTab === 'undelivered') && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-8">
-                          <span className="text-sm lg:hidden">FC</span>
-                          <span className="text-sm hidden lg:inline">Fulfillment Center</span>
-                          {selectedFulfillmentCenters.length > 0 && (
-                            <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
-                              {selectedFulfillmentCenters.length}
-                            </span>
-                          )}
-                          <ChevronDownIcon className="ml-1 h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-56" align="start">
-                        <div className="space-y-2">
-                          {['FC-East', 'FC-West', 'FC-Central', 'FC-South'].map((fc) => (
-                            <div key={fc} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`fc-header-${fc}`}
-                                checked={selectedFulfillmentCenters.includes(fc)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedFulfillmentCenters([...selectedFulfillmentCenters, fc])
-                                  } else {
-                                    setSelectedFulfillmentCenters(selectedFulfillmentCenters.filter(f => f !== fc))
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`fc-header-${fc}`}
-                                className="text-sm font-normal cursor-pointer"
-                              >
-                                {fc}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-
-                  {/* Order Type Filter - SLA tab */}
-                  {activeTab === 'sla' && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-8">
-                          <span className="text-sm lg:hidden">Type</span>
-                          <span className="text-sm hidden lg:inline">Order Type</span>
-                          {selectedOrderTypes.length > 0 && (
-                            <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
-                              {selectedOrderTypes.length}
-                            </span>
-                          )}
-                          <ChevronDownIcon className="ml-1 h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-40" align="start">
-                        <div className="space-y-2">
-                          {['D2C', 'B2C'].map((type) => (
-                            <div key={type} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`type-header-${type}`}
-                                checked={selectedOrderTypes.includes(type)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedOrderTypes([...selectedOrderTypes, type])
-                                  } else {
-                                    setSelectedOrderTypes(selectedOrderTypes.filter(t => t !== type))
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`type-header-${type}`}
-                                className="text-sm font-normal cursor-pointer"
-                              >
-                                {type}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-
-                  {/* Order Fulfilled Filter - SLA, Undelivered tabs */}
-                  {(activeTab === 'sla' || activeTab === 'undelivered') && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" size="sm" className="h-8">
-                          <span className="text-sm lg:hidden">Fulfilled?</span>
-                          <span className="text-sm hidden lg:inline">Order Fulfilled?</span>
-                          {selectedOrderFulfilled.length > 0 && (
-                            <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
-                              {selectedOrderFulfilled.length}
-                            </span>
-                          )}
-                          <ChevronDownIcon className="ml-1 h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-40" align="start">
-                        <div className="space-y-2">
-                          {['Yes', 'No'].map((status) => (
-                            <div key={status} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`fulfilled-header-${status}`}
-                                checked={selectedOrderFulfilled.includes(status)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedOrderFulfilled([...selectedOrderFulfilled, status])
-                                  } else {
-                                    setSelectedOrderFulfilled(selectedOrderFulfilled.filter(s => s !== status))
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`fulfilled-header-${status}`}
-                                className="text-sm font-normal cursor-pointer"
-                              >
-                                {status}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                </div>
-              </div>
+              {/* Tab content wrapper - greyed out during loading */}
+              <div className={isLoadingData ? "opacity-20 pointer-events-none" : ""}>
 
               {/* Tab 1: Financials */}
-              <TabsContent value="financials" className="space-y-7 mt-4">
+              <TabsContent value="financials" className="space-y-5 mt-0 px-1">
                 {/* Feature Row: Cost Breakdown + Summary Panel */}
                 <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
                   {/* Cost Breakdown - Stacked Area Chart */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-lg">{getGranularityLabel(billingGranularity)} Cost Breakdown</CardTitle>
-                      <CardDescription>All fee categories over time</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>{getGranularityLabel(billingGranularity)} Cost Breakdown</div></CardTitle>
+                      <CardDescription className="text-xs">All fee categories over time</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -999,8 +675,8 @@ export default function AnalyticsPage() {
                   {/* Summary Panel */}
                   <Card className="h-fit">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-lg">Period Summary</CardTitle>
-                      <CardDescription>{dateRangeDisplayLabel}</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Period Summary</div></CardTitle>
+                      <CardDescription className="text-xs">{dateRangeDisplayLabel}</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {/* Total Cost */}
@@ -1047,23 +723,23 @@ export default function AnalyticsPage() {
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">Cost per Item</span>
-                            <span className="font-medium tabular-nums">${billingEfficiencyMetrics.costPerItem.toFixed(2)}</span>
+                            <span className="font-medium tabular-nums">${(billingEfficiencyMetrics?.costPerItem ?? 0).toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">Avg Items/Order</span>
-                            <span className="font-medium tabular-nums">{billingEfficiencyMetrics.avgItemsPerOrder.toFixed(2)}</span>
+                            <span className="font-medium tabular-nums">{(billingEfficiencyMetrics?.avgItemsPerOrder ?? 0).toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">Shipping % of Total</span>
-                            <span className="font-medium tabular-nums">{billingEfficiencyMetrics.shippingAsPercentOfTotal.toFixed(1)}%</span>
+                            <span className="font-medium tabular-nums">{(billingEfficiencyMetrics?.shippingAsPercentOfTotal ?? 0).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">Orders w/ Surcharge</span>
-                            <span className="font-medium tabular-nums">{billingEfficiencyMetrics.surchargeRate.toFixed(1)}%</span>
+                            <span className="font-medium tabular-nums">{(billingEfficiencyMetrics?.surchargeRate ?? 0).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">Orders w/ Insurance</span>
-                            <span className="font-medium tabular-nums">{billingEfficiencyMetrics.insuranceRate.toFixed(1)}%</span>
+                            <span className="font-medium tabular-nums">{(billingEfficiencyMetrics?.insuranceRate ?? 0).toFixed(1)}%</span>
                           </div>
                         </div>
                       </div>
@@ -1076,8 +752,8 @@ export default function AnalyticsPage() {
                   {/* Cost Distribution Donut */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Cost Distribution</CardTitle>
-                      <CardDescription>Breakdown by category</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Cost Distribution</div></CardTitle>
+                      <CardDescription className="text-xs">Breakdown by category</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1152,8 +828,8 @@ export default function AnalyticsPage() {
                   {/* Pick/Pack Distribution */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Pick & Pack Distribution</CardTitle>
-                      <CardDescription>Orders by item count</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Pick & Pack Distribution</div></CardTitle>
+                      <CardDescription className="text-xs">Orders by item count</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1214,8 +890,8 @@ export default function AnalyticsPage() {
                   {/* Cost per Order Trend */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Cost per Order Trend</CardTitle>
-                      <CardDescription>Average cost over time</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Cost per Order Trend</div></CardTitle>
+                      <CardDescription className="text-xs">Average cost over time</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1288,8 +964,8 @@ export default function AnalyticsPage() {
                   {/* Shipping Cost by Zone */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Shipping Cost by Zone</CardTitle>
-                      <CardDescription>Zone-based shipping analysis</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Shipping Cost by Zone</div></CardTitle>
+                      <CardDescription className="text-xs">Zone-based shipping analysis</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1346,8 +1022,8 @@ export default function AnalyticsPage() {
                   {/* Additional Services Breakdown */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Additional Services Breakdown</CardTitle>
-                      <CardDescription>Breakdown of additional service fees</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Additional Services Breakdown</div></CardTitle>
+                      <CardDescription className="text-xs">Breakdown of additional service fees</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1420,10 +1096,10 @@ export default function AnalyticsPage() {
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle className="text-base">{getGranularityLabel(billingGranularity)} Fee Breakdown</CardTitle>
-                        <CardDescription>Detailed breakdown by category</CardDescription>
+                        <CardTitle className="text-sm font-medium"><div>{getGranularityLabel(billingGranularity)} Fee Breakdown</div></CardTitle>
+                        <CardDescription className="text-xs">Detailed breakdown by category</CardDescription>
                       </div>
-                      <Button variant="outline" size="sm" className="h-8">
+                      <Button variant="outline" size="sm" className="h-[30px] text-xs">
                         <DownloadIcon className="w-4 h-4 mr-1" />
                         Export
                       </Button>
@@ -1498,13 +1174,29 @@ export default function AnalyticsPage() {
               </TabsContent>
 
               {/* Tab 2: Cost & Speed Analysis */}
-              <TabsContent value="cost-speed" className="space-y-7 mt-7">
+              <TabsContent value="cost-speed" className="space-y-5 mt-0 px-1">
+                {/* Delay Impact Toggle */}
+                {delayImpact && delayImpact.affectedShipments > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-muted/30">
+                    <Switch
+                      id="delay-toggle-cs"
+                      checked={includeDelayedOrders}
+                      onCheckedChange={setIncludeDelayedOrders}
+                    />
+                    <Label htmlFor="delay-toggle-cs" className="text-xs font-medium cursor-pointer whitespace-nowrap">
+                      Include Inventory Delays
+                    </Label>
+                    <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
+                      {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%) orders
+                    </span>
+                  </div>
+                )}
                 {/* Average Cost over Time */}
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between">
                     <div>
-                      <CardTitle className="text-base">Average Cost over Time</CardTitle>
-                      <CardDescription>Average cost per order with and without surcharges</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Average Cost over Time</div></CardTitle>
+                      <CardDescription className="text-xs">Average cost per order with and without surcharges</CardDescription>
                     </div>
                     {overallAvgCost !== null && (
                       <div className="text-right">
@@ -1637,11 +1329,125 @@ export default function AnalyticsPage() {
                   </CardContent>
                 </Card>
 
-                {/* Geography: Cost + Transit by State */}
+                {/* Delivery Speed Trends - All 3 Time Metrics */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm font-medium"><div>Delivery Speed Trends</div></CardTitle>
+                    <CardDescription className="text-xs">All three time metrics over the selected period</CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                    <ChartContainer
+                      config={{
+                        avgOrderToDeliveryDays: {
+                          label: "Order-to-Delivery",
+                          color: "#328bcb",
+                        },
+                        avgCarrierTransitDays: {
+                          label: "Final Mile Carrier",
+                          color: "#ec9559",
+                        },
+                        avgFulfillTimeHours: {
+                          label: "Fulfillment",
+                          color: "#22c55e",
+                        },
+                      }}
+                      className="aspect-auto h-[280px] w-full"
+                    >
+                      <ComposedChart
+                        data={deliverySpeedTrendData}
+                        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                      >
+                        <defs>
+                          <linearGradient id="fillOTD" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#328bcb" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#328bcb" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          tickLine={false}
+                          axisLine={false}
+                          minTickGap={32}
+                          tickFormatter={(value) => {
+                            const date = new Date(value)
+                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          }}
+                        />
+                        <YAxis
+                          yAxisId="days"
+                          orientation="left"
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(value) => `${value}d`}
+                          width={40}
+                        />
+                        <YAxis
+                          yAxisId="hours"
+                          orientation="right"
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(value) => `${value}h`}
+                          width={40}
+                        />
+                        <ChartTooltip
+                          cursor={false}
+                          content={
+                            <ChartTooltipContent
+                              labelFormatter={(value) => {
+                                return new Date(value).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric'
+                                })
+                              }}
+                              formatter={(value, name) => {
+                                if (name === 'avgFulfillTimeHours') return [`${Number(value).toFixed(1)}h`, 'Fulfillment']
+                                if (name === 'avgOrderToDeliveryDays') return [`${Number(value).toFixed(1)}d`, 'Order-to-Delivery']
+                                if (name === 'avgCarrierTransitDays') return [`${Number(value).toFixed(1)}d`, 'Final Mile Carrier']
+                                return [value, name]
+                              }}
+                              indicator="dot"
+                            />
+                          }
+                        />
+                        <Area
+                          yAxisId="days"
+                          dataKey="avgOrderToDeliveryDays"
+                          type="monotone"
+                          fill="url(#fillOTD)"
+                          stroke="var(--color-avgOrderToDeliveryDays)"
+                          strokeWidth={2}
+                          dot={false}
+                        />
+                        <Line
+                          yAxisId="days"
+                          dataKey="avgCarrierTransitDays"
+                          type="monotone"
+                          stroke="var(--color-avgCarrierTransitDays)"
+                          strokeWidth={2}
+                          dot={false}
+                        />
+                        <Line
+                          yAxisId="hours"
+                          dataKey="avgFulfillTimeHours"
+                          type="monotone"
+                          stroke="var(--color-avgFulfillTimeHours)"
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                        />
+                        <ChartLegend content={<ChartLegendContent />} />
+                      </ComposedChart>
+                    </ChartContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Geography: Cost + Final Mile by State */}
                 <Card>
                   <CardHeader className="text-center">
-                    <CardTitle className="text-base">Cost + Transit Time by State</CardTitle>
-                    <CardDescription>Geographic distribution of shipping costs and delivery times</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Cost + Final Mile by State</div></CardTitle>
+                    <CardDescription className="text-xs">Geographic distribution of shipping costs and final mile carrier times</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid gap-4 md:grid-cols-2">
@@ -1653,7 +1459,7 @@ export default function AnalyticsPage() {
                       <CostSpeedStateMap
                         data={stateCostSpeedData}
                         metric="transit"
-                        title="Avg Transit Time"
+                        title="Avg Final Mile"
                       />
                     </div>
                   </CardContent>
@@ -1662,8 +1468,8 @@ export default function AnalyticsPage() {
                 {/* Cost by Zone */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Cost by Shipping Zone</CardTitle>
-                    <CardDescription>How shipping cost and transit time scale with zone distance</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Cost by Shipping Zone</div></CardTitle>
+                    <CardDescription className="text-xs">How shipping cost and carrier transit time scale with zone distance</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <ChartContainer
@@ -1673,7 +1479,7 @@ export default function AnalyticsPage() {
                           color: "#328bcb",
                         },
                         avgTransitTime: {
-                          label: "Avg Transit",
+                          label: "Final Mile",
                           color: "#000000",
                         },
                       }}
@@ -1717,7 +1523,7 @@ export default function AnalyticsPage() {
                                     <span className="font-medium tabular-nums">${data.avgCost.toFixed(2)}</span>
                                   </div>
                                   <div className="flex justify-between gap-4">
-                                    <span className="text-muted-foreground">Average Transit Time</span>
+                                    <span className="text-muted-foreground">Final Mile</span>
                                     <span className="font-medium tabular-nums">{data.avgTransitTime.toFixed(1)} days</span>
                                   </div>
                                 </div>
@@ -1744,11 +1550,11 @@ export default function AnalyticsPage() {
                   </CardContent>
                 </Card>
 
-                {/* Transit Time Distribution */}
+                {/* Final Mile Carrier Distribution */}
                 <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Transit Time Distribution</CardTitle>
-                      <CardDescription>Min, median, max by carrier</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Final Mile Distribution</div></CardTitle>
+                      <CardDescription className="text-xs">Final mile carrier transit time: min, median, max by carrier</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
@@ -1802,13 +1608,13 @@ export default function AnalyticsPage() {
               </TabsContent>
 
               {/* Tab 3: Order Volume */}
-              <TabsContent value="order-volume" className="space-y-7 mt-7">
+              <TabsContent value="order-volume" className="space-y-5 mt-0 px-1">
                 {/* Layered Volume Heat Map with State Details */}
                 {isMounted && volumeData.stateData.length > 0 && (
                   <div className="grid gap-4 lg:grid-cols-3">
                     <Card className="lg:col-span-2">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Order Volume Heat Map</CardTitle>
+                        <CardTitle className="text-sm font-medium"><div>Order Volume Heat Map</div></CardTitle>
                         <CardDescription className="text-xs">
                           <span className="lg:hidden">For USA domestic orders only. State colors show relative order volume (white-to-green), with city-level volume overlay (blue/orange/red dots).</span>
                           <span className="hidden lg:inline">For USA domestic orders only. View state-level averages (white-to-green) with city-level volume overlay (blue/orange/red dots).<br />Hover over states or cities for details, or click states to see average order volume and top cities.</span>
@@ -1847,8 +1653,8 @@ export default function AnalyticsPage() {
                 {/* Daily Trend */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Daily Order Volume</CardTitle>
-                    <CardDescription>Order count trend over the selected period</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Daily Order Volume</div></CardTitle>
+                    <CardDescription className="text-xs">Order count trend over the selected period</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <ChartContainer
@@ -1920,8 +1726,8 @@ export default function AnalyticsPage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Orders by Hour of Day</CardTitle>
-                      <CardDescription>When do orders come in throughout the day?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Orders by Hour of Day</div></CardTitle>
+                      <CardDescription className="text-xs">When do orders come in throughout the day?</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -1990,8 +1796,8 @@ export default function AnalyticsPage() {
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Orders by Day of Week</CardTitle>
-                      <CardDescription>Which days are busiest?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Orders by Day of Week</div></CardTitle>
+                      <CardDescription className="text-xs">Which days are busiest?</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -2057,8 +1863,8 @@ export default function AnalyticsPage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Orders by Fulfillment Center</CardTitle>
-                      <CardDescription>Which FCs handle the most volume?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Orders by Fulfillment Center</div></CardTitle>
+                      <CardDescription className="text-xs">Which FCs handle the most volume?</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="overflow-x-auto">
@@ -2086,8 +1892,8 @@ export default function AnalyticsPage() {
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Orders by Store Integration</CardTitle>
-                      <CardDescription>Which stores generate the most orders?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Orders by Store Integration</div></CardTitle>
+                      <CardDescription className="text-xs">Which stores generate the most orders?</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="overflow-x-auto">
@@ -2116,12 +1922,12 @@ export default function AnalyticsPage() {
               </TabsContent>
 
               {/* Tab 4: Carriers + Zones */}
-              <TabsContent value="carriers-zones" className="space-y-7 mt-7">
+              <TabsContent value="carriers-zones" className="space-y-5 mt-0 px-1">
                 {/* Zone Performance Landscape - Feature Chart */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Zone Performance Landscape</CardTitle>
-                    <CardDescription>How shipping cost and transit time scale with distance from your fulfillment center</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Zone Performance Landscape</div></CardTitle>
+                    <CardDescription className="text-xs">How shipping cost and transit time scale with distance from your fulfillment center</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -2301,8 +2107,8 @@ export default function AnalyticsPage() {
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle className="text-base">Your Carrier Network</CardTitle>
-                        <CardDescription>Your shipments are distributed across {carrierPerformance.length} carriers for optimal coverage and competitive rates</CardDescription>
+                        <CardTitle className="text-sm font-medium"><div>Your Carrier Network</div></CardTitle>
+                        <CardDescription className="text-xs">Your shipments are distributed across {carrierPerformance.length} carriers for optimal coverage and competitive rates</CardDescription>
                       </div>
                     </div>
                   </CardHeader>
@@ -2378,8 +2184,8 @@ export default function AnalyticsPage() {
                 {/* Zone Deep Dive */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Zone Cost & Transit Details</CardTitle>
-                    <CardDescription>Detailed breakdown of shipping metrics by zone distance</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Zone Cost & Transit Details</div></CardTitle>
+                    <CardDescription className="text-xs">Detailed breakdown of shipping metrics by zone distance</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="rounded-md border">
@@ -2427,14 +2233,30 @@ export default function AnalyticsPage() {
               </TabsContent>
 
               {/* Tab 4: SLA Performance */}
-              <TabsContent value="sla" className="space-y-7 mt-7">
+              <TabsContent value="sla" className="space-y-5 mt-0 px-1">
+                {/* Delay Impact Toggle */}
+                {delayImpact && delayImpact.affectedShipments > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-muted/30">
+                    <Switch
+                      id="delay-toggle-sla"
+                      checked={includeDelayedOrders}
+                      onCheckedChange={setIncludeDelayedOrders}
+                    />
+                    <Label htmlFor="delay-toggle-sla" className="text-xs font-medium cursor-pointer whitespace-nowrap">
+                      Include Inventory Delays
+                    </Label>
+                    <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
+                      {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%) orders
+                    </span>
+                  </div>
+                )}
                 {/* On-Time Delivery Trend */}
                 <Card>
                   <CardHeader className="pb-4">
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
-                        <CardTitle className="text-base">Fulfillment SLA Success Rate</CardTitle>
-                        <CardDescription>Daily performance trend across selected period</CardDescription>
+                        <CardTitle className="text-sm font-medium"><div>Fulfillment SLA Success Rate</div></CardTitle>
+                        <CardDescription className="text-xs">Daily performance trend across selected period</CardDescription>
                       </div>
                       <div className="text-right">
                         <div className="text-4xl font-bold tabular-nums"
@@ -2554,8 +2376,8 @@ export default function AnalyticsPage() {
                   {/* Time to Fulfill Trends */}
                   <Card className="flex flex-col">
                     <CardHeader>
-                      <CardTitle className="text-base">Time to Fulfill Trends</CardTitle>
-                      <CardDescription>How long does it take to fulfill orders over time?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Time to Fulfill Trends</div></CardTitle>
+                      <CardDescription className="text-xs">How long does it take to fulfill orders over time?</CardDescription>
                     </CardHeader>
                     <CardContent className="flex-1">
                       <ChartContainer
@@ -2642,8 +2464,8 @@ export default function AnalyticsPage() {
                   {/* Fulfillment Speed by FC */}
                   <Card className="flex flex-col">
                     <CardHeader>
-                      <CardTitle className="text-base">Fulfillment Speed by FC</CardTitle>
-                      <CardDescription>Which fulfillment centers process orders fastest?</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Fulfillment Speed by FC</div></CardTitle>
+                      <CardDescription className="text-xs">Which fulfillment centers process orders fastest?</CardDescription>
                     </CardHeader>
                     <CardContent className="flex-1">
                       <ChartContainer
@@ -2709,8 +2531,8 @@ export default function AnalyticsPage() {
                 {/* Recent SLA Breaches */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Recent SLA Breaches</CardTitle>
-                    <CardDescription>Orders that missed their fulfillment deadline</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Recent SLA Breaches</div></CardTitle>
+                    <CardDescription className="text-xs">Orders that missed their fulfillment deadline</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="rounded-md border">
@@ -2762,40 +2584,120 @@ export default function AnalyticsPage() {
                 </Card>
               </TabsContent>
 
-              {/* Tab 5: Performance by State */}
-              <TabsContent value="state-performance" className="space-y-7 mt-7">
+              {/* Tab 5: Performance Breakdown */}
+              <TabsContent value="state-performance" className="space-y-5 mt-0 px-1">
                 <div className="grid gap-4 lg:grid-cols-3">
-                  {/* Interactive US Map - 2 columns */}
+                  {/* Interactive Map - 2 columns */}
                   <Card className="lg:col-span-2">
                     <CardHeader>
-                      <CardTitle className="text-base">US State Performance Map</CardTitle>
-                      <CardDescription>
-                        Click on any state to view detailed performance metrics
-                      </CardDescription>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <CardTitle className="text-sm font-medium">
+                            <div>{COUNTRY_CONFIGS[selectedCountry]?.label} Performance Map</div>
+                          </CardTitle>
+                          <CardDescription className="text-xs">
+                            Click on any {COUNTRY_CONFIGS[selectedCountry]?.regionLabel.toLowerCase()} to view detailed performance metrics
+                          </CardDescription>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Select
+                            value={dateRange}
+                            onValueChange={handleDatePresetChange}
+                          >
+                            <SelectTrigger className="h-[28px] w-auto gap-1 text-xs text-foreground bg-background">
+                              <SelectValue>
+                                {DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent align="end" className="font-roboto text-xs">
+                              {DATE_RANGE_PRESETS.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {dateRange === 'custom' && (
+                            <InlineDateRangePicker
+                              dateRange={customDateRange.from && customDateRange.to ? { from: customDateRange.from, to: customDateRange.to } : undefined}
+                              onDateRangeChange={(range) => {
+                                if (range?.from && range?.to) {
+                                  // Enforce 14-day minimum when range touches recent dates
+                                  // (survivorship bias: recent shipments haven't had time to deliver)
+                                  const today = new Date()
+                                  today.setHours(23, 59, 59, 999)
+                                  const fourteenDaysAgo = new Date(today)
+                                  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13)
+                                  fourteenDaysAgo.setHours(0, 0, 0, 0)
+
+                                  if (range.to >= fourteenDaysAgo) {
+                                    // Range touches the recent window — ensure "from" is at least 14 days back
+                                    const minFrom = new Date(today)
+                                    minFrom.setDate(minFrom.getDate() - 13)
+                                    minFrom.setHours(0, 0, 0, 0)
+                                    if (range.from > minFrom) {
+                                      setCustomDateRange({ from: minFrom, to: today })
+                                      return
+                                    }
+                                  }
+                                  setCustomDateRange({ from: range.from, to: range.to })
+                                }
+                              }}
+                              autoOpen
+                            />
+                          )}
+                          <Select value={selectedCountry} onValueChange={(v) => {
+                            setSelectedCountry(v)
+                            setSelectedState(null)
+                          }}>
+                            <SelectTrigger className="h-[28px] w-auto gap-1 text-xs text-foreground bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent align="end">
+                              <SelectItem value="US">USA</SelectItem>
+                              <SelectItem value="CA">Canada</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
                     </CardHeader>
-                    <CardContent className="-mt-[35px] pr-0 pt-0">
-                      <USStateMap
-                        stateData={statePerformance}
-                        onStateSelect={setSelectedState}
+                    <CardContent className="pt-0">
+                      <PerformanceMap
+                        key={selectedCountry}
+                        config={COUNTRY_CONFIGS[selectedCountry]}
+                        regionData={statePerformance}
+                        onRegionSelect={setSelectedState}
                       />
                     </CardContent>
                   </Card>
 
-                  {/* State Details Panel - 1 column */}
+                  {/* Region Details Panel - 1 column */}
                   <div className="lg:col-span-1">
                     {selectedState && statePerformance.find(s => s.state === selectedState) ? (
                       <StateDetailsPanel
                         stateData={statePerformance.find(s => s.state === selectedState)!}
+                        cityData={analyticsData?.cityVolume || []}
+                        delayImpact={delayImpact}
+                        includeDelayed={includeDelayedOrders}
+                        onToggleDelayed={setIncludeDelayedOrders}
                       />
                     ) : (
-                      <NationalPerformanceOverviewPanel stateData={statePerformance} />
+                      <NationalPerformanceOverviewPanel
+                        stateData={statePerformance}
+                        country={selectedCountry}
+                        regionLabel={COUNTRY_CONFIGS[selectedCountry]?.regionLabel}
+                        regionLabelPlural={COUNTRY_CONFIGS[selectedCountry]?.regionLabelPlural}
+                        delayImpact={delayImpact}
+                        includeDelayed={includeDelayedOrders}
+                        onToggleDelayed={setIncludeDelayedOrders}
+                      />
                     )}
                   </div>
                 </div>
               </TabsContent>
 
               {/* Tab 6: Undelivered Shipments */}
-              <TabsContent value="undelivered" className="space-y-6 mt-6">
+              <TabsContent value="undelivered" className="space-y-5 mt-0 px-1">
                 {/* KPI Summary Cards */}
                 <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                   <Card>
@@ -2832,8 +2734,8 @@ export default function AnalyticsPage() {
                   {/* Age Distribution Chart */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Age Distribution</CardTitle>
-                      <CardDescription>Days since label was generated</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Age Distribution</div></CardTitle>
+                      <CardDescription className="text-xs">Days since label was generated</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <ChartContainer
@@ -2880,8 +2782,8 @@ export default function AnalyticsPage() {
                   {/* Status Breakdown */}
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Status Breakdown</CardTitle>
-                      <CardDescription>Current shipment status distribution</CardDescription>
+                      <CardTitle className="text-sm font-medium"><div>Status Breakdown</div></CardTitle>
+                      <CardDescription className="text-xs">Current shipment status distribution</CardDescription>
                     </CardHeader>
                     <CardContent>
                       {/* Total count header */}
@@ -2925,8 +2827,8 @@ export default function AnalyticsPage() {
                 {/* Undelivered by Carrier */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Undelivered by Carrier</CardTitle>
-                    <CardDescription>Shipment count and average days in transit per carrier</CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Undelivered by Carrier</div></CardTitle>
+                    <CardDescription className="text-xs">Shipment count and average days in transit per carrier</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <ChartContainer
@@ -2980,8 +2882,8 @@ export default function AnalyticsPage() {
                 {/* Shipments Detail Table */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Undelivered Shipments Detail</CardTitle>
-                    <CardDescription>
+                    <CardTitle className="text-sm font-medium"><div>Undelivered Shipments Detail</div></CardTitle>
+                    <CardDescription className="text-xs">
                       Showing {Math.min(50, undeliveredShipments.length)} of {undeliveredShipments.length} undelivered shipments, sorted by days in transit
                     </CardDescription>
                   </CardHeader>
@@ -3040,6 +2942,8 @@ export default function AnalyticsPage() {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              </div>
             </Tabs>
           </div>
         </div>

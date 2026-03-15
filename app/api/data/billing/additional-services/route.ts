@@ -144,6 +144,7 @@ export async function GET(request: NextRequest) {
       id: row.id,
       clientId: row.client_id,
       referenceId: row.reference_id || '',
+      referenceType: row.reference_type || '',
       feeType: row.fee_type || '',
       // Return billed_amount if available, null otherwise (UI shows "-")
       charge: row.billed_amount !== null && row.billed_amount !== undefined

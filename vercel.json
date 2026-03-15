@@ -71,6 +71,10 @@
     {
       "path": "/api/cron/lock-commissions",
       "schedule": "0 11 1 * *"
+    },
+    {
+      "path": "/api/cron/refresh-analytics",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
