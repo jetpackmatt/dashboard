@@ -295,13 +295,16 @@ export async function GET(request: NextRequest) {
     // ── Date-based trends (from by_date — already grouped per day) ────────
     const byDate = s.by_date as any[]
 
-    const costTrend = byDate.map((r: any) => ({
-      month: r.summary_date,
-      avgCostBase: r.shipment_count > 0 ? (r.total_base_charge / 100) / r.shipment_count : 0,
-      avgCostWithSurcharge: r.shipment_count > 0 ? (r.total_charge / 100) / r.shipment_count : 0,
-      surchargeOnly: r.shipment_count > 0 ? ((r.total_charge - r.total_base_charge) / 100) / r.shipment_count : 0,
-      orderCount: r.shipment_count,
-    }))
+    const costTrend = byDate
+      // Exclude days with shipments but no cost data (e.g. today — SFTP/markup not yet available)
+      .filter((r: any) => !(r.shipment_count > 0 && r.total_charge === 0 && r.total_base_charge === 0))
+      .map((r: any) => ({
+        month: r.summary_date,
+        avgCostBase: r.shipment_count > 0 ? (r.total_base_charge / 100) / r.shipment_count : 0,
+        avgCostWithSurcharge: r.shipment_count > 0 ? (r.total_charge / 100) / r.shipment_count : 0,
+        surchargeOnly: r.shipment_count > 0 ? ((r.total_charge - r.total_base_charge) / 100) / r.shipment_count : 0,
+        orderCount: r.shipment_count,
+      }))
 
     const deliverySpeedTrend = byDate.map((r: any) => {
       // "With delayed" = all shipments
