@@ -92,6 +92,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Calculate P80 percentile from sorted array
+function calculateP80(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = Math.ceil(0.8 * sorted.length) - 1
+  return Math.round(sorted[Math.max(0, index)] * 10) / 10
+}
+
 // Fallback: Direct query calculation when RPC is not available
 async function calculateBenchmarksDirectly(
   supabase: ReturnType<typeof createAdminClient>,
@@ -113,41 +121,35 @@ async function calculateBenchmarksDirectly(
   for (const carrier of uniqueCarriers) {
     if (!carrier) continue
 
-    // Calculate zone averages for this carrier
-    const zoneAverages: Record<string, number | null> = {}
-    const zoneCounts: Record<string, number> = {}
+    // Calculate zone averages + P80 for this carrier
+    const zoneData: Record<string, number | null> = {}
 
     for (let zone = 1; zone <= 10; zone++) {
-      const { data: zoneData } = await supabase
+      const { data: rows } = await supabase
         .from('shipments')
-        .select('event_labeled, event_delivered')
+        .select('transit_time_days')
         .eq('carrier', carrier)
         .eq('zone_used', zone)
-        .not('event_delivered', 'is', null)
-        .not('event_labeled', 'is', null)
+        .not('transit_time_days', 'is', null)
         .gte('event_delivered', startDate.toISOString())
         .limit(1000)
 
-      if (zoneData && zoneData.length > 0) {
-        const transitTimes = zoneData.map((s: { event_labeled: string; event_delivered: string }) => {
-          const labeled = new Date(s.event_labeled)
-          const delivered = new Date(s.event_delivered)
-          return (delivered.getTime() - labeled.getTime()) / (1000 * 60 * 60 * 24)
-        }).filter((t: number) => t > 0 && t < 30) // Filter outliers
+      if (rows && rows.length > 0) {
+        const transitTimes = rows
+          .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
+          .filter((t: number) => t > 0 && t < 30)
 
         if (transitTimes.length > 0) {
           const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
-          zoneAverages[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
-          zoneCounts[`zone_${zone}_count`] = transitTimes.length
+          zoneData[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
+          zoneData[`zone_${zone}_p80`] = calculateP80(transitTimes)
+          zoneData[`zone_${zone}_count`] = transitTimes.length
         }
       }
     }
 
-    if (Object.keys(zoneAverages).length > 0) {
-      await upsertBenchmark(supabase, 'carrier_service', carrier as string, carrier as string, {
-        ...zoneAverages,
-        ...zoneCounts
-      })
+    if (Object.keys(zoneData).length > 0) {
+      await upsertBenchmark(supabase, 'carrier_service', carrier as string, carrier as string, zoneData)
     }
   }
 }
@@ -173,42 +175,39 @@ async function calculateShipOptionBenchmarksDirectly(
   for (const shipOption of uniqueOptions) {
     if (!shipOption) continue
 
-    const zoneAverages: Record<string, number | null> = {}
-    const zoneCounts: Record<string, number> = {}
+    const zoneData: Record<string, number | null> = {}
 
     for (let zone = 1; zone <= 10; zone++) {
-      const { data: zoneData } = await supabase
+      const { data: rows } = await supabase
         .from('shipments')
-        .select('event_labeled, event_delivered')
+        .select('transit_time_days')
         .eq('ship_option', shipOption)
         .eq('zone_used', zone)
-        .not('event_delivered', 'is', null)
-        .not('event_labeled', 'is', null)
+        .not('transit_time_days', 'is', null)
         .gte('event_delivered', startDate.toISOString())
         .limit(1000)
 
-      if (zoneData && zoneData.length > 0) {
-        const transitTimes = zoneData.map((s: { event_labeled: string; event_delivered: string }) => {
-          const labeled = new Date(s.event_labeled)
-          const delivered = new Date(s.event_delivered)
-          return (delivered.getTime() - labeled.getTime()) / (1000 * 60 * 60 * 24)
-        }).filter((t: number) => t > 0 && t < 30)
+      if (rows && rows.length > 0) {
+        const transitTimes = rows
+          .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
+          .filter((t: number) => t > 0 && t < 30)
 
         if (transitTimes.length > 0) {
           const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
-          zoneAverages[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
-          zoneCounts[`zone_${zone}_count`] = transitTimes.length
+          zoneData[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
+          zoneData[`zone_${zone}_p80`] = calculateP80(transitTimes)
+          zoneData[`zone_${zone}_count`] = transitTimes.length
         }
       }
     }
 
-    if (Object.keys(zoneAverages).length > 0) {
+    if (Object.keys(zoneData).length > 0) {
       await upsertBenchmark(
         supabase,
         'ship_option',
         String(shipOption),
         `Ship Option ${shipOption}`,
-        { ...zoneAverages, ...zoneCounts }
+        zoneData
       )
     }
   }
@@ -248,25 +247,23 @@ async function calculateInternationalBenchmarks(
 
     const { data: routeData } = await supabase
       .from('shipments')
-      .select('event_labeled, event_delivered')
+      .select('transit_time_days')
       .eq('carrier', carrier)
       .eq('origin_country', origin)
       .eq('destination_country', destination)
-      .not('event_delivered', 'is', null)
-      .not('event_labeled', 'is', null)
+      .not('transit_time_days', 'is', null)
       .gte('event_delivered', startDate.toISOString())
       .limit(1000)
 
-    if (routeData && routeData.length >= 3) { // Require at least 3 samples (fewer for carrier-specific)
-      const transitTimes = routeData.map((s: { event_labeled: string; event_delivered: string }) => {
-        const labeled = new Date(s.event_labeled)
-        const delivered = new Date(s.event_delivered)
-        return (delivered.getTime() - labeled.getTime()) / (1000 * 60 * 60 * 24)
-      }).filter((t: number) => t > 0 && t < 60) // Filter outliers (up to 60 days for international)
+    if (routeData && routeData.length >= 3) {
+      const transitTimes = routeData
+        .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
+        .filter((t: number) => t > 0 && t < 60)
 
       if (transitTimes.length >= 3) {
         const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
         const roundedAvg = Math.round(avg * 10) / 10
+        const p80 = calculateP80(transitTimes)
 
         // Store with carrier in the key: "carrier:origin:destination"
         // benchmark_type='international_route' for easy lookup
@@ -275,7 +272,7 @@ async function calculateInternationalBenchmarks(
           'international_route',
           routeKey, // e.g., "DHL Express:US:MX"
           `${carrier}: ${origin} → ${destination}`,
-          { zone_1_avg: roundedAvg, zone_1_count: transitTimes.length }
+          { zone_1_avg: roundedAvg, zone_1_p80: p80, zone_1_count: transitTimes.length }
         )
 
         console.log(`[Benchmarks] ${carrier}: ${origin} → ${destination}: ${roundedAvg} days (${transitTimes.length} samples)`)
@@ -308,6 +305,16 @@ async function upsertBenchmark(
       zone_8_avg: data.zone_8_avg ?? null,
       zone_9_avg: data.zone_9_avg ?? null,
       zone_10_avg: data.zone_10_avg ?? null,
+      zone_1_p80: data.zone_1_p80 ?? null,
+      zone_2_p80: data.zone_2_p80 ?? null,
+      zone_3_p80: data.zone_3_p80 ?? null,
+      zone_4_p80: data.zone_4_p80 ?? null,
+      zone_5_p80: data.zone_5_p80 ?? null,
+      zone_6_p80: data.zone_6_p80 ?? null,
+      zone_7_p80: data.zone_7_p80 ?? null,
+      zone_8_p80: data.zone_8_p80 ?? null,
+      zone_9_p80: data.zone_9_p80 ?? null,
+      zone_10_p80: data.zone_10_p80 ?? null,
       zone_1_count: data.zone_1_count ?? 0,
       zone_2_count: data.zone_2_count ?? 0,
       zone_3_count: data.zone_3_count ?? 0,

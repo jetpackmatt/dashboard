@@ -13,7 +13,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { ShipBobClient, ShipBobProduct } from './client'
 import { ensureFCsExist } from '@/lib/fulfillment-centers'
-import { calculateNonShipmentPreviewMarkups, calculateCreditPreviewMarkups } from '@/lib/billing/preview-markups'
+import { calculateNonShipmentPreviewMarkups, calculateCreditPreviewMarkups, calculateShipmentPreviewMarkups } from '@/lib/billing/preview-markups'
 
 const SHIPBOB_API_BASE = 'https://api.shipbob.com/2025-07'
 const BATCH_SIZE = 500
@@ -791,6 +791,7 @@ export async function syncClient(
           insurance_value: shipment.insurance_value || null,
           estimated_fulfillment_date: shipment.estimated_fulfillment_date || null,
           estimated_fulfillment_date_status: shipment.estimated_fulfillment_date_status || null,
+          estimated_delivery_date: shipment.delivery_date || null,
           last_update_at: shipment.last_update_at || null,
           package_material_type: shipment.package_material_type || null,
           require_signature: shipment.require_signature || false,
@@ -1808,6 +1809,16 @@ export async function syncAllTransactions(
       } catch (creditMarkupError) {
         console.error('[TransactionSync] Credit markup calculation failed (non-fatal):', creditMarkupError)
       }
+      // Also run shipment preview markups as safety net for SFTP cron
+      // (SFTP cron is primary, but if it fails/times out, this catches up)
+      try {
+        const shipmentMarkupResult = await calculateShipmentPreviewMarkups({ limit: 2000 })
+        if (shipmentMarkupResult.updated > 0) {
+          console.log(`[TransactionSync] Shipment preview markups: ${shipmentMarkupResult.updated} updated`)
+        }
+      } catch (shipmentMarkupError) {
+        console.error('[TransactionSync] Shipment markup calculation failed (non-fatal):', shipmentMarkupError)
+      }
       result.success = true
       result.duration = Date.now() - startTime
       return result
@@ -2180,11 +2191,12 @@ export async function syncAllTransactions(
     }
 
     // ==========================================
-    // FOURTH PASS: Calculate preview markups for non-shipments
+    // FOURTH PASS: Calculate preview markups for non-shipments + shipments
     // ==========================================
     // Non-shipment fees (Per Pick, Storage, Returns, etc.) can have markup
     // calculated immediately since their API cost is final (no SFTP breakdown needed).
-    // Shipment markups are handled separately by the SFTP sync cron.
+    // Shipment markups are also calculated here as a safety net — the SFTP cron is
+    // the primary source, but if it fails/times out, this catches pending shipments.
     console.log('[TransactionSync] Calculating preview markups for non-shipment transactions...')
     try {
       const markupResult = await calculateNonShipmentPreviewMarkups({ limit: 2000 })
@@ -2197,6 +2209,18 @@ export async function syncAllTransactions(
     } catch (markupError) {
       // Don't fail the sync if markup calculation fails - it's a preview feature
       console.error('[TransactionSync] Preview markup calculation failed (non-fatal):', markupError)
+    }
+    // Shipment preview markups (safety net for SFTP cron)
+    try {
+      const shipmentMarkupResult = await calculateShipmentPreviewMarkups({ limit: 2000 })
+      if (shipmentMarkupResult.updated > 0 || shipmentMarkupResult.errors.length > 0) {
+        console.log(`[TransactionSync] Shipment preview markups: ${shipmentMarkupResult.updated} updated, ${shipmentMarkupResult.skipped} skipped`)
+        if (shipmentMarkupResult.errors.length > 0) {
+          console.log(`[TransactionSync] Shipment markup errors: ${shipmentMarkupResult.errors.slice(0, 3).join(', ')}`)
+        }
+      }
+    } catch (shipmentMarkupError) {
+      console.error('[TransactionSync] Shipment markup calculation failed (non-fatal):', shipmentMarkupError)
     }
 
     // ==========================================

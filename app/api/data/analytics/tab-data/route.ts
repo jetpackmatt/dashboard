@@ -21,6 +21,10 @@ const STATE_NAME_MAP: Record<string, Record<string, string>> = {
 }
 
 function getStateName(code: string, country: string): string {
+  if (country === 'ALL') {
+    // Try all country maps
+    return STATE_NAME_MAP['US']?.[code] || STATE_NAME_MAP['CA']?.[code] || STATE_NAME_MAP['AU']?.[code] || code
+  }
   return STATE_NAME_MAP[country]?.[code] || code
 }
 
@@ -104,7 +108,7 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `${clientId}:${startDate}:${endDate}:${datePreset}:${country}`
+  const cacheKey = `v3:${clientId}:${startDate}:${endDate}:${datePreset}:${country}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
@@ -132,6 +136,7 @@ export async function GET(request: NextRequest) {
       slaDetailResult,
       undeliveredRows,
       clientResult,
+      fcNamesResult,
     ] = await Promise.all([
       // Single RPC: all GROUP BY queries executed server-side in Postgres
       supabase.rpc('get_analytics_from_summaries', {
@@ -166,7 +171,17 @@ export async function GET(request: NextRequest) {
 
       // Client name
       supabase.from('clients').select('company_name').eq('id', clientId!).single(),
+
+      // Distinct FC countries for this client (uses SQL distinct via RPC-like approach)
+      supabase.rpc('get_client_fc_countries', { p_client_id: clientId, p_start: startDate, p_end: endDate }),
     ])
+
+    // Available countries from RPC (distinct FC countries for this client in date range)
+    const fcCountryRows = fcNamesResult.data || []
+    const availableCountries: string[] = fcCountryRows.map((r: any) => String(r.country)).filter(Boolean)
+    if (!availableCountries.includes('US')) availableCountries.unshift('US')
+    const countryDataDays: Record<string, number> = {}
+    for (const r of fcCountryRows) { countryDataDays[String(r.country)] = Number(r.data_days) || 0 }
 
     if (summaryResult.error) throw new Error(summaryResult.error.message)
     const s = summaryResult.data
@@ -182,6 +197,20 @@ export async function GET(request: NextRequest) {
     const slaPercentCurrent = slaTotalCurrent > 0 ? (cur.on_time_count / slaTotalCurrent) * 100 : 0
     const slaPercentPrev = slaTotalPrev > 0 ? (prev.on_time_count / slaTotalPrev) * 100 : 0
 
+    // Delivery on-time (carrier transit vs benchmark + 1 day buffer)
+    const deliveryOnTimeTotalCur = cur.delivery_on_time_count + cur.delivery_late_count
+    const deliveryOnTimeTotalPrev = prev.delivery_on_time_count + prev.delivery_late_count
+    const deliveryOnTimePercentCur = deliveryOnTimeTotalCur > 0 ? (cur.delivery_on_time_count / deliveryOnTimeTotalCur) * 100 : 0
+    const deliveryOnTimePercentPrev = deliveryOnTimeTotalPrev > 0 ? (prev.delivery_on_time_count / deliveryOnTimeTotalPrev) * 100 : 0
+
+    // Benchmark comparison: actual avg transit vs weighted benchmark avg
+    const actualAvgTransitCur = cur.transit_count > 0 ? cur.total_transit_days / cur.transit_count : 0
+    const benchmarkAvgTransitCur = cur.benchmark_transit_count > 0 ? cur.total_benchmark_transit_days / cur.benchmark_transit_count : 0
+    const transitVsBenchmarkCur = benchmarkAvgTransitCur > 0 ? actualAvgTransitCur - benchmarkAvgTransitCur : 0
+    const actualAvgTransitPrev = prev.transit_count > 0 ? prev.total_transit_days / prev.transit_count : 0
+    const benchmarkAvgTransitPrev = prev.benchmark_transit_count > 0 ? prev.total_benchmark_transit_days / prev.benchmark_transit_count : 0
+    const transitVsBenchmarkPrev = benchmarkAvgTransitPrev > 0 ? actualAvgTransitPrev - benchmarkAvgTransitPrev : 0
+
     const kpis = {
       totalCost: cur.total_charge / 100,
       orderCount: cur.shipment_count,
@@ -189,6 +218,18 @@ export async function GET(request: NextRequest) {
       slaPercent: slaPercentCurrent,
       lateOrders: cur.breached_count,
       undelivered: cur.undelivered_count,
+      deliveryOnTimePercent: deliveryOnTimePercentCur,
+      deliveryOnTimeCount: cur.delivery_on_time_count,
+      deliveryLateCount: cur.delivery_late_count,
+      transitVsBenchmark: transitVsBenchmarkCur,
+      benchmarkAvgTransit: benchmarkAvgTransitCur,
+      benchmarkTransitCount: cur.benchmark_transit_count,
+      avgFulfillTime: (() => {
+        const cleanHrs = cur.total_fulfill_business_hours - (cur.delay_fulfill_biz_hours || 0)
+        const cleanCnt = cur.fulfill_count - (cur.delay_count || 0)
+        return cleanCnt > 0 ? cleanHrs / cleanCnt : (cur.fulfill_count > 0 ? cur.total_fulfill_business_hours / cur.fulfill_count : 0)
+      })(),
+      avgFulfillTimeWithDelayed: cur.fulfill_count > 0 ? cur.total_fulfill_business_hours / cur.fulfill_count : 0,
       periodChange: {
         totalCost: pctChange(cur.total_charge, prev.total_charge),
         orderCount: pctChange(cur.shipment_count, prev.shipment_count),
@@ -196,6 +237,8 @@ export async function GET(request: NextRequest) {
         slaPercent: slaPercentCurrent - slaPercentPrev,
         lateOrders: pctChange(cur.breached_count, prev.breached_count),
         undelivered: pctChange(cur.undelivered_count, prev.undelivered_count),
+        deliveryOnTimePercent: deliveryOnTimePercentCur - deliveryOnTimePercentPrev,
+        transitVsBenchmark: transitVsBenchmarkCur - transitVsBenchmarkPrev,
       },
     }
 
@@ -217,6 +260,14 @@ export async function GET(request: NextRequest) {
       const avgDeliveryDays = cleanDeliveryCount > 0 ? cleanDeliveryDays / cleanDeliveryCount : allDeliveryDays
       const avgRegionalMile = avgDeliveryDays > 0 ? Math.max(0, avgDeliveryDays - avgFulfillHours / 24 - avgTransitDays) : 0
 
+      // Delivery on-time per state
+      const stateDeliveryTotal = (r.delivery_on_time_count || 0) + (r.delivery_late_count || 0)
+      const stateDeliveryOnTimePct = stateDeliveryTotal > 0 ? ((r.delivery_on_time_count || 0) / stateDeliveryTotal) * 100 : 0
+
+      // Benchmark comparison per state
+      const stateBenchmarkAvg = (r.benchmark_transit_count || 0) > 0 ? (r.total_benchmark_transit_days || 0) / r.benchmark_transit_count : 0
+      const stateTransitVsBenchmark = stateBenchmarkAvg > 0 ? avgTransitDays - stateBenchmarkAvg : 0
+
       return {
         state: r.state,
         stateName: getStateName(r.state, country),
@@ -227,6 +278,11 @@ export async function GET(request: NextRequest) {
         avgFulfillTimeHours: avgFulfillHours,
         avgRegionalMileDays: avgRegionalMile,
         avgCarrierTransitDays: avgTransitDays,
+        deliveryOnTimePercent: stateDeliveryOnTimePct,
+        deliveryOnTimeCount: r.delivery_on_time_count || 0,
+        deliveryLateCount: r.delivery_late_count || 0,
+        transitVsBenchmark: stateTransitVsBenchmark,
+        benchmarkAvgTransit: stateBenchmarkAvg,
         shippedPercent: 100,
         deliveredPercent: 100,
         // "With delayed" variants for toggle
@@ -258,6 +314,8 @@ export async function GET(request: NextRequest) {
       const cleanDeliveryDays = r.total_delivery_days - (r.delay_delivery_days || 0)
       const cleanDeliveryCnt = r.delivery_count - (r.delay_delivery_count || 0)
 
+      const dayDeliveryTotal = (r.delivery_on_time_count || 0) + (r.delivery_late_count || 0)
+
       return {
         date: r.summary_date,
         avgFulfillTimeHours: cleanFulfillCnt > 0 ? cleanFulfillHrs / cleanFulfillCnt : allFulfill,
@@ -265,6 +323,7 @@ export async function GET(request: NextRequest) {
         avgCarrierTransitDays: r.transit_count > 0 ? r.total_transit_days / r.transit_count : 0,
         orderCount: r.shipment_count,
         deliveredCount: r.delivered_count,
+        deliveryOnTimePercent: dayDeliveryTotal > 0 ? ((r.delivery_on_time_count || 0) / dayDeliveryTotal) * 100 : -1,
         // "With delayed" variants for toggle
         avgFulfillTimeHoursWithDelayed: allFulfill,
         avgOrderToDeliveryDaysWithDelayed: allDelivery,
@@ -771,6 +830,8 @@ export async function GET(request: NextRequest) {
       undeliveredShipments,
       totalShipments: cur.shipment_count,
       granularity,
+      availableCountries,
+      countryDataDays,
     }
 
     // Cache for warm-instance reuse

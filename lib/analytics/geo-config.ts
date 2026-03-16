@@ -81,7 +81,7 @@ export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
     regionLabelPlural: 'States',
     geoUrl: '/us-states.json',
     projection: 'geoAlbersUsa',
-    projectionConfig: {},
+    projectionConfig: { scale: 1000 },
     objectName: 'states',
     nameToCode: US_NAME_TO_CODE,
     codeToName: US_CODE_TO_NAME,
@@ -93,7 +93,7 @@ export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
     regionLabelPlural: 'Provinces',
     geoUrl: '/ca-provinces.json',
     projection: 'geoMercator',
-    projectionConfig: { center: [-96, 58], scale: 500 },
+    projectionConfig: { center: [-93, 58], scale: 550 },
     objectName: 'provinces',
     nameToCode: CA_NAME_TO_CODE,
     codeToName: CA_CODE_TO_NAME,
@@ -104,7 +104,7 @@ export const COUNTRY_CONFIGS: Record<string, CountryConfig> = {
 export const CA_NORTHERN_TERRITORIES = ['YT', 'NT', 'NU']
 
 // Projection config when northern territories are hidden (zoom into southern provinces)
-export const CA_SOUTHERN_PROJECTION_CONFIG = { center: [-90, 52] as [number, number], scale: 700 }
+export const CA_SOUTHERN_PROJECTION_CONFIG = { center: [-92, 50] as [number, number], scale: 550 }
 
 /**
  * Normalize a region value (state/province) to its standard code.

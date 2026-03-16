@@ -1,6 +1,6 @@
 "use client"
 
-import { Card, CardHeader, CardTitle } from "@/components/ui/card"
+// Card removed — rendered inside parent grid cell
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
@@ -32,23 +32,38 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
   const filteredData = stateData.filter(s => knownCodes.has(s.state))
 
   // Calculate national totals from filtered data only
-  const totalOrders = filteredData.reduce((sum, s) => sum + s.orderCount, 0)
   const totalShipped = filteredData.reduce((sum, s) => sum + s.shippedCount, 0)
   const totalDelivered = filteredData.reduce((sum, s) => sum + s.deliveredCount, 0)
-  const regionsWithOrders = filteredData.filter(s => s.orderCount > 0).length
 
   // Calculate weighted averages for all 3 time metrics (weight by relevant count)
-  const totalWeightedDays = filteredData.reduce((sum, s) => sum + (s.avgDeliveryTimeDays * s.deliveredCount), 0)
+  // Use "WithDelayed" variants when toggle is on, clean variants when off
+  const deliveryField = includeDelayed ? 'avgDeliveryTimeDaysWithDelayed' : 'avgDeliveryTimeDays'
+  const fulfillField = includeDelayed ? 'avgFulfillTimeHoursWithDelayed' : 'avgFulfillTimeHours'
+
+  const totalWeightedDays = filteredData.reduce((sum, s) => sum + ((s[deliveryField] ?? s.avgDeliveryTimeDays) * s.deliveredCount), 0)
   const avgDeliveryTime = totalDelivered > 0 ? totalWeightedDays / totalDelivered : 0
 
-  const totalWeightedFulfill = filteredData.reduce((sum, s) => sum + (s.avgFulfillTimeHours * s.shippedCount), 0)
+  const totalWeightedFulfill = filteredData.reduce((sum, s) => sum + ((s[fulfillField] ?? s.avgFulfillTimeHours) * s.shippedCount), 0)
   const avgFulfillTime = totalShipped > 0 ? totalWeightedFulfill / totalShipped : 0
 
-  const totalWeightedRegionalMile = filteredData.reduce((sum, s) => sum + (s.avgRegionalMileDays * s.deliveredCount), 0)
+  // Middle mile = delivery - fulfill/24 - transit; recalculate based on toggle
+  const totalWeightedRegionalMile = filteredData.reduce((sum, s) => {
+    const delivery = (s[deliveryField] ?? s.avgDeliveryTimeDays)
+    const fulfill = (s[fulfillField] ?? s.avgFulfillTimeHours)
+    const regionalMile = delivery > 0 ? Math.max(0, delivery - fulfill / 24 - s.avgCarrierTransitDays) : 0
+    return sum + (regionalMile * s.deliveredCount)
+  }, 0)
   const avgRegionalMile = totalDelivered > 0 ? totalWeightedRegionalMile / totalDelivered : 0
 
   const totalWeightedTransit = filteredData.reduce((sum, s) => sum + (s.avgCarrierTransitDays * s.deliveredCount), 0)
   const avgCarrierTransit = totalDelivered > 0 ? totalWeightedTransit / totalDelivered : 0
+
+  // Transit vs benchmark: weighted average comparison
+  const totalBenchmarkDays = filteredData.reduce((sum, s) => sum + ((s.benchmarkAvgTransit || 0) * (s.deliveredCount || 0)), 0)
+  const benchmarkAvg = totalDelivered > 0 ? totalBenchmarkDays / totalDelivered : 0
+  const transitDelta = benchmarkAvg > 0 ? avgCarrierTransit - benchmarkAvg : 0
+  const transitDeltaPct = benchmarkAvg > 0 ? Math.abs(transitDelta) / benchmarkAvg * 100 : 0
+  const hasBenchmarkData = benchmarkAvg > 0
 
   // Get top 5 fastest — min 10 delivered, relax to 1 if fewer than 3 qualify
   const eligibleStates = filteredData.filter(s => s.avgDeliveryTimeDays > 0)
@@ -67,56 +82,60 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
     }
   }
 
-  const countryLabel = country === 'US' ? 'USA' : COUNTRY_CONFIGS[country]?.label || 'National'
-
   return (
-    <Card className="h-full overflow-hidden flex flex-col bg-gradient-to-b from-zinc-100 to-white dark:from-zinc-800 dark:to-zinc-950">
-      <CardHeader className="flex-shrink-0 border-b border-border">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-lg">{countryLabel} Overview</CardTitle>
-          <div className="ml-auto flex flex-col items-center">
-            <Badge variant="secondary" className="tabular-nums text-xs font-medium">{totalOrders.toLocaleString()} orders</Badge>
-            <div className="text-[10px] text-muted-foreground mt-0.5">across {regionsWithOrders} {regionLabelPlural.toLowerCase()}</div>
-          </div>
-        </div>
-      </CardHeader>
-
+    <div className="h-full overflow-hidden flex flex-col">
+      <div className="flex-shrink-0 border-b border-border px-5 h-[68px] flex items-center">
+        <div className="text-sm font-semibold">{country === 'US' ? 'USA' : COUNTRY_CONFIGS[country]?.label} National Average</div>
+      </div>
       {/* Time Metrics — full-bleed grid */}
       <div className="flex-shrink-0">
-        {/* Primary row: Order to Delivery | Ship to Delivery */}
-        <div className="grid grid-cols-2">
-          <div className="text-center px-3 py-4 border-r border-border bg-blue-50/50 dark:bg-blue-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order to Delivery</div>
-            <div className="text-2xl font-bold tabular-nums">{avgDeliveryTime.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+        {/* Primary row: Carrier Transit | Middle Mile | Fulfill Time */}
+        <div className="grid grid-cols-3">
+          <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Last Mile</div>
+            <div className="text-2xl font-bold tabular-nums">{avgCarrierTransit.toFixed(1)}</div>
+            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
           </div>
-          <div className="text-center px-3 py-4 bg-indigo-50/50 dark:bg-indigo-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Ship to Delivery</div>
-            <div className="text-2xl font-bold tabular-nums">{(avgRegionalMile + avgCarrierTransit).toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+          <div className="text-center px-3 py-4 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Middle Mile</div>
+            <div className="text-2xl font-bold tabular-nums">{avgRegionalMile.toFixed(1)}</div>
+            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+          </div>
+          <div className="text-center px-3 py-4 bg-amber-50/40 dark:bg-amber-950/15">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Fulfill Time</div>
+            <div className="text-2xl font-bold tabular-nums">{avgFulfillTime.toFixed(1)}</div>
+            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
           </div>
         </div>
-        {/* Breakdown: Fulfill | Regional Mile | Final Mile */}
-        <div className="grid grid-cols-3 border-t border-border">
-          <div className="text-center px-2 py-3 border-r border-border bg-amber-50/40 dark:bg-amber-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment</div>
-            <div className="text-lg font-bold tabular-nums">{avgFulfillTime.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">op. hours</div>
+        {/* Secondary row: Order-to-Delivery | vs Benchmark */}
+        <div className="grid grid-cols-2 border-t border-border">
+          <div className="text-center px-3 py-4 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order-to-Delivery</div>
+            <div className="text-lg font-bold tabular-nums">{avgDeliveryTime.toFixed(1)}</div>
+            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
           </div>
-          <div className="text-center px-2 py-3 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Regional Mile</div>
-            <div className="text-lg font-bold tabular-nums">{avgRegionalMile.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">days</div>
-          </div>
-          <div className="text-center px-2 py-3 bg-sky-50/40 dark:bg-sky-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Final Mile</div>
-            <div className="text-lg font-bold tabular-nums">{avgCarrierTransit.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">days</div>
+          <div className={`text-center px-3 py-4 ${hasBenchmarkData && transitDelta <= 0 ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : hasBenchmarkData ? 'bg-red-50/50 dark:bg-red-950/20' : 'bg-blue-50/50 dark:bg-blue-950/20'}`}>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">vs Benchmark</div>
+            {hasBenchmarkData ? (
+              <>
+                <div className={`text-lg font-bold tabular-nums ${transitDelta <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {transitDeltaPct.toFixed(0)}% {transitDelta <= 0 ? 'faster' : 'slower'}
+                </div>
+                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                  {avgCarrierTransit.toFixed(1)} actual vs {benchmarkAvg.toFixed(1)} expected
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-lg font-bold tabular-nums">—</div>
+                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">no data yet</div>
+              </>
+            )}
           </div>
         </div>
         {/* Delay Toggle row */}
         {delayImpact && delayImpact.affectedShipments > 0 && onToggleDelayed && (
-          <div className="flex items-center gap-2 px-3 py-3.5 border-t border-border bg-orange-50/30 dark:bg-orange-950/10">
+          <div className="flex items-center gap-2 px-4 py-4 border-t border-border bg-orange-50/30 dark:bg-orange-950/10">
             <Switch
               id="delay-toggle-panel"
               checked={includeDelayed ?? false}
@@ -133,7 +152,7 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
 
         {/* Top 5 Fastest States — full-bleed */}
         <div className="border-t border-border">
-          <div className="px-4 pt-4 pb-2">
+          <div className="px-5 pt-5 pb-3">
             <h4 className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
               Top 5 Fastest {regionLabelPlural}
             </h4>
@@ -141,7 +160,7 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
           {fastestStates.length > 0 ? (
             <div>
               {fastestStates.map((state, index) => (
-                <div key={state.state} className="flex items-center px-4 py-2 border-t border-border hover:bg-muted/30 transition-colors">
+                <div key={state.state} className="flex items-center px-5 py-3 border-t border-border hover:bg-muted/30 transition-colors">
                   <span className="text-xs text-muted-foreground w-5 tabular-nums">{index + 1}</span>
                   <span className="text-xs font-medium flex-1">{state.stateName}</span>
                   <span className="text-xs font-medium tabular-nums mr-2">{state.avgDeliveryTimeDays.toFixed(1)}d</span>
@@ -150,17 +169,17 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
               ))}
             </div>
           ) : (
-            <div className="text-center py-4 text-muted-foreground text-xs border-t border-border">
+            <div className="text-center py-5 text-muted-foreground text-xs border-t border-border">
               Not enough data
             </div>
           )}
         </div>
 
         {/* Click hint */}
-        <div className="px-4 py-3 border-t border-border text-xs text-muted-foreground bg-muted/30">
+        <div className="px-5 py-4 border-t border-border text-xs text-muted-foreground bg-muted/30">
           Click a {regionLabel.toLowerCase()} on the map to view detailed metrics
         </div>
       </div>
-    </Card>
+    </div>
   )
 }

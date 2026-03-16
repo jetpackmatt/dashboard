@@ -97,6 +97,7 @@ export interface KPIMetrics {
   totalCost: number
   orderCount: number
   avgTransitTime: number
+  avgFulfillTime: number
   slaPercent: number
   lateOrders: number
   undelivered: number
@@ -269,8 +270,17 @@ export interface StatePerformance {
   avgFulfillTimeHours: number       // Order Import → Label Generated (hours)
   avgRegionalMileDays: number       // Label Generated → Carrier First Scan (days)
   avgCarrierTransitDays: number     // Carrier First Scan → Delivered (days) — uses transit_time_days
+  deliveryOnTimePercent?: number    // % delivered within benchmark + 1 day
+  deliveryOnTimeCount?: number
+  deliveryLateCount?: number
+  transitVsBenchmark?: number       // actual avg transit - benchmark avg (negative = faster)
+  benchmarkAvgTransit?: number      // weighted benchmark avg transit for this state's carrier+zone mix
   shippedPercent: number
   deliveredPercent: number
+  // "With delayed" variants for toggle
+  avgDeliveryTimeDaysWithDelayed?: number
+  avgFulfillTimeHoursWithDelayed?: number
+  delayCount?: number
 }
 
 // Cost + Speed Analysis Types

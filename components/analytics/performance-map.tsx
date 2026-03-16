@@ -4,7 +4,7 @@ import { useMemo, useState, useRef } from "react"
 import { ComposableMap, Geographies, Geography } from "react-simple-maps"
 import type { StatePerformance } from "@/lib/analytics/types"
 import type { CountryConfig } from "@/lib/analytics/geo-config"
-import { CA_NORTHERN_TERRITORIES, CA_SOUTHERN_PROJECTION_CONFIG } from "@/lib/analytics/geo-config"
+import { CA_NORTHERN_TERRITORIES } from "@/lib/analytics/geo-config"
 import { Card, CardContent } from "@/components/ui/card"
 
 interface PerformanceMapProps {
@@ -28,38 +28,25 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
 
   const dataMap = new Map(regionData.map(d => [d.state, d]))
 
-  // For Canada: hide northern territories when they have no data
-  const hideNorthernTerritories = useMemo(() => {
-    if (config.code !== 'CA') return false
-    return CA_NORTHERN_TERRITORIES.every(code => {
+  // Northern territories with no data — render greyed out, non-interactive
+  const greyedOutCodes = useMemo(() => {
+    if (config.code !== 'CA') return new Set<string>()
+    const greyed = new Set<string>()
+    for (const code of CA_NORTHERN_TERRITORIES) {
       const d = dataMap.get(code)
-      return !d || d.orderCount === 0
-    })
-  }, [config.code, regionData])
-
-  const projectionConfig = useMemo(() => {
-    if (hideNorthernTerritories) return CA_SOUTHERN_PROJECTION_CONFIG
-    return config.projectionConfig
-  }, [hideNorthernTerritories, config.projectionConfig])
-
-  // Names of territories to exclude from rendering
-  const hiddenGeoNames = useMemo(() => {
-    if (!hideNorthernTerritories) return new Set<string>()
-    const names = new Set<string>()
-    for (const [name, code] of Object.entries(config.nameToCode)) {
-      if (CA_NORTHERN_TERRITORIES.includes(code)) names.add(name)
+      if (!d || d.orderCount === 0) greyed.add(code)
     }
-    return names
-  }, [hideNorthernTerritories, config.nameToCode])
+    return greyed
+  }, [config.code, regionData])
 
   const getRegionColor = (regionCode: string) => {
     const data = dataMap.get(regionCode)
     if (!data || data.orderCount === 0) {
-      return "hsl(var(--muted))"
+      return "hsl(var(--border))"
     }
 
     const avgDays = data.avgCarrierTransitDays
-    if (avgDays <= 0) return "hsl(var(--muted))"
+    if (avgDays <= 0) return "hsl(var(--border))"
     if (avgDays < 3) {
       return "hsl(142 71% 45%)" // green
     } else if (avgDays < 5) {
@@ -86,29 +73,31 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
     <div ref={containerRef} className="relative w-full">
       <ComposableMap
         projection={config.projection as any}
-        projectionConfig={projectionConfig as any}
+        projectionConfig={config.projectionConfig as any}
       >
         <Geographies geography={config.geoUrl}>
           {({ geographies }) =>
-            geographies
-              .filter((geo) => !hiddenGeoNames.has(geo.properties.name))
-              .map((geo) => {
+            geographies.map((geo) => {
               const geoName = geo.properties.name
               const regionCode = config.nameToCode[geoName] || ''
+              const isGreyedOut = greyedOutCodes.has(regionCode)
 
               return (
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
-                  fill={getRegionColor(regionCode)}
-                  stroke="hsl(var(--background))"
+                  fill={isGreyedOut ? "hsl(var(--border))" : getRegionColor(regionCode)}
+                  stroke="hsl(var(--muted))"
                   strokeWidth={0.5}
                   style={{
                     default: {
                       outline: 'none',
-                      opacity: getRegionOpacity(regionCode),
+                      opacity: isGreyedOut ? 0.85 : getRegionOpacity(regionCode),
                     },
-                    hover: {
+                    hover: isGreyedOut ? {
+                      outline: 'none',
+                      opacity: 0.85,
+                    } : {
                       outline: 'none',
                       opacity: 0.8,
                       filter: 'brightness(1.15) drop-shadow(0 0 3px rgba(0,0,0,0.3))',
@@ -116,14 +105,14 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
                     },
                     pressed: {
                       outline: 'none',
-                      opacity: 1,
+                      opacity: isGreyedOut ? 0.85 : 1,
                     },
                   }}
-                  onClick={() => handleRegionClick(regionCode)}
-                  onMouseEnter={() => setHoveredRegion(regionCode)}
-                  onMouseLeave={() => setHoveredRegion(null)}
+                  onClick={() => !isGreyedOut && handleRegionClick(regionCode)}
+                  onMouseEnter={() => !isGreyedOut && setHoveredRegion(regionCode)}
+                  onMouseLeave={() => !isGreyedOut && setHoveredRegion(null)}
                   onMouseMove={(event: React.MouseEvent) => {
-                    setMousePosition({ x: event.clientX, y: event.clientY })
+                    if (!isGreyedOut) setMousePosition({ x: event.clientX, y: event.clientY })
                   }}
                 />
               )
@@ -133,10 +122,10 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
       </ComposableMap>
 
       {/* Legend */}
-      <Card className="absolute bottom-2 left-2 w-auto">
+      <Card className={`absolute left-2 w-auto z-10 ${config.code === 'CA' ? 'bottom-[70px]' : '-bottom-5'}`}>
         <CardContent className="p-2">
           <div className="flex items-center gap-3">
-            <span className="text-[10px] font-semibold whitespace-nowrap">Final Mile:</span>
+            <span className="text-[10px] font-semibold whitespace-nowrap">Carrier Transit:</span>
             <div className="flex items-center gap-1">
               <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(142 71% 45%)" }} />
               <span className="text-[10px] whitespace-nowrap">{"<3d"}</span>
@@ -187,11 +176,11 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
                     <div className="font-semibold text-sm tabular-nums">{data.avgFulfillTimeHours.toFixed(1)}h</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground">Regional</div>
+                    <div className="text-[10px] text-muted-foreground">Middle Mile</div>
                     <div className="font-semibold text-sm tabular-nums">{data.avgRegionalMileDays.toFixed(1)}d</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground">Final Mile</div>
+                    <div className="text-[10px] text-muted-foreground">Carrier Transit</div>
                     <div className="font-semibold text-sm tabular-nums">{data.avgCarrierTransitDays.toFixed(1)}d</div>
                   </div>
                 </div>

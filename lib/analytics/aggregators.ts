@@ -223,6 +223,7 @@ export function calculateKPIs(
     totalCost,
     orderCount,
     avgTransitTime,
+    avgFulfillTime: 0,
     slaPercent,
     lateOrders,
     undelivered,

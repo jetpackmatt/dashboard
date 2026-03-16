@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const cronStart = Date.now()
     console.log('Starting daily SFTP cost sync...')
 
     const adminClient = createAdminClient()
@@ -45,56 +46,63 @@ export async function GET(request: Request) {
     console.log(`Fetching SFTP file for: ${dateStr}`)
     console.log(`(contains transactions charged on: ${formatDateForLog(yesterday(today))})`)
 
+    // Track results across all steps
+    let sftpFilename = ''
+    let sftpDate = ''
+    let sftpRawRows = 0
+    let sftpShipments = 0
+    let sftpUpdated = 0
+    let sftpNotFound = 0
+    let sftpErrors: string[] = []
+    let sftpFetchFailed = false
+
     // Step 1: Fetch today's daily file
     const sftpResult = await fetchDailyShippingBreakdown(today)
 
     if (!sftpResult.success) {
       console.log(`SFTP fetch failed: ${sftpResult.error}`)
-      return NextResponse.json({
-        success: false,
-        filename: sftpResult.filename,
-        error: sftpResult.error,
-        message: 'SFTP file not found or fetch failed'
-      })
-    }
+      sftpFetchFailed = true
+      sftpFilename = sftpResult.filename || ''
+      // Don't return early — still need to run backfill and preview markups
+    } else {
+      sftpFilename = sftpResult.filename || ''
+      sftpDate = sftpResult.date || ''
+      sftpRawRows = sftpResult.rawRowCount || 0
 
-    console.log(`Fetched ${sftpResult.filename}:`)
-    console.log(`  Raw rows: ${sftpResult.rawRowCount}`)
-    console.log(`  Unique shipments: ${sftpResult.rows.length}`)
+      console.log(`Fetched ${sftpFilename}:`)
+      console.log(`  Raw rows: ${sftpRawRows}`)
+      console.log(`  Unique shipments: ${sftpResult.rows.length}`)
 
-    if (sftpResult.rows.length === 0) {
-      console.log('No shipments in SFTP file, nothing to update')
-      return NextResponse.json({
-        success: true,
-        filename: sftpResult.filename,
-        date: sftpResult.date,
-        rawRows: sftpResult.rawRowCount,
-        shipments: 0,
-        updated: 0,
-        notFound: 0,
-        errors: 0,
-        message: 'No shipments in file'
-      })
-    }
+      if (sftpResult.rows.length > 0) {
+        sftpShipments = sftpResult.rows.length
 
-    // Step 2: Update transactions with breakdown data
-    // Pass fileDate to enable precise matching for reshipments (same shipment, different dates)
-    const updateResult = await updateTransactionsWithDailyBreakdown(adminClient, sftpResult.rows, today)
+        // Step 2: Update transactions with breakdown data
+        // Pass fileDate to enable precise matching for reshipments (same shipment, different dates)
+        const updateResult = await updateTransactionsWithDailyBreakdown(adminClient, sftpResult.rows, today)
 
-    console.log('Update results:')
-    console.log(`  Updated: ${updateResult.updated}`)
-    console.log(`  Not found: ${updateResult.notFound}`)
-    console.log(`  Errors: ${updateResult.errors.length}`)
+        sftpUpdated = updateResult.updated
+        sftpNotFound = updateResult.notFound
+        sftpErrors = updateResult.errors
 
-    if (updateResult.errors.length > 0) {
-      console.log('First 5 errors:')
-      for (const err of updateResult.errors.slice(0, 5)) {
-        console.log(`    ${err}`)
+        console.log('Update results:')
+        console.log(`  Updated: ${sftpUpdated}`)
+        console.log(`  Not found: ${sftpNotFound}`)
+        console.log(`  Errors: ${sftpErrors.length}`)
+
+        if (sftpErrors.length > 0) {
+          console.log('First 5 errors:')
+          for (const err of sftpErrors.slice(0, 5)) {
+            console.log(`    ${err}`)
+          }
+        }
+      } else {
+        console.log('No shipments in SFTP file, nothing to update')
       }
     }
 
     // Step 2b: Backfill pass — retry SFTP matching for previous 3 days
     // Catches transactions that arrived in DB after the original SFTP cron ran
+    // IMPORTANT: Runs even if primary SFTP fetch failed
     console.log('Starting SFTP backfill for previous 3 days...')
     const backfillResults: Array<{ date: string; missing: number; updated: number; notFound: number }> = []
 
@@ -154,24 +162,43 @@ export async function GET(request: Request) {
     }
 
     // Step 3: Calculate preview markups for shipments that now have base_cost
-    // This makes marked-up charges visible immediately after SFTP sync
-    console.log('Calculating preview markups for shipments...')
+    // IMPORTANT: Runs ALWAYS — even if SFTP fetch failed or had no rows.
+    // There may be eligible transactions from previous days that need markup.
+    const step3Start = Date.now()
+    const elapsedBeforeMarkup = step3Start - cronStart
+    console.log(`Calculating preview markups for shipments... (${elapsedBeforeMarkup}ms elapsed so far)`)
+
+    // Check how many are eligible BEFORE processing (diagnostic)
+    const { count: eligibleCount } = await adminClient
+      .from('transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('fee_type', 'Shipping')
+      .not('client_id', 'is', null)
+      .or('invoiced_status_jp.is.null,invoiced_status_jp.eq.false')
+      .is('markup_is_preview', null)
+      .not('base_cost', 'is', null)
+    console.log(`Preview markup: ${eligibleCount || 0} eligible transactions found`)
+
     const markupResult = await calculateShipmentPreviewMarkups({ limit: 5000 })
-    console.log(`Preview markups: ${markupResult.updated} updated, ${markupResult.skipped} skipped`)
+    const step3Duration = Date.now() - step3Start
+    console.log(`Preview markups: ${markupResult.updated} updated, ${markupResult.skipped} skipped (${step3Duration}ms)`)
     if (markupResult.errors.length > 0) {
-      console.log(`Preview markup errors: ${markupResult.errors.slice(0, 3).join(', ')}`)
+      console.log(`Preview markup errors: ${markupResult.errors.slice(0, 5).join(', ')}`)
     }
+    const totalDuration = Date.now() - cronStart
+    console.log(`Total SFTP cron duration: ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`)
 
     return NextResponse.json({
-      success: true,
-      filename: sftpResult.filename,
-      date: sftpResult.date,
-      rawRows: sftpResult.rawRowCount,
-      shipments: sftpResult.rows.length,
-      updated: updateResult.updated,
-      notFound: updateResult.notFound,
-      errors: updateResult.errors.length,
-      errorDetails: updateResult.errors.slice(0, 10),
+      success: !sftpFetchFailed,
+      sftpFetchFailed,
+      filename: sftpFilename,
+      date: sftpDate,
+      rawRows: sftpRawRows,
+      shipments: sftpShipments,
+      updated: sftpUpdated,
+      notFound: sftpNotFound,
+      errors: sftpErrors.length,
+      errorDetails: sftpErrors.slice(0, 10),
       previewMarkups: {
         updated: markupResult.updated,
         skipped: markupResult.skipped,

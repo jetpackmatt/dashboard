@@ -38,6 +38,7 @@ import { LayeredVolumeHeatMap } from "@/components/analytics/layered-volume-heat
 import { CostSpeedStateMap } from "@/components/analytics/cost-speed-state-map"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -135,6 +136,35 @@ export default function AnalyticsPage() {
     return searchParams.get('tab') || 'state-performance'
   })
 
+  // Two-phase tab switching: show loader instantly, defer heavy content mount
+  // renderedTab lags behind activeTab — content only mounts after loader is visible
+  const [renderedTab, setRenderedTab] = React.useState(activeTab)
+  const [isTabTransitioning, setIsTabTransitioning] = React.useState(false)
+
+  // When activeTab changes, show loader immediately, defer content mount
+  React.useEffect(() => {
+    if (activeTab !== renderedTab) {
+      setIsTabTransitioning(true)
+      // Use double-rAF to ensure the loader paints before mounting heavy content
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setRenderedTab(activeTab)
+          // Don't clear isTabTransitioning here — let the renderedTab effect below handle it
+        })
+      })
+    }
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear transition state AFTER React has committed the new tab render
+  React.useEffect(() => {
+    if (isTabTransitioning && renderedTab === activeTab) {
+      // Wait one more frame after React commits, so the browser finishes painting
+      requestAnimationFrame(() => {
+        setIsTabTransitioning(false)
+      })
+    }
+  }, [renderedTab, activeTab, isTabTransitioning])
+
   // Sync tab state when URL search params change (e.g. sidebar link navigation)
   React.useEffect(() => {
     const tabFromUrl = searchParams.get('tab')
@@ -152,6 +182,8 @@ export default function AnalyticsPage() {
 
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
   const [selectedCountry, setSelectedCountry] = React.useState('US')
+  // Performance tab needs a specific country (map requires config) — fall back to US when ALL
+  const perfCountry = selectedCountry === 'ALL' ? 'US' : selectedCountry
   const [selectedVolumeState, setSelectedVolumeState] = React.useState<string | null>(null)
 
   // Delay exclusion toggle — default: exclude delayed orders from averages
@@ -259,7 +291,7 @@ export default function AnalyticsPage() {
   const delayImpact = analyticsData?.delayImpact || null
 
   const kpiData: KPIMetrics = analyticsData?.kpis || {
-    totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0,
+    totalCost: 0, orderCount: 0, avgTransitTime: 0, avgFulfillTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0,
     periodChange: { totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0 }
   }
 
@@ -463,7 +495,8 @@ export default function AnalyticsPage() {
   }
 
   // Volume data is always current since it comes pre-computed from the server
-  const isVolumeDataCurrent = hasData
+  // When no client is selected, treat as "current" so Loading indicator doesn't show forever
+  const isVolumeDataCurrent = hasData || !selectedClientId || selectedClientId === 'all'
 
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
@@ -492,7 +525,7 @@ export default function AnalyticsPage() {
             ))}
           </SelectContent>
         </Select>
-        {(!isMounted || !isVolumeDataCurrent || isLoadingData) && (
+        {(!isMounted || !isVolumeDataCurrent || isLoadingData || isTabTransitioning) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
             <JetpackLoader size="md" />
             <span className="text-xs text-muted-foreground">Loading</span>
@@ -503,7 +536,7 @@ export default function AnalyticsPage() {
         <div className="@container/main flex flex-1 flex-col w-full font-roboto">
           <div className="flex flex-col w-full px-4 lg:px-6">
             {/* Tabs for Different Reports */}
-            <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+            <Tabs value={renderedTab} onValueChange={handleTabChange} className="w-full">
               {/* Top spacing */}
               <div className="pt-5" />
 
@@ -518,11 +551,32 @@ export default function AnalyticsPage() {
                 <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
               )}
 
-              {/* Tab content wrapper - greyed out during loading */}
-              <div className={isLoadingData ? "opacity-20 pointer-events-none" : ""}>
+              {/* Tab content wrapper - greyed out during loading or tab transition */}
+              <div className={(isLoadingData || isTabTransitioning) ? "opacity-20 pointer-events-none" : "transition-opacity duration-150"}>
 
               {/* Tab 1: Financials */}
-              <TabsContent value="financials" className="space-y-5 mt-0 px-1">
+              <TabsContent value="financials" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Sticky header */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
+                    <div>
+                      <div className="text-lg font-semibold">Financials</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Billing breakdown and cost analysis</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* Feature Row: Cost Breakdown + Summary Panel */}
                 <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
                   {/* Cost Breakdown - Stacked Area Chart */}
@@ -1171,41 +1225,124 @@ export default function AnalyticsPage() {
                     </div>
                   </CardContent>
                 </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               {/* Tab 2: Cost & Speed Analysis */}
-              <TabsContent value="cost-speed" className="space-y-5 mt-0 px-1">
-                {/* Delay Impact Toggle */}
-                {delayImpact && delayImpact.affectedShipments > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-muted/30">
-                    <Switch
-                      id="delay-toggle-cs"
-                      checked={includeDelayedOrders}
-                      onCheckedChange={setIncludeDelayedOrders}
-                    />
-                    <Label htmlFor="delay-toggle-cs" className="text-xs font-medium cursor-pointer whitespace-nowrap">
-                      Include Inventory Delays
-                    </Label>
-                    <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
-                      {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%) orders
-                    </span>
-                  </div>
-                )}
-                {/* Average Cost over Time */}
-                <Card>
-                  <CardHeader className="flex flex-row items-start justify-between">
+              <TabsContent value="cost-speed" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Header bar — sticky */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
                     <div>
-                      <CardTitle className="text-sm font-medium"><div>Average Cost over Time</div></CardTitle>
-                      <CardDescription className="text-xs">Average cost per order with and without surcharges</CardDescription>
-                    </div>
-                    {overallAvgCost !== null && (
-                      <div className="text-right">
-                        <div className="text-xs text-muted-foreground">Period Average</div>
-                        <div className="text-lg font-bold">${overallAvgCost.toFixed(2)}</div>
+                      <div className="text-lg font-semibold">Cost + Speed</div>
+                      <div className="text-xs text-muted-foreground tabular-nums mt-0.5">
+                        Shipping cost and delivery speed analysis
                       </div>
-                    )}
-                  </CardHeader>
-                  <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      {delayImpact && delayImpact.affectedShipments > 0 && (
+                        <>
+                          <Switch
+                            id="delay-toggle-cs"
+                            checked={includeDelayedOrders}
+                            onCheckedChange={setIncludeDelayedOrders}
+                            className="scale-75"
+                          />
+                          <Label htmlFor="delay-toggle-cs" className="text-[10px] font-medium cursor-pointer whitespace-nowrap mr-2">
+                            Include Inventory Delays
+                          </Label>
+                        </>
+                      )}
+                      <Select
+                        value={dateRange}
+                        onValueChange={handleDatePresetChange}
+                      >
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>
+                            {DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {(analyticsData?.availableCountries || []).length > 1 && (
+                        <Select value={selectedCountry} onValueChange={(v) => {
+                          setSelectedCountry(v)
+                          setSelectedState(null)
+                        }}>
+                          <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent align="end">
+                            <SelectItem value="ALL">All Countries</SelectItem>
+                            <SelectItem value="US">USA</SelectItem>
+                            {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
+                            {(analyticsData?.availableCountries || []).includes('AU') && <SelectItem value="AU">Australia</SelectItem>}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* KPI Summary Row */}
+                  <div className="px-5 lg:px-8 pb-5">
+                    <div className="rounded-xl border border-border/60 bg-background/80 backdrop-blur-sm shadow-sm overflow-hidden">
+                      <div className="grid grid-cols-2 lg:grid-cols-4">
+                        <div className="text-center px-4 py-5 border-r border-border/50 bg-sky-50/40 dark:bg-sky-950/15">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Period Avg Cost</div>
+                          <div className="text-2xl font-bold tabular-nums">{overallAvgCost !== null ? `$${overallAvgCost.toFixed(2)}` : '—'}</div>
+                          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">per order</div>
+                        </div>
+                        <div className="text-center px-4 py-5 lg:border-r border-border/50 bg-emerald-50/40 dark:bg-emerald-950/15">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg Carrier Transit</div>
+                          <div className="text-2xl font-bold tabular-nums">
+                            {kpiData.avgTransitTime > 0 ? kpiData.avgTransitTime.toFixed(1) : '—'}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">calendar days</div>
+                        </div>
+                        <div className="text-center px-4 py-5 border-t lg:border-t-0 border-r border-border/50 bg-amber-50/30 dark:bg-amber-950/10">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg Fulfillment</div>
+                          <div className="text-2xl font-bold tabular-nums">
+                            {(() => {
+                              const v = includeDelayedOrders ? ((kpiData as any).avgFulfillTimeWithDelayed || kpiData.avgFulfillTime) : kpiData.avgFulfillTime
+                              return v > 0 ? v.toFixed(1) : '—'
+                            })()}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">operating hours</div>
+                        </div>
+                        <div className="text-center px-4 py-5 border-t lg:border-t-0 bg-indigo-50/30 dark:bg-indigo-950/10">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Shipping Zones</div>
+                          <div className="text-2xl font-bold tabular-nums">{zoneCostData.length}</div>
+                          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">active zones</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Chart sections — Cards on grey background */}
+                  <div className="px-5 lg:px-8 pb-8 space-y-5">
+
+                    {/* Average Cost over Time */}
+                    <div className="rounded-xl border border-border/60 bg-background shadow-sm overflow-hidden">
+                      <div className="flex items-start justify-between px-6 pt-6 pb-2">
+                        <div>
+                          <div className="text-sm font-semibold">Average Cost over Time</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">Cost per order with and without surcharges</div>
+                        </div>
+                        {overallAvgCost !== null && (
+                          <div className="text-right">
+                            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Period Average</div>
+                            <div className="text-lg font-bold tabular-nums mt-0.5">${overallAvgCost.toFixed(2)}</div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="px-6 pb-6 pt-2">
                     <ChartContainer
                       config={{
                         avgCostBase: {
@@ -1221,7 +1358,7 @@ export default function AnalyticsPage() {
                           color: "hsl(0, 0%, 15%)",
                         },
                       }}
-                      className="aspect-auto h-[250px] w-full"
+                      className="aspect-auto h-[280px] w-full"
                     >
                       <ComposedChart data={costTrendDataWithMA}>
                         <defs>
@@ -1250,7 +1387,7 @@ export default function AnalyticsPage() {
                             />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid vertical={false} />
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.6} />
                         <XAxis
                           dataKey="month"
                           tickLine={false}
@@ -1310,7 +1447,6 @@ export default function AnalyticsPage() {
                           stroke="var(--color-movingAverage)"
                           strokeWidth={2}
                           dot={(props: any) => {
-                            // Only show dots at intervals matching the moving average window
                             const showDot = props.index % maWindowSize === 0
                             return (
                               <circle
@@ -1326,16 +1462,16 @@ export default function AnalyticsPage() {
                         <ChartLegend content={<ChartLegendContent />} />
                       </ComposedChart>
                     </ChartContainer>
-                  </CardContent>
-                </Card>
+                      </div>
+                    </div>
 
-                {/* Delivery Speed Trends - All 3 Time Metrics */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium"><div>Delivery Speed Trends</div></CardTitle>
-                    <CardDescription className="text-xs">All three time metrics over the selected period</CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+                    {/* Delivery Speed Trends */}
+                    <div className="rounded-xl border border-border/60 bg-background shadow-sm overflow-hidden">
+                      <div className="px-6 pt-6 pb-2">
+                        <div className="text-sm font-semibold">Delivery Speed Trends</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">All three time metrics over the selected period</div>
+                      </div>
+                      <div className="px-6 pb-6 pt-2">
                     <ChartContainer
                       config={{
                         avgOrderToDeliveryDays: {
@@ -1343,7 +1479,7 @@ export default function AnalyticsPage() {
                           color: "#328bcb",
                         },
                         avgCarrierTransitDays: {
-                          label: "Final Mile Carrier",
+                          label: "Carrier Transit",
                           color: "#ec9559",
                         },
                         avgFulfillTimeHours: {
@@ -1351,7 +1487,7 @@ export default function AnalyticsPage() {
                           color: "#22c55e",
                         },
                       }}
-                      className="aspect-auto h-[280px] w-full"
+                      className="aspect-auto h-[300px] w-full"
                     >
                       <ComposedChart
                         data={deliverySpeedTrendData}
@@ -1363,7 +1499,7 @@ export default function AnalyticsPage() {
                             <stop offset="95%" stopColor="#328bcb" stopOpacity={0.02} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid vertical={false} />
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.6} />
                         <XAxis
                           dataKey="date"
                           tickLine={false}
@@ -1404,7 +1540,7 @@ export default function AnalyticsPage() {
                               formatter={(value, name) => {
                                 if (name === 'avgFulfillTimeHours') return [`${Number(value).toFixed(1)}h`, 'Fulfillment']
                                 if (name === 'avgOrderToDeliveryDays') return [`${Number(value).toFixed(1)}d`, 'Order-to-Delivery']
-                                if (name === 'avgCarrierTransitDays') return [`${Number(value).toFixed(1)}d`, 'Final Mile Carrier']
+                                if (name === 'avgCarrierTransitDays') return [`${Number(value).toFixed(1)}d`, 'Carrier Transit']
                                 return [value, name]
                               }}
                               indicator="dot"
@@ -1440,38 +1576,46 @@ export default function AnalyticsPage() {
                         <ChartLegend content={<ChartLegendContent />} />
                       </ComposedChart>
                     </ChartContainer>
-                  </CardContent>
-                </Card>
-
-                {/* Geography: Cost + Final Mile by State */}
-                <Card>
-                  <CardHeader className="text-center">
-                    <CardTitle className="text-sm font-medium"><div>Cost + Final Mile by State</div></CardTitle>
-                    <CardDescription className="text-xs">Geographic distribution of shipping costs and final mile carrier times</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <CostSpeedStateMap
-                        data={stateCostSpeedData}
-                        metric="cost"
-                        title="Avg Shipping Cost"
-                      />
-                      <CostSpeedStateMap
-                        data={stateCostSpeedData}
-                        metric="transit"
-                        title="Avg Final Mile"
-                      />
+                      </div>
                     </div>
-                  </CardContent>
-                </Card>
 
-                {/* Cost by Zone */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium"><div>Cost by Shipping Zone</div></CardTitle>
-                    <CardDescription className="text-xs">How shipping cost and carrier transit time scale with zone distance</CardDescription>
-                  </CardHeader>
-                  <CardContent>
+                    {/* Geography: Cost + Carrier Transit by State — side by side (hidden when ALL) */}
+                    {selectedCountry !== 'ALL' && (
+                    <div className="rounded-xl border border-border/60 bg-background shadow-sm overflow-hidden">
+                      <div className="px-6 pt-6 pb-2">
+                        <div className="text-sm font-semibold">Cost + Transit by {selectedCountry === 'CA' ? 'Province' : 'State'}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">Geographic distribution of shipping costs and carrier transit times</div>
+                      </div>
+                      <div className="px-6 pb-6 pt-2">
+                        <div className="grid gap-6 md:grid-cols-2">
+                          <div className="rounded-lg border border-border/40 bg-zinc-50/50 dark:bg-zinc-800/30 p-4">
+                            <CostSpeedStateMap
+                              data={stateCostSpeedData}
+                              metric="cost"
+                              title="Avg Shipping Cost"
+                            />
+                          </div>
+                          <div className="rounded-lg border border-border/40 bg-zinc-50/50 dark:bg-zinc-800/30 p-4">
+                            <CostSpeedStateMap
+                              data={stateCostSpeedData}
+                              metric="transit"
+                              title="Avg Carrier Transit"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* Cost by Zone + Carrier Transit Distribution — side by side on desktop */}
+                    <div className="grid gap-5 lg:grid-cols-2">
+                      {/* Cost by Zone */}
+                      <div className="rounded-xl border border-border/60 bg-background shadow-sm overflow-hidden">
+                        <div className="px-6 pt-6 pb-2">
+                          <div className="text-sm font-semibold">Cost by Shipping Zone</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">Cost and transit time by zone distance</div>
+                        </div>
+                        <div className="px-6 pb-6 pt-2">
                     <ChartContainer
                       config={{
                         avgCost: {
@@ -1479,17 +1623,17 @@ export default function AnalyticsPage() {
                           color: "#328bcb",
                         },
                         avgTransitTime: {
-                          label: "Final Mile",
+                          label: "Carrier Transit",
                           color: "#000000",
                         },
                       }}
-                      className="h-[250px] w-full"
+                      className="h-[280px] w-full"
                     >
                       <ComposedChart
                         data={zoneCostData}
-                        margin={{ top: 20, right: 20, left: 20, bottom: 0 }}
+                        margin={{ top: 20, right: 20, left: 10, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
                         <XAxis
                           dataKey="zone"
                           tickLine={false}
@@ -1523,7 +1667,7 @@ export default function AnalyticsPage() {
                                     <span className="font-medium tabular-nums">${data.avgCost.toFixed(2)}</span>
                                   </div>
                                   <div className="flex justify-between gap-4">
-                                    <span className="text-muted-foreground">Final Mile</span>
+                                    <span className="text-muted-foreground">Carrier Transit</span>
                                     <span className="font-medium tabular-nums">{data.avgTransitTime.toFixed(1)} days</span>
                                   </div>
                                 </div>
@@ -1547,68 +1691,105 @@ export default function AnalyticsPage() {
                         />
                       </ComposedChart>
                     </ChartContainer>
-                  </CardContent>
-                </Card>
-
-                {/* Final Mile Carrier Distribution */}
-                <Card>
-                    <CardHeader>
-                      <CardTitle className="text-sm font-medium"><div>Final Mile Distribution</div></CardTitle>
-                      <CardDescription className="text-xs">Final mile carrier transit time: min, median, max by carrier</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {transitTimeDistributionData.map((carrier) => (
-                          <div key={carrier.carrier}>
-                            <div className="flex items-center justify-between text-sm mb-1">
-                              <span className="font-medium">{carrier.carrier}</span>
-                              <span className="text-muted-foreground text-xs">{carrier.orderCount} orders</span>
-                            </div>
-                            <div className="relative h-8">
-                              {/* Background bar */}
-                              <div className="absolute inset-0 bg-muted rounded-md" />
-
-                              {/* Range bar (min to max) */}
-                              <div
-                                className="absolute top-1/2 -translate-y-1/2 h-2 bg-primary/20 rounded-full"
-                                style={{
-                                  left: `${(carrier.min / carrier.max) * 100}%`,
-                                  width: `${((carrier.max - carrier.min) / carrier.max) * 100}%`,
-                                }}
-                              />
-
-                              {/* IQR bar (Q1 to Q3) */}
-                              <div
-                                className="absolute top-1/2 -translate-y-1/2 h-3 bg-primary/50 rounded"
-                                style={{
-                                  left: `${(carrier.q1 / carrier.max) * 100}%`,
-                                  width: `${((carrier.q3 - carrier.q1) / carrier.max) * 100}%`,
-                                }}
-                              />
-
-                              {/* Median line */}
-                              <div
-                                className="absolute top-1/2 -translate-y-1/2 h-5 w-0.5 bg-primary"
-                                style={{
-                                  left: `${(carrier.median / carrier.max) * 100}%`,
-                                }}
-                              />
-                            </div>
-                            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                              <span>{carrier.min.toFixed(1)}d</span>
-                              <span>Median: {carrier.median.toFixed(1)}d</span>
-                              <span>{carrier.max.toFixed(1)}d</span>
-                            </div>
-                          </div>
-                        ))}
+                        </div>
                       </div>
-                    </CardContent>
-                </Card>
 
+                      {/* Carrier Transit Distribution */}
+                      <div className="rounded-xl border border-border/60 bg-background shadow-sm overflow-hidden">
+                        <div className="px-6 pt-6 pb-4">
+                          <div className="text-sm font-semibold">Carrier Transit Distribution</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">Transit time range by carrier (min → median → max)</div>
+                        </div>
+                        <div className="px-6 pb-6 space-y-5">
+                          {transitTimeDistributionData.map((carrier) => (
+                            <div key={carrier.carrier}>
+                              <div className="flex items-center justify-between text-sm mb-2">
+                                <span className="font-medium">{carrier.carrier}</span>
+                                <Badge variant="secondary" className="text-[10px] px-2 py-0 font-medium tabular-nums">{carrier.orderCount.toLocaleString()} orders</Badge>
+                              </div>
+                              <div className="relative h-9 rounded-md overflow-hidden">
+                                {/* Background bar */}
+                                <div className="absolute inset-0 bg-zinc-100 dark:bg-zinc-800 rounded-md" />
+
+                                {/* Range bar (min to max) */}
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 h-2.5 rounded-full"
+                                  style={{
+                                    left: `${(carrier.min / carrier.max) * 100}%`,
+                                    width: `${((carrier.max - carrier.min) / carrier.max) * 100}%`,
+                                    backgroundColor: 'hsl(203 61% 50% / 0.2)',
+                                  }}
+                                />
+
+                                {/* IQR bar (Q1 to Q3) */}
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 h-4 rounded"
+                                  style={{
+                                    left: `${(carrier.q1 / carrier.max) * 100}%`,
+                                    width: `${((carrier.q3 - carrier.q1) / carrier.max) * 100}%`,
+                                    backgroundColor: 'hsl(203 61% 50% / 0.45)',
+                                  }}
+                                />
+
+                                {/* Median line */}
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 h-6 w-0.5"
+                                  style={{
+                                    left: `${(carrier.median / carrier.max) * 100}%`,
+                                    backgroundColor: 'hsl(203 61% 50%)',
+                                  }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[10px] text-muted-foreground mt-1.5 tabular-nums">
+                                <span>{carrier.min.toFixed(1)}d</span>
+                                <span className="font-medium text-foreground">Median: {carrier.median.toFixed(1)}d</span>
+                                <span>{carrier.max.toFixed(1)}d</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
               </TabsContent>
 
               {/* Tab 3: Order Volume */}
-              <TabsContent value="order-volume" className="space-y-5 mt-0 px-1">
+              <TabsContent value="order-volume" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Sticky header */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
+                    <div>
+                      <div className="text-lg font-semibold">Order Volume</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Volume trends by time, geography, and channel</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {(analyticsData?.availableCountries || []).length > 1 && (
+                        <Select value={selectedCountry} onValueChange={(v) => { setSelectedCountry(v); setSelectedState(null) }}>
+                          <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent align="end">
+                            <SelectItem value="ALL">All Countries</SelectItem>
+                            <SelectItem value="US">USA</SelectItem>
+                            {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+                  <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* Layered Volume Heat Map with State Details */}
                 {isMounted && volumeData.stateData.length > 0 && (
                   <div className="grid gap-4 lg:grid-cols-3">
@@ -1919,10 +2100,33 @@ export default function AnalyticsPage() {
                     </CardContent>
                   </Card>
                 </div>
+                  </div>
+                </div>
               </TabsContent>
 
               {/* Tab 4: Carriers + Zones */}
-              <TabsContent value="carriers-zones" className="space-y-5 mt-0 px-1">
+              <TabsContent value="carriers-zones" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Sticky header */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
+                    <div>
+                      <div className="text-lg font-semibold">Carriers + Zones</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Carrier performance and zone-level cost analysis</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* Zone Performance Landscape - Feature Chart */}
                 <Card>
                   <CardHeader>
@@ -2230,26 +2434,49 @@ export default function AnalyticsPage() {
                     </div>
                   </CardContent>
                 </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               {/* Tab 4: SLA Performance */}
-              <TabsContent value="sla" className="space-y-5 mt-0 px-1">
-                {/* Delay Impact Toggle */}
-                {delayImpact && delayImpact.affectedShipments > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-muted/30">
-                    <Switch
-                      id="delay-toggle-sla"
-                      checked={includeDelayedOrders}
-                      onCheckedChange={setIncludeDelayedOrders}
-                    />
-                    <Label htmlFor="delay-toggle-sla" className="text-xs font-medium cursor-pointer whitespace-nowrap">
-                      Include Inventory Delays
-                    </Label>
-                    <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
-                      {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%) orders
-                    </span>
+              <TabsContent value="sla" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Sticky header */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
+                    <div>
+                      <div className="text-lg font-semibold">SLA Performance</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Fulfillment SLA compliance and trends</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      {delayImpact && delayImpact.affectedShipments > 0 && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border bg-background">
+                          <Switch
+                            id="delay-toggle-sla"
+                            checked={includeDelayedOrders}
+                            onCheckedChange={setIncludeDelayedOrders}
+                            className="scale-[0.8]"
+                          />
+                          <Label htmlFor="delay-toggle-sla" className="text-xs font-medium cursor-pointer whitespace-nowrap">
+                            Include Inventory Delays
+                          </Label>
+                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                            {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%)
+                          </span>
+                        </div>
+                      )}
+                      <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                )}
+                  <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* On-Time Delivery Trend */}
                 <Card>
                   <CardHeader className="pb-4">
@@ -2582,29 +2809,31 @@ export default function AnalyticsPage() {
                     </div>
                   </CardContent>
                 </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               {/* Tab 5: Performance Breakdown */}
-              <TabsContent value="state-performance" className="space-y-5 mt-0 px-1">
-                <div className="grid gap-4 lg:grid-cols-3">
-                  {/* Interactive Map - 2 columns */}
-                  <Card className="lg:col-span-2">
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-4">
+              <TabsContent value="state-performance" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 min-h-[calc(100vh-64px)] bg-muted dark:bg-zinc-900">
+                  {/* Map + Details grid */}
+                  <div className="grid lg:grid-cols-3 min-h-[calc(100vh-64px)]">
+                    {/* Map - 2 columns */}
+                    <div className="lg:col-span-2 bg-muted dark:bg-zinc-900 relative [&>.relative>svg]:-mt-[20px] [&>.relative>svg]:-mb-[5px] flex flex-col after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[50%] after:bg-gradient-to-b after:from-transparent after:to-zinc-200 dark:after:to-zinc-800 after:pointer-events-none after:z-[1]">
+                      {/* Header bar — inside map column */}
+                      <div className="flex items-start justify-between gap-4 px-4 lg:px-6 py-5">
                         <div>
-                          <CardTitle className="text-sm font-medium">
-                            <div>{COUNTRY_CONFIGS[selectedCountry]?.label} Performance Map</div>
-                          </CardTitle>
-                          <CardDescription className="text-xs">
-                            Click on any {COUNTRY_CONFIGS[selectedCountry]?.regionLabel.toLowerCase()} to view detailed performance metrics
-                          </CardDescription>
+                          <div className="text-lg font-semibold">{perfCountry === 'US' ? 'USA' : COUNTRY_CONFIGS[perfCountry]?.label} Performance Overview</div>
+                          <div className="text-xs text-muted-foreground tabular-nums mt-0.5">
+                            {statePerformance.reduce((sum, s) => sum + s.orderCount, 0).toLocaleString()} orders
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
                           <Select
                             value={dateRange}
                             onValueChange={handleDatePresetChange}
                           >
-                            <SelectTrigger className="h-[28px] w-auto gap-1 text-xs text-foreground bg-background">
+                            <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                               <SelectValue>
                                 {DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}
                               </SelectValue>
@@ -2622,8 +2851,6 @@ export default function AnalyticsPage() {
                               dateRange={customDateRange.from && customDateRange.to ? { from: customDateRange.from, to: customDateRange.to } : undefined}
                               onDateRangeChange={(range) => {
                                 if (range?.from && range?.to) {
-                                  // Enforce 14-day minimum when range touches recent dates
-                                  // (survivorship bias: recent shipments haven't had time to deliver)
                                   const today = new Date()
                                   today.setHours(23, 59, 59, 999)
                                   const fourteenDaysAgo = new Date(today)
@@ -2631,7 +2858,6 @@ export default function AnalyticsPage() {
                                   fourteenDaysAgo.setHours(0, 0, 0, 0)
 
                                   if (range.to >= fourteenDaysAgo) {
-                                    // Range touches the recent window — ensure "from" is at least 14 days back
                                     const minFrom = new Date(today)
                                     minFrom.setDate(minFrom.getDate() - 13)
                                     minFrom.setHours(0, 0, 0, 0)
@@ -2646,58 +2872,101 @@ export default function AnalyticsPage() {
                               autoOpen
                             />
                           )}
-                          <Select value={selectedCountry} onValueChange={(v) => {
-                            setSelectedCountry(v)
-                            setSelectedState(null)
-                          }}>
-                            <SelectTrigger className="h-[28px] w-auto gap-1 text-xs text-foreground bg-background">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent align="end">
-                              <SelectItem value="US">USA</SelectItem>
-                              <SelectItem value="CA">Canada</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          {(analyticsData?.availableCountries || []).length > 1 && (
+                            <Select value={perfCountry} onValueChange={(v) => {
+                              setSelectedCountry(v)
+                              setSelectedState(null)
+                            }}>
+                              <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent align="end">
+                                <SelectItem value="US">USA</SelectItem>
+                                {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
+                                {(analyticsData?.availableCountries || []).includes('AU') && <SelectItem value="AU">Australia</SelectItem>}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
                       </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <PerformanceMap
-                        key={selectedCountry}
-                        config={COUNTRY_CONFIGS[selectedCountry]}
-                        regionData={statePerformance}
-                        onRegionSelect={setSelectedState}
-                      />
-                    </CardContent>
-                  </Card>
+                      {(() => {
+                        const dataDays = analyticsData?.countryDataDays?.[perfCountry] ?? 999
+                        if (perfCountry !== 'US' && dataDays < 10) {
+                          const countryName = perfCountry === 'CA' ? 'Canada' : perfCountry === 'AU' ? 'Australia' : perfCountry
+                          return (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                              <div className="text-sm font-medium text-muted-foreground mb-2">Not Enough Data Yet</div>
+                              <div className="text-xs text-muted-foreground max-w-sm">
+                                {countryName} has only {dataDays} {dataDays === 1 ? 'day' : 'days'} of shipping data in this period.
+                                At least 10 days of data is needed for meaningful performance metrics.
+                              </div>
+                            </div>
+                          )
+                        }
+                        return (
+                          <PerformanceMap
+                            key={perfCountry}
+                            config={COUNTRY_CONFIGS[perfCountry]}
+                            regionData={statePerformance}
+                            onRegionSelect={setSelectedState}
+                          />
+                        )
+                      })()}
+                    </div>
 
-                  {/* Region Details Panel - 1 column */}
-                  <div className="lg:col-span-1">
-                    {selectedState && statePerformance.find(s => s.state === selectedState) ? (
-                      <StateDetailsPanel
-                        stateData={statePerformance.find(s => s.state === selectedState)!}
-                        cityData={analyticsData?.cityVolume || []}
-                        delayImpact={delayImpact}
-                        includeDelayed={includeDelayedOrders}
-                        onToggleDelayed={setIncludeDelayedOrders}
-                      />
-                    ) : (
-                      <NationalPerformanceOverviewPanel
-                        stateData={statePerformance}
-                        country={selectedCountry}
-                        regionLabel={COUNTRY_CONFIGS[selectedCountry]?.regionLabel}
-                        regionLabelPlural={COUNTRY_CONFIGS[selectedCountry]?.regionLabelPlural}
-                        delayImpact={delayImpact}
-                        includeDelayed={includeDelayedOrders}
-                        onToggleDelayed={setIncludeDelayedOrders}
-                      />
-                    )}
+                    {/* Details panel - 1 column, border-left divider */}
+                    <div className="lg:col-span-1 border-t lg:border-t-0 lg:border-l border-border bg-gradient-to-b from-zinc-100 via-zinc-50 to-zinc-100 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-900">
+                      {(perfCountry !== 'US' && (analyticsData?.countryDataDays?.[perfCountry] ?? 999) < 14) ? (
+                        <div className="h-full flex items-center justify-center">
+                          <div className="text-xs text-muted-foreground py-16">Check back once more data has accumulated</div>
+                        </div>
+                      ) : selectedState && statePerformance.find(s => s.state === selectedState) ? (
+                        <StateDetailsPanel
+                          stateData={statePerformance.find(s => s.state === selectedState)!}
+                          cityData={analyticsData?.cityVolume || []}
+                          delayImpact={delayImpact}
+                          includeDelayed={includeDelayedOrders}
+                          onToggleDelayed={setIncludeDelayedOrders}
+                        />
+                      ) : (
+                        <NationalPerformanceOverviewPanel
+                          stateData={statePerformance}
+                          country={perfCountry}
+                          regionLabel={COUNTRY_CONFIGS[perfCountry]?.regionLabel}
+                          regionLabelPlural={COUNTRY_CONFIGS[perfCountry]?.regionLabelPlural}
+                          delayImpact={delayImpact}
+                          includeDelayed={includeDelayedOrders}
+                          onToggleDelayed={setIncludeDelayedOrders}
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
               </TabsContent>
 
               {/* Tab 6: Undelivered Shipments */}
-              <TabsContent value="undelivered" className="space-y-5 mt-0 px-1">
+              <TabsContent value="undelivered" className="mt-0">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50/80 to-zinc-100 dark:from-zinc-900 dark:via-zinc-900/80 dark:to-zinc-900">
+                  {/* Sticky header */}
+                  <div className="sticky top-0 z-20 flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-5 bg-zinc-100/95 dark:bg-zinc-900/95 backdrop-blur-sm border-b border-border/40 shadow-sm">
+                    <div>
+                      <div className="text-lg font-semibold">Undelivered Shipments</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Active shipments not yet delivered</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
+                      <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                        <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
+                          <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent align="end" className="font-roboto text-xs">
+                          {DATE_RANGE_PRESETS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* KPI Summary Cards */}
                 <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                   <Card>
@@ -2941,6 +3210,8 @@ export default function AnalyticsPage() {
                     )}
                   </CardContent>
                 </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               </div>
