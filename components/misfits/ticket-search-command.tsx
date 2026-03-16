@@ -52,10 +52,10 @@ export function TicketSearchCommand({ onSelect, clientId, creditAmount }: Ticket
       const params = new URLSearchParams()
       if (query.trim()) params.set('q', query.trim())
       if (clientId) params.set('clientId', clientId)
-      // When browsing (no query), only show tickets likely to need linking.
+      // When browsing (no query), show tickets awaiting credit (ever had "Credit Requested", not yet resolved).
       // When searching by specific ticket/shipment, show all statuses so users can find any ticket.
       if (!query.trim()) {
-        params.set('status', 'Credit Requested,Credit Approved')
+        params.set('awaitingCredit', '1')
       }
 
       const res = await fetch(`/api/data/misfits/search-tickets?${params}`)

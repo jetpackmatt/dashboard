@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
   const typeFilter = searchParams.get('type')
   const statusFilter = searchParams.get('status')
   const clientIdFilter = searchParams.get('clientId')
+  const awaitingCredit = searchParams.get('awaitingCredit') === '1'
 
   try {
     // Get ticket IDs that already have a credit transaction linked — exclude from results
@@ -78,7 +79,13 @@ export async function GET(request: NextRequest) {
     if (typeFilter) {
       query = query.eq('ticket_type', typeFilter)
     }
-    if (statusFilter) {
+    if (awaitingCredit) {
+      // Show tickets that ever had "Credit Requested" and are not yet resolved.
+      // Care admins may add "In Process" updates after credit was requested — still awaiting credit.
+      query = query
+        .neq('status', 'Resolved')
+        .contains('events', [{ status: 'Credit Requested' }])
+    } else if (statusFilter) {
       // Support comma-separated status values
       const statuses = statusFilter.split(',').map(s => s.trim()).filter(Boolean)
       if (statuses.length === 1) {
