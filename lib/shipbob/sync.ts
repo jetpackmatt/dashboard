@@ -4123,62 +4123,11 @@ export interface VoidedReconcileResult {
 }
 
 export async function reconcileVoidedShippingTransactions(): Promise<VoidedReconcileResult> {
-  const supabase = createAdminClient()
-  const result: VoidedReconcileResult = {
-    success: true,
-    duplicateGroups: 0,
-    voided: 0,
-    errors: [],
-  }
-
-  try {
-    // Find shipments with duplicate Shipping transactions
-    // (same reference_id + tracking_id + invoice_id_sb, multiple charge_dates)
-    const { data: duplicates, error } = await supabase.rpc('find_duplicate_shipping_transactions')
-
-    // If the RPC doesn't exist yet, fall back to raw query approach
-    if (error && error.message.includes('function') && error.message.includes('does not exist')) {
-      console.log('[VoidedReconcile] RPC not found, using direct query')
-      return await reconcileVoidedShippingTransactionsDirect()
-    }
-
-    if (error) {
-      result.errors.push(`Query error: ${error.message}`)
-      result.success = false
-      return result
-    }
-
-    if (!duplicates || duplicates.length === 0) {
-      console.log('[VoidedReconcile] No duplicate shipping transactions found')
-      return result
-    }
-
-    const uniqueShipments = new Set(duplicates.map((d: { reference_id: string }) => d.reference_id))
-    result.duplicateGroups = uniqueShipments.size
-    console.log(`[VoidedReconcile] Found ${duplicates.length} transactions to void across ${result.duplicateGroups} shipments`)
-
-    // Mark older transactions as voided
-    for (const dup of duplicates) {
-      const { error: updateErr } = await supabase
-        .from('transactions')
-        .update({ is_voided: true })
-        .eq('transaction_id', dup.transaction_id)
-
-      if (updateErr) {
-        result.errors.push(`Update ${dup.transaction_id}: ${updateErr.message}`)
-      } else {
-        result.voided++
-        console.log(`[VoidedReconcile] Voided ${dup.transaction_id} (shipment ${dup.reference_id}): ${dup.reason}`)
-      }
-    }
-
-    console.log(`[VoidedReconcile] Marked ${result.voided} transactions as voided`)
-    return result
-  } catch (e) {
-    result.errors.push(`Fatal error: ${e instanceof Error ? e.message : 'Unknown'}`)
-    result.success = false
-    return result
-  }
+  // Use paginated direct query approach (45-day window).
+  // The old RPC (find_duplicate_shipping_transactions) scanned ALL 115K+ transactions
+  // without a date filter, causing Supabase statement timeouts. The Direct approach
+  // uses cursor-based pagination and a 45-day window for reliable execution.
+  return await reconcileVoidedShippingTransactionsDirect()
 }
 
 /**
@@ -4195,53 +4144,69 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
   }
 
   try {
-    // Step 1: Find all Shipping transactions (positive cost only - charges, not credits)
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('transaction_id, reference_id, tracking_id, invoice_id_sb, charge_date, cost')
-      .eq('fee_type', 'Shipping')
-      .eq('reference_type', 'Shipment')
-      .gt('cost', 0) // Only positive costs (charges)
-      .not('invoice_id_sb', 'is', null)
-      .not('tracking_id', 'is', null)
-      .or('is_voided.is.null,is_voided.eq.false')
-      .order('reference_id')
-      .order('charge_date', { ascending: false })
+    // Step 1: Paginated fetch of recent Shipping transactions (last 45 days)
+    // CRITICAL: Supabase returns MAX 1000 rows per query. Without pagination,
+    // 114K+ transactions were silently truncated, missing most voided labels.
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - 45)
+    const cutoffStr = cutoffDate.toISOString().split('T')[0]
 
-    if (error) {
-      result.errors.push(`Query error: ${error.message}`)
-      result.success = false
+    const PAGE_SIZE = 1000
+    const allTransactions: Array<{
+      transaction_id: string
+      reference_id: string
+      tracking_id: string
+      invoice_id_sb: string
+      charge_date: string
+      cost: string
+    }> = []
+    let lastId: string | null = null
+
+    while (true) {
+      let query = supabase
+        .from('transactions')
+        .select('transaction_id, reference_id, tracking_id, invoice_id_sb, charge_date, cost')
+        .eq('fee_type', 'Shipping')
+        .eq('reference_type', 'Shipment')
+        .gt('cost', 0)
+        .not('invoice_id_sb', 'is', null)
+        .not('tracking_id', 'is', null)
+        .or('is_voided.is.null,is_voided.eq.false')
+        .gte('charge_date', cutoffStr)
+        .order('transaction_id', { ascending: true })
+        .limit(PAGE_SIZE)
+
+      if (lastId) {
+        query = query.gt('transaction_id', lastId)
+      }
+
+      const { data, error } = await query
+      if (error) {
+        result.errors.push(`Query error: ${error.message}`)
+        result.success = false
+        return result
+      }
+      if (!data || data.length === 0) break
+
+      allTransactions.push(...data)
+      lastId = data[data.length - 1].transaction_id
+      if (data.length < PAGE_SIZE) break
+    }
+
+    console.log(`[VoidedReconcile] Fetched ${allTransactions.length} active shipping transactions (last 45 days)`)
+
+    if (allTransactions.length === 0) {
       return result
     }
 
-    if (!transactions || transactions.length === 0) {
-      return result
-    }
-
-    // Step 2: Find all negative transactions (credits) for these shipments
-    // Credits can be in fee_type 'Shipping' or 'Credits'
-    const shipmentIds = [...new Set(transactions.map((t: { reference_id: string }) => t.reference_id))]
-
-    const { data: credits } = await supabase
-      .from('transactions')
-      .select('reference_id, cost')
-      .in('reference_type', ['Shipment', 'Credit'])
-      .in('reference_id', shipmentIds)
-      .lt('cost', 0) // Negative costs only (credits)
-
-    // Build set of shipment_ids that have credits
-    const shipmentsWithCredits = new Set(credits?.map((c: { reference_id: string }) => c.reference_id) || [])
-    console.log(`[VoidedReconcile] Found ${shipmentsWithCredits.size} shipments with credits`)
-
-    // Step 3: Group transactions by reference_id (shipment)
-    // This catches both Pattern B (same tracking) and Pattern D (different tracking)
+    // Step 2: Group by shipment_id, then only process groups with >1 charge
     const groupsByShipment = new Map<string, Array<{
       transaction_id: string
       tracking_id: string
       charge_date: string
     }>>()
 
-    for (const tx of transactions) {
+    for (const tx of allTransactions) {
       const key = tx.reference_id
       if (!groupsByShipment.has(key)) {
         groupsByShipment.set(key, [])
@@ -4253,27 +4218,83 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
       })
     }
 
-    // Step 4: Find groups with multiple charges
+    const duplicateShipmentIds = [...groupsByShipment.entries()]
+      .filter(([, txs]) => txs.length > 1)
+      .map(([id]) => id)
+
+    if (duplicateShipmentIds.length === 0) {
+      console.log('[VoidedReconcile] No duplicate shipping transactions found')
+      return result
+    }
+
+    console.log(`[VoidedReconcile] Found ${duplicateShipmentIds.length} shipments with multiple charges`)
+
+    // Step 3: Fetch credits for duplicate shipments only (paginated in batches of 50)
+    const allCredits: Array<{ reference_id: string; cost: string }> = []
+    for (let i = 0; i < duplicateShipmentIds.length; i += 50) {
+      const batch = duplicateShipmentIds.slice(i, i + 50)
+      const { data: credits } = await supabase
+        .from('transactions')
+        .select('reference_id, cost')
+        .in('reference_type', ['Shipment', 'Credit'])
+        .in('reference_id', batch)
+        .lt('cost', 0)
+      if (credits) allCredits.push(...credits)
+    }
+
+    const shipmentsWithCredits = new Set(allCredits.map(c => c.reference_id))
+    console.log(`[VoidedReconcile] ${shipmentsWithCredits.size} of ${duplicateShipmentIds.length} duplicate shipments have credits (Pattern C skip)`)
+
+    // Step 4: Fetch current shipment tracking for same-date tiebreaker
+    // When two transactions share the same charge_date, keep the one whose
+    // tracking_id matches the shipment's current tracking.
+    const shipmentTrackingMap = new Map<string, string>()
+    for (let i = 0; i < duplicateShipmentIds.length; i += 50) {
+      const batch = duplicateShipmentIds.slice(i, i + 50)
+      const { data: shipments } = await supabase
+        .from('shipments')
+        .select('shipment_id, tracking_id')
+        .in('shipment_id', batch)
+      if (shipments) {
+        for (const s of shipments) {
+          if (s.tracking_id) {
+            shipmentTrackingMap.set(String(s.shipment_id), s.tracking_id)
+          }
+        }
+      }
+    }
+
+    // Step 5: Detect voided labels
     const toVoid: Array<{ transaction_id: string; reason: string }> = []
 
     for (const [shipmentId, txs] of groupsByShipment) {
       if (txs.length <= 1) continue
 
-      // Check if this shipment has credits - if so, ShipBob already handled it
+      // Check if this shipment has credits - if so, ShipBob already handled it (Pattern C)
       if (shipmentsWithCredits.has(shipmentId)) {
-        continue // Skip - has credit, not a voided label scenario
+        continue
       }
 
       result.duplicateGroups++
 
-      // Check if tracking IDs are the same or different
       const uniqueTrackings = new Set(txs.map(t => t.tracking_id))
       const isDifferentTracking = uniqueTrackings.size > 1
 
-      // Sort by charge_date descending (newest first)
-      txs.sort((a, b) => new Date(b.charge_date).getTime() - new Date(a.charge_date).getTime())
+      // Sort: newest charge_date first, with tiebreaker for same-date entries
+      const currentTracking = shipmentTrackingMap.get(shipmentId)
+      txs.sort((a, b) => {
+        const dateDiff = new Date(b.charge_date).getTime() - new Date(a.charge_date).getTime()
+        if (dateDiff !== 0) return dateDiff
+        // Same date tiebreaker: transaction matching shipment's current tracking wins
+        if (currentTracking) {
+          if (a.tracking_id === currentTracking && b.tracking_id !== currentTracking) return -1
+          if (b.tracking_id === currentTracking && a.tracking_id !== currentTracking) return 1
+        }
+        // Final fallback: newer transaction_id first (ULIDs are chronological)
+        return b.transaction_id.localeCompare(a.transaction_id)
+      })
 
-      // Mark all but the newest as voided
+      // Mark all but the first (newest/matching) as voided
       for (let i = 1; i < txs.length; i++) {
         const reason = isDifferentTracking
           ? 'Pattern D: voided label (different tracking, no credit)'
@@ -4292,7 +4313,7 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
 
     console.log(`[VoidedReconcile] Found ${result.duplicateGroups} duplicate groups, ${toVoid.length} to void`)
 
-    // Step 5: Mark older transactions as voided
+    // Step 6: Mark older transactions as voided
     for (const item of toVoid) {
       const { error: updateErr } = await supabase
         .from('transactions')
