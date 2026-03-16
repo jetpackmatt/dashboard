@@ -159,6 +159,47 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Failed to update transaction' }, { status: 500 })
       }
 
+      // Update the care ticket: set status to Credit Approved, credit amount, and add event
+      if (tx.fee_type === 'Credit' && tx.cost) {
+        const creditAmount = Math.abs(parseFloat(tx.cost) || 0)
+        const creditDateISO = tx.charge_date
+          ? (tx.charge_date.includes('T') ? tx.charge_date : `${tx.charge_date}T00:00:00.000Z`)
+          : new Date().toISOString()
+
+        // Fetch current ticket to get existing events
+        const { data: currentTicket } = await supabase
+          .from('care_tickets')
+          .select('events, status')
+          .eq('id', careTicketId)
+          .single()
+
+        if (currentTicket && currentTicket.status !== 'Resolved') {
+          const existingEvents: Array<{ status: string; note: string; createdAt: string; createdBy: string }> = currentTicket.events || []
+
+          // Only add Credit Approved event if not already present
+          const hasApproved = existingEvents.some(e => e.status === 'Credit Approved')
+          if (!hasApproved) {
+            const newEvent = {
+              status: 'Credit Approved',
+              note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+              createdAt: creditDateISO,
+              createdBy: 'System',
+            }
+            // Events are newest-first
+            existingEvents.unshift(newEvent)
+          }
+
+          await supabase
+            .from('care_tickets')
+            .update({
+              status: 'Credit Approved',
+              credit_amount: creditAmount,
+              events: existingEvents,
+            })
+            .eq('id', careTicketId)
+        }
+      }
+
     } else if (action === 'set_brand') {
       if (!clientId) {
         return NextResponse.json({ error: 'clientId is required' }, { status: 400 })
