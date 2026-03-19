@@ -150,12 +150,21 @@ export function UnfulfilledTable({
     try {
       const offset = page * size
 
+      // When client-side filters are active, fetch all rows so filtering + pagination work correctly
+      // Unfulfilled orders are typically < 1000 so fetching all is safe
+      const hasClientFilters = ageFilter.length > 0 || typeFilter.length > 0 || channelFilter.length > 0 || destinationFilter.length > 0
+
       // Build query params
       const params = new URLSearchParams({
         clientId,
-        limit: size.toString(),
-        offset: offset.toString(),
+        limit: hasClientFilters ? '1000' : size.toString(),
+        offset: hasClientFilters ? '0' : offset.toString(),
       })
+
+      // Tell API to fetch all when client-side filters are active
+      if (hasClientFilters) {
+        params.set('fetchAll', 'true')
+      }
 
       // Add sort params
       if (sortField) {
@@ -280,9 +289,9 @@ export function UnfulfilledTable({
       // Note: Date range filtering is now done server-side for performance
 
       setData(filteredData)
-      // Use filtered data count when client-side filters are active
-      // Note: Status filter is now server-side, so use server count for that
-      const hasClientFilters = ageFilter.length > 0 || typeFilter.length > 0 || channelFilter.length > 0 || destinationFilter.length > 0
+      // When client-side filters are active, we fetched ALL rows and filtered locally
+      // so filteredData.length IS the accurate total for pagination
+      // When no client-side filters, use the server's count (which respects server-side pagination)
       setTotalCount(hasClientFilters ? filteredData.length : (result.totalCount || 0))
     } catch (err) {
       console.error('Error fetching unfulfilled orders:', err)

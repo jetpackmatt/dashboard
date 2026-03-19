@@ -1,8 +1,6 @@
 "use client"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { GlobeIcon, MapPinIcon, MousePointerClickIcon } from "lucide-react"
+import { MapPinIcon } from "lucide-react"
 import { StateVolumeData, ZipCodeVolumeData } from "@/lib/analytics/types"
 
 interface NationalVolumeOverviewPanelProps {
@@ -29,81 +27,58 @@ export function NationalVolumeOverviewPanel({ stateData, cityData }: NationalVol
   const topCities = cityData.slice(0, 10)
 
   return (
-    <Card className="h-full overflow-hidden flex flex-col">
-      <CardHeader className="flex-shrink-0 border-b border-border">
-        <div className="flex items-center gap-2">
-          <GlobeIcon className="w-4 h-4 text-muted-foreground" />
-          <CardTitle className="text-lg">National Overview</CardTitle>
-        </div>
-      </CardHeader>
+    <div className="h-full overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="flex-shrink-0 border-b border-border px-5 py-4 h-[68px] flex items-center">
+        <div className="text-sm font-semibold">National Overview</div>
+      </div>
 
-      <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* National Stats */}
-        <div>
-          <h4 className="text-xs font-semibold mb-2">National Volume Metrics</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-0.5">
-              <div className="text-[10px] text-muted-foreground">Total Orders</div>
-              <div className="text-xl font-bold tabular-nums">{totalOrders.toLocaleString()}</div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-[10px] text-muted-foreground">Avg Orders/Day</div>
-              <div className="text-xl font-bold tabular-nums">{totalAvgPerDay.toFixed(1)}</div>
-            </div>
+      {/* Volume metrics — colored cells like Performance tab */}
+      <div className="flex-shrink-0">
+        <div className="grid grid-cols-2">
+          <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
+            <div className="text-2xl font-bold tabular-nums">{totalOrders.toLocaleString()}</div>
           </div>
-          <div className="mt-2 text-[10px] text-muted-foreground">
-            Across {statesWithOrders} states
+          <div className="text-center px-3 py-4 bg-emerald-50/40 dark:bg-emerald-950/15">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg Orders/Day</div>
+            <div className="text-2xl font-bold tabular-nums">{totalAvgPerDay.toFixed(1)}</div>
           </div>
         </div>
+        <div className="text-[10px] text-muted-foreground px-5 py-2 border-t border-border bg-indigo-50/30 dark:bg-indigo-950/10">
+          Across {statesWithOrders} states
+        </div>
+      </div>
 
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto">
         {/* Top 10 Cities */}
-        <div>
-          <h4 className="text-xs font-semibold mb-2 flex items-center gap-2">
-            <MapPinIcon className="w-3 h-3" />
-            Top 10 Cities Nationwide
-          </h4>
+        <div className="border-t border-border">
+          <div className="px-5 pt-5 pb-3">
+            <h4 className="text-[10px] font-medium uppercase tracking-wider flex items-center gap-2">
+              <MapPinIcon className="w-3 h-3" />
+              Top 10 Cities Nationwide
+            </h4>
+          </div>
           {topCities.length > 0 ? (
-            <div className="border rounded-lg overflow-hidden">
-              <Table className="text-xs">
-                <TableHeader>
-                  <TableRow className="h-8">
-                    <TableHead className="w-6 py-1 px-2">#</TableHead>
-                    <TableHead className="py-1 px-2">City</TableHead>
-                    <TableHead className="py-1 px-2">State</TableHead>
-                    <TableHead className="text-right py-1 px-2">Orders</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {topCities.map((city, index) => (
-                    <TableRow key={`${city.city}-${city.state}-${index}`} className="h-7">
-                      <TableCell className="font-medium text-muted-foreground py-1 px-2">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell className="font-medium py-1 px-2">{capitalizeCity(city.city)}</TableCell>
-                      <TableCell className="text-muted-foreground py-1 px-2">
-                        {city.state}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums py-1 px-2">
-                        {city.orderCount.toLocaleString()}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            <div>
+              {topCities.map((city, index) => (
+                <div key={`${city.city}-${city.state}-${index}`} className="flex items-center px-5 py-3 border-t border-border hover:bg-muted/30">
+                  <span className="text-xs text-muted-foreground w-5 tabular-nums">{index + 1}</span>
+                  <span className="text-xs font-medium flex-1">{capitalizeCity(city.city)}</span>
+                  <span className="text-xs text-muted-foreground w-8">{city.state}</span>
+                  <span className="text-xs font-medium tabular-nums ml-4">{city.orderCount.toLocaleString()}</span>
+                </div>
+              ))}
             </div>
           ) : (
-            <div className="text-center py-4 text-muted-foreground text-xs">
+            <div className="text-center py-5 text-muted-foreground text-xs border-t border-border">
               No city data available
             </div>
           )}
         </div>
 
-        {/* Click hint */}
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
-          <MousePointerClickIcon className="w-4 h-4 flex-shrink-0" />
-          <span>Click a state on the map to view state-specific volume and top cities</span>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

@@ -1,18 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+export const maxDuration = 300
+
 /**
  * POST /api/cron/calculate-benchmarks
  *
  * Daily cron job to calculate transit time benchmarks from historical shipment data.
- * Creates/updates entries in transit_benchmarks for both:
- * 1. Carrier services (e.g., "USPS Ground Advantage")
- * 2. Ship options (e.g., "146" for ShipBob Economy)
+ * Stores monthly snapshots so benchmarks are time-matched to the client's date range.
+ *
+ * Normal run: recomputes current month + previous month (for late-arriving data).
+ * Backfill:   ?backfill=true computes all months with delivered shipments.
  *
  * Schedule: Daily at 4 AM UTC (0 4 * * *)
  */
 export async function POST(request: NextRequest) {
-  // Verify cron secret
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -20,68 +22,37 @@ export async function POST(request: NextRequest) {
 
   const supabase = createAdminClient()
   const startTime = Date.now()
+  const isBackfill = request.nextUrl.searchParams.get('backfill') === 'true'
 
-  console.log('[Benchmarks] Starting transit benchmark calculation...')
+  console.log(`[Benchmarks] Starting ${isBackfill ? 'BACKFILL' : 'daily'} benchmark calculation...`)
 
   try {
-    // Get unique carriers and ship_options from delivered shipments in last 90 days
-    const ninetyDaysAgo = new Date()
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+    // Determine which months to compute
+    const months = await getMonthsToCompute(supabase, isBackfill)
+    console.log(`[Benchmarks] Computing ${months.length} months: ${months.map(m => m.label).join(', ')}`)
 
-    // Step 1: Calculate benchmarks per carrier (carrier_service type)
-    console.log('[Benchmarks] Calculating carrier service benchmarks...')
+    let totalUpserts = 0
 
-    const { data: carrierData, error: carrierError } = await supabase
-      .rpc('calculate_carrier_benchmarks', {
-        start_date: ninetyDaysAgo.toISOString()
-      })
-
-    if (carrierError) {
-      // RPC might not exist yet, fall back to direct query
-      console.log('[Benchmarks] RPC not available, using direct queries...')
-      await calculateBenchmarksDirectly(supabase, ninetyDaysAgo)
-    } else if (carrierData) {
-      // Upsert carrier benchmarks
-      for (const row of carrierData) {
-        await upsertBenchmark(supabase, 'carrier_service', row.carrier, row.carrier, row)
+    for (const month of months) {
+      // Guard: don't exceed Vercel function timeout (leave 15s buffer)
+      if (Date.now() - startTime > (maxDuration - 15) * 1000) {
+        console.log(`[Benchmarks] Approaching timeout after ${totalUpserts} upserts, stopping`)
+        break
       }
+
+      const monthUpserts = await computeMonthBenchmarks(supabase, month.start, month.end, month.benchmarkMonth)
+      totalUpserts += monthUpserts
+      console.log(`[Benchmarks] ${month.label}: ${monthUpserts} benchmark rows upserted`)
     }
-
-    // Step 2: Calculate benchmarks per ship_option
-    console.log('[Benchmarks] Calculating ship option benchmarks...')
-
-    const { data: shipOptionData, error: shipOptionError } = await supabase
-      .rpc('calculate_ship_option_benchmarks', {
-        start_date: ninetyDaysAgo.toISOString()
-      })
-
-    if (shipOptionError) {
-      console.log('[Benchmarks] Ship option RPC not available, using direct queries...')
-      await calculateShipOptionBenchmarksDirectly(supabase, ninetyDaysAgo)
-    } else if (shipOptionData) {
-      // Upsert ship option benchmarks
-      for (const row of shipOptionData) {
-        await upsertBenchmark(
-          supabase,
-          'ship_option',
-          String(row.ship_option),
-          row.ship_option_name || `Ship Option ${row.ship_option}`,
-          row
-        )
-      }
-    }
-
-    // Step 3: Calculate international route benchmarks (origin → destination country)
-    console.log('[Benchmarks] Calculating international route benchmarks...')
-    await calculateInternationalBenchmarks(supabase, ninetyDaysAgo)
 
     const duration = Date.now() - startTime
-    console.log(`[Benchmarks] Calculation complete in ${duration}ms`)
+    console.log(`[Benchmarks] Done in ${duration}ms: ${totalUpserts} total upserts across ${months.length} months`)
 
     return NextResponse.json({
       success: true,
       duration,
-      message: 'Transit benchmarks calculated successfully'
+      months: months.length,
+      upserts: totalUpserts,
     })
   } catch (error) {
     console.error('[Benchmarks] Error:', error)
@@ -92,6 +63,67 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Determine which months to compute benchmarks for
+async function getMonthsToCompute(
+  supabase: ReturnType<typeof createAdminClient>,
+  backfill: boolean
+): Promise<{ start: string; end: string; benchmarkMonth: string; label: string }[]> {
+  if (backfill) {
+    // Get all months with delivered shipments
+    const { data } = await supabase.rpc('get_benchmark_months' as never)
+
+    // Fallback if RPC doesn't exist: compute last 14 months
+    if (!data) {
+      const months = []
+      const now = new Date()
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        months.push(makeMonth(d))
+      }
+      return months
+    }
+  }
+
+  // Daily run: current month + previous month
+  const now = new Date()
+  const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+
+  return [makeMonth(previousMonth), makeMonth(currentMonth)]
+}
+
+function makeMonth(d: Date) {
+  const year = d.getFullYear()
+  const month = d.getMonth()
+  const start = new Date(year, month, 1)
+  const end = new Date(year, month + 1, 1) // first day of next month
+  const label = `${year}-${String(month + 1).padStart(2, '0')}`
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    benchmarkMonth: `${label}-01`, // date string for DB: "2025-03-01"
+    label,
+  }
+}
+
+// Compute all benchmark types for a single month
+async function computeMonthBenchmarks(
+  supabase: ReturnType<typeof createAdminClient>,
+  monthStart: string,
+  monthEnd: string,
+  benchmarkMonth: string
+): Promise<number> {
+  let upserts = 0
+
+  // Step 1: Carrier service benchmarks
+  upserts += await computeCarrierBenchmarks(supabase, monthStart, monthEnd, benchmarkMonth)
+
+  // Step 2: International route benchmarks
+  upserts += await computeInternationalBenchmarks(supabase, monthStart, monthEnd, benchmarkMonth)
+
+  return upserts
+}
+
 // Calculate P80 percentile from sorted array
 function calculateP80(values: number[]): number {
   if (values.length === 0) return 0
@@ -100,200 +132,180 @@ function calculateP80(values: number[]): number {
   return Math.round(sorted[Math.max(0, index)] * 10) / 10
 }
 
-// Fallback: Direct query calculation when RPC is not available
-async function calculateBenchmarksDirectly(
+// Compute carrier service benchmarks for a single month
+async function computeCarrierBenchmarks(
   supabase: ReturnType<typeof createAdminClient>,
-  startDate: Date
-) {
-  // Get distinct carriers
-  const { data: carriers } = await supabase
-    .from('shipments')
-    .select('carrier')
-    .not('carrier', 'is', null)
-    .not('event_delivered', 'is', null)
-    .gte('event_delivered', startDate.toISOString())
-    .limit(100)
+  monthStart: string,
+  monthEnd: string,
+  benchmarkMonth: string
+): Promise<number> {
+  // Get all delivered shipments for this month with transit data
+  // Paginate with cursor to handle >1000 rows
+  const allRows: { carrier: string; zone_used: number; transit_time_days: number }[] = []
+  const pageSize = 1000
+  let lastId: string | null = null
 
-  if (!carriers) return
-
-  const uniqueCarriers = [...new Set(carriers.map((c: { carrier: string }) => c.carrier))]
-
-  for (const carrier of uniqueCarriers) {
-    if (!carrier) continue
-
-    // Calculate zone averages + P80 for this carrier
-    const zoneData: Record<string, number | null> = {}
-
-    for (let zone = 1; zone <= 10; zone++) {
-      const { data: rows } = await supabase
-        .from('shipments')
-        .select('transit_time_days')
-        .eq('carrier', carrier)
-        .eq('zone_used', zone)
-        .not('transit_time_days', 'is', null)
-        .gte('event_delivered', startDate.toISOString())
-        .limit(1000)
-
-      if (rows && rows.length > 0) {
-        const transitTimes = rows
-          .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
-          .filter((t: number) => t > 0 && t < 30)
-
-        if (transitTimes.length > 0) {
-          const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
-          zoneData[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
-          zoneData[`zone_${zone}_p80`] = calculateP80(transitTimes)
-          zoneData[`zone_${zone}_count`] = transitTimes.length
-        }
-      }
-    }
-
-    if (Object.keys(zoneData).length > 0) {
-      await upsertBenchmark(supabase, 'carrier_service', carrier as string, carrier as string, zoneData)
-    }
-  }
-}
-
-// Calculate ship option benchmarks directly
-async function calculateShipOptionBenchmarksDirectly(
-  supabase: ReturnType<typeof createAdminClient>,
-  startDate: Date
-) {
-  // Get distinct ship_options
-  const { data: shipOptions } = await supabase
-    .from('shipments')
-    .select('ship_option')
-    .not('ship_option', 'is', null)
-    .not('event_delivered', 'is', null)
-    .gte('event_delivered', startDate.toISOString())
-    .limit(100)
-
-  if (!shipOptions) return
-
-  const uniqueOptions = [...new Set(shipOptions.map((s: { ship_option: number }) => s.ship_option))]
-
-  for (const shipOption of uniqueOptions) {
-    if (!shipOption) continue
-
-    const zoneData: Record<string, number | null> = {}
-
-    for (let zone = 1; zone <= 10; zone++) {
-      const { data: rows } = await supabase
-        .from('shipments')
-        .select('transit_time_days')
-        .eq('ship_option', shipOption)
-        .eq('zone_used', zone)
-        .not('transit_time_days', 'is', null)
-        .gte('event_delivered', startDate.toISOString())
-        .limit(1000)
-
-      if (rows && rows.length > 0) {
-        const transitTimes = rows
-          .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
-          .filter((t: number) => t > 0 && t < 30)
-
-        if (transitTimes.length > 0) {
-          const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
-          zoneData[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
-          zoneData[`zone_${zone}_p80`] = calculateP80(transitTimes)
-          zoneData[`zone_${zone}_count`] = transitTimes.length
-        }
-      }
-    }
-
-    if (Object.keys(zoneData).length > 0) {
-      await upsertBenchmark(
-        supabase,
-        'ship_option',
-        String(shipOption),
-        `Ship Option ${shipOption}`,
-        zoneData
-      )
-    }
-  }
-}
-
-// Calculate international route benchmarks by carrier (carrier + origin country → destination country)
-async function calculateInternationalBenchmarks(
-  supabase: ReturnType<typeof createAdminClient>,
-  startDate: Date
-) {
-  // Get distinct international routes with carrier (where origin != destination)
-  const { data: routes } = await supabase
-    .from('shipments')
-    .select('carrier, origin_country, destination_country')
-    .not('carrier', 'is', null)
-    .not('origin_country', 'is', null)
-    .not('destination_country', 'is', null)
-    .not('event_delivered', 'is', null)
-    .gte('event_delivered', startDate.toISOString())
-    .limit(10000)
-
-  if (!routes) return
-
-  // Build unique carrier+route combinations
-  const routeSet = new Set<string>()
-  for (const r of routes) {
-    if (r.carrier && r.origin_country && r.destination_country && r.origin_country !== r.destination_country) {
-      routeSet.add(`${r.carrier}:${r.origin_country}:${r.destination_country}`)
-    }
-  }
-
-  const uniqueRoutes = Array.from(routeSet)
-  console.log(`[Benchmarks] Found ${uniqueRoutes.length} international carrier+route combinations`)
-
-  for (const routeKey of uniqueRoutes) {
-    const [carrier, origin, destination] = routeKey.split(':')
-
-    const { data: routeData } = await supabase
+  while (true) {
+    let query = supabase
       .from('shipments')
-      .select('transit_time_days')
-      .eq('carrier', carrier)
-      .eq('origin_country', origin)
-      .eq('destination_country', destination)
+      .select('id, carrier, zone_used, transit_time_days')
+      .not('carrier', 'is', null)
+      .not('zone_used', 'is', null)
       .not('transit_time_days', 'is', null)
-      .gte('event_delivered', startDate.toISOString())
-      .limit(1000)
+      .not('event_delivered', 'is', null)
+      .gte('event_delivered', monthStart)
+      .lt('event_delivered', monthEnd)
+      .order('id', { ascending: true })
+      .limit(pageSize)
 
-    if (routeData && routeData.length >= 3) {
-      const transitTimes = routeData
-        .map((s: { transit_time_days: number }) => Number(s.transit_time_days))
-        .filter((t: number) => t > 0 && t < 60)
+    if (lastId) {
+      query = query.gt('id', lastId)
+    }
 
-      if (transitTimes.length >= 3) {
-        const avg = transitTimes.reduce((a: number, b: number) => a + b, 0) / transitTimes.length
-        const roundedAvg = Math.round(avg * 10) / 10
-        const p80 = calculateP80(transitTimes)
+    const { data, error } = await query
+    if (error || !data || data.length === 0) break
 
-        // Store with carrier in the key: "carrier:origin:destination"
-        // benchmark_type='international_route' for easy lookup
-        await upsertBenchmark(
-          supabase,
-          'international_route',
-          routeKey, // e.g., "DHL Express:US:MX"
-          `${carrier}: ${origin} → ${destination}`,
-          { zone_1_avg: roundedAvg, zone_1_p80: p80, zone_1_count: transitTimes.length }
-        )
-
-        console.log(`[Benchmarks] ${carrier}: ${origin} → ${destination}: ${roundedAvg} days (${transitTimes.length} samples)`)
+    for (const row of data) {
+      const transit = Number(row.transit_time_days)
+      if (transit > 0 && transit < 30 && row.zone_used >= 1 && row.zone_used <= 10) {
+        allRows.push({
+          carrier: row.carrier,
+          zone_used: row.zone_used,
+          transit_time_days: transit,
+        })
       }
     }
+
+    lastId = data[data.length - 1].id
+    if (data.length < pageSize) break
   }
+
+  // Group by carrier + zone
+  const grouped = new Map<string, number[]>()
+  for (const row of allRows) {
+    const key = `${row.carrier}:${row.zone_used}`
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key)!.push(row.transit_time_days)
+  }
+
+  // Build per-carrier zone data and upsert
+  const carrierZones = new Map<string, Record<string, number | null>>()
+  for (const [key, times] of grouped) {
+    const [carrier, zoneStr] = key.split(':')
+    const zone = parseInt(zoneStr)
+    if (!carrierZones.has(carrier)) carrierZones.set(carrier, {})
+    const zd = carrierZones.get(carrier)!
+
+    const avg = times.reduce((a, b) => a + b, 0) / times.length
+    zd[`zone_${zone}_avg`] = Math.round(avg * 10) / 10
+    zd[`zone_${zone}_p80`] = calculateP80(times)
+    zd[`zone_${zone}_count`] = times.length
+  }
+
+  let upserts = 0
+  for (const [carrier, zoneData] of carrierZones) {
+    await upsertBenchmark(supabase, 'carrier_service', carrier, carrier, zoneData, benchmarkMonth)
+    upserts++
+  }
+
+  return upserts
 }
 
-// Upsert a benchmark row
+// Compute international route benchmarks for a single month
+async function computeInternationalBenchmarks(
+  supabase: ReturnType<typeof createAdminClient>,
+  monthStart: string,
+  monthEnd: string,
+  benchmarkMonth: string
+): Promise<number> {
+  // Get international delivered shipments for this month
+  const allRows: { carrier: string; origin_country: string; destination_country: string; transit_time_days: number }[] = []
+  const pageSize = 1000
+  let lastId: string | null = null
+
+  while (true) {
+    let query = supabase
+      .from('shipments')
+      .select('id, carrier, origin_country, destination_country, transit_time_days')
+      .not('carrier', 'is', null)
+      .not('origin_country', 'is', null)
+      .not('destination_country', 'is', null)
+      .not('transit_time_days', 'is', null)
+      .not('event_delivered', 'is', null)
+      .gte('event_delivered', monthStart)
+      .lt('event_delivered', monthEnd)
+      .order('id', { ascending: true })
+      .limit(pageSize)
+
+    if (lastId) {
+      query = query.gt('id', lastId)
+    }
+
+    const { data, error } = await query
+    if (error || !data || data.length === 0) break
+
+    for (const row of data) {
+      const transit = Number(row.transit_time_days)
+      if (transit > 0 && transit < 60 && row.origin_country !== row.destination_country) {
+        allRows.push({
+          carrier: row.carrier,
+          origin_country: row.origin_country,
+          destination_country: row.destination_country,
+          transit_time_days: transit,
+        })
+      }
+    }
+
+    lastId = data[data.length - 1].id
+    if (data.length < pageSize) break
+  }
+
+  // Group by carrier:origin:destination
+  const grouped = new Map<string, number[]>()
+  for (const row of allRows) {
+    const key = `${row.carrier}:${row.origin_country}:${row.destination_country}`
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key)!.push(row.transit_time_days)
+  }
+
+  let upserts = 0
+  for (const [routeKey, times] of grouped) {
+    if (times.length < 3) continue // Need at least 3 samples
+
+    const [carrier, origin, destination] = routeKey.split(':')
+    const avg = times.reduce((a, b) => a + b, 0) / times.length
+    const roundedAvg = Math.round(avg * 10) / 10
+    const p80 = calculateP80(times)
+
+    await upsertBenchmark(
+      supabase,
+      'international_route',
+      routeKey,
+      `${carrier}: ${origin} → ${destination}`,
+      { zone_1_avg: roundedAvg, zone_1_p80: p80, zone_1_count: times.length },
+      benchmarkMonth
+    )
+    upserts++
+  }
+
+  return upserts
+}
+
+// Upsert a benchmark row with month
 async function upsertBenchmark(
   supabase: ReturnType<typeof createAdminClient>,
   benchmarkType: string,
   benchmarkKey: string,
   displayName: string,
-  data: Record<string, number | null>
+  data: Record<string, number | null>,
+  benchmarkMonth: string
 ) {
   const { error } = await supabase
     .from('transit_benchmarks')
     .upsert({
       benchmark_type: benchmarkType,
       benchmark_key: benchmarkKey,
+      benchmark_month: benchmarkMonth,
       display_name: displayName,
       zone_1_avg: data.zone_1_avg ?? null,
       zone_2_avg: data.zone_2_avg ?? null,
@@ -327,11 +339,11 @@ async function upsertBenchmark(
       zone_10_count: data.zone_10_count ?? 0,
       last_calculated_at: new Date().toISOString(),
     }, {
-      onConflict: 'benchmark_type,benchmark_key'
+      onConflict: 'benchmark_type,benchmark_key,benchmark_month'
     })
 
   if (error) {
-    console.error(`[Benchmarks] Error upserting ${benchmarkType}/${benchmarkKey}:`, error)
+    console.error(`[Benchmarks] Error upserting ${benchmarkType}/${benchmarkKey}/${benchmarkMonth}:`, error)
   }
 }
 

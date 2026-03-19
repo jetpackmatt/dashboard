@@ -3,6 +3,13 @@ import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/
 import type { DateRangePreset } from '@/lib/analytics/types'
 import { getGranularityForRange } from '@/lib/analytics/types'
 import { US_STATES, CA_PROVINCES, AU_STATES } from '@/lib/destination-data'
+import usCitiesData from '@/lib/analytics/us-cities-coords.json'
+import caCitiesData from '@/lib/analytics/ca-cities-coords.json'
+
+// City coordinates lookup (module-level, computed once per cold start)
+const cityCoords = new Map<string, { lon: number; lat: number }>(
+  [...usCitiesData, ...caCitiesData].map((c: any) => [c.key, { lon: c.lon, lat: c.lat }])
+)
 
 export const maxDuration = 60
 
@@ -11,7 +18,7 @@ const PAGE_SIZE = 1000
 // ── Module-level cache (persists across warm Vercel invocations) ──────────
 const responseCache = new Map<string, { json: any; ts: number }>()
 const CACHE_TTL = 5 * 60 * 1000
-const CACHE_MAX = 20
+const CACHE_MAX = 50
 
 // ── State name lookup ────────────────────────────────────────────────────
 const STATE_NAME_MAP: Record<string, Record<string, string>> = {
@@ -72,9 +79,12 @@ function formatMonthLabel(key: string, granularity: string): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   if (granularity === 'monthly') {
     const [y, m] = key.split('-')
-    return `${months[parseInt(m) - 1]} ${y}`
+    return `${months[parseInt(m) - 1]} ${y.slice(2)}`
   }
   const [y, m, d] = key.split('-')
+  if (granularity === 'weekly') {
+    return `${months[parseInt(m) - 1]} ${parseInt(d)}`
+  }
   return `${months[parseInt(m) - 1]} ${parseInt(d)}`
 }
 
@@ -99,16 +109,32 @@ export async function GET(request: NextRequest) {
   }
 
   const startDate = searchParams.get('startDate')
-  const endDate = searchParams.get('endDate')
+  const rawEndDate = searchParams.get('endDate')
   const datePreset = (searchParams.get('datePreset') || '30d') as DateRangePreset
   const country = searchParams.get('country') || 'US'
+  const timezone = searchParams.get('timezone') || 'America/New_York'
+  const tab = searchParams.get('tab') || 'all'
+  const domesticOnly = searchParams.get('domesticOnly') === 'true'
 
-  if (!startDate || !endDate) {
+  // Tab-based lazy loading: skip expensive raw-table queries unless the active tab needs them
+  const needsTransit = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
+  const needsSLA = tab === 'all' || tab === 'sla'
+  const needsUndelivered = tab === 'all' || tab === 'undelivered'
+  const needsOrderVolume = tab === 'all' || tab === 'order-volume'
+
+  if (!startDate || !rawEndDate) {
     return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 })
   }
 
+  // Never include today — charges won't be fully synced/marked up until overnight crons run
+  const todayStr = new Date().toISOString().substring(0, 10)
+  const yesterdayDate = new Date()
+  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1)
+  const yesterdayStr = yesterdayDate.toISOString().substring(0, 10)
+  const endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
+
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `v3:${clientId}:${startDate}:${endDate}:${datePreset}:${country}`
+  const cacheKey = `v11:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
@@ -127,9 +153,22 @@ export async function GET(request: NextRequest) {
   const prevStartDate = prevFrom.toISOString().substring(0, 10)
   const prevEndDate = prevTo.toISOString().substring(0, 10)
 
+  // Extend trend start date backwards to compensate for tail trimming + rolling avg edges
+  // This way, after trimming unreliable tail days, the chart still shows the full requested range
+  const TREND_BUFFER_DAYS = 10
+  const trendStart = new Date(startDate + 'T00:00:00Z')
+  trendStart.setUTCDate(trendStart.getUTCDate() - TREND_BUFFER_DAYS)
+  const trendStartDate = trendStart.toISOString().substring(0, 10)
+
   try {
-    // ── Fast queries only — summary RPC (109ms) + transit (545ms) + SLA (457ms)
-    // Fulfillment trend, order time, pick/pack eliminated (computed from summaries)
+    // ── Tab-based lazy loading: core queries always run, expensive raw-table queries only when needed ──
+    // Wrap each query with timing for diagnostics
+    const t0 = Date.now()
+    const timed = <T>(label: string, promise: Promise<T>): Promise<T> => {
+      const s = Date.now()
+      return promise.then(r => { console.log(`[analytics] ${label}: ${Date.now() - s}ms`); return r })
+    }
+
     const [
       summaryResult,
       transitDistResult,
@@ -137,44 +176,85 @@ export async function GET(request: NextRequest) {
       undeliveredRows,
       clientResult,
       fcNamesResult,
+      fcLookupResult,
+      hourDistResult,
+      dowDistResult,
+      orderVolumeResult,
+      revenueResult,
+      invoicesResult,
     ] = await Promise.all([
-      // Single RPC: all GROUP BY queries executed server-side in Postgres
-      supabase.rpc('get_analytics_from_summaries', {
+      // Core: Single RPC — all GROUP BY queries from pre-aggregated summaries (~100ms)
+      timed('summaries', supabase.rpc('get_analytics_from_summaries', {
         p_client_id: clientId,
         p_start: startDate,
         p_end: endDate,
         p_prev_start: prevStartDate,
         p_prev_end: prevEndDate,
         p_country: country,
-      }),
+        p_trend_start: trendStartDate,
+        p_domestic_only: domesticOnly,
+      })),
 
-      // Transit distribution — uses covering index (545ms)
-      supabase.rpc('get_transit_distribution', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }),
+      // Transit distribution — raw shipments scan (~545ms), only for carriers/cost-speed tabs
+      needsTransit
+        ? timed('transit', supabase.rpc('get_transit_distribution', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }))
+        : { data: null, error: null },
 
-      // SLA detail records (457ms)
-      supabase.rpc('get_sla_detail_records', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }),
+      // SLA detail records — raw shipments scan (~457ms), only for SLA tab
+      needsSLA
+        ? timed('sla', supabase.rpc('get_sla_detail_records', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }))
+        : { data: null, error: null },
 
-      // Undelivered shipments (raw — typically <5% of total)
-      cursorPaginate((lastId) => {
-        let q = supabase.from('shipments')
-          .select('id, tracking_id, shipbob_order_id, recipient_name, event_labeled, carrier, status, destination_country')
-          .eq('client_id', clientId!)
-          .is('deleted_at', null)
-          .is('event_delivered', null)
-          .gte('event_labeled', startDate!)
-          .lte('event_labeled', endDate + 'T23:59:59.999Z')
-          .order('id', { ascending: true })
-          .limit(PAGE_SIZE)
-        if (lastId) q = q.gt('id', lastId)
-        return q
-      }),
+      // Undelivered shipments — cursor pagination on raw shipments, only for undelivered tab
+      needsUndelivered
+        ? timed('undelivered', cursorPaginate((lastId) => {
+            let q = supabase.from('shipments')
+              .select('id, tracking_id, shipbob_order_id, recipient_name, event_labeled, carrier, status, destination_country, fc_name')
+              .eq('client_id', clientId!)
+              .is('deleted_at', null)
+              .is('event_delivered', null)
+              .gte('event_labeled', startDate!)
+              .lte('event_labeled', endDate + 'T23:59:59.999Z')
+              .order('id', { ascending: true })
+              .limit(PAGE_SIZE)
+            if (lastId) q = q.gt('id', lastId)
+            return q
+          }))
+        : ([] as any[]),
 
-      // Client name
-      supabase.from('clients').select('company_name').eq('id', clientId!).single(),
+      // Core: Client name
+      timed('client', supabase.from('clients').select('company_name').eq('id', clientId!).single()),
 
-      // Distinct FC countries for this client (uses SQL distinct via RPC-like approach)
-      supabase.rpc('get_client_fc_countries', { p_client_id: clientId, p_start: startDate, p_end: endDate }),
-    ])
+      // Core: Distinct FC countries for this client
+      timed('fcCountries', supabase.rpc('get_client_fc_countries', { p_client_id: clientId, p_start: startDate, p_end: endDate })),
+
+      // FC name → country lookup — only needed for undelivered domestic filtering
+      needsUndelivered
+        ? timed('fcLookup', supabase.from('fulfillment_centers').select('name, country'))
+        : { data: null, error: null },
+
+      // Hour-of-day distribution — raw orders scan, only for order-volume tab
+      needsOrderVolume
+        ? timed('hourDist', supabase.rpc('get_order_hour_distribution', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
+        : { data: null, error: null },
+
+      // Day-of-week distribution — raw orders scan, only for order-volume tab
+      needsOrderVolume
+        ? timed('dowDist', supabase.rpc('get_order_dow_distribution', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
+        : { data: null, error: null },
+
+      // Order Volume breakdowns by purchase_date — raw orders scan, only for order-volume tab
+      needsOrderVolume
+        ? timed('orderVolume', supabase.rpc('get_order_volume_by_purchase_date', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
+        : { data: null, error: null },
+
+      // Core: Total revenue for billing efficiency (always ALL — only used by Financials tab which is locked to ALL)
+      timed('revenue', supabase.rpc('get_total_revenue', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: 'ALL' })),
+
+      // Core: Invoice category breakdown for Financials
+      timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate })),
+    ]) as any[]
+    console.log(`[analytics] All queries done in ${Date.now() - t0}ms (tab=${tab})`)
 
     // Available countries from RPC (distinct FC countries for this client in date range)
     const fcCountryRows = fcNamesResult.data || []
@@ -182,6 +262,71 @@ export async function GET(request: NextRequest) {
     if (!availableCountries.includes('US')) availableCountries.unshift('US')
     const countryDataDays: Record<string, number> = {}
     for (const r of fcCountryRows) { countryDataDays[String(r.country)] = Number(r.data_days) || 0 }
+
+    // ── Billing period types (used by both invoice map and trend computation) ──
+    type BillingPeriod = { shipping: number; surcharges: number; warehousing: number; extraPicks: number; multiHubIQ: number; b2b: number; vasKitting: number; receiving: number; returns: number; dutyTax: number; other: number; credit: number; shipments: number }
+    const emptyPeriod = (): BillingPeriod => ({ shipping: 0, surcharges: 0, warehousing: 0, extraPicks: 0, multiHubIQ: 0, b2b: 0, vasKitting: 0, receiving: 0, returns: 0, dutyTax: 0, other: 0, credit: 0, shipments: 0 })
+
+    // ── Fee type → UI category mapping ─────────────────────────────────────
+    const feeTypeToCategory = (feeType: string): string => {
+      if (feeType === 'Per Pick Fee') return 'extraPicks'
+      if (feeType === 'Warehousing Fee') return 'warehousing'
+      if (feeType === 'WRO Receiving Fee' || feeType === 'URO Storage Fee') return 'receiving'
+      if (feeType.startsWith('B2B')) return 'b2b'
+      if (feeType === 'Inventory Placement Program Fee') return 'multiHubIQ'
+      if (feeType === 'VAS - Paid Requests' || feeType === 'Kitting Fee') return 'vasKitting'
+      if (feeType === 'Credit') return 'credit'
+      if (feeType.includes('Return') || feeType === 'Return to sender - Processing Fees') return 'returns'
+      if (feeType.toLowerCase().includes('tax') || feeType.toLowerCase().includes('gst')
+        || feeType.toLowerCase().includes('hst') || feeType.toLowerCase().includes('pst')
+        || feeType.toLowerCase().includes('duty')) return 'dutyTax'
+      return 'other'
+    }
+
+    // Build invoice data map: period_start → full category breakdown from invoice line items
+    // For invoiced weeks, this replaces pre-aggregated summaries (which drift after invoicing)
+    type InvoicePeriod = BillingPeriod & { invoiceTotal: number }
+    const invoiceDataMap = new Map<string, InvoicePeriod>()
+    for (const row of (invoicesResult.data || []) as any[]) {
+      const key = (row.period_start || '').substring(0, 10)
+      if (!key) continue
+      if (!invoiceDataMap.has(key)) {
+        invoiceDataMap.set(key, { ...emptyPeriod(), invoiceTotal: Number(row.invoice_total) })
+      }
+      const p = invoiceDataMap.get(key)!
+      const amount = Number(row.category_total) || 0
+      const tax = Number(row.tax_total) || 0
+      const surcharge = Number(row.surcharge_total) || 0
+      const lc = row.line_category as string
+      const ft = row.fee_type as string || ''
+      // Route tax from all line items into dutyTax
+      p.dutyTax += tax
+      if (lc === 'Shipping') {
+        p.shipping += amount - surcharge
+        p.surcharges += surcharge
+        p.shipments += Number(row.item_count) || 0
+      } else if (lc === 'Pick Fees') {
+        p.extraPicks += amount
+      } else if (lc === 'Storage') {
+        p.warehousing += amount
+      } else if (lc === 'B2B Fees') {
+        p.b2b += amount
+      } else if (lc === 'Returns') {
+        p.returns += amount
+      } else if (lc === 'Receiving') {
+        p.receiving += amount
+      } else if (lc === 'Credits') {
+        p.credit += amount
+      } else if (lc === 'Additional Services') {
+        const cat = feeTypeToCategory(ft)
+        if (cat === 'multiHubIQ') p.multiHubIQ += amount
+        else if (cat === 'vasKitting') p.vasKitting += amount
+        else if (cat === 'dutyTax') p.dutyTax += amount
+        else p.other += amount
+      } else {
+        p.other += amount
+      }
+    }
 
     if (summaryResult.error) throw new Error(summaryResult.error.message)
     const s = summaryResult.data
@@ -230,6 +375,7 @@ export async function GET(request: NextRequest) {
         return cleanCnt > 0 ? cleanHrs / cleanCnt : (cur.fulfill_count > 0 ? cur.total_fulfill_business_hours / cur.fulfill_count : 0)
       })(),
       avgFulfillTimeWithDelayed: cur.fulfill_count > 0 ? cur.total_fulfill_business_hours / cur.fulfill_count : 0,
+      avgDeliveryDays: cur.delivery_count > 0 ? cur.total_delivery_days / cur.delivery_count : 0,
       periodChange: {
         totalCost: pctChange(cur.total_charge, prev.total_charge),
         orderCount: pctChange(cur.shipment_count, prev.shipment_count),
@@ -292,58 +438,154 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // ── Performance City Data (from core RPC — analytics_city_summaries) ────
+    const totalShipments = cur.shipment_count || 1
+    const perfCityData = ((s.by_city || []) as any[]).map((r: any) => ({
+      city: r.city,
+      state: r.state,
+      orderCount: r.shipment_count,
+      delayCount: r.delay_count || 0,
+      percent: (r.shipment_count / totalShipments) * 100,
+    }))
+
     // ── Date-based trends (from by_date — already grouped per day) ────────
     const byDate = s.by_date as any[]
 
-    const costTrend = byDate
-      // Exclude days with shipments but no cost data (e.g. today — SFTP/markup not yet available)
+    // Rolling average window size based on date range preset
+    const halfWindow = datePreset === '14d' ? 0
+      : datePreset === '30d' ? 1
+      : datePreset === '60d' ? 2
+      : 3 // 90d, 6mo, 1yr, all, custom
+
+    // Cost trend with rolling average
+    const rawCost = byDate
       .filter((r: any) => !(r.shipment_count > 0 && r.total_charge === 0 && r.total_base_charge === 0))
       .map((r: any) => ({
-        month: r.summary_date,
-        avgCostBase: r.shipment_count > 0 ? (r.total_base_charge / 100) / r.shipment_count : 0,
-        avgCostWithSurcharge: r.shipment_count > 0 ? (r.total_charge / 100) / r.shipment_count : 0,
-        surchargeOnly: r.shipment_count > 0 ? ((r.total_charge - r.total_base_charge) / 100) / r.shipment_count : 0,
-        orderCount: r.shipment_count,
+        date: r.summary_date,
+        baseCharge: Number(r.total_base_charge) || 0,
+        totalCharge: Number(r.total_charge) || 0,
+        shipmentCount: r.shipment_count,
       }))
 
-    const deliverySpeedTrend = byDate.map((r: any) => {
-      // "With delayed" = all shipments
-      const allFulfill = r.fulfill_count > 0 ? r.total_fulfill_business_hours / r.fulfill_count : 0
-      const allDelivery = r.delivery_count > 0 ? r.total_delivery_days / r.delivery_count : 0
+    const costTrendAll = rawCost.map((d, i) => {
+      let sumBase = 0, sumTotal = 0, sumShipments = 0
+      for (let j = Math.max(0, i - halfWindow); j <= Math.min(rawCost.length - 1, i + halfWindow); j++) {
+        sumBase += rawCost[j].baseCharge
+        sumTotal += rawCost[j].totalCharge
+        sumShipments += rawCost[j].shipmentCount
+      }
+      return {
+        month: d.date,
+        avgCostBase: sumShipments > 0 ? (sumBase / 100) / sumShipments : 0,
+        avgCostWithSurcharge: sumShipments > 0 ? (sumTotal / 100) / sumShipments : 0,
+        surchargeOnly: sumShipments > 0 ? ((sumTotal - sumBase) / 100) / sumShipments : 0,
+        orderCount: d.shipmentCount,
+      }
+    })
+    // Trim buffer days — only show dates within the user's requested range
+    const costTrend = costTrendAll.filter(d => d.month >= startDate!)
 
-      // "Clean" = subtract delayed shipments
-      const cleanFulfillHrs = r.total_fulfill_business_hours - (r.delay_fulfill_biz_hours || 0)
-      const cleanFulfillCnt = r.fulfill_count - (r.delay_count || 0)
-      const cleanDeliveryDays = r.total_delivery_days - (r.delay_delivery_days || 0)
-      const cleanDeliveryCnt = r.delivery_count - (r.delay_delivery_count || 0)
-
+    // Build raw daily sums for 7-day rolling average calculation
+    const rawDays = byDate.map((r: any) => {
+      const deliveredRatio = r.shipment_count > 0 ? r.delivered_count / r.shipment_count : 0
+      const hasReliable = deliveredRatio >= 0.20 && r.delivered_count >= 5
       const dayDeliveryTotal = (r.delivery_on_time_count || 0) + (r.delivery_late_count || 0)
-
       return {
         date: r.summary_date,
-        avgFulfillTimeHours: cleanFulfillCnt > 0 ? cleanFulfillHrs / cleanFulfillCnt : allFulfill,
-        avgOrderToDeliveryDays: cleanDeliveryCnt > 0 ? cleanDeliveryDays / cleanDeliveryCnt : allDelivery,
-        avgCarrierTransitDays: r.transit_count > 0 ? r.total_transit_days / r.transit_count : 0,
-        orderCount: r.shipment_count,
+        hasReliable,
+        shipmentCount: r.shipment_count,
         deliveredCount: r.delivered_count,
-        deliveryOnTimePercent: dayDeliveryTotal > 0 ? ((r.delivery_on_time_count || 0) / dayDeliveryTotal) * 100 : -1,
-        // "With delayed" variants for toggle
-        avgFulfillTimeHoursWithDelayed: allFulfill,
-        avgOrderToDeliveryDaysWithDelayed: allDelivery,
+        // Raw sums for weighted rolling averages
+        fulfillHrs: r.total_fulfill_business_hours - (r.delay_fulfill_biz_hours || 0),
+        fulfillCnt: r.fulfill_count - (r.delay_count || 0),
+        allFulfillHrs: r.total_fulfill_business_hours,
+        allFulfillCnt: r.fulfill_count,
+        deliveryDays: r.total_delivery_days - (r.delay_delivery_days || 0),
+        deliveryCnt: r.delivery_count - (r.delay_delivery_count || 0),
+        allDeliveryDays: r.total_delivery_days,
+        allDeliveryCnt: r.delivery_count,
+        transitDays: r.total_transit_days,
+        transitCnt: r.transit_count,
+        onTimeCount: r.delivery_on_time_count || 0,
+        deliveryTotal: dayDeliveryTotal,
       }
     })
 
-    // Daily order volume with growth %
-    const dailyVolume = byDate.map((r: any, i: number) => ({
-      date: r.summary_date,
-      orderCount: r.shipment_count,
-      growthPercent: i > 0 && byDate[i - 1].shipment_count > 0
-        ? ((r.shipment_count - byDate[i - 1].shipment_count) / byDate[i - 1].shipment_count) * 100
+    // Trim trailing days where delivery data is unreliable
+    let lastReliableIdx = rawDays.length - 1
+    while (lastReliableIdx >= 0 && !rawDays[lastReliableIdx].hasReliable) {
+      lastReliableIdx--
+    }
+    const trimmed = rawDays.slice(0, lastReliableIdx + 1)
+
+    const deliverySpeedTrendAll = trimmed.map((d, i) => {
+      let wFulfillHrs = 0, wFulfillCnt = 0
+      let wAllFulfillHrs = 0, wAllFulfillCnt = 0
+      let wDeliveryDays = 0, wDeliveryCnt = 0
+      let wAllDeliveryDays = 0, wAllDeliveryCnt = 0
+      let wTransitDays = 0, wTransitCnt = 0
+      let wOnTime = 0, wDeliveryTotal = 0
+
+      for (let j = Math.max(0, i - halfWindow); j <= Math.min(trimmed.length - 1, i + halfWindow); j++) {
+        const w = trimmed[j]
+        wFulfillHrs += w.fulfillHrs; wFulfillCnt += w.fulfillCnt
+        wAllFulfillHrs += w.allFulfillHrs; wAllFulfillCnt += w.allFulfillCnt
+        wDeliveryDays += w.deliveryDays; wDeliveryCnt += w.deliveryCnt
+        wAllDeliveryDays += w.allDeliveryDays; wAllDeliveryCnt += w.allDeliveryCnt
+        wTransitDays += w.transitDays; wTransitCnt += w.transitCnt
+        wOnTime += w.onTimeCount; wDeliveryTotal += w.deliveryTotal
+      }
+
+      const avgFulfill = wFulfillCnt > 0 ? wFulfillHrs / wFulfillCnt : 0
+      const avgFulfillAll = wAllFulfillCnt > 0 ? wAllFulfillHrs / wAllFulfillCnt : 0
+      const avgOTD = wDeliveryCnt > 0 ? wDeliveryDays / wDeliveryCnt : null
+      const avgOTDAll = wAllDeliveryCnt > 0 ? wAllDeliveryDays / wAllDeliveryCnt : null
+      const avgTransit = wTransitCnt > 0 ? wTransitDays / wTransitCnt : null
+
+      // Middle Mile = order-to-delivery - fulfillment/24 - carrier transit
+      const middleMile = (avgOTD !== null && avgTransit !== null && avgOTD > 0)
+        ? Math.max(0, avgOTD - avgFulfill / 24 - avgTransit)
+        : null
+
+      return {
+        date: d.date,
+        avgFulfillTimeHours: avgFulfill,
+        avgOrderToDeliveryDays: avgOTD,
+        avgCarrierTransitDays: avgTransit,
+        middleMileDays: middleMile,
+        orderCount: d.shipmentCount,
+        deliveredCount: d.deliveredCount,
+        deliveryOnTimePercent: wDeliveryTotal > 0 ? (wOnTime / wDeliveryTotal) * 100 : -1,
+        avgFulfillTimeHoursWithDelayed: avgFulfillAll,
+        avgOrderToDeliveryDaysWithDelayed: avgOTDAll,
+      }
+    })
+    // Trim buffer days — only show dates within the user's requested range
+    const deliverySpeedTrend = deliverySpeedTrendAll.filter(d => d.date >= startDate!)
+
+    // For weekly granularity, extend start back to Monday of the first week so partial leading weeks get full data
+    const weekExtendedStart = (() => {
+      if (granularity !== 'weekly') return startDate!
+      const d = new Date(startDate! + 'T00:00:00Z')
+      const day = d.getUTCDay()
+      d.setUTCDate(d.getUTCDate() - ((day + 6) % 7)) // back to Monday
+      return d.toISOString().substring(0, 10)
+    })()
+
+    // Daily order volume with growth % — uses purchase_date (not event_labeled)
+    const byDateInRange = byDate.filter((r: any) => r.summary_date >= weekExtendedStart)
+    const ov = orderVolumeResult.data || {}
+    const ovByDate: { purchase_day: string; order_count: number }[] = ov.by_date || []
+    const dailyVolume = ovByDate.map((r: any, i: number) => ({
+      date: r.purchase_day,
+      orderCount: r.order_count,
+      growthPercent: i > 0 && ovByDate[i - 1].order_count > 0
+        ? ((r.order_count - ovByDate[i - 1].order_count) / ovByDate[i - 1].order_count) * 100
         : null,
     }))
 
     // On-time trend (min 5 shipments per day)
-    const onTimeTrend = byDate
+    const onTimeTrend = byDateInRange
       .map((r: any) => {
         const slaTotal = r.on_time_count + r.breached_count
         return {
@@ -356,50 +598,179 @@ export async function GET(request: NextRequest) {
       .filter(d => d._slaTotal >= 5)
       .map(({ _slaTotal, ...rest }) => rest)
 
-    // ── Period-grouped trends (weekly/monthly from daily data) ─────────────
-    const periodMap = new Map<string, { charge: number; items: number; shipments: number }>()
-    for (const r of byDate) {
+    // ── Period-grouped trends (real data from summaries) ─────────────────
+
+    const periodMap = new Map<string, BillingPeriod>()
+
+    // Shipping costs from analytics_daily_summaries (by_date) — split into base + surcharges
+    for (const r of byDateInRange) {
       const key = getTimeKey(r.summary_date, granularity)
-      const existing = periodMap.get(key)
-      if (existing) {
-        existing.charge += Number(r.total_charge)
-        existing.items += r.total_items
-        existing.shipments += r.shipment_count
-      } else {
-        periodMap.set(key, { charge: Number(r.total_charge), items: r.total_items, shipments: r.shipment_count })
+      if (!periodMap.has(key)) periodMap.set(key, emptyPeriod())
+      const p = periodMap.get(key)!
+      p.shipping += Number(r.total_base_charge) / 100
+      p.surcharges += Number(r.total_surcharge) / 100
+      p.shipments += r.shipment_count
+    }
+
+    // Non-shipping fees from analytics_billing_summaries (by_date_fee_type)
+    const byDateFeeType: { summary_date: string; fee_type: string; total_amount: number }[] = s.by_date_fee_type as any[] || []
+    for (const r of byDateFeeType) {
+      if (r.summary_date < weekExtendedStart) continue
+      const key = getTimeKey(r.summary_date, granularity)
+      if (!periodMap.has(key)) periodMap.set(key, emptyPeriod())
+      const p = periodMap.get(key)!
+      const cat = feeTypeToCategory(r.fee_type)
+      if (cat in p) {
+        ;(p as any)[cat] += Number(r.total_amount) / 100
+      }
+    }
+
+    // Filter out incomplete trailing weeks (current week whose Sunday hasn't passed)
+    const isCompleteWeek = (mondayKey: string): boolean => {
+      const monday = new Date(mondayKey + 'T00:00:00Z')
+      const sunday = new Date(monday)
+      sunday.setUTCDate(monday.getUTCDate() + 6)
+      return sunday.toISOString().substring(0, 10) <= todayStr
+    }
+
+    // Merge invoice-backed periods into periodMap (replaces summary data for invoiced weeks/months)
+    // Skip for daily granularity — invoice totals can't be meaningfully assigned to a single day;
+    // the pre-aggregated daily summaries already have data spread across actual transaction dates.
+    const invoiceByGranularity = new Map<string, InvoicePeriod>()
+    if (granularity !== 'daily') {
+      for (const [key, inv] of invoiceDataMap) {
+        const gKey = getTimeKey(key, granularity)
+        if (!invoiceByGranularity.has(gKey)) {
+          invoiceByGranularity.set(gKey, { ...emptyPeriod(), invoiceTotal: 0 })
+        }
+        const merged = invoiceByGranularity.get(gKey)!
+        merged.shipping += inv.shipping
+        merged.surcharges += inv.surcharges
+        merged.extraPicks += inv.extraPicks
+        merged.warehousing += inv.warehousing
+        merged.multiHubIQ += inv.multiHubIQ
+        merged.b2b += inv.b2b
+        merged.vasKitting += inv.vasKitting
+        merged.receiving += inv.receiving
+        merged.returns += inv.returns
+        merged.dutyTax += inv.dutyTax
+        merged.other += inv.other
+        merged.credit += inv.credit
+        merged.shipments += inv.shipments
+        merged.invoiceTotal += inv.invoiceTotal
+      }
+      for (const [gKey, inv] of invoiceByGranularity) {
+        periodMap.set(gKey, inv)
       }
     }
 
     const billingTrend = Array.from(periodMap.entries())
-      .map(([period, g]) => {
-        const s = g.charge / 100
-        const ep = Math.max(0, g.items - g.shipments) * 0.35
-        const total = s + s * (10 / 60) + ep + s * 0.08 * 0.15 + s * 0.12 * 0.10 + s * 0.05 * 0.20 + s * (4 / 60) * 0.3 + s * 0.03
-        const cr = -(total * 0.02)
+      .filter(([period]) => granularity !== 'weekly' || isCompleteWeek(period))
+      .map(([period, p]) => {
+        const inv = invoiceByGranularity.get(period)
+        // For invoiced periods: use invoice total (includes tax); otherwise sum categories
+        const total = inv ? inv.invoiceTotal : p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
+        // If invoice total differs from category sum, put delta in dutyTax (it's tax)
+        const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
+        const taxRemainder = inv ? Math.round((inv.invoiceTotal - categorySum) * 100) / 100 : 0
         return {
           month: period,
           monthLabel: formatMonthLabel(period, granularity),
-          shipping: s,
-          warehousing: s * (10 / 60),
-          extraPicks: ep,
-          multiHubIQ: s * 0.08 * 0.15,
-          b2b: s * 0.12 * 0.10,
-          vasKitting: s * 0.05 * 0.20,
-          receiving: s * (4 / 60) * 0.3,
-          dutyTax: s * 0.03,
-          credit: cr,
-          total: total + cr,
-          orderCount: g.shipments,
-          costPerOrder: g.shipments > 0 ? (total + cr) / g.shipments : 0,
+          shipping: p.shipping,
+          surcharges: p.surcharges,
+          extraPicks: p.extraPicks,
+          warehousing: p.warehousing,
+          multiHubIQ: p.multiHubIQ,
+          b2b: p.b2b,
+          vasKitting: p.vasKitting,
+          receiving: p.receiving,
+          returns: p.returns,
+          dutyTax: p.dutyTax + taxRemainder,
+          other: p.other,
+          credit: p.credit,
+          total,
+          orderCount: p.shipments,
+          costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
         }
       })
       .sort((a, b) => a.month.localeCompare(b.month))
 
+    // ── Always-weekly billing trend (for fee breakdown table) ──────────────
+    // When granularity is already weekly, reuse billingTrend. Otherwise build a separate weekly map.
+    let billingTrendWeekly = billingTrend
+    if (granularity !== 'weekly') {
+      // billingTrendWeekly is always weekly — extend start to Monday even when page granularity is daily/monthly
+      const weeklyExtStart = (() => {
+        const d = new Date(startDate! + 'T00:00:00Z')
+        const day = d.getUTCDay()
+        d.setUTCDate(d.getUTCDate() - ((day + 6) % 7))
+        return d.toISOString().substring(0, 10)
+      })()
+      const weeklyMap = new Map<string, BillingPeriod>()
+      for (const r of byDate) {
+        if (r.summary_date < weeklyExtStart) continue
+        const key = getTimeKey(r.summary_date, 'weekly')
+        if (!weeklyMap.has(key)) weeklyMap.set(key, emptyPeriod())
+        const p = weeklyMap.get(key)!
+        p.shipping += Number(r.total_base_charge) / 100
+        p.surcharges += Number(r.total_surcharge) / 100
+        p.shipments += r.shipment_count
+      }
+      for (const r of byDateFeeType) {
+        if (r.summary_date < weeklyExtStart) continue
+        const key = getTimeKey(r.summary_date, 'weekly')
+        if (!weeklyMap.has(key)) weeklyMap.set(key, emptyPeriod())
+        const p = weeklyMap.get(key)!
+        const cat = feeTypeToCategory(r.fee_type)
+        if (cat in p) { ;(p as any)[cat] += Number(r.total_amount) / 100 }
+      }
+      // Merge invoice data (re-keyed to weekly) — only when not country-filtered
+      // (invoices contain all countries' data; can't split by country)
+      const invoiceByWeek = new Map<string, InvoicePeriod>()
+      if (country === 'ALL') {
+        for (const [key, inv] of invoiceDataMap) {
+          const wKey = getTimeKey(key, 'weekly')
+          if (!invoiceByWeek.has(wKey)) {
+            invoiceByWeek.set(wKey, { ...emptyPeriod(), invoiceTotal: 0 })
+          }
+          const m = invoiceByWeek.get(wKey)!
+          m.shipping += inv.shipping; m.surcharges += inv.surcharges; m.extraPicks += inv.extraPicks
+          m.warehousing += inv.warehousing; m.multiHubIQ += inv.multiHubIQ; m.b2b += inv.b2b
+          m.vasKitting += inv.vasKitting; m.receiving += inv.receiving; m.returns += inv.returns
+          m.dutyTax += inv.dutyTax; m.other += inv.other; m.credit += inv.credit
+          m.shipments += inv.shipments; m.invoiceTotal += inv.invoiceTotal
+        }
+        for (const [wKey, inv] of invoiceByWeek) {
+          weeklyMap.set(wKey, inv)
+        }
+      }
+      billingTrendWeekly = Array.from(weeklyMap.entries())
+        .filter(([period]) => isCompleteWeek(period))
+        .map(([period, p]) => {
+          const inv = invoiceByWeek.get(period)
+          const total = inv ? inv.invoiceTotal : p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
+          const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
+          const taxRemainder = inv ? Math.round((inv.invoiceTotal - categorySum) * 100) / 100 : 0
+          return {
+            month: period,
+            monthLabel: formatMonthLabel(period, 'weekly'),
+            shipping: p.shipping, surcharges: p.surcharges, extraPicks: p.extraPicks,
+            warehousing: p.warehousing, multiHubIQ: p.multiHubIQ, b2b: p.b2b,
+            vasKitting: p.vasKitting, receiving: p.receiving, returns: p.returns,
+            dutyTax: p.dutyTax + taxRemainder, other: p.other, credit: p.credit,
+            total, orderCount: p.shipments,
+            costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
+          }
+        })
+        .sort((a, b) => a.month.localeCompare(b.month))
+    }
+
     const costPerOrderTrend = Array.from(periodMap.entries())
+      .filter(([period]) => granularity !== 'weekly' || isCompleteWeek(period))
       .map(([period, g]) => ({
         month: period,
         monthLabel: formatMonthLabel(period, granularity),
-        costPerOrder: g.shipments > 0 ? (g.charge / 100) / g.shipments : 0,
+        costPerOrder: g.shipments > 0 ? (g.shipping + g.surcharges) / g.shipments : 0,
         orderCount: g.shipments,
       }))
       .sort((a, b) => a.month.localeCompare(b.month))
@@ -455,64 +826,83 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // ── Volume by Hour / Day of Week (computed from summary by_date) ──────
-    // Distribute evenly across business hours (approximation from summary data)
-    // This avoids the slow raw shipments×orders JOIN (~1.5s)
-    const totalOrdersForDist = cur.shipment_count
-    const businessHours = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    // ── Carrier × Zone cross-tab (for zone distribution per carrier) ────
+    const carrierZoneBreakdown = (s.by_carrier_zone as any[] || []).map((r: any) => ({
+      carrier: r.carrier,
+      zone: r.zone,
+      orderCount: r.shipment_count,
+    }))
+
+    // ── Volume by Hour / Day of Week (real data from shipments) ─────────
+    const hourRows: { hour: number; order_count: number }[] = hourDistResult.data || []
+    const totalHourOrders = hourRows.reduce((sum, r) => sum + Number(r.order_count), 0)
+    const hourMap = new Map(hourRows.map(r => [r.hour, Number(r.order_count)]))
     const volumeByHour = Array.from({ length: 24 }, (_, h) => {
-      // Approximate: 80% of orders in business hours (8am-5pm), 20% outside
-      const isBusiness = businessHours.includes(h)
-      const weight = isBusiness ? 0.08 : 0.0143
-      const count = Math.round(totalOrdersForDist * weight)
-      return { hour: h, orderCount: count, percent: totalOrdersForDist > 0 ? (count / totalOrdersForDist) * 100 : 0 }
+      const count = hourMap.get(h) || 0
+      return { hour: h, orderCount: count, percent: totalHourOrders > 0 ? (count / totalHourOrders) * 100 : 0 }
     })
 
-    const weekdayWeight = 0.17 // ~85% of orders on weekdays
-    const weekendWeight = 0.075 // ~15% of orders on weekends
+    const dowRows: { dow: number; order_count: number }[] = dowDistResult.data || []
+    const totalDowOrders = dowRows.reduce((sum, r) => sum + Number(r.order_count), 0)
+    const dowMap = new Map(dowRows.map(r => [r.dow, Number(r.order_count)]))
     const volumeByDayOfWeek = Array.from({ length: 7 }, (_, d) => {
-      const isWeekend = d === 0 || d === 6
-      const count = Math.round(totalOrdersForDist * (isWeekend ? weekendWeight : weekdayWeight))
-      return { dayOfWeek: d, dayName: DOW_NAMES[d], orderCount: count, percent: totalOrdersForDist > 0 ? (count / totalOrdersForDist) * 100 : 0 }
+      const count = dowMap.get(d) || 0
+      return { dayOfWeek: d, dayName: DOW_NAMES[d], orderCount: count, percent: totalDowOrders > 0 ? (count / totalDowOrders) * 100 : 0 }
     })
 
-    // ── Volume by FC (pre-grouped) ─────────────────────────────────────────
-    const volumeByFC = (s.by_fc as any[]).map((r: any) => ({
+    // ── Volume by FC (purchase_date-based) ──────────────────────────────────
+    const ovTotal = ov.total || 0
+    const ovByFC: { fc_name: string; order_count: number }[] = ov.by_fc || []
+    const volumeByFC = ovByFC.map((r: any) => ({
       fcName: r.fc_name,
-      orderCount: r.shipment_count,
-      percent: cur.shipment_count > 0 ? (r.shipment_count / cur.shipment_count) * 100 : 0,
+      orderCount: r.order_count,
+      percent: ovTotal > 0 ? (r.order_count / ovTotal) * 100 : 0,
     }))
 
-    // ── Volume by Store (pre-grouped) ──────────────────────────────────────
-    const volumeByStore = (s.by_store as any[]).map((r: any) => ({
+    // ── Volume by Store (purchase_date-based) ────────────────────────────────
+    const ovByStore: { store_name: string; order_count: number }[] = ov.by_store || []
+    const volumeByStore = ovByStore.map((r: any) => ({
       storeIntegrationName: r.store_name,
-      orderCount: r.shipment_count,
-      percent: cur.shipment_count > 0 ? (r.shipment_count / cur.shipment_count) * 100 : 0,
+      orderCount: r.order_count,
+      percent: ovTotal > 0 ? (r.order_count / ovTotal) * 100 : 0,
     }))
 
-    // ── State Volume (from by_state, already country-filtered) ─────────────
-    const totalDays = byDate.length || 1
-    const stateVolume = (s.by_state as any[]).map((r: any) => ({
+    // ── State Volume (purchase_date-based) ───────────────────────────────────
+    const totalDays = ovByDate.length || 1
+    const ovByState: { state: string; order_count: number }[] = ov.by_state || []
+    const stateVolume = ovByState.map((r: any) => ({
       state: r.state,
       stateName: getStateName(r.state, country),
-      orderCount: r.shipment_count,
-      percent: cur.shipment_count > 0 ? (r.shipment_count / cur.shipment_count) * 100 : 0,
-      avgOrdersPerDay: r.shipment_count / totalDays,
+      orderCount: r.order_count,
+      percent: ovTotal > 0 ? (r.order_count / ovTotal) * 100 : 0,
+      avgOrdersPerDay: r.order_count / totalDays,
     }))
 
-    // ── City Volume (pre-grouped, limited to 500 in SQL) ───────────────────
-    const cityVolume = (s.by_city as any[]).map((r: any) => ({
-      city: r.city,
-      state: r.state,
-      zipCode: '',
-      orderCount: r.shipment_count,
-      delayCount: r.delay_count || 0,
-      percent: cur.shipment_count > 0 ? (r.shipment_count / cur.shipment_count) * 100 : 0,
-    }))
+    // ── City Volume (purchase_date-based, limited to 500 in SQL) ─────────────
+    const ovByCity: { city: string; state: string; order_count: number }[] = ov.by_city || []
+    const cityVolume = ovByCity.map((r: any) => {
+      const key = `${(r.city || '').toUpperCase()}|${r.state}`
+      const coords = cityCoords.get(key)
+      return {
+        city: r.city,
+        state: r.state,
+        zipCode: '',
+        orderCount: r.order_count,
+        delayCount: 0,
+        percent: ovTotal > 0 ? (r.order_count / ovTotal) * 100 : 0,
+        lon: coords?.lon,
+        lat: coords?.lat,
+      }
+    })
 
-    // ── Billing Summary (simulated categories from totals) ─────────────────
-    const currentCostDollars = cur.total_charge / 100
-    const prevCostDollars = prev.total_charge / 100
+    // ── Billing Summary (real data from summaries) ─────────────────────────
+    const currentShippingDollars = cur.total_charge / 100
+    const prevShippingDollars = prev.total_charge / 100
+    // Add non-shipping fees from billing summaries
+    const billingFees: { fee_type: string; transaction_count: number; total_amount: number }[] = s.billing as any[] || []
+    const totalNonShippingFees = billingFees.reduce((sum, f) => sum + Number(f.total_amount) / 100, 0)
+    const currentCostDollars = currentShippingDollars + totalNonShippingFees
+    const prevCostDollars = prevShippingDollars // prev period non-shipping fees not available in single RPC call
     const currentCPO = cur.shipment_count > 0 ? currentCostDollars / cur.shipment_count : 0
     const prevCPO = prev.shipment_count > 0 ? prevCostDollars / prev.shipment_count : 0
     const billingSummary = {
@@ -526,36 +916,40 @@ export async function GET(request: NextRequest) {
       },
     }
 
-    // ── Billing Category Breakdown (simulated from totals) ─────────────────
-    const shipping = currentCostDollars
-    const warehousing = shipping * (10 / 60)
-    const extraPicks = Math.max(0, cur.total_items - cur.shipment_count) * 0.35
-    const multiHubIQ = shipping * 0.08 * 0.15
-    const b2b = shipping * 0.12 * 0.10
-    const vasKitting = shipping * 0.05 * 0.20
-    const receiving = shipping * (4 / 60) * 0.3
-    const dutyTax = shipping * 0.03
-    const subtotal = shipping + warehousing + extraPicks + multiHubIQ + b2b + vasKitting + receiving + dutyTax
-    const credit = -(subtotal * 0.02)
-    const grandTotal = subtotal + credit
-
-    const billingCategories = [
-      { category: 'Shipping', amount: shipping, quantity: cur.shipment_count },
-      { category: 'Warehousing', amount: warehousing, quantity: cur.shipment_count },
-      { category: 'Extra Picks', amount: extraPicks, quantity: Math.max(0, cur.total_items - cur.shipment_count) },
-      { category: 'MultiHub IQ', amount: multiHubIQ, quantity: Math.round(cur.shipment_count * 0.15) },
-      { category: 'B2B', amount: b2b, quantity: Math.round(cur.shipment_count * 0.10) },
-      { category: 'VAS/Kitting', amount: vasKitting, quantity: Math.round(cur.shipment_count * 0.20) },
-      { category: 'Receiving', amount: receiving, quantity: Math.round(cur.shipment_count * 0.04) },
-      { category: 'Duty & Tax', amount: dutyTax, quantity: Math.round(cur.shipment_count * 0.03) },
-      { category: 'Credit', amount: credit, quantity: cur.shipment_count },
-    ]
-    const billingCategoryBreakdown = billingCategories
-      .filter(c => Math.abs(c.amount) > 0.01)
-      .map(c => ({
-        category: c.category,
+    // ── Billing Category Breakdown (real data from billing summaries) ─────
+    // Map real fee types to UI categories, then build breakdown
+    const categoryDisplayNames: Record<string, string> = {
+      extraPicks: 'Extra Picks', warehousing: 'Warehousing', receiving: 'Receiving',
+      b2b: 'B2B', multiHubIQ: 'MultiHub IQ', vasKitting: 'VAS/Kitting',
+      returns: 'Returns', dutyTax: 'Duty & Tax', other: 'Other', credit: 'Credit',
+    }
+    const categoryTotals = new Map<string, { amount: number; quantity: number }>()
+    // Start with shipping (base charge) and surcharges
+    const currentBaseDollars = cur.total_base_charge / 100
+    const currentSurchargeDollars = cur.total_surcharge / 100
+    categoryTotals.set('Shipping', { amount: currentBaseDollars, quantity: cur.shipment_count })
+    categoryTotals.set('Surcharges', { amount: currentSurchargeDollars, quantity: cur.shipment_count })
+    // Add each billing fee type mapped to its category
+    for (const f of billingFees) {
+      const cat = feeTypeToCategory(f.fee_type)
+      const displayName = categoryDisplayNames[cat] || cat
+      const existing = categoryTotals.get(displayName)
+      const amount = Number(f.total_amount) / 100
+      const qty = f.transaction_count
+      if (existing) {
+        existing.amount += amount
+        existing.quantity += qty
+      } else {
+        categoryTotals.set(displayName, { amount, quantity: qty })
+      }
+    }
+    const grandTotal = Array.from(categoryTotals.values()).reduce((s, c) => s + c.amount, 0)
+    const billingCategoryBreakdown = Array.from(categoryTotals.entries())
+      .filter(([, c]) => Math.abs(c.amount) > 0.01)
+      .map(([category, c]) => ({
+        category,
         amount: c.amount,
-        percent: grandTotal > 0 ? (c.amount / grandTotal) * 100 : 0,
+        percent: grandTotal !== 0 ? (c.amount / grandTotal) * 100 : 0,
         quantity: c.quantity,
         unitPrice: c.quantity > 0 ? c.amount / c.quantity : 0,
       }))
@@ -606,21 +1000,40 @@ export async function GET(request: NextRequest) {
     })
 
     // ── Additional Services Breakdown (from billing summaries — REAL data) ──
-    const totalAdditionalAmount = (s.billing as any[]).reduce((sum: number, r: any) => sum + r.total_amount / 100, 0)
-    const additionalServicesBreakdown = (s.billing as any[]).map((r: any) => ({
-      category: r.fee_type,
-      amount: r.total_amount / 100,
-      transactionCount: r.transaction_count,
-      percent: totalAdditionalAmount > 0 ? ((r.total_amount / 100) / totalAdditionalAmount) * 100 : 0,
-    }))
+    const additionalServicesFees = (s.billing as any[]).filter((r: any) => r.fee_type !== 'Credit')
+    // Group B2B fees into one, rename Inventory Placement Program Fee
+    const groupedFees = new Map<string, { amount: number; count: number }>()
+    for (const r of additionalServicesFees) {
+      const label = (r.fee_type as string).startsWith('B2B') ? 'B2B'
+        : r.fee_type === 'Inventory Placement Program Fee' ? 'MultiHub IQ Fee'
+        : r.fee_type
+      const existing = groupedFees.get(label) || { amount: 0, count: 0 }
+      existing.amount += r.total_amount / 100
+      existing.count += r.transaction_count
+      groupedFees.set(label, existing)
+    }
+    const totalAdditionalAmount = [...groupedFees.values()].reduce((sum, f) => sum + f.amount, 0)
+    const additionalServicesBreakdown = [...groupedFees.entries()].map(([category, f]) => ({
+      category,
+      amount: f.amount,
+      transactionCount: f.count,
+      percent: totalAdditionalAmount > 0 ? (f.amount / totalAdditionalAmount) * 100 : 0,
+    })).sort((a, b) => b.amount - a.amount)
 
     // ── Billing Efficiency ─────────────────────────────────────────────────
+    // Revenue is always total (not country-filtered) so that US% + CA% ≈ ALL%
+    // and the metric means "what share of total revenue goes to fulfillment from this country"
+    const revenueData = revenueResult.data as any
+    if (revenueResult.error) console.error('[analytics] Revenue RPC error:', revenueResult.error.message)
+    const totalRevenue: number = revenueData?.total_revenue ?? 0
+    const ordersWithPrice: number = revenueData?.orders_with_price ?? 0
     const billingEfficiency = {
       costPerItem: cur.total_items > 0 ? currentCostDollars / cur.total_items : 0,
       avgItemsPerOrder: cur.shipment_count > 0 ? cur.total_items / cur.shipment_count : 0,
-      shippingAsPercentOfTotal: 100,
-      surchargeRate: cur.shipment_count > 0 ? ((cur.total_surcharge / 100) / currentCostDollars) * 100 : 0,
-      insuranceRate: cur.shipment_count > 0 ? ((cur.total_insurance / 100) / currentCostDollars) * 100 : 0,
+      fulfillmentAsPercentOfRevenue: totalRevenue > 0 ? (currentCostDollars / totalRevenue) * 100 : 0,
+      avgRevenuePerOrder: ordersWithPrice > 0 ? totalRevenue / ordersWithPrice : 0,
+      surchargePercentOfCost: currentCostDollars > 0 ? ((cur.total_surcharge / 100) / currentCostDollars) * 100 : 0,
+      totalCredits: Math.abs(billingFees.filter((f: any) => f.fee_type === 'Credit').reduce((sum: number, f: any) => sum + Number(f.total_amount) / 100, 0)),
     }
 
     // ── SLA Metrics ────────────────────────────────────────────────────────
@@ -661,7 +1074,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Fulfillment Trend (from summary by_date — avg only, no percentiles) ──
-    const fulfillmentTrend = byDate.map((r: any) => {
+    const fulfillmentTrend = byDateInRange.map((r: any) => {
       const allAvg = r.fulfill_count > 0 ? r.total_fulfill_business_hours / r.fulfill_count : 0
       const cleanHrs = r.total_fulfill_business_hours - (r.delay_fulfill_biz_hours || 0)
       const cleanCnt = r.fulfill_count - (r.delay_count || 0)
@@ -715,22 +1128,34 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Undelivered Tab ────────────────────────────────────────────────────
+    // Build FC name → country lookup for domestic-only filtering
+    const fcCountryMap = new Map<string, string>()
+    for (const fc of (fcLookupResult.data || [])) {
+      if (fc.name && fc.country) fcCountryMap.set(fc.name, fc.country)
+    }
+
     const now = Date.now()
-    const undeliveredShipments = (undeliveredRows as any[]).map(s => {
-      const labelDate = s.event_labeled ? new Date(s.event_labeled).getTime() : now
-      const daysInTransit = Math.floor((now - labelDate) / 86400000)
-      return {
-        trackingId: s.tracking_id || '',
-        orderId: s.shipbob_order_id || '',
-        customerName: s.recipient_name || '',
-        labelGenerationTimestamp: s.event_labeled || '',
-        daysInTransit,
-        status: s.status || 'Unknown',
-        carrier: s.carrier || '',
-        destination: s.destination_country || '',
-        lastUpdate: '',
-      }
-    }).sort((a, b) => b.daysInTransit - a.daysInTransit)
+    const undeliveredShipments = (undeliveredRows as any[])
+      // Domestic-only: FC country must match destination country
+      .filter(s => {
+        const fcCountry = fcCountryMap.get(s.fc_name)
+        return fcCountry && fcCountry === s.destination_country
+      })
+      .map(s => {
+        const labelDate = s.event_labeled ? new Date(s.event_labeled).getTime() : now
+        const daysInTransit = Math.floor((now - labelDate) / 86400000)
+        return {
+          trackingId: s.tracking_id || '',
+          orderId: s.shipbob_order_id || '',
+          customerName: s.recipient_name || '',
+          labelGenerationTimestamp: s.event_labeled || '',
+          daysInTransit,
+          status: s.status || 'Unknown',
+          carrier: s.carrier || '',
+          destination: s.destination_country || '',
+          lastUpdate: '',
+        }
+      }).sort((a, b) => b.daysInTransit - a.daysInTransit)
 
     const totalUndelivered = undeliveredShipments.length
     const avgDaysInTransit = totalUndelivered > 0
@@ -794,47 +1219,72 @@ export async function GET(request: NextRequest) {
       return { ...b, count, percent: totalUndelivered > 0 ? (count / totalUndelivered) * 100 : 0 }
     })
 
-    // ── Build final result ─────────────────────────────────────────────────
-    const result = {
+    // ── Build final result (only include tab-specific fields when computed) ──
+    const result: Record<string, any> = {
+      // Core fields — always included (from pre-aggregated summaries)
       statePerformance,
+      perfCityData,
       kpis,
       costTrend,
       deliverySpeedTrend,
       shipOptionPerformance,
-      transitDistribution,
       stateCostSpeed,
       zoneCost,
-      volumeByHour,
-      volumeByDayOfWeek,
-      volumeByFC,
-      volumeByStore,
-      dailyVolume,
-      stateVolume,
-      cityVolume,
       carrierPerformance,
+      carrierZoneBreakdown,
       billingSummary,
       billingCategoryBreakdown,
       billingTrend,
+      billingTrendWeekly,
       pickPackDistribution,
       costPerOrderTrend,
       shippingCostByZone,
       additionalServicesBreakdown,
       billingEfficiency,
-      slaMetrics,
       fulfillmentTrend,
       fcFulfillmentMetrics,
       onTimeTrend,
       fulfillmentDelayed,
       delayImpact,
-      undeliveredSummary,
-      undeliveredByCarrier,
-      undeliveredByStatus,
-      undeliveredByAge,
-      undeliveredShipments,
       totalShipments: cur.shipment_count,
       granularity,
       availableCountries,
       countryDataDays,
+      _loadedTab: tab,
+    }
+
+    // Tab-specific fields — only included when their expensive queries actually ran.
+    // This prevents merges from overwriting real data with empty arrays.
+    if (needsTransit) {
+      result.transitDistribution = transitDistribution
+    }
+    if (needsSLA) {
+      result.slaMetrics = slaMetrics
+    } else {
+      // Always include summary-level SLA (from summaries), but without detail records
+      result.slaMetrics = {
+        onTimePercent: slaPercentCurrent,
+        breachedCount: cur.breached_count,
+        totalShipments: slaTotalCurrent,
+        breachedShipments: [],
+        onTimeShipments: [],
+      }
+    }
+    if (needsOrderVolume) {
+      result.volumeByHour = volumeByHour
+      result.volumeByDayOfWeek = volumeByDayOfWeek
+      result.volumeByFC = volumeByFC
+      result.volumeByStore = volumeByStore
+      result.dailyVolume = dailyVolume
+      result.stateVolume = stateVolume
+      result.cityVolume = cityVolume
+    }
+    if (needsUndelivered) {
+      result.undeliveredSummary = undeliveredSummary
+      result.undeliveredByCarrier = undeliveredByCarrier
+      result.undeliveredByStatus = undeliveredByStatus
+      result.undeliveredByAge = undeliveredByAge
+      result.undeliveredShipments = undeliveredShipments
     }
 
     // Cache for warm-instance reuse

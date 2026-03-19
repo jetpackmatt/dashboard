@@ -1,11 +1,10 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useMemo, useState, useRef } from "react"
 import { ComposableMap, Geographies, Geography } from "react-simple-maps"
 import { Card, CardContent } from "@/components/ui/card"
+import { COUNTRY_CONFIGS, CA_NORTHERN_TERRITORIES } from "@/lib/analytics/geo-config"
 import type { StateCostSpeedData } from "@/lib/analytics/types"
-
-const geoUrl = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
 
 type MetricType = 'cost' | 'transit'
 
@@ -13,31 +12,29 @@ interface CostSpeedStateMapProps {
   data: StateCostSpeedData[]
   metric: MetricType
   title: string
+  country?: string // 'US' | 'CA' — defaults to 'US'
 }
 
-const stateNameToCode: Record<string, string> = {
-  'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR',
-  'California': 'CA', 'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE',
-  'Florida': 'FL', 'Georgia': 'GA', 'Hawaii': 'HI', 'Idaho': 'ID',
-  'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA', 'Kansas': 'KS',
-  'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME', 'Maryland': 'MD',
-  'Massachusetts': 'MA', 'Michigan': 'MI', 'Minnesota': 'MN', 'Mississippi': 'MS',
-  'Missouri': 'MO', 'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV',
-  'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM', 'New York': 'NY',
-  'North Carolina': 'NC', 'North Dakota': 'ND', 'Ohio': 'OH', 'Oklahoma': 'OK',
-  'Oregon': 'OR', 'Pennsylvania': 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC',
-  'South Dakota': 'SD', 'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT',
-  'Vermont': 'VT', 'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV',
-  'Wisconsin': 'WI', 'Wyoming': 'WY'
-}
-
-export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProps) {
+export function CostSpeedStateMap({ data, metric, title, country = 'US' }: CostSpeedStateMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [hoveredState, setHoveredState] = useState<string | null>(null)
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
 
+  const config = COUNTRY_CONFIGS[country] || COUNTRY_CONFIGS.US
+
   const safeData = Array.isArray(data) ? data : []
   const dataMap = new Map(safeData.map(d => [d.state, d]))
+
+  // Northern territories with no data — greyed out
+  const greyedOut = useMemo(() => {
+    if (country !== 'CA') return new Set<string>()
+    const s = new Set<string>()
+    for (const code of CA_NORTHERN_TERRITORIES) {
+      const d = dataMap.get(code)
+      if (!d || d.orderCount === 0) s.add(code)
+    }
+    return s
+  }, [country, safeData])
 
   // Get values for normalization
   const values = safeData.map(d => metric === 'cost' ? d.avgCost : d.avgTransitTime).filter(v => v > 0)
@@ -45,11 +42,11 @@ export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProp
   const maxValue = values.length > 0 ? Math.max(...values) : 0
 
   // Color scheme: Cost = blue gradient, Transit = orange/red gradient
-  // Higher values = darker/more intense
   const getStateColor = (stateCode: string) => {
+    if (greyedOut.has(stateCode)) return "hsl(0, 0%, 92%)"
     const stateData = dataMap.get(stateCode)
     if (!stateData || maxValue === minValue) {
-      return "hsl(0, 0%, 92%)" // Light grey for no data
+      return "hsl(0, 0%, 92%)"
     }
 
     const value = metric === 'cost' ? stateData.avgCost : stateData.avgTransitTime
@@ -58,16 +55,14 @@ export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProp
     const normalized = (value - minValue) / (maxValue - minValue)
 
     if (metric === 'cost') {
-      // Blue gradient: light blue to dark blue (higher cost = darker)
       const hue = 210
-      const saturation = 20 + (normalized * 60) // 20% to 80%
-      const lightness = 85 - (normalized * 50) // 85% to 35%
+      const saturation = 20 + (normalized * 60)
+      const lightness = 85 - (normalized * 50)
       return `hsl(${hue}, ${saturation}%, ${lightness}%)`
     } else {
-      // Orange/red gradient: light orange to dark red (longer transit = darker/redder)
-      const hue = 30 - (normalized * 25) // 30 (orange) to 5 (red)
-      const saturation = 30 + (normalized * 60) // 30% to 90%
-      const lightness = 85 - (normalized * 50) // 85% to 35%
+      const hue = 30 - (normalized * 25)
+      const saturation = 30 + (normalized * 60)
+      const lightness = 85 - (normalized * 50)
       return `hsl(${hue}, ${saturation}%, ${lightness}%)`
     }
   }
@@ -86,38 +81,47 @@ export function CostSpeedStateMap({ data, metric, title }: CostSpeedStateMapProp
     return `${value.toFixed(1)} days`
   }
 
+  // Resolve geo name → region code using the config's nameToCode map
+  const resolveCode = (geoName: string) => {
+    // Check if it's already a code
+    if (config.codeToName[geoName]) return geoName
+    // Look up by name
+    return config.nameToCode[geoName] || geoName
+  }
+
   return (
     <div
       ref={containerRef}
       className="relative"
       onMouseMove={(e) => setMousePosition({ x: e.clientX, y: e.clientY })}
     >
-      <div className="text-sm font-medium text-center mb-1">{title}</div>
+      {title && <div className="text-sm font-medium text-center -mb-1">{title}</div>}
       <ComposableMap
-        projection="geoAlbersUsa"
+        projection={config.projection as any}
+        projectionConfig={config.projectionConfig as any}
         className="w-full h-auto"
-        style={{ maxHeight: '340px' }}
       >
-        <Geographies geography={geoUrl}>
+        <Geographies geography={config.geoUrl}>
           {({ geographies }: { geographies: any[] }) =>
             geographies.map((geo: any) => {
-              const stateName = geo.properties.name
-              const stateCode = stateNameToCode[stateName]
-              const isHovered = hoveredState === stateCode
+              const geoName = geo.properties.name || geo.properties.NAME
+              const regionCode = resolveCode(geoName)
+              const isGreyed = greyedOut.has(regionCode)
+              const isHovered = hoveredState === regionCode
 
               return (
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
-                  fill={getStateColor(stateCode)}
+                  fill={getStateColor(regionCode)}
                   stroke={isHovered ? '#000' : '#fff'}
                   strokeWidth={isHovered ? 1.5 : 0.5}
                   style={{
                     default: { outline: 'none' },
-                    hover: { outline: 'none', cursor: 'pointer' },
+                    hover: { outline: 'none', cursor: isGreyed ? 'default' : 'pointer' },
                     pressed: { outline: 'none' },
                   }}
-                  onMouseEnter={() => setHoveredState(stateCode)}
+                  onMouseEnter={() => !isGreyed && setHoveredState(regionCode)}
                   onMouseLeave={() => setHoveredState(null)}
                 />
               )

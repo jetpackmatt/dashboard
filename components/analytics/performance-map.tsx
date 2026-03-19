@@ -122,29 +122,27 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
       </ComposableMap>
 
       {/* Legend */}
-      <Card className={`absolute left-2 w-auto z-10 ${config.code === 'CA' ? 'bottom-[70px]' : '-bottom-5'}`}>
-        <CardContent className="p-2">
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-semibold whitespace-nowrap">Carrier Transit:</span>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(142 71% 45%)" }} />
-              <span className="text-[10px] whitespace-nowrap">{"<3d"}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(203 61% 50%)" }} />
-              <span className="text-[10px] whitespace-nowrap">3-5d</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(0 72% 51%)" }} />
-              <span className="text-[10px] whitespace-nowrap">{">5d"}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-sm bg-muted" />
-              <span className="text-[10px] whitespace-nowrap">No data</span>
-            </div>
+      <div className={`absolute left-5 z-10 ${config.code === 'CA' ? 'bottom-[70px]' : '-bottom-5'}`}>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-semibold whitespace-nowrap text-muted-foreground">Last Mile:</span>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(142 71% 45%)" }} />
+            <span className="text-[10px] whitespace-nowrap text-muted-foreground">{"<3d"}</span>
           </div>
-        </CardContent>
-      </Card>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(203 61% 50%)" }} />
+            <span className="text-[10px] whitespace-nowrap text-muted-foreground">3-5d</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "hsl(0 72% 51%)" }} />
+            <span className="text-[10px] whitespace-nowrap text-muted-foreground">{">5d"}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm bg-muted" />
+            <span className="text-[10px] whitespace-nowrap text-muted-foreground">No data</span>
+          </div>
+        </div>
+      </div>
 
       {/* Hover tooltip */}
       {hoveredRegion && dataMap.has(hoveredRegion) && (() => {
@@ -180,7 +178,7 @@ export function PerformanceMap({ config, regionData, onRegionSelect }: Performan
                     <div className="font-semibold text-sm tabular-nums">{data.avgRegionalMileDays.toFixed(1)}d</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground">Carrier Transit</div>
+                    <div className="text-[10px] text-muted-foreground">Last Mile</div>
                     <div className="font-semibold text-sm tabular-nums">{data.avgCarrierTransitDays.toFixed(1)}d</div>
                   </div>
                 </div>

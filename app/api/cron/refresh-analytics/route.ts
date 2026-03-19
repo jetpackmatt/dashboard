@@ -14,7 +14,11 @@ export const maxDuration = 120
  *   2. Re-aggregates from raw tables (shipments + orders + transactions + items)
  *   3. Inserts fresh summary rows into analytics_daily/billing/city_summaries
  *
- * Runs every 5 minutes.
+ * Poison pill protection: if a batch fails (e.g. statement timeout), the oldest
+ * entry is skipped by marking it processed with a failure reason. This prevents
+ * a single bad entry from blocking the entire queue indefinitely.
+ *
+ * Runs every 5 minutes. Function has statement_timeout=120s via ALTER FUNCTION.
  */
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
@@ -53,24 +57,65 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Process in small batches — function has 60s statement_timeout set via ALTER FUNCTION.
+    // Process in small batches — function has 120s statement_timeout.
     // Busy dates can have 300-400 shipments with complex JOINs, so keep batches small.
     const BATCH_SIZE = 5
     const MAX_BATCHES = 20  // Cap at 100 total per cron run
     let totalProcessed = 0
+    let skippedEntries = 0
+    let consecutiveErrors = 0
 
     for (let i = 0; i < MAX_BATCHES; i++) {
+      // Guard: don't exceed Vercel function timeout (leave 10s buffer)
+      if (Date.now() - startTime > (maxDuration - 10) * 1000) {
+        console.log(`[Cron RefreshAnalytics] Approaching timeout, stopping after ${totalProcessed} processed`)
+        break
+      }
+
       const { data, error } = await supabase.rpc('refresh_analytics_summaries', {
         p_batch_size: BATCH_SIZE,
       })
 
       if (error) {
         console.error(`[Cron RefreshAnalytics] Error on batch ${i + 1}:`, error.message)
-        // If we already processed some, report partial success
-        if (totalProcessed > 0) break
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        consecutiveErrors++
+
+        // Poison pill protection: skip the oldest unprocessed entry
+        // This prevents a single bad entry from blocking the queue forever
+        const { data: stuckEntries } = await supabase
+          .from('analytics_refresh_queue')
+          .select('id, client_id, summary_date, reason')
+          .is('processed_at', null)
+          .order('created_at', { ascending: true })
+          .limit(1)
+
+        if (stuckEntries && stuckEntries.length > 0) {
+          const stuck = stuckEntries[0]
+          console.warn(`[Cron RefreshAnalytics] Skipping stuck entry: client=${stuck.client_id} date=${stuck.summary_date} reason=${stuck.reason}`)
+
+          // Mark as processed so it doesn't block the queue, but with a reason
+          // so it can be investigated and re-queued manually if needed
+          await supabase
+            .from('analytics_refresh_queue')
+            .update({
+              processed_at: new Date().toISOString(),
+              reason: `SKIPPED: ${error.message.substring(0, 100)} (was: ${stuck.reason || 'trigger'})`,
+            })
+            .eq('id', stuck.id)
+
+          skippedEntries++
+        }
+
+        // After 3 consecutive errors, give up for this run
+        if (consecutiveErrors >= 3) {
+          console.error(`[Cron RefreshAnalytics] 3 consecutive errors, aborting run`)
+          break
+        }
+
+        continue // Try next batch (the stuck entry was skipped)
       }
 
+      consecutiveErrors = 0 // Reset on success
       const batchProcessed = data?.processed ?? 0
       totalProcessed += batchProcessed
 
@@ -79,12 +124,13 @@ export async function GET(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime
-    console.log(`[Cron RefreshAnalytics] Completed in ${duration}ms: ${totalProcessed} (client, date) pairs refreshed`)
+    console.log(`[Cron RefreshAnalytics] Completed in ${duration}ms: ${totalProcessed} processed, ${skippedEntries} skipped`)
 
     return NextResponse.json({
       success: true,
       duration: `${duration}ms`,
       processed: totalProcessed,
+      skipped: skippedEntries,
       queueDepth,
     })
   } catch (error) {

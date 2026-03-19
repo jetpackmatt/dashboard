@@ -1,9 +1,6 @@
 "use client"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { MapPinIcon, TrendingUpIcon } from "lucide-react"
+import { MapPinIcon } from "lucide-react"
 import { StateVolumeData, CityVolumeData } from "@/lib/analytics/types"
 
 interface StateVolumeDetailsPanelProps {
@@ -23,106 +20,70 @@ function capitalizeCity(name: string): string {
 
 export function StateVolumeDetailsPanel({ stateData, cityData, onClose }: StateVolumeDetailsPanelProps) {
   return (
-    <Card className="h-full overflow-hidden flex flex-col">
-      <CardHeader className="flex-shrink-0 border-b border-border">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">{stateData.stateName}</CardTitle>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Close panel"
-          >
-            ×
-          </button>
-        </div>
-      </CardHeader>
+    <div className="h-full overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="flex-shrink-0 border-b border-border px-5 py-4 h-[68px] flex items-center justify-between">
+        <div className="text-sm font-semibold">{stateData.stateName}</div>
+        <button
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground transition-colors text-lg"
+          aria-label="Close panel"
+        >
+          ×
+        </button>
+      </div>
 
-      <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* State Overview */}
-        <div>
-          <h4 className="text-xs font-semibold mb-2">State Volume Metrics</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-0.5">
-              <div className="text-[10px] text-muted-foreground">Total Orders</div>
-              <div className="text-xl font-bold tabular-nums">{stateData.orderCount.toLocaleString()}</div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-[10px] text-muted-foreground">% of Total Volume</div>
-              <div className="text-xl font-bold tabular-nums">{stateData.percent.toFixed(1)}%</div>
-            </div>
+      {/* Volume metrics — colored cells like Performance tab */}
+      <div className="flex-shrink-0">
+        <div className="grid grid-cols-3">
+          <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
+            <div className="text-2xl font-bold tabular-nums">{stateData.orderCount.toLocaleString()}</div>
+          </div>
+          <div className="text-center px-3 py-4 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Total</div>
+            <div className="text-2xl font-bold tabular-nums">{stateData.percent.toFixed(1)}%</div>
+          </div>
+          <div className="text-center px-3 py-4 bg-amber-50/30 dark:bg-amber-950/10">
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg/Day</div>
+            <div className="text-2xl font-bold tabular-nums">{stateData.avgOrdersPerDay.toFixed(1)}</div>
           </div>
         </div>
+      </div>
 
-        {/* Average Orders Per Day */}
-        <div className="flex items-center justify-between p-3 rounded-lg border">
-          <div className="flex items-center gap-2">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center">
-              <TrendingUpIcon className="w-4 h-4 text-green-600" />
-            </div>
-            <div>
-              <div className="text-[10px] text-muted-foreground">Avg Orders/Day</div>
-              <div className="text-base font-semibold tabular-nums">
-                {stateData.avgOrdersPerDay.toFixed(1)}
-              </div>
-            </div>
-          </div>
-        </div>
-
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto">
         {/* Top 10 Cities */}
-        <div>
-          <h4 className="text-xs font-semibold mb-2 flex items-center gap-2">
-            <MapPinIcon className="w-3 h-3" />
-            Top 10 Cities by Volume
-          </h4>
+        <div className="border-t border-border">
+          <div className="px-5 pt-5 pb-3">
+            <h4 className="text-[10px] font-medium uppercase tracking-wider flex items-center gap-2">
+              <MapPinIcon className="w-3 h-3" />
+              Top 10 Cities by Volume
+            </h4>
+          </div>
           {cityData.slice(0, 10).length > 0 ? (
-            <div className="border rounded-lg overflow-hidden">
-              <Table className="text-xs">
-                <TableHeader>
-                  <TableRow className="h-8">
-                    <TableHead className="w-6 py-1 px-2">#</TableHead>
-                    <TableHead className="py-1 px-2">City</TableHead>
-                    <TableHead className="text-right py-1 px-2">Orders</TableHead>
-                    <TableHead className="text-right py-1 px-2">% State</TableHead>
-                    <TableHead className="text-right py-1 px-2">% USA</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cityData.slice(0, 10).map((city, index) => {
-                    const percentOfState = stateData.orderCount > 0
-                      ? (city.orderCount / stateData.orderCount * 100)
-                      : 0
-                    return (
-                      <TableRow key={`${city.city}-${city.state}-${index}`} className="h-7">
-                        <TableCell className="font-medium text-muted-foreground py-1 px-2">
-                          {index + 1}
-                        </TableCell>
-                        <TableCell className="font-medium py-1 px-2">{capitalizeCity(city.city)}</TableCell>
-                        <TableCell className="text-right tabular-nums py-1 px-2">
-                          {city.orderCount.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-right py-1 px-2">
-                          <span className="tabular-nums text-muted-foreground">
-                            {percentOfState.toFixed(1)}%
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right py-1 px-2">
-                          <span className="tabular-nums text-muted-foreground">
-                            {city.percent.toFixed(2)}%
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+            <div>
+              {cityData.slice(0, 10).map((city, index) => {
+                const percentOfState = stateData.orderCount > 0
+                  ? (city.orderCount / stateData.orderCount * 100)
+                  : 0
+                return (
+                  <div key={`${city.city}-${city.state}-${index}`} className="flex items-center px-5 py-3 border-t border-border hover:bg-muted/30">
+                    <span className="text-xs text-muted-foreground w-5 tabular-nums">{index + 1}</span>
+                    <span className="text-xs font-medium flex-1">{capitalizeCity(city.city)}</span>
+                    <span className="text-xs font-medium tabular-nums">{city.orderCount.toLocaleString()}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums ml-3 w-12 text-right">{percentOfState.toFixed(1)}%</span>
+                  </div>
+                )
+              })}
             </div>
           ) : (
-            <div className="text-center py-4 text-muted-foreground text-xs">
+            <div className="text-center py-5 text-muted-foreground text-xs border-t border-border">
               No city data available for this state
             </div>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

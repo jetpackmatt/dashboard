@@ -1238,11 +1238,15 @@ export function aggregateDeliverySpeedTrend(
         ? data.carrierTransitTimes.reduce((sum, t) => sum + t, 0) / data.carrierTransitTimes.length
         : 0
 
+      const middleMile = avgOTD > 0 && avgTransit > 0
+        ? Math.max(0, avgOTD - avgFulfill / 24 - avgTransit)
+        : null
       return {
         date,
         avgFulfillTimeHours: avgFulfill,
         avgOrderToDeliveryDays: avgOTD,
         avgCarrierTransitDays: avgTransit,
+        middleMileDays: middleMile,
         orderCount: data.orderCount,
         deliveredCount: data.orderToDeliveryTimes.length,
       }
@@ -1990,7 +1994,9 @@ export function calculateMonthlyBillingTrend(
     b2b: number
     vasKitting: number
     receiving: number
+    returns: number
     dutyTax: number
+    other: number
     credit: number
     total: number
     orderCount: number
@@ -2007,7 +2013,9 @@ export function calculateMonthlyBillingTrend(
         b2b: 0,
         vasKitting: 0,
         receiving: 0,
+        returns: 0,
         dutyTax: 0,
+        other: 0,
         credit: 0,
         total: 0,
         orderCount: 0,
@@ -2040,13 +2048,16 @@ export function calculateMonthlyBillingTrend(
       month,
       monthLabel: getMonthLabel(month),
       shipping: data.shipping,
+      surcharges: 0,
       warehousing: data.warehousing,
       extraPicks: data.extraPicks,
       multiHubIQ: data.multiHubIQ,
       b2b: data.b2b,
       vasKitting: data.vasKitting,
       receiving: data.receiving,
+      returns: 0,
       dutyTax: data.dutyTax,
+      other: 0,
       credit: data.credit,
       total: data.total,
       orderCount: data.orderCount,
@@ -2072,7 +2083,9 @@ export function calculateBillingTrend(
     b2b: number
     vasKitting: number
     receiving: number
+    returns: number
     dutyTax: number
+    other: number
     credit: number
     total: number
     orderCount: number
@@ -2089,7 +2102,9 @@ export function calculateBillingTrend(
         b2b: 0,
         vasKitting: 0,
         receiving: 0,
+        returns: 0,
         dutyTax: 0,
+        other: 0,
         credit: 0,
         total: 0,
         orderCount: 0,
@@ -2122,13 +2137,16 @@ export function calculateBillingTrend(
       month: key,
       monthLabel: getTimeLabel(key, granularity),
       shipping: data.shipping,
+      surcharges: 0,
       warehousing: data.warehousing,
       extraPicks: data.extraPicks,
       multiHubIQ: data.multiHubIQ,
       b2b: data.b2b,
       vasKitting: data.vasKitting,
       receiving: data.receiving,
+      returns: 0,
       dutyTax: data.dutyTax,
+      other: 0,
       credit: data.credit,
       total: data.total,
       orderCount: data.orderCount,
@@ -2410,33 +2428,31 @@ export function calculateBillingEfficiencyMetrics(
     return {
       costPerItem: 0,
       avgItemsPerOrder: 0,
-      shippingAsPercentOfTotal: 0,
-      surchargeRate: 0,
-      insuranceRate: 0,
+      fulfillmentAsPercentOfRevenue: 0,
+      avgRevenuePerOrder: 0,
+      surchargePercentOfCost: 0,
+      totalCredits: 0,
     }
   }
 
   let totalCost = 0
   let totalShipping = 0
   let totalItems = 0
-  let ordersWithSurcharge = 0
-  let ordersWithInsurance = 0
 
   filtered.forEach(s => {
     const billing = calculateShipmentBilling(s)
     totalCost += billing.total
     totalShipping += billing.shipping
     totalItems += s.totalQuantity
-    if (s.surchargeApplied > 0) ordersWithSurcharge++
-    if (s.insuranceAmount > 0) ordersWithInsurance++
   })
 
   return {
     costPerItem: totalItems > 0 ? totalCost / totalItems : 0,
     avgItemsPerOrder: filtered.length > 0 ? totalItems / filtered.length : 0,
-    shippingAsPercentOfTotal: totalCost > 0 ? (totalShipping / totalCost) * 100 : 0,
-    surchargeRate: filtered.length > 0 ? (ordersWithSurcharge / filtered.length) * 100 : 0,
-    insuranceRate: filtered.length > 0 ? (ordersWithInsurance / filtered.length) * 100 : 0,
+    fulfillmentAsPercentOfRevenue: 0,
+    avgRevenuePerOrder: 0,
+    surchargePercentOfCost: totalCost > 0 ? (totalShipping / totalCost) * 100 : 0,
+    totalCredits: 0,
   }
 }
 

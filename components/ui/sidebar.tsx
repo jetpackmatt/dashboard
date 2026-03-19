@@ -703,7 +703,7 @@ const SidebarMenuSub = React.forwardRef<
     ref={ref}
     data-sidebar="menu-sub"
     className={cn(
-      "ml-6 flex min-w-0 translate-x-px flex-col gap-0.5 border-l border-sidebar-border pl-2 pr-2 pt-0.5 pb-2",
+      "ml-6 flex min-w-0 flex-col gap-0.5 pl-1 pr-0 py-1",
       "group-data-[collapsible=icon]:hidden",
       className
     )}
@@ -735,9 +735,9 @@ const SidebarMenuSubButton = React.forwardRef<
       data-size={size}
       data-active={isActive}
       className={cn(
-        "flex h-6 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sidebar-foreground/70 outline-none ring-sidebar-ring hover:text-sidebar-foreground focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
-        "data-[active=true]:text-sidebar-foreground data-[active=true]:font-semibold",
-        size === "sm" && "text-xs",
+        "flex h-7 min-w-0 items-center gap-2 overflow-hidden rounded-l-md rounded-r-none px-3 text-sidebar-foreground/55 outline-none ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+        "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground data-[active=true]:font-medium",
+        size === "sm" && "text-[13px]",
         size === "md" && "text-sm",
         "group-data-[collapsible=icon]:hidden",
         className

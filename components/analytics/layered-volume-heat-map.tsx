@@ -1,99 +1,87 @@
 "use client"
 
-import { useState, useMemo, useRef } from "react"
+import { useState, useMemo, useRef, useCallback } from "react"
+import React from "react"
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps"
 import { Card, CardContent } from "@/components/ui/card"
 import { StateVolumeData, ZipCodeVolumeData } from "@/lib/analytics/types"
+import { COUNTRY_CONFIGS } from "@/lib/analytics/geo-config"
 
-const geoUrl = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+// Error boundary to catch react-simple-maps projection crashes (e.g. geoAlbersUsa returns null for out-of-bounds coords)
+class MarkerErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  render() { return this.state.hasError ? null : this.props.children }
+}
 
 interface LayeredVolumeHeatMapProps {
   stateData: StateVolumeData[]
   zipCodeData: ZipCodeVolumeData[]
   onStateSelect: (stateCode: string) => void
+  country?: string
 }
 
-// State name to abbreviation mapping
-const stateNameToCode: Record<string, string> = {
-  'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR',
-  'California': 'CA', 'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE',
-  'Florida': 'FL', 'Georgia': 'GA', 'Hawaii': 'HI', 'Idaho': 'ID',
-  'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA', 'Kansas': 'KS',
-  'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME', 'Maryland': 'MD',
-  'Massachusetts': 'MA', 'Michigan': 'MI', 'Minnesota': 'MN', 'Mississippi': 'MS',
-  'Missouri': 'MO', 'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV',
-  'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM', 'New York': 'NY',
-  'North Carolina': 'NC', 'North Dakota': 'ND', 'Ohio': 'OH', 'Oklahoma': 'OK',
-  'Oregon': 'OR', 'Pennsylvania': 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC',
-  'South Dakota': 'SD', 'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT',
-  'Vermont': 'VT', 'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV',
-  'Wisconsin': 'WI', 'Wyoming': 'WY'
-}
-
-export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: LayeredVolumeHeatMapProps) {
+export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect, country = 'US' }: LayeredVolumeHeatMapProps) {
+  const config = COUNTRY_CONFIGS[country] || COUNTRY_CONFIGS['US']
   const containerRef = useRef<HTMLDivElement>(null)
+  const mouseRef = useRef({ x: 0, y: 0 })
+  const tooltipRef = useRef<HTMLDivElement>(null)
   const [hoveredState, setHoveredState] = useState<string | null>(null)
   const [hoveredZip, setHoveredZip] = useState<string | null>(null)
   const [selectedState, setSelectedState] = useState<string | null>(null)
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
 
   // Safety checks for data arrays
   const safeStateData = Array.isArray(stateData) ? stateData : []
   const safeZipCodeData = Array.isArray(zipCodeData) ? zipCodeData : []
 
-  // Debug logging to understand the data structure
-  console.log('LayeredVolumeHeatMap render - city data count:', safeZipCodeData.length)
-
-  // Limit to top 500 cities to prevent overwhelming the map component
-  // Data is already sorted by orderCount descending from aggregator
+  // Limit to top 200 cities for performance (fewer DOM nodes = faster mount/unmount)
   const limitedZipCodeData = useMemo(() => {
-    const limit = 500
-    const limited = safeZipCodeData.slice(0, limit)
-    if (safeZipCodeData.length > limit) {
-      console.log(`Limited cities from ${safeZipCodeData.length} to ${limit} for performance`)
-    }
-    return limited
+    return safeZipCodeData.slice(0, 200)
   }, [safeZipCodeData])
 
+  // Update tooltip position via ref (no re-renders)
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    mouseRef.current = { x: e.clientX, y: e.clientY }
+    if (tooltipRef.current) {
+      const flipToLeft = containerRef.current
+        ? e.clientX > containerRef.current.getBoundingClientRect().left + containerRef.current.getBoundingClientRect().width / 2
+        : false
+      tooltipRef.current.style.left = flipToLeft ? `${e.clientX - 276}px` : `${e.clientX + 20}px`
+      tooltipRef.current.style.top = `${e.clientY - 20}px`
+    }
+  }, [])
+
   // Pre-compute marker data with stable coordinate arrays
+  // Filter to coordinates valid for the current country's bounding box
   const markerData = useMemo(() => {
     return limitedZipCodeData.map((zip) => {
-      const hasCoords = zip.lon !== undefined && zip.lat !== undefined
-      const hasOldCoords = zip.coordinates !== undefined
+      const lon = typeof zip.lon === 'number' && isFinite(zip.lon) ? zip.lon : null
+      const lat = typeof zip.lat === 'number' && isFinite(zip.lat) ? zip.lat : null
 
-      if (!hasCoords && !hasOldCoords) {
-        return null
+      if (lon === null || lat === null) {
+        if (!Array.isArray(zip.coordinates) || zip.coordinates.length < 2) return null
+        return {
+          city: zip.city,
+          state: zip.state,
+          orderCount: zip.orderCount,
+          cityKey: `${zip.city}|${zip.state}`,
+          coordinates: [zip.coordinates[0], zip.coordinates[1]] as [number, number],
+        }
       }
 
-      // Create a plain array without type annotation to avoid any TypeScript/React issues
-      const coords: [number, number] = hasCoords
-        ? [zip.lon!, zip.lat!]
-        : zip.coordinates!
+      // geoAlbersUsa crashes on coordinates outside US bounds — filter by country bbox
+      if (country === 'US' && (lat < 24 || lat > 72 || lon < -180 || lon > -60)) return null
+      if (country === 'CA' && (lat < 41 || lat > 84 || lon < -141 || lon > -52)) return null
 
       return {
         city: zip.city,
         state: zip.state,
         orderCount: zip.orderCount,
         cityKey: `${zip.city}|${zip.state}`,
-        coordinates: coords
+        coordinates: [lon, lat] as [number, number],
       }
     }).filter(Boolean)
-  }, [limitedZipCodeData])
-
-  // Check ALL cities for invalid coordinates
-  const invalidZips = limitedZipCodeData.filter((zip, index) => {
-    if (!zip || typeof zip.lon !== 'number' || typeof zip.lat !== 'number') {
-      console.error(`Invalid city at index ${index}:`, zip)
-      return true
-    }
-    if (isNaN(zip.lon) || isNaN(zip.lat) || !isFinite(zip.lon) || !isFinite(zip.lat)) {
-      console.error(`Invalid coordinates at index ${index}:`, { city: zip.city, state: zip.state, lon: zip.lon, lat: zip.lat })
-      return true
-    }
-    return false
-  })
-
-  console.log(`Found ${invalidZips.length} invalid cities out of ${limitedZipCodeData.length}`)
+  }, [limitedZipCodeData, country])
 
   // Create maps for quick lookup
   const stateDataMap = new Map(safeStateData.map(d => [d.state, d]))
@@ -121,33 +109,30 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: 
     return `hsl(${hue}, ${saturation}%, ${lightness}%)`
   }
 
-  // Zip code dot coloring: 3-tier system (blue, orange, red)
-  const zipOrderCounts = limitedZipCodeData.map(d => d.orderCount).filter(count => typeof count === 'number')
-  const minZipOrders = zipOrderCounts.length > 0 ? Math.min(...zipOrderCounts) : 0
-  const maxZipOrders = zipOrderCounts.length > 0 ? Math.max(...zipOrderCounts) : 0
+  // Zip code dot coloring: percentile-based 3-tier system (blue, orange, red)
+  // Using percentiles instead of linear min/max so the tiers are evenly populated
+  const { p60Threshold, p85Threshold, minZipOrders, maxZipOrders } = useMemo(() => {
+    const counts = limitedZipCodeData.map(d => d.orderCount).filter(c => typeof c === 'number').sort((a, b) => a - b)
+    if (counts.length === 0) return { p60Threshold: 0, p85Threshold: 0, minZipOrders: 0, maxZipOrders: 0 }
+    return {
+      p60Threshold: counts[Math.floor(counts.length * 0.60)] || 0,
+      p85Threshold: counts[Math.floor(counts.length * 0.85)] || 0,
+      minZipOrders: counts[0],
+      maxZipOrders: counts[counts.length - 1],
+    }
+  }, [limitedZipCodeData])
 
   const getZipDotColor = (orderCount: number): string => {
-    if (maxZipOrders === minZipOrders) {
-      return 'hsl(30, 100%, 50%)' // Default to orange if all values are the same
-    }
-
-    const normalized = (orderCount - minZipOrders) / (maxZipOrders - minZipOrders)
-
-    if (normalized < 0.33) {
-      return 'hsl(240, 100%, 50%)' // Blue (low)
-    } else if (normalized < 0.67) {
-      return 'hsl(30, 100%, 50%)' // Orange (medium)
-    } else {
-      return 'hsl(0, 100%, 50%)' // Red (high)
-    }
+    if (orderCount >= p85Threshold) return 'hsl(0, 100%, 50%)'    // Red (top 15%)
+    if (orderCount >= p60Threshold) return 'hsl(30, 100%, 50%)'   // Orange (middle 25%)
+    return 'hsl(240, 100%, 50%)'                                   // Blue (bottom 60%)
   }
 
   const getZipDotSize = (orderCount: number): number => {
-    if (maxZipOrders === minZipOrders) {
-      return 4 // Default medium size if all values are the same
-    }
-    const normalized = (orderCount - minZipOrders) / (maxZipOrders - minZipOrders)
-    return 2 + (normalized * 4) // Size range: 2-6px
+    if (maxZipOrders === minZipOrders) return 4
+    // Log scale so small cities aren't invisible
+    const logNorm = Math.log(1 + orderCount - minZipOrders) / Math.log(1 + maxZipOrders - minZipOrders)
+    return 2 + (logNorm * 4) // 2-6px
   }
 
   const handleStateClick = (stateCode: string) => {
@@ -155,27 +140,20 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: 
     onStateSelect(stateCode)
   }
 
-  // Helper to check if mouse is on right half of container
-  const isMouseOnRightSide = () => {
-    if (!containerRef.current) return false
-    const rect = containerRef.current.getBoundingClientRect()
-    const containerMidpoint = rect.left + rect.width / 2
-    return mousePosition.x > containerMidpoint
-  }
-
   return (
-    <div ref={containerRef} className="relative -mt-7 -mb-4" onMouseMove={(e) => setMousePosition({ x: e.clientX, y: e.clientY })}>
+    <div ref={containerRef} className="relative -mt-7 -mb-4" onMouseMove={handleMouseMove}>
       <ComposableMap
-        projection="geoAlbersUsa"
+        projection={config.projection as any}
+        projectionConfig={config.projectionConfig as any}
         className="w-full h-auto"
         style={{ maxHeight: '580px' }}
       >
-        {/* Base layer: State fills with white-to-green gradient */}
-        <Geographies geography={geoUrl}>
+        {/* Base layer: State/Province fills with white-to-green gradient */}
+        <Geographies geography={config.geoUrl}>
           {({ geographies }) =>
             geographies.map((geo) => {
-              const stateName = geo.properties.name
-              const stateCode = stateNameToCode[stateName]
+              const regionName = geo.properties.name
+              const stateCode = config.nameToCode[regionName]
               const isSelected = selectedState === stateCode
               const isHovered = hoveredState === stateCode
 
@@ -219,77 +197,65 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: 
           const isHovered = hoveredZip === marker.cityKey
 
           return (
-            <Marker
-              key={marker.cityKey}
-              coordinates={marker.coordinates}
-            >
-              <circle
-                r={size}
-                fill={color}
-                fillOpacity={0.8}
-                stroke={isHovered ? '#000' : 'transparent'}
-                strokeWidth={isHovered ? 1 : 0}
-                onMouseEnter={() => {
-                  setHoveredZip(marker.cityKey)
-                  setHoveredState(null)
-                }}
-                onMouseLeave={() => setHoveredZip(null)}
-                style={{
-                  transition: 'all 0.2s ease',
-                  filter: isHovered ? 'brightness(1.2)' : 'none',
-                  cursor: 'pointer'
-                }}
-              />
-            </Marker>
+            <MarkerErrorBoundary key={marker.cityKey}>
+              <Marker
+                coordinates={marker.coordinates}
+              >
+                <circle
+                  r={isHovered ? size + 1 : size}
+                  fill={color}
+                  fillOpacity={isHovered ? 1 : 0.8}
+                  stroke={isHovered ? '#000' : 'transparent'}
+                  strokeWidth={isHovered ? 1 : 0}
+                  onMouseEnter={() => {
+                    setHoveredZip(marker.cityKey)
+                    setHoveredState(null)
+                  }}
+                  onMouseLeave={() => setHoveredZip(null)}
+                  style={{ cursor: 'pointer' }}
+                />
+              </Marker>
+            </MarkerErrorBoundary>
           )
         })}
       </ComposableMap>
 
       {/* Combined Legend */}
-      <Card className="absolute bottom-1.5 w-auto shadow-md" style={{ left: '-15px' }}>
-        <CardContent className="p-2 px-3">
-          <div className="flex items-center gap-4">
-            {/* State gradient legend */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold text-muted-foreground">States:</span>
+      <div className="pl-10 -mt-4 relative z-[2]">
+        <div className="flex items-center gap-4">
+          {/* State gradient legend */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-muted-foreground">States:</span>
+            <span className="text-[9px] text-muted-foreground">Low</span>
+            <div className="w-12 h-2.5 rounded-sm" style={{
+              background: "linear-gradient(to right, hsl(142, 8%, 90%), hsl(142, 44%, 62%), hsl(142, 80%, 35%))"
+            }} />
+            <span className="text-[9px] text-muted-foreground">High</span>
+          </div>
+          {/* City dots legend */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-muted-foreground">Cities:</span>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(240, 100%, 50%)' }} />
               <span className="text-[9px] text-muted-foreground">Low</span>
-              <div className="w-12 h-2.5 rounded-sm" style={{
-                background: "linear-gradient(to right, hsl(142, 8%, 90%), hsl(142, 44%, 62%), hsl(142, 80%, 35%))"
-              }} />
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(30, 100%, 50%)' }} />
+              <span className="text-[9px] text-muted-foreground">Med</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(0, 100%, 50%)' }} />
               <span className="text-[9px] text-muted-foreground">High</span>
             </div>
-            {/* City dots legend */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold text-muted-foreground">Cities:</span>
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(240, 100%, 50%)' }} />
-                <span className="text-[9px] text-muted-foreground">Low</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(30, 100%, 50%)' }} />
-                <span className="text-[9px] text-muted-foreground">Med</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(0, 100%, 50%)' }} />
-                <span className="text-[9px] text-muted-foreground">High</span>
-              </div>
-            </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {/* State hover tooltip */}
+      {/* Hover tooltip (shared ref for positioning) */}
       {hoveredState && !hoveredZip && stateDataMap.has(hoveredState) && (() => {
-        const flipToLeft = isMouseOnRightSide()
         const data = stateDataMap.get(hoveredState)!
         return (
-          <Card
-            className="fixed w-64 pointer-events-none z-50"
-            style={{
-              left: flipToLeft ? `${mousePosition.x - 276}px` : `${mousePosition.x + 20}px`,
-              top: `${mousePosition.y - 20}px`
-            }}
-          >
+          <Card ref={tooltipRef} className="fixed w-64 pointer-events-none z-50">
             <CardContent className="p-3">
               <div className="space-y-2">
                 <div className="font-semibold">{data.stateName}</div>
@@ -316,31 +282,18 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect }: 
         )
       })()}
 
-      {/* City hover tooltip */}
       {hoveredZip && zipDataMap.has(hoveredZip) && (() => {
-        const flipToLeft = isMouseOnRightSide()
         const data = zipDataMap.get(hoveredZip)!
         const color = getZipDotColor(data.orderCount)
         return (
-          <Card
-            className="fixed w-64 pointer-events-none z-50"
-            style={{
-              left: flipToLeft ? `${mousePosition.x - 276}px` : `${mousePosition.x + 20}px`,
-              top: `${mousePosition.y - 20}px`
-            }}
-          >
+          <Card ref={tooltipRef} className="fixed w-64 pointer-events-none z-50">
             <CardContent className="p-3">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: color }}
-                  />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
                   <div className="font-semibold">{data.city}</div>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {data.state}
-                </div>
+                <div className="text-sm text-muted-foreground">{data.state}</div>
                 <div className="text-2xl font-bold tabular-nums">
                   {data.orderCount.toLocaleString()} orders
                 </div>

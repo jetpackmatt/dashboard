@@ -335,8 +335,9 @@ export interface CostSpeedTrendData {
 export interface DeliverySpeedTrendData {
   date: string
   avgFulfillTimeHours: number
-  avgOrderToDeliveryDays: number
-  avgCarrierTransitDays: number
+  avgOrderToDeliveryDays: number | null
+  avgCarrierTransitDays: number | null
+  middleMileDays: number | null
   orderCount: number
   deliveredCount: number
 }
@@ -443,13 +444,16 @@ export interface MonthlyBillingTrend {
   month: string
   monthLabel: string
   shipping: number
-  warehousing: number
+  surcharges: number
   extraPicks: number
+  warehousing: number
   multiHubIQ: number
   b2b: number
   vasKitting: number
   receiving: number
+  returns: number
   dutyTax: number
+  other: number
   credit: number
   total: number
   orderCount: number
@@ -497,9 +501,10 @@ export interface AdditionalServicesBreakdown {
 export interface BillingEfficiencyMetrics {
   costPerItem: number
   avgItemsPerOrder: number
-  shippingAsPercentOfTotal: number
-  surchargeRate: number
-  insuranceRate: number
+  fulfillmentAsPercentOfRevenue: number
+  avgRevenuePerOrder: number
+  surchargePercentOfCost: number
+  totalCredits: number
 }
 
 // Undelivered Analytics Types

@@ -55,7 +55,8 @@ export interface ShipmentsFilters {
 
 export function useDebouncedShipmentsFilters(
   filters: ShipmentsFilters,
-  delay: number = FILTER_DEBOUNCE_MS
+  delay: number = FILTER_DEBOUNCE_MS,
+  active: boolean = true
 ): ShipmentsFilters {
   const [debouncedFilters, setDebouncedFilters] = React.useState(filters)
   const timeoutRef = React.useRef<NodeJS.Timeout | null>(null)
@@ -64,6 +65,8 @@ export function useDebouncedShipmentsFilters(
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
     }
+    // When tab is not active, cancel pending debounce — don't schedule new one
+    if (!active) return
     timeoutRef.current = setTimeout(() => {
       setDebouncedFilters(filters)
     }, delay)
@@ -72,7 +75,7 @@ export function useDebouncedShipmentsFilters(
         clearTimeout(timeoutRef.current)
       }
     }
-  }, [filters, delay])
+  }, [filters, delay, active])
 
   return debouncedFilters
 }
@@ -91,7 +94,8 @@ export interface UnfulfilledFilters {
 
 export function useDebouncedUnfulfilledFilters(
   filters: UnfulfilledFilters,
-  delay: number = FILTER_DEBOUNCE_MS
+  delay: number = FILTER_DEBOUNCE_MS,
+  active: boolean = true
 ): UnfulfilledFilters {
   const [debouncedFilters, setDebouncedFilters] = React.useState(filters)
   const timeoutRef = React.useRef<NodeJS.Timeout | null>(null)
@@ -100,6 +104,8 @@ export function useDebouncedUnfulfilledFilters(
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
     }
+    // When tab is not active, cancel pending debounce — don't schedule new one
+    if (!active) return
     timeoutRef.current = setTimeout(() => {
       setDebouncedFilters(filters)
     }, delay)
@@ -108,7 +114,7 @@ export function useDebouncedUnfulfilledFilters(
         clearTimeout(timeoutRef.current)
       }
     }
-  }, [filters, delay])
+  }, [filters, delay, active])
 
   return debouncedFilters
 }

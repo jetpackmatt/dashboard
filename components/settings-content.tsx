@@ -546,6 +546,36 @@ export function SettingsContent() {
                     />
                   </div>
                 </div>
+                {/* Timezone */}
+                <div className="flex items-center justify-between gap-12 py-6">
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-sm font-medium">Time Zone</Label>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      Controls how analytics charts display time-based data (e.g. orders by hour of day).
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end flex-shrink-0 w-[210px]">
+                    <Select
+                      value={settings.timezone}
+                      onValueChange={(value) => updateSetting('timezone', value)}
+                    >
+                      <SelectTrigger className="w-[210px] h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="America/New_York">Eastern (ET)</SelectItem>
+                        <SelectItem value="America/Chicago">Central (CT)</SelectItem>
+                        <SelectItem value="America/Denver">Mountain (MT)</SelectItem>
+                        <SelectItem value="America/Los_Angeles">Pacific (PT)</SelectItem>
+                        <SelectItem value="America/Anchorage">Alaska (AKT)</SelectItem>
+                        <SelectItem value="Pacific/Honolulu">Hawaii (HT)</SelectItem>
+                        <SelectItem value="America/Toronto">Eastern Canada</SelectItem>
+                        <SelectItem value="America/Vancouver">Pacific Canada</SelectItem>
+                        <SelectItem value="UTC">UTC</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

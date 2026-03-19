@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import type { StatePerformance } from "@/lib/analytics/types"
 import { COUNTRY_CONFIGS } from "@/lib/analytics/geo-config"
+import { KpiTooltip, KPI_TOOLTIPS } from "@/components/analytics/kpi-tooltip"
 
 interface DelayImpact {
   affectedShipments: number
@@ -92,17 +93,17 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
         {/* Primary row: Carrier Transit | Middle Mile | Fulfill Time */}
         <div className="grid grid-cols-3">
           <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Last Mile</div>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
             <div className="text-2xl font-bold tabular-nums">{avgCarrierTransit.toFixed(1)}</div>
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
           </div>
           <div className="text-center px-3 py-4 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Middle Mile</div>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
             <div className="text-2xl font-bold tabular-nums">{avgRegionalMile.toFixed(1)}</div>
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
           </div>
           <div className="text-center px-3 py-4 bg-amber-50/40 dark:bg-amber-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Fulfill Time</div>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Fulfill Time <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
             <div className="text-2xl font-bold tabular-nums">{avgFulfillTime.toFixed(1)}</div>
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
           </div>
@@ -110,12 +111,12 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
         {/* Secondary row: Order-to-Delivery | vs Benchmark */}
         <div className="grid grid-cols-2 border-t border-border">
           <div className="text-center px-3 py-4 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order-to-Delivery</div>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order-to-Delivery <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} /></div>
             <div className="text-lg font-bold tabular-nums">{avgDeliveryTime.toFixed(1)}</div>
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
           </div>
           <div className={`text-center px-3 py-4 ${hasBenchmarkData && transitDelta <= 0 ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : hasBenchmarkData ? 'bg-red-50/50 dark:bg-red-950/20' : 'bg-blue-50/50 dark:bg-blue-950/20'}`}>
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">vs Benchmark</div>
+            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">vs Benchmark <KpiTooltip text={KPI_TOOLTIPS.vsBenchmark} /></div>
             {hasBenchmarkData ? (
               <>
                 <div className={`text-lg font-bold tabular-nums ${transitDelta <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
@@ -142,7 +143,7 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
               onCheckedChange={onToggleDelayed}
             />
             <Label htmlFor="delay-toggle-panel" className="text-xs font-medium cursor-pointer whitespace-nowrap">
-              Include Inventory Delays
+              Include Inventory Delays <KpiTooltip text={KPI_TOOLTIPS.includeDelays} />
             </Label>
             <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
               {delayImpact.affectedShipments.toLocaleString()} ({delayImpact.affectedPercent.toFixed(1)}%) orders

@@ -24,12 +24,15 @@ export interface UserSettings {
   defaultPageSize: 50 | 100 | 150 | 200
   // When true, resolved tickets are hidden from the Care section
   hideResolvedTickets: boolean
+  // IANA timezone for analytics display (hour/day-of-week charts, etc.)
+  timezone: string
 }
 
 const DEFAULTS: UserSettings = {
   trackingMethod: 'deliveryiq',
   defaultPageSize: 50,
   hideResolvedTickets: false,
+  timezone: 'America/New_York',
 }
 
 // ---------------------------------------------------------------------------

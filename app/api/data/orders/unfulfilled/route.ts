@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get('offset') || '0')
   const statusFilter = searchParams.get('status') // comma-separated list of statuses
   const searchQuery = searchParams.get('search')?.trim() || '' // search across multiple fields
+  const fetchAll = searchParams.get('fetchAll') === 'true' // fetch all rows for client-side filtering
 
   // Sort params (defaults: created_at desc)
   const sortField = searchParams.get('sortField') || 'created_at'
@@ -180,9 +181,10 @@ export async function GET(request: NextRequest) {
     let shipmentsError: any = null
     let count: number | null = null
 
-    if (statusFilterValues) {
-      // Fetch all records for client-side status filtering (up to 1000 limit)
-      // Note: Unfulfilled shipments are typically <1000, so this is safe
+    // Fetch all records when status filter or client-side filters are active
+    // (unfulfilled shipments are typically <1000, so this is safe)
+    const needsAllRows = !!statusFilterValues || fetchAll
+    if (needsAllRows) {
       const result = await query
         .order(sortField, { ascending: sortAscending })
         .limit(1000)
@@ -216,7 +218,7 @@ export async function GET(request: NextRequest) {
       if (endDate) fallbackQuery = fallbackQuery.lte('orders.order_import_date', `${endDate}T23:59:59.999Z`)
       if (clientId) fallbackQuery = fallbackQuery.eq('client_id', clientId)
 
-      if (statusFilterValues) {
+      if (needsAllRows) {
         const fallbackResult = await fallbackQuery
           .order(sortField, { ascending: sortAscending })
           .limit(1000)
@@ -437,10 +439,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       data: filteredShipments,
-      // Note: count from DB query may not match filtered count when using client-side status filter
-      // Return the actual filtered count for accuracy
-      totalCount: statusFilterValues ? filteredShipments.length : (count || 0),
-      hasMore: statusFilterValues ? false : (offset + limit) < (count || 0),
+      // Always return the DB count as the baseline total (the "Y" in "X of Y")
+      // Client-side status/destination/age filters reduce the displayed count but the total stays constant
+      totalCount: count || 0,
+      hasMore: needsAllRows ? false : (offset + limit) < (count || 0),
     })
   } catch (err) {
     console.error('Unfulfilled orders API error:', err)
