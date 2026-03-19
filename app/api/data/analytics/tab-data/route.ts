@@ -104,9 +104,13 @@ export async function GET(request: NextRequest) {
     return handleAccessError(error)
   }
 
-  if (!clientId || clientId === 'all') {
-    return NextResponse.json({ error: 'A specific client must be selected for analytics' }, { status: 400 })
+  if (!clientId) {
+    return NextResponse.json({ error: 'A client must be selected for analytics' }, { status: 400 })
   }
+
+  // 'all' = aggregate across all clients (admin only — verifyClientAccess already enforced this)
+  const isAllClients = clientId === 'all'
+  const rpcClientId = isAllClients ? null : clientId
 
   const startDate = searchParams.get('startDate')
   const rawEndDate = searchParams.get('endDate')
@@ -185,7 +189,7 @@ export async function GET(request: NextRequest) {
     ] = await Promise.all([
       // Core: Single RPC — all GROUP BY queries from pre-aggregated summaries (~100ms)
       timed('summaries', supabase.rpc('get_analytics_from_summaries', {
-        p_client_id: clientId,
+        p_client_id: rpcClientId,
         p_start: startDate,
         p_end: endDate,
         p_prev_start: prevStartDate,
@@ -196,17 +200,17 @@ export async function GET(request: NextRequest) {
       })),
 
       // Transit distribution — raw shipments scan (~545ms), only for carriers/cost-speed tabs
-      needsTransit
+      (needsTransit && !isAllClients)
         ? timed('transit', supabase.rpc('get_transit_distribution', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }))
         : { data: null, error: null },
 
       // SLA detail records — raw shipments scan (~457ms), only for SLA tab
-      needsSLA
+      (needsSLA && !isAllClients)
         ? timed('sla', supabase.rpc('get_sla_detail_records', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }))
         : { data: null, error: null },
 
       // Undelivered shipments — cursor pagination on raw shipments, only for undelivered tab
-      needsUndelivered
+      (needsUndelivered && !isAllClients)
         ? timed('undelivered', cursorPaginate((lastId) => {
             let q = supabase.from('shipments')
               .select('id, tracking_id, shipbob_order_id, recipient_name, event_labeled, carrier, status, destination_country, fc_name')
@@ -222,11 +226,13 @@ export async function GET(request: NextRequest) {
           }))
         : ([] as any[]),
 
-      // Core: Client name
-      timed('client', supabase.from('clients').select('company_name').eq('id', clientId!).single()),
+      // Core: Client name (skip for 'all' — no single client)
+      isAllClients
+        ? { data: { company_name: 'All Brands' }, error: null }
+        : timed('client', supabase.from('clients').select('company_name').eq('id', clientId!).single()),
 
       // Core: Distinct FC countries for this client
-      timed('fcCountries', supabase.rpc('get_client_fc_countries', { p_client_id: clientId, p_start: startDate, p_end: endDate })),
+      timed('fcCountries', supabase.rpc('get_client_fc_countries', { p_client_id: rpcClientId, p_start: startDate, p_end: endDate })),
 
       // FC name → country lookup — only needed for undelivered domestic filtering
       needsUndelivered
@@ -234,25 +240,29 @@ export async function GET(request: NextRequest) {
         : { data: null, error: null },
 
       // Hour-of-day distribution — raw orders scan, only for order-volume tab
-      needsOrderVolume
+      (needsOrderVolume && !isAllClients)
         ? timed('hourDist', supabase.rpc('get_order_hour_distribution', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
         : { data: null, error: null },
 
       // Day-of-week distribution — raw orders scan, only for order-volume tab
-      needsOrderVolume
+      (needsOrderVolume && !isAllClients)
         ? timed('dowDist', supabase.rpc('get_order_dow_distribution', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
         : { data: null, error: null },
 
       // Order Volume breakdowns by purchase_date — raw orders scan, only for order-volume tab
-      needsOrderVolume
+      (needsOrderVolume && !isAllClients)
         ? timed('orderVolume', supabase.rpc('get_order_volume_by_purchase_date', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_timezone: timezone, p_country: country }))
         : { data: null, error: null },
 
       // Core: Total revenue for billing efficiency (always ALL — only used by Financials tab which is locked to ALL)
-      timed('revenue', supabase.rpc('get_total_revenue', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: 'ALL' })),
+      !isAllClients
+        ? timed('revenue', supabase.rpc('get_total_revenue', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: 'ALL' }))
+        : { data: null, error: null },
 
       // Core: Invoice category breakdown for Financials
-      timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate })),
+      !isAllClients
+        ? timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate }))
+        : { data: null, error: null },
     ]) as any[]
     console.log(`[analytics] All queries done in ${Date.now() - t0}ms (tab=${tab})`)
 

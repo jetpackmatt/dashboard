@@ -131,26 +131,22 @@ export function CostSpeedStateMap({ data, metric, title, country = 'US' }: CostS
       </ComposableMap>
 
       {/* Legend */}
-      <Card className="absolute bottom-1 left-0 w-auto shadow-sm">
-        <CardContent className="p-1.5 px-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] text-muted-foreground">
-              {metric === 'cost' ? `$${minValue.toFixed(0)}` : `${minValue.toFixed(1)}d`}
-            </span>
-            <div
-              className="w-10 h-2 rounded-sm"
-              style={{
-                background: metric === 'cost'
-                  ? "linear-gradient(to right, hsl(210, 20%, 85%), hsl(210, 50%, 60%), hsl(210, 80%, 35%))"
-                  : "linear-gradient(to right, hsl(30, 30%, 85%), hsl(20, 60%, 60%), hsl(5, 90%, 35%))"
-              }}
-            />
-            <span className="text-[9px] text-muted-foreground">
-              {metric === 'cost' ? `$${maxValue.toFixed(0)}` : `${maxValue.toFixed(1)}d`}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="absolute bottom-1 left-1 flex items-center gap-1.5">
+        <span className="text-[9px] text-muted-foreground">
+          {metric === 'cost' ? `$${minValue.toFixed(0)}` : `${minValue.toFixed(1)}d`}
+        </span>
+        <div
+          className="w-10 h-2 rounded-sm"
+          style={{
+            background: metric === 'cost'
+              ? "linear-gradient(to right, hsl(210, 20%, 85%), hsl(210, 50%, 60%), hsl(210, 80%, 35%))"
+              : "linear-gradient(to right, hsl(30, 30%, 85%), hsl(20, 60%, 60%), hsl(5, 90%, 35%))"
+          }}
+        />
+        <span className="text-[9px] text-muted-foreground">
+          {metric === 'cost' ? `$${maxValue.toFixed(0)}` : `${maxValue.toFixed(1)}d`}
+        </span>
+      </div>
 
       {/* Hover tooltip */}
       {hoveredState && dataMap.has(hoveredState) && (() => {

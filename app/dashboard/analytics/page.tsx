@@ -32,6 +32,7 @@ import { NationalVolumeOverviewPanel } from "@/components/analytics/national-vol
 import { NationalPerformanceOverviewPanel } from "@/components/analytics/national-performance-overview-panel"
 import { LayeredVolumeHeatMap } from "@/components/analytics/layered-volume-heat-map"
 import { CostSpeedStateMap } from "@/components/analytics/cost-speed-state-map"
+import { KpiTooltip, KPI_TOOLTIPS } from "@/components/analytics/kpi-tooltip"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -92,7 +93,7 @@ import { getDateRangeFromPreset } from "@/lib/analytics/aggregators"
 
 const ANALYTICS_TABS = [
   { value: "state-performance", label: "Performance" },
-  { value: "cost-speed", label: "Cost + Speed" },
+  { value: "cost-speed", label: "Shipping Cost + Speed" },
   { value: "order-volume", label: "Order Volume" },
   { value: "carriers-zones", label: "Carriers + Zones" },
   { value: "financials", label: "Financials" },
@@ -162,7 +163,7 @@ function useChartDateRange(
     }
 
     // Not cached — fetch independently
-    if (!clientId || clientId === 'all') return
+    if (!clientId) return
 
     let cancelled = false
     setIsFetching(true)
@@ -238,7 +239,7 @@ function useChartSectionRange(
       setChartData(cached)
       return
     }
-    if (!clientId || clientId === 'all') return
+    if (!clientId) return
     let cancelled = false
     setIsFetching(true)
     const range = getDateRangeFromPreset(chartPreset)
@@ -435,7 +436,7 @@ export default function AnalyticsPage() {
 
   // Fetch pre-aggregated data from server when client, date range, or country changes
   React.useEffect(() => {
-    if (!isMounted || !selectedClientId || selectedClientId === 'all') {
+    if (!isMounted || !selectedClientId) {
       setAnalyticsData(null)
       setIsLoadingData(false)
       return
@@ -490,7 +491,7 @@ export default function AnalyticsPage() {
 
   // Lazy-load tab-specific data when switching tabs
   React.useEffect(() => {
-    if (!analyticsData || !selectedClientId || selectedClientId === 'all') return
+    if (!analyticsData || !selectedClientId) return
     if (loadedTabsRef.current.has(activeTab)) return
 
     let cancelled = false
@@ -827,7 +828,7 @@ export default function AnalyticsPage() {
   // Fast presets first, then slower ones — all in background
   const PREFETCH_PRESETS = ['14d', '30d', '60d', '90d', '6mo', '1yr', 'all']
   React.useEffect(() => {
-    if (!analyticsData || !selectedClientId || selectedClientId === 'all') return
+    if (!analyticsData || !selectedClientId) return
 
     let cancelled = false
     const timers: ReturnType<typeof setTimeout>[] = []
@@ -1027,7 +1028,7 @@ export default function AnalyticsPage() {
 
   // Volume data is always current since it comes pre-computed from the server
   // When no client is selected, treat as "current" so Loading indicator doesn't show forever
-  const isVolumeDataCurrent = hasData || !selectedClientId || selectedClientId === 'all'
+  const isVolumeDataCurrent = hasData || !selectedClientId
 
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
@@ -1075,10 +1076,10 @@ export default function AnalyticsPage() {
               {!isLoadingData && dataError && (
                 <p className="text-sm text-destructive px-1">{dataError}</p>
               )}
-              {!isLoadingData && !dataError && (!selectedClientId || selectedClientId === 'all') && (
+              {!isLoadingData && !dataError && !selectedClientId && (
                 <p className="text-sm text-muted-foreground px-1">Select a brand to view analytics.</p>
               )}
-              {!isLoadingData && !dataError && selectedClientId && selectedClientId !== 'all' && !hasData && (
+              {!isLoadingData && !dataError && selectedClientId && !hasData && (
                 <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
               )}
 
@@ -1680,11 +1681,11 @@ export default function AnalyticsPage() {
 
               {/* Tab 2: Cost & Speed Analysis */}
               <TabsContent value="cost-speed" className="mt-0">
-                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-zinc-50 dark:bg-zinc-900">
+                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50 to-white dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-950">
                   <div className="flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-2">
                     <div>
-                      <div className="text-lg font-semibold">Cost + Speed</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">Shipping cost and delivery speed analysis</div>
+                      <div className="text-lg font-semibold">Shipping Cost + Speed</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Average shipping cost and transit time analysis</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -1703,26 +1704,26 @@ export default function AnalyticsPage() {
                   <div className="border-y border-border mt-4">
                     <div className="grid grid-cols-2 lg:grid-cols-4">
                       <div className="text-center px-4 py-5 border-r border-border/50 bg-indigo-50/30 dark:bg-indigo-950/10">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Period Avg. Cost</div>
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Period Avg. Shipping Cost</div>
                         <div className="text-2xl font-bold tabular-nums">{kpiSectionAvgCost !== null ? `$${kpiSectionAvgCost.toFixed(2)}` : '—'}</div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">per order</div>
                       </div>
                       <div className="text-center px-4 py-5 lg:border-r border-border/50 bg-amber-50/30 dark:bg-amber-950/10">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Fulfillment</div>
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
                         <div className="text-2xl font-bold tabular-nums">
                           {kpiSectionKpis.avgFulfillTime > 0 ? kpiSectionKpis.avgFulfillTime.toFixed(1) : '—'}
                         </div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">operating hours</div>
                       </div>
                       <div className="text-center px-4 py-5 border-t lg:border-t-0 border-r border-border/50 bg-emerald-50/40 dark:bg-emerald-950/15">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Middle Mile</div>
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
                         <div className="text-2xl font-bold tabular-nums">
                           {kpiSectionMiddleMile > 0 ? kpiSectionMiddleMile.toFixed(1) : '—'}
                         </div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">calendar days</div>
                       </div>
                       <div className="text-center px-4 py-5 border-t lg:border-t-0 bg-sky-50/40 dark:bg-sky-950/15">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Last Mile</div>
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
                         <div className="text-2xl font-bold tabular-nums">
                           {kpiSectionKpis.avgTransitTime > 0 ? kpiSectionKpis.avgTransitTime.toFixed(1) : '—'}
                         </div>
@@ -1756,7 +1757,7 @@ export default function AnalyticsPage() {
                         <div className="px-5 lg:px-8 pt-5 pb-5">
                           <div className="grid gap-6 md:grid-cols-2">
                             <div>
-                              <div className="text-sm font-medium text-center mb-0">Average Shipping Cost</div>
+                              <div className="text-sm font-medium text-center mb-0 mt-3">Average Shipping Cost</div>
                               {showCA && (
                                 <CostSpeedStateMap data={caData} metric="cost" title="" country="CA" />
                               )}
@@ -1765,7 +1766,7 @@ export default function AnalyticsPage() {
                               )}
                             </div>
                             <div>
-                              <div className="text-sm font-medium text-center mb-0">Average Last Mile Transit</div>
+                              <div className="text-sm font-medium text-center mb-0 mt-3">Average Last Mile Transit</div>
                               {showCA && (
                                 <CostSpeedStateMap data={caData} metric="transit" title="" country="CA" />
                               )}
