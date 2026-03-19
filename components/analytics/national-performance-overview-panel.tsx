@@ -4,7 +4,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import type { StatePerformance } from "@/lib/analytics/types"
+import type { StatePerformance, OtdPercentiles } from "@/lib/analytics/types"
 import { COUNTRY_CONFIGS } from "@/lib/analytics/geo-config"
 import { KpiTooltip, KPI_TOOLTIPS } from "@/components/analytics/kpi-tooltip"
 
@@ -25,9 +25,10 @@ interface NationalPerformanceOverviewPanelProps {
   delayImpact?: DelayImpact | null
   includeDelayed?: boolean
   onToggleDelayed?: (value: boolean) => void
+  otdPercentiles?: OtdPercentiles | null
 }
 
-export function NationalPerformanceOverviewPanel({ stateData, country = 'US', regionLabel = 'State', regionLabelPlural = 'States', delayImpact, includeDelayed, onToggleDelayed }: NationalPerformanceOverviewPanelProps) {
+export function NationalPerformanceOverviewPanel({ stateData, country = 'US', regionLabel = 'State', regionLabelPlural = 'States', delayImpact, includeDelayed, onToggleDelayed, otdPercentiles }: NationalPerformanceOverviewPanelProps) {
   // Filter to only known states/provinces (excludes territories, military codes, junk)
   const knownCodes = new Set(Object.keys(COUNTRY_CONFIGS[country]?.codeToName || {}))
   const filteredData = stateData.filter(s => knownCodes.has(s.state))
@@ -58,13 +59,6 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
 
   const totalWeightedTransit = filteredData.reduce((sum, s) => sum + (s.avgCarrierTransitDays * s.deliveredCount), 0)
   const avgCarrierTransit = totalDelivered > 0 ? totalWeightedTransit / totalDelivered : 0
-
-  // Transit vs benchmark: weighted average comparison
-  const totalBenchmarkDays = filteredData.reduce((sum, s) => sum + ((s.benchmarkAvgTransit || 0) * (s.deliveredCount || 0)), 0)
-  const benchmarkAvg = totalDelivered > 0 ? totalBenchmarkDays / totalDelivered : 0
-  const transitDelta = benchmarkAvg > 0 ? avgCarrierTransit - benchmarkAvg : 0
-  const transitDeltaPct = benchmarkAvg > 0 ? Math.abs(transitDelta) / benchmarkAvg * 100 : 0
-  const hasBenchmarkData = benchmarkAvg > 0
 
   // Get top 5 fastest — min 10 delivered, relax to 1 if fewer than 3 qualify
   const eligibleStates = filteredData.filter(s => s.avgDeliveryTimeDays > 0)
@@ -108,30 +102,27 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
           </div>
         </div>
-        {/* Secondary row: Order-to-Delivery | vs Benchmark */}
-        <div className="grid grid-cols-2 border-t border-border">
-          <div className="text-center px-3 py-4 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order-to-Delivery <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} /></div>
-            <div className="text-lg font-bold tabular-nums">{avgDeliveryTime.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+        {/* Secondary row: Order-to-Delivery Percentiles */}
+        <div className="border-t border-border">
+          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-3 pt-3 pb-1">
+            Order-to-Delivery Time <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} />
           </div>
-          <div className={`text-center px-3 py-4 ${hasBenchmarkData && transitDelta <= 0 ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : hasBenchmarkData ? 'bg-red-50/50 dark:bg-red-950/20' : 'bg-blue-50/50 dark:bg-blue-950/20'}`}>
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">vs Benchmark <KpiTooltip text={KPI_TOOLTIPS.vsBenchmark} /></div>
-            {hasBenchmarkData ? (
-              <>
-                <div className={`text-lg font-bold tabular-nums ${transitDelta <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {transitDeltaPct.toFixed(0)}% {transitDelta <= 0 ? 'faster' : 'slower'}
-                </div>
-                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                  {avgCarrierTransit.toFixed(1)} actual vs {benchmarkAvg.toFixed(1)} expected
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-lg font-bold tabular-nums">—</div>
-                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">no data yet</div>
-              </>
-            )}
+          <div className="grid grid-cols-3">
+            <div className="text-center px-2 py-3 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fastest 20%</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p20 != null ? otdPercentiles.otd_p20.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="text-center px-2 py-3 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Median</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p50 != null ? otdPercentiles.otd_p50.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="text-center px-2 py-3 bg-amber-50/40 dark:bg-amber-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Slowest 20%</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p80 != null ? otdPercentiles.otd_p80.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
           </div>
         </div>
         {/* Delay Toggle row */}

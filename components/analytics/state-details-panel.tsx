@@ -1,6 +1,6 @@
 "use client"
 
-import type { StatePerformance } from "@/lib/analytics/types"
+import type { StatePerformance, OtdPercentiles } from "@/lib/analytics/types"
 // Card removed — rendered inside parent grid cell
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -26,9 +26,10 @@ interface StateDetailsPanelProps {
   delayImpact?: DelayImpact | null
   includeDelayed?: boolean
   onToggleDelayed?: (value: boolean) => void
+  otdPercentiles?: OtdPercentiles | null
 }
 
-export function StateDetailsPanel({ stateData, cityData, delayImpact, includeDelayed, onToggleDelayed }: StateDetailsPanelProps) {
+export function StateDetailsPanel({ stateData, cityData, delayImpact, includeDelayed, onToggleDelayed, otdPercentiles }: StateDetailsPanelProps) {
   // Top 5 cities by volume for this state (subtract delays when toggle is off)
   const topCities = (cityData || [])
     .filter(c => c.state === stateData.state && c.orderCount > 0)
@@ -50,12 +51,6 @@ export function StateDetailsPanel({ stateData, cityData, delayImpact, includeDel
   const regionalMile = deliveryTime > 0
     ? Math.max(0, deliveryTime - fulfillTime / 24 - stateData.avgCarrierTransitDays)
     : stateData.avgRegionalMileDays
-
-  // Transit vs benchmark
-  const transitDelta = stateData.transitVsBenchmark || 0
-  const benchmarkAvg = stateData.benchmarkAvgTransit || 0
-  const transitDeltaPct = benchmarkAvg > 0 ? Math.abs(transitDelta) / benchmarkAvg * 100 : 0
-  const hasBenchmarkData = benchmarkAvg > 0
 
   return (
     <div className="h-full overflow-hidden flex flex-col">
@@ -86,30 +81,27 @@ export function StateDetailsPanel({ stateData, cityData, delayImpact, includeDel
             <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
           </div>
         </div>
-        {/* Secondary row: Order-to-Delivery | vs Benchmark */}
-        <div className="grid grid-cols-2 border-t border-border">
-          <div className="text-center px-3 py-4 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Order-to-Delivery <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} /></div>
-            <div className="text-lg font-bold tabular-nums">{deliveryTime.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+        {/* Secondary row: Order-to-Delivery Percentiles */}
+        <div className="border-t border-border">
+          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-3 pt-3 pb-1">
+            Order-to-Delivery Time <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} />
           </div>
-          <div className={`text-center px-3 py-4 ${hasBenchmarkData && transitDelta <= 0 ? 'bg-emerald-50/50 dark:bg-emerald-950/20' : hasBenchmarkData ? 'bg-red-50/50 dark:bg-red-950/20' : 'bg-blue-50/50 dark:bg-blue-950/20'}`}>
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">vs Benchmark <KpiTooltip text={KPI_TOOLTIPS.vsBenchmark} /></div>
-            {hasBenchmarkData ? (
-              <>
-                <div className={`text-lg font-bold tabular-nums ${transitDelta <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {transitDeltaPct.toFixed(0)}% {transitDelta <= 0 ? 'faster' : 'slower'}
-                </div>
-                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                  {stateData.avgCarrierTransitDays.toFixed(1)} actual vs {benchmarkAvg.toFixed(1)} expected
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-lg font-bold tabular-nums">—</div>
-                <div className="text-[10px] text-zinc-400 dark:text-zinc-500">no data yet</div>
-              </>
-            )}
+          <div className="grid grid-cols-3">
+            <div className="text-center px-2 py-3 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fastest 20%</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p20 != null ? otdPercentiles.otd_p20.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="text-center px-2 py-3 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Median</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p50 != null ? otdPercentiles.otd_p50.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="text-center px-2 py-3 bg-amber-50/40 dark:bg-amber-950/15">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Slowest 20%</div>
+              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p80 != null ? otdPercentiles.otd_p80.toFixed(1) : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
           </div>
         </div>
         {/* Delay Toggle row */}

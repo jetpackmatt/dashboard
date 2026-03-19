@@ -283,6 +283,15 @@ export interface StatePerformance {
   delayCount?: number
 }
 
+// Order-to-Delivery Percentile Types
+
+export interface OtdPercentiles {
+  otd_p20: number | null
+  otd_p50: number | null
+  otd_p80: number | null
+  sample_count: number
+}
+
 // Cost + Speed Analysis Types
 
 export interface CostTrendData {

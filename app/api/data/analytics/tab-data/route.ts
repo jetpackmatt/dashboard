@@ -96,20 +96,23 @@ function pctChange(current: number, previous: number): number {
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
+  const rawClientId = searchParams.get('clientId')
   let clientId: string | null
   try {
-    const access = await verifyClientAccess(searchParams.get('clientId'))
+    const access = await verifyClientAccess(rawClientId)
     clientId = access.requestedClientId
   } catch (error) {
     return handleAccessError(error)
   }
 
-  if (!clientId) {
+  // 'all' = aggregate across all clients (admin only — verifyClientAccess already enforced this)
+  // verifyClientAccess returns null for 'all', so check the original param
+  const isAllClients = rawClientId === 'all'
+
+  if (!clientId && !isAllClients) {
     return NextResponse.json({ error: 'A client must be selected for analytics' }, { status: 400 })
   }
 
-  // 'all' = aggregate across all clients (admin only — verifyClientAccess already enforced this)
-  const isAllClients = clientId === 'all'
   const rpcClientId = isAllClients ? null : clientId
 
   const startDate = searchParams.get('startDate')
@@ -125,6 +128,7 @@ export async function GET(request: NextRequest) {
   const needsSLA = tab === 'all' || tab === 'sla'
   const needsUndelivered = tab === 'all' || tab === 'undelivered'
   const needsOrderVolume = tab === 'all' || tab === 'order-volume'
+  const needsPerformance = tab === 'all' || tab === 'state-performance'
 
   if (!startDate || !rawEndDate) {
     return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 })
@@ -186,6 +190,7 @@ export async function GET(request: NextRequest) {
       orderVolumeResult,
       revenueResult,
       invoicesResult,
+      _otdPercentilesUnused,
     ] = await Promise.all([
       // Core: Single RPC — all GROUP BY queries from pre-aggregated summaries (~100ms)
       timed('summaries', supabase.rpc('get_analytics_from_summaries', {
@@ -263,6 +268,10 @@ export async function GET(request: NextRequest) {
       !isAllClients
         ? timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate }))
         : { data: null, error: null },
+
+      // OTD percentiles removed — now fetched via dedicated /api/data/analytics/otd-percentiles route
+      // to support includeDelayed toggle re-fetching
+      { data: null, error: null },
     ]) as any[]
     console.log(`[analytics] All queries done in ${Date.now() - t0}ms (tab=${tab})`)
 
@@ -1296,6 +1305,7 @@ export async function GET(request: NextRequest) {
       result.undeliveredByAge = undeliveredByAge
       result.undeliveredShipments = undeliveredShipments
     }
+    // OTD percentiles now fetched via dedicated route (supports delay toggle)
 
     // Cache for warm-instance reuse
     if (responseCache.size >= CACHE_MAX) {

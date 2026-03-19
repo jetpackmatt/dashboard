@@ -324,8 +324,12 @@ export default function AnalyticsPage() {
   }, [])
 
   // Client context for brand filtering
-  const { selectedClientId } = useClient()
+  const { selectedClientId, isAdmin } = useClient()
   const { settings } = useUserSettings()
+
+  // For admins, null selectedClientId means "All Brands" → send 'all' to API
+  // For non-admins, null means no brand selected yet
+  const effectiveClientId = selectedClientId ?? (isAdmin ? 'all' : null)
 
   // Pre-aggregated analytics data from server
   const [analyticsData, setAnalyticsData] = React.useState<any>(null)
@@ -388,6 +392,11 @@ export default function AnalyticsPage() {
   })
 
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
+  type OtdP = { otd_p20: number | null; otd_p50: number | null; otd_p80: number | null; sample_count: number }
+  const [nationalOtdClean, setNationalOtdClean] = React.useState<OtdP | null>(null)
+  const [nationalOtdWithDelayed, setNationalOtdWithDelayed] = React.useState<OtdP | null>(null)
+  const [stateOtdClean, setStateOtdClean] = React.useState<OtdP | null>(null)
+  const [stateOtdWithDelayed, setStateOtdWithDelayed] = React.useState<OtdP | null>(null)
   const [selectedCountry, setSelectedCountry] = React.useState('US')
   // Performance tab needs a specific country (map requires config) — fall back to US when ALL
   const perfCountry = selectedCountry === 'ALL' ? 'US' : selectedCountry
@@ -420,11 +429,11 @@ export default function AnalyticsPage() {
 
   // Build fetch params (shared between initial load and tab-switch fetches)
   const buildFetchParams = React.useCallback((tab: string) => {
-    if (!selectedClientId || !currentDateRange) return null
+    if (!effectiveClientId || !currentDateRange) return null
     const startDate = currentDateRange.from.toISOString().split('T')[0]
     const endDate = currentDateRange.to.toISOString().split('T')[0]
     return new URLSearchParams({
-      clientId: selectedClientId,
+      clientId: effectiveClientId,
       startDate,
       endDate,
       datePreset: dateRange,
@@ -432,11 +441,55 @@ export default function AnalyticsPage() {
       timezone: settings.timezone,
       tab,
     })
-  }, [selectedClientId, currentDateRange, dateRange, selectedCountry, settings.timezone])
+  }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone])
+
+  // Fetch OTD percentiles (both clean + with-delayed variants, national + state)
+  // Both variants fetched upfront so the toggle switches instantly (no network delay)
+  React.useEffect(() => {
+    if (!effectiveClientId || !currentDateRange) {
+      setNationalOtdClean(null)
+      setNationalOtdWithDelayed(null)
+      setStateOtdClean(null)
+      setStateOtdWithDelayed(null)
+      return
+    }
+    let cancelled = false
+    const startDate = currentDateRange.from.toISOString().split('T')[0]
+    const endDate = currentDateRange.to.toISOString().split('T')[0]
+    const base: Record<string, string> = {
+      clientId: effectiveClientId,
+      startDate,
+      endDate,
+      country: perfCountry,
+    }
+    const fetchOtd = (extra: Record<string, string> = {}) =>
+      fetch(`/api/data/analytics/otd-percentiles?${new URLSearchParams({ ...base, ...extra })}`)
+        .then(res => res.ok ? res.json() : null)
+    // National: both variants
+    fetchOtd({ includeDelayed: 'false' })
+      .then(data => { if (!cancelled) setNationalOtdClean(data) })
+      .catch(() => { if (!cancelled) setNationalOtdClean(null) })
+    fetchOtd({ includeDelayed: 'true' })
+      .then(data => { if (!cancelled) setNationalOtdWithDelayed(data) })
+      .catch(() => { if (!cancelled) setNationalOtdWithDelayed(null) })
+    // State-level: both variants if state selected
+    if (selectedState) {
+      fetchOtd({ includeDelayed: 'false', state: selectedState })
+        .then(data => { if (!cancelled) setStateOtdClean(data) })
+        .catch(() => { if (!cancelled) setStateOtdClean(null) })
+      fetchOtd({ includeDelayed: 'true', state: selectedState })
+        .then(data => { if (!cancelled) setStateOtdWithDelayed(data) })
+        .catch(() => { if (!cancelled) setStateOtdWithDelayed(null) })
+    } else {
+      setStateOtdClean(null)
+      setStateOtdWithDelayed(null)
+    }
+    return () => { cancelled = true }
+  }, [selectedState, effectiveClientId, currentDateRange, perfCountry])
 
   // Fetch pre-aggregated data from server when client, date range, or country changes
   React.useEffect(() => {
-    if (!isMounted || !selectedClientId) {
+    if (!isMounted || !effectiveClientId) {
       setAnalyticsData(null)
       setIsLoadingData(false)
       return
@@ -487,12 +540,15 @@ export default function AnalyticsPage() {
 
     fetchData()
     return () => { cancelled = true }
-  }, [isMounted, selectedClientId, currentDateRange, dateRange, selectedCountry, settings.timezone]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isMounted, effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lazy-load tab-specific data when switching tabs
   React.useEffect(() => {
-    if (!analyticsData || !selectedClientId) return
-    if (loadedTabsRef.current.has(activeTab)) return
+    if (!analyticsData || !effectiveClientId) return
+    if (loadedTabsRef.current.has(activeTab)) {
+      setIsLoadingTabData(false)
+      return
+    }
 
     let cancelled = false
 
@@ -521,7 +577,7 @@ export default function AnalyticsPage() {
 
     fetchTabData()
     return () => { cancelled = true }
-  }, [activeTab, analyticsData, selectedClientId, buildFetchParams])
+  }, [activeTab, analyticsData, effectiveClientId, buildFetchParams])
 
   // ── ALL DATA IS NOW PRE-AGGREGATED SERVER-SIDE ──
   // No client-side aggregation needed. Data comes from /api/data/analytics/tab-data
@@ -651,16 +707,16 @@ export default function AnalyticsPage() {
 
   // Seed cache with page-level data so charts can look it up after page selector changes
   React.useEffect(() => {
-    if (!analyticsData || !selectedClientId) return
-    const cacheKey = `${dateRange}:${selectedCountry}:${settings.timezone}:${selectedClientId}`
+    if (!analyticsData || !effectiveClientId) return
+    const cacheKey = `${dateRange}:${selectedCountry}:${settings.timezone}:${effectiveClientId}`
     chartDataCache.current.set(cacheKey, analyticsData)
-  }, [analyticsData, dateRange, selectedCountry, settings.timezone, selectedClientId])
+  }, [analyticsData, dateRange, selectedCountry, settings.timezone, effectiveClientId])
   // === Order Volume tab hooks ===
-  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
+  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
   // === Cost + Speed tab hooks ===
   // When includeInternational is false (default), pass domesticOnly=true via extraParams
@@ -669,20 +725,20 @@ export default function AnalyticsPage() {
     () => includeInternational ? undefined : { domesticOnly: 'true' },
     [includeInternational]
   )
-  const costSpeedKpiSection = useChartSectionRange(analyticsData, dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
-  const costSpeedMapSection = useChartSectionRange(analyticsData, dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const costTrendChart = useChartDateRange(costTrendData, 'costTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
-  const deliverySpeedChart = useChartDateRange(analyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
-  const zoneCostChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const shipOptionChart = useChartDateRange(shipOptionPerformanceData, 'shipOptionPerformance', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const costSpeedKpiSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const costSpeedMapSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const costTrendChart = useChartDateRange(costTrendData, 'costTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const deliverySpeedChart = useChartDateRange(analyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const zoneCostChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const shipOptionChart = useChartDateRange(shipOptionPerformanceData, 'shipOptionPerformance', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
 
   // === carriers-zones tab data (declared here so hooks below can use it) ===
   const carrierPerformance: CarrierPerformance[] = analyticsData?.carrierPerformance || []
 
   // === Carriers + Zones tab hooks ===
-  const carrierSection = useChartSectionRange(analyticsData, dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const carrierZoneChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const zoneDeepDiveChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
+  const carrierSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const carrierZoneChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const zoneDeepDiveChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
   // === Financials tab data (declared before hooks) ===
   const billingTrendData: MonthlyBillingTrend[] = analyticsData?.billingTrend || []
@@ -698,19 +754,19 @@ export default function AnalyticsPage() {
   // Financials always uses 'ALL' via lockedCountry — invoices can't be split by country.
   // pageCountry = selectedCountry (truthful about what page data contains) so the hook
   // knows when to use page data vs fetch independently with country='ALL'.
-  const financialsSection = useChartSectionRange(analyticsData, dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
 
   // === SLA tab hooks ===
-  const slaTrendChart = useChartDateRange(analyticsData?.onTimeTrend || [], 'onTimeTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const fulfillTrendChart = useChartDateRange(analyticsData?.fulfillmentTrend || [], 'fulfillmentTrend', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
-  const fcFulfillChart = useChartDateRange(fcFulfillmentMetrics, 'fcFulfillmentMetrics', dateRange, selectedClientId, selectedCountry, settings.timezone, chartDataCache)
+  const slaTrendChart = useChartDateRange(analyticsData?.onTimeTrend || [], 'onTimeTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const fulfillTrendChart = useChartDateRange(analyticsData?.fulfillmentTrend || [], 'fulfillmentTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const fcFulfillChart = useChartDateRange(fcFulfillmentMetrics, 'fcFulfillmentMetrics', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
   // === Cost+Speed KPI section derived data ===
   const kpiSectionData = costSpeedKpiSection.data
@@ -828,14 +884,14 @@ export default function AnalyticsPage() {
   // Fast presets first, then slower ones — all in background
   const PREFETCH_PRESETS = ['14d', '30d', '60d', '90d', '6mo', '1yr', 'all']
   React.useEffect(() => {
-    if (!analyticsData || !selectedClientId) return
+    if (!analyticsData || !effectiveClientId) return
 
     let cancelled = false
     const timers: ReturnType<typeof setTimeout>[] = []
 
     const toFetch = PREFETCH_PRESETS.filter(p => {
       if (p === dateRange) return false // Already loaded as page data
-      const cacheKey = `${p}:${selectedCountry}:${settings.timezone}:${selectedClientId}`
+      const cacheKey = `${p}:${selectedCountry}:${settings.timezone}:${effectiveClientId}`
       return !chartDataCache.current.has(cacheKey) // Not yet cached
     })
 
@@ -844,7 +900,7 @@ export default function AnalyticsPage() {
         if (cancelled) return
         const range = getDateRangeFromPreset(preset as DateRangePreset)
         const params = new URLSearchParams({
-          clientId: selectedClientId!,
+          clientId: effectiveClientId!,
           startDate: range.from.toISOString().split('T')[0],
           endDate: range.to.toISOString().split('T')[0],
           datePreset: preset,
@@ -857,7 +913,7 @@ export default function AnalyticsPage() {
           .then(res => res.ok ? res.json() : null)
           .then(data => {
             if (!cancelled && data) {
-              const cacheKey = `${preset}:${selectedCountry}:${settings.timezone}:${selectedClientId}`
+              const cacheKey = `${preset}:${selectedCountry}:${settings.timezone}:${effectiveClientId}`
               chartDataCache.current.set(cacheKey, data)
             }
           })
@@ -869,7 +925,7 @@ export default function AnalyticsPage() {
       cancelled = true
       timers.forEach(clearTimeout)
     }
-  }, [analyticsData, selectedClientId, selectedCountry, settings.timezone, dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [analyticsData, effectiveClientId, selectedCountry, settings.timezone, dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // === financials tab ===
   const billingSummary: BillingSummary = analyticsData?.billingSummary || {
@@ -1028,7 +1084,7 @@ export default function AnalyticsPage() {
 
   // Volume data is always current since it comes pre-computed from the server
   // When no client is selected, treat as "current" so Loading indicator doesn't show forever
-  const isVolumeDataCurrent = hasData || !selectedClientId
+  const isVolumeDataCurrent = hasData || !effectiveClientId
 
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
@@ -1076,10 +1132,10 @@ export default function AnalyticsPage() {
               {!isLoadingData && dataError && (
                 <p className="text-sm text-destructive px-1">{dataError}</p>
               )}
-              {!isLoadingData && !dataError && !selectedClientId && (
+              {!isLoadingData && !dataError && !effectiveClientId && (
                 <p className="text-sm text-muted-foreground px-1">Select a brand to view analytics.</p>
               )}
-              {!isLoadingData && !dataError && selectedClientId && !hasData && (
+              {!isLoadingData && !dataError && effectiveClientId && !hasData && (
                 <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
               )}
 
@@ -3546,6 +3602,7 @@ export default function AnalyticsPage() {
                           delayImpact={delayImpact}
                           includeDelayed={includeDelayedOrders}
                           onToggleDelayed={setIncludeDelayedOrders}
+                          otdPercentiles={includeDelayedOrders ? stateOtdWithDelayed : stateOtdClean}
                         />
                       ) : (
                         <NationalPerformanceOverviewPanel
@@ -3556,6 +3613,7 @@ export default function AnalyticsPage() {
                           delayImpact={delayImpact}
                           includeDelayed={includeDelayedOrders}
                           onToggleDelayed={setIncludeDelayedOrders}
+                          otdPercentiles={includeDelayedOrders ? nationalOtdWithDelayed : nationalOtdClean}
                         />
                       )}
                     </div>
