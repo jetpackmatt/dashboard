@@ -207,17 +207,91 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ========================================
+    // Part 3: Create lost_in_transit_checks entries for Loss claims without one
+    // This ensures ALL Loss claims appear in Delivery IQ (archived section)
+    // ========================================
+    console.log('[Cron AdvanceClaims] Checking for Loss claims missing Delivery IQ entries...')
+
+    let created = 0
+    let createErrors = 0
+
+    // Find Loss care tickets (any status) that have no lost_in_transit_checks entry
+    const { data: orphanedClaims, error: orphanFetchError } = await supabase
+      .from('care_tickets')
+      .select('shipment_id, tracking_number, carrier, client_id, status, created_at')
+      .eq('issue_type', 'Loss')
+      .is('deleted_at', null)
+      .not('shipment_id', 'is', null)
+      .not('tracking_number', 'is', null)
+      .not('carrier', 'is', null)
+
+    if (orphanFetchError) {
+      console.error('[Cron AdvanceClaims] Error fetching orphaned claims:', orphanFetchError.message)
+    } else if (orphanedClaims && orphanedClaims.length > 0) {
+      // Deduplicate by shipment_id (keep most recent)
+      const byShipment = new Map<string, typeof orphanedClaims[0]>()
+      for (const claim of orphanedClaims) {
+        if (!claim.shipment_id) continue
+        const existing = byShipment.get(claim.shipment_id)
+        if (!existing || new Date(claim.created_at) > new Date(existing.created_at)) {
+          byShipment.set(claim.shipment_id, claim)
+        }
+      }
+
+      // Check which shipment_ids already have LIT entries
+      const shipmentIds = [...byShipment.keys()]
+      const { data: existingEntries } = await supabase
+        .from('lost_in_transit_checks')
+        .select('shipment_id')
+        .in('shipment_id', shipmentIds)
+
+      const existingSet = new Set((existingEntries || []).map(e => e.shipment_id))
+      const missing = [...byShipment.entries()].filter(([sid]) => !existingSet.has(sid))
+
+      if (missing.length > 0) {
+        console.log(`[Cron AdvanceClaims] Found ${missing.length} Loss claims without Delivery IQ entries`)
+
+        const records = missing.map(([, claim]) => ({
+          shipment_id: claim.shipment_id!,
+          tracking_number: claim.tracking_number!,
+          carrier: claim.carrier!,
+          client_id: claim.client_id,
+          claim_eligibility_status: claim.status === 'Resolved' ? 'approved'
+            : claim.status === 'Credit Denied' ? 'denied'
+            : 'claim_filed',
+          checked_at: claim.created_at,
+          first_checked_at: claim.created_at,
+          eligible_after: claim.created_at.split('T')[0],
+          is_international: (claim.carrier || '').toLowerCase().includes('dhl'),
+        }))
+
+        const { error: insertError } = await supabase
+          .from('lost_in_transit_checks')
+          .insert(records)
+
+        if (insertError) {
+          console.error('[Cron AdvanceClaims] Error creating entries:', insertError.message)
+          createErrors++
+        } else {
+          created = records.length
+          console.log(`[Cron AdvanceClaims] Created ${created} Delivery IQ entries`)
+        }
+      }
+    }
+
     const duration = Date.now() - startTime
-    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${synced} synced, ${errors + syncErrors + emailErrors} errors`)
+    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${synced} synced, ${created} created, ${errors + syncErrors + createErrors + emailErrors} errors`)
 
     return NextResponse.json({
-      success: errors === 0 && syncErrors === 0,
+      success: errors === 0 && syncErrors === 0 && createErrors === 0,
       duration: `${duration}ms`,
       claimsAdvanced: advanced,
       emailsSent,
       emailErrors,
       claimsSynced: synced,
-      errors: errors + syncErrors,
+      deliveryIqEntriesCreated: created,
+      errors: errors + syncErrors + createErrors,
     })
   } catch (error) {
     console.error('[Cron AdvanceClaims] Error:', error)
