@@ -12,6 +12,10 @@
  */
 
 const TRACKINGMORE_API_BASE = 'https://api.trackingmore.com/v4'
+// V3 realtime endpoint for synchronous carrier lookups
+// V4 removed /trackings/realtime (returns 404). V3's version still works and
+// returns carrier data immediately instead of queueing an async fetch.
+const TRACKINGMORE_V3_BASE = 'https://api.trackingmore.com/v3'
 
 // Timeout for TrackingMore API calls (30 seconds - realtime endpoint can be slow)
 const API_TIMEOUT_MS = 30000
@@ -98,13 +102,23 @@ export interface TrackingResult {
 export function getTrackingMoreCarrierCode(carrier: string): string | null {
   const carrierLower = (carrier || '').toLowerCase()
 
+  // IMPORTANT: More specific carrier matches MUST come before generic ones
+  // e.g., "UPSMailInnovations" must match 'upsmi' before matching generic 'ups'
+
+  // UPS Mail Innovations - uses USPS for final delivery (must be before generic UPS)
+  // "UPSMailInnovations" → "upsmailinnovations" contains "mailinnovation" but NOT "upsmi"
+  if (carrierLower.includes('upsmi') || carrierLower.includes('mailinnovation') || carrierLower.includes('mail innovations')) return 'ups-mi'
+  // FedEx SmartPost - uses USPS for final delivery (must be before generic FedEx)
+  if (carrierLower.includes('smartpost')) return 'fedex'
+
   // Common carrier mappings
   if (carrierLower.includes('usps')) return 'usps'
   if (carrierLower.includes('ups')) return 'ups'
   if (carrierLower.includes('fedex')) return 'fedex'
   if (carrierLower.includes('dhl')) {
+    // DhlEcs = DHL eCommerce Solutions
+    if (carrierLower.includes('ecs') || carrierLower.includes('ecommerce')) return 'dhlglobalmail'
     if (carrierLower.includes('express')) return 'dhl'
-    if (carrierLower.includes('ecommerce')) return 'dhl-ecommerce'
     return 'dhl'
   }
   if (carrierLower.includes('ontrac')) return 'ontrac'
@@ -117,22 +131,20 @@ export function getTrackingMoreCarrierCode(carrier: string): string | null {
   // BetterTrucks - Regional last-mile carrier
   if (carrierLower.includes('bettertrucks') || carrierLower.includes('better trucks')) return 'bettertrucks'
   // OSM Worldwide - Parcel consolidator (hands off to USPS for final delivery)
-  // TrackingMore supports OSM tracking
   if (carrierLower.includes('osm')) return 'osmworldwide'
-  // UniUni - Canadian regional carrier
-  if (carrierLower.includes('uniuni')) return 'uniuni'
-  // Passport - International shipping
-  if (carrierLower.includes('passport')) return 'passport'
+  // UniUni - Canadian regional carrier (TrackingMore code is 'uni', not 'uniuni')
+  if (carrierLower.includes('uniuni')) return 'uni'
+  // Passport - International shipping (TrackingMore code is 'passport-shipping')
+  if (carrierLower.includes('passport')) return 'passport-shipping'
   // APC Postal Logistics
   if (carrierLower.includes('apc')) return 'apc'
-  // UPS Mail Innovations - uses USPS for final delivery
-  if (carrierLower.includes('upsmi') || carrierLower.includes('mail innovations')) return 'ups-mi'
-  // FedEx SmartPost - uses USPS for final delivery
-  if (carrierLower.includes('smartpost')) return 'fedex'
+
+  // ShipBob has its own carrier service with SB-prefixed tracking numbers
+  if (carrierLower.includes('shipbob')) return 'shipbob'
 
   // Carriers with no TrackingMore support - return null to skip
-  // ShipBob internal, PrePaid, DE_KITTING - these are internal/freight and have no tracking
-  if (carrierLower.includes('shipbob') || carrierLower.includes('prepaid') || carrierLower.includes('kitting')) {
+  // PrePaid, DE_KITTING - these are internal/freight and have no tracking
+  if (carrierLower.includes('prepaid') || carrierLower.includes('kitting')) {
     return null
   }
 
@@ -251,13 +263,14 @@ export async function getTracking(
       return processTrackingResponse(getData.data[0])
     }
 
-    // If tracking doesn't exist, create it using the realtime endpoint
-    // TrackingMore API V4: "create a tracking" is also "create & get" (real-time API)
-    console.log('[TrackingMore] No existing tracking found, using realtime endpoint for:', trackingNumber, 'carrier:', carrierCode)
+    // If tracking doesn't exist, use V3 realtime endpoint for synchronous carrier lookup.
+    // IMPORTANT: V4's /trackings/realtime returns 404 (endpoint removed in V4).
+    // V3's /trackings/realtime still works and fetches from the carrier in real-time,
+    // returning checkpoint data immediately instead of queueing an async fetch.
+    // V4's /trackings/create only registers for async monitoring (returns "pending").
+    console.log('[TrackingMore] No existing tracking found, using V3 realtime for:', trackingNumber, 'carrier:', carrierCode)
 
-    // Use the realtime endpoint to get tracking data immediately
-    // This fetches from the carrier in real-time rather than waiting for async updates
-    const realtimeResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
+    const realtimeResponse = await fetchWithTimeout(`${TRACKINGMORE_V3_BASE}/trackings/realtime`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -269,50 +282,29 @@ export async function getTracking(
       }),
     })
 
-    const realtimeData: TrackingMoreResponse<TrackingMoreTracking> = await realtimeResponse.json()
-    console.log('[TrackingMore] Realtime response code:', realtimeData.meta?.code, 'message:', realtimeData.meta?.message)
-
-    // TrackingMore returns HTTP 200 even for errors, so check meta.code
-    if (realtimeData.meta.code === 200 || realtimeData.meta.code === 201) {
-      return processTrackingResponse(realtimeData.data)
+    const realtimeText = await realtimeResponse.text()
+    // V3 response format: { code: 200, data: {...} } (no meta wrapper)
+    let realtimeJson: { code?: number; data?: TrackingMoreTracking; message?: string } | null = null
+    try {
+      realtimeJson = JSON.parse(realtimeText)
+    } catch {
+      console.error('[TrackingMore] Failed to parse V3 realtime response:', realtimeText.substring(0, 200))
     }
 
-    // If realtime fails because tracking already exists, check if it was registered with wrong carrier
-    if (realtimeData.meta?.code === 4016 || realtimeData.meta?.code === 4101) {
-      // Check if the existing tracking has a different carrier code
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const existingData = (realtimeData as any).data as { id: string; tracking_number: string; courier_code: string } | undefined
-      if (existingData?.courier_code && existingData.courier_code !== carrierCode) {
-        console.log('[TrackingMore] Tracking exists with wrong carrier:', existingData.courier_code, '- deleting and recreating with:', carrierCode)
-        // Delete the tracking with wrong carrier
-        await deleteTrackingById(existingData.id, apiKey)
-        // Try creating again with correct carrier
-        const retryResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/realtime`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Tracking-Api-Key': apiKey,
-          },
-          body: JSON.stringify({
-            tracking_number: trackingNumber,
-            courier_code: carrierCode,
-          }),
-        })
-        const retryData: TrackingMoreResponse<TrackingMoreTracking> = await retryResponse.json()
-        console.log('[TrackingMore] Retry realtime response code:', retryData.meta?.code)
-        if (retryData.meta.code === 200 || retryData.meta.code === 201) {
-          return processTrackingResponse(retryData.data)
-        }
+    console.log('[TrackingMore] V3 Realtime response code:', realtimeJson?.code, 'status:', realtimeJson?.data?.delivery_status)
+
+    if (realtimeJson?.code === 200 && realtimeJson?.data) {
+      const tracking = realtimeJson.data
+      // V3 realtime returns "notfound" when the carrier doesn't recognize the tracking number
+      if (tracking.delivery_status !== 'notfound') {
+        return processTrackingResponse(tracking)
       }
-      // Tracking exists with same carrier, fetch it using the ID
-      console.log('[TrackingMore] Tracking already exists, fetching by ID:', existingData?.id)
-      if (existingData?.id) {
-        return await getTrackingById(existingData.id, apiKey)
-      }
+      console.log('[TrackingMore] V3 realtime: carrier returned notfound for', trackingNumber)
     }
 
-    // Try regular create as fallback
-    console.log('[TrackingMore] Realtime failed, trying regular create')
+    // Also register in V4 for ongoing async monitoring (even if V3 found nothing)
+    // V4 create registers the tracking for background updates via webhooks/polling
+    console.log('[TrackingMore] Registering in V4 for async monitoring')
     const createResponse = await fetchWithTimeout(`${TRACKINGMORE_API_BASE}/trackings/create`, {
       method: 'POST',
       headers: {
