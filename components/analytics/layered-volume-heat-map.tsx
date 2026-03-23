@@ -221,31 +221,31 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect, co
       </ComposableMap>
 
       {/* Combined Legend */}
-      <div className="pl-10 -mt-4 relative z-[2]">
+      <div className="pl-10 -mt-9 relative z-[2]">
         <div className="flex items-center gap-4">
           {/* State gradient legend */}
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-semibold text-muted-foreground">States:</span>
-            <span className="text-[9px] text-muted-foreground">Low</span>
+            <span className="text-[9px] text-muted-foreground">Low Volume</span>
             <div className="w-12 h-2.5 rounded-sm" style={{
               background: "linear-gradient(to right, hsl(142, 8%, 90%), hsl(142, 44%, 62%), hsl(142, 80%, 35%))"
             }} />
-            <span className="text-[9px] text-muted-foreground">High</span>
+            <span className="text-[9px] text-muted-foreground">High Volume</span>
           </div>
           {/* City dots legend */}
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-semibold text-muted-foreground">Cities:</span>
             <div className="flex items-center gap-1">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(240, 100%, 50%)' }} />
-              <span className="text-[9px] text-muted-foreground">Low</span>
+              <span className="text-[9px] text-muted-foreground">Low Volume</span>
             </div>
             <div className="flex items-center gap-1">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(30, 100%, 50%)' }} />
-              <span className="text-[9px] text-muted-foreground">Med</span>
+              <span className="text-[9px] text-muted-foreground">Medium Volume</span>
             </div>
             <div className="flex items-center gap-1">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'hsl(0, 100%, 50%)' }} />
-              <span className="text-[9px] text-muted-foreground">High</span>
+              <span className="text-[9px] text-muted-foreground">High Volume</span>
             </div>
           </div>
         </div>

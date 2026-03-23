@@ -25,19 +25,37 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient()
-  const { data, error } = await supabase.rpc('get_otd_percentiles', {
+  const rpcParams = {
     p_client_id: rpcClientId,
     p_start_date: startDate,
     p_end_date: endDate,
     p_country: country,
     p_state: state,
     p_include_delayed: includeDelayed,
-  })
+  }
 
-  if (error) {
-    console.error('[otd-percentiles] RPC error:', error.message)
+  // Fetch core percentiles (P20/P50/P80) and extreme percentiles (P5/P95) in parallel
+  const [coreResult, extremeResult] = await Promise.all([
+    supabase.rpc('get_otd_percentiles', rpcParams),
+    supabase.rpc('get_otd_extreme_percentiles', rpcParams),
+  ])
+
+  if (coreResult.error) {
+    console.error('[otd-percentiles] Core RPC error:', coreResult.error.message)
     return NextResponse.json({ error: 'Failed to compute percentiles' }, { status: 500 })
   }
 
-  return NextResponse.json(data)
+  // Merge extreme percentiles into core result (graceful fallback if extreme RPC not yet deployed)
+  const merged = {
+    ...coreResult.data,
+    otd_p5: extremeResult.data?.otd_p5 ?? null,
+    otd_p95: extremeResult.data?.otd_p95 ?? null,
+    otd_mean: extremeResult.data?.otd_mean ?? null,
+  }
+
+  if (extremeResult.error) {
+    console.warn('[otd-percentiles] Extreme RPC not available yet:', extremeResult.error.message)
+  }
+
+  return NextResponse.json(merged)
 }

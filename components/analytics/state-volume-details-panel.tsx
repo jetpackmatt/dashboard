@@ -2,6 +2,7 @@
 
 import { MapPinIcon } from "lucide-react"
 import { StateVolumeData, CityVolumeData } from "@/lib/analytics/types"
+import { AnimatedNumber } from "@/components/analytics/animated-number"
 
 interface StateVolumeDetailsPanelProps {
   stateData: StateVolumeData
@@ -38,15 +39,15 @@ export function StateVolumeDetailsPanel({ stateData, cityData, onClose }: StateV
         <div className="grid grid-cols-3">
           <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
-            <div className="text-2xl font-bold tabular-nums">{stateData.orderCount.toLocaleString()}</div>
+            <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={stateData.orderCount} locale /></div>
           </div>
           <div className="text-center px-3 py-4 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Total</div>
-            <div className="text-2xl font-bold tabular-nums">{stateData.percent.toFixed(1)}%</div>
+            <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={stateData.percent} decimals={1} suffix="%" /></div>
           </div>
           <div className="text-center px-3 py-4 bg-amber-50/30 dark:bg-amber-950/10">
             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg/Day</div>
-            <div className="text-2xl font-bold tabular-nums">{stateData.avgOrdersPerDay.toFixed(1)}</div>
+            <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={stateData.avgOrdersPerDay} decimals={1} /></div>
           </div>
         </div>
       </div>

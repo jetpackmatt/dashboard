@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { KpiTooltip, KPI_TOOLTIPS } from "@/components/analytics/kpi-tooltip"
+import { AnimatedNumber } from "@/components/analytics/animated-number"
 
 interface CityData {
   city: string
@@ -61,46 +62,67 @@ export function StateDetailsPanel({ stateData, cityData, delayImpact, includeDel
         </div>
       </div>
 
-      {/* Time Metrics — full-bleed grid */}
+      {/* Time Metrics — interconnected grid */}
       <div className="flex-shrink-0">
-        {/* Primary row: Carrier Transit | Middle Mile | Fulfill Time */}
-        <div className="grid grid-cols-3">
-          <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
-            <div className="text-2xl font-bold tabular-nums">{stateData.avgCarrierTransitDays.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+        <div>
+          {/* Row 1: Order-to-Delivery percentiles */}
+          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-4 py-2.5 border-b border-border bg-orange-50/30 dark:bg-orange-950/10">
+            Order-to-Delivery <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} />
           </div>
-          <div className="text-center px-3 py-4 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
-            <div className="text-2xl font-bold tabular-nums">{regionalMile.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
-          </div>
-          <div className="text-center px-3 py-4 bg-amber-50/40 dark:bg-amber-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Fulfill Time <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
-            <div className="text-2xl font-bold tabular-nums">{fulfillTime.toFixed(1)}</div>
-            <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
-          </div>
-        </div>
-        {/* Secondary row: Order-to-Delivery Percentiles */}
-        <div className="border-t border-border">
-          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-3 pt-3 pb-1">
-            Order-to-Delivery Time <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} />
-          </div>
-          <div className="grid grid-cols-3">
-            <div className="text-center px-2 py-3 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fastest 20%</div>
-              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p20 != null ? otdPercentiles.otd_p20.toFixed(1) : '—'}</div>
-              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+          <div className="grid grid-cols-3 border-b border-border">
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-emerald-50/40 dark:bg-emerald-950/15">
+              <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-1">Fastest 20%</div>
+              <div className="text-2xl font-bold tabular-nums">{otdPercentiles?.otd_p20 != null ? <AnimatedNumber value={otdPercentiles.otd_p20} decimals={1} /> : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
             </div>
-            <div className="text-center px-2 py-3 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Median</div>
-              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p50 != null ? otdPercentiles.otd_p50.toFixed(1) : '—'}</div>
-              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
+              <div className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">Median</div>
+              <div className="text-2xl font-bold tabular-nums">{otdPercentiles?.otd_p50 != null ? <AnimatedNumber value={otdPercentiles.otd_p50} decimals={1} /> : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
             </div>
-            <div className="text-center px-2 py-3 bg-amber-50/40 dark:bg-amber-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Slowest 20%</div>
-              <div className="text-lg font-bold tabular-nums">{otdPercentiles?.otd_p80 != null ? otdPercentiles.otd_p80.toFixed(1) : '—'}</div>
-              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 bg-amber-50/40 dark:bg-amber-950/15">
+              <div className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1">Slowest 20%</div>
+              <div className="text-2xl font-bold tabular-nums">{otdPercentiles?.otd_p80 != null ? <AnimatedNumber value={otdPercentiles.otd_p80} decimals={1} /> : '—'}</div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+            </div>
+          </div>
+          {/* Row 1b: Extremes + weighted average (half-height spectrum row) */}
+          <div className="grid grid-cols-3 border-b border-border">
+            <div className="flex flex-col items-center justify-center px-2 py-2 border-r border-border bg-emerald-50/20 dark:bg-emerald-950/10">
+              <div className="text-[9px] font-medium text-emerald-600/70 dark:text-emerald-400/70 uppercase tracking-wider mb-0.5">Top 5%</div>
+              <div className="text-sm font-semibold tabular-nums">{otdPercentiles?.otd_p5 != null ? <AnimatedNumber value={otdPercentiles.otd_p5} decimals={1} /> : '—'}</div>
+              <div className="text-[9px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="flex flex-col items-center justify-center px-2 py-2 border-r border-border bg-zinc-50/40 dark:bg-zinc-800/20">
+              <div className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-0.5">Average</div>
+              <div className="text-sm font-semibold tabular-nums">{otdPercentiles?.otd_mean != null ? <AnimatedNumber value={otdPercentiles.otd_mean} decimals={1} /> : '—'}</div>
+              <div className="text-[9px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+            <div className="flex flex-col items-center justify-center px-2 py-2 bg-amber-50/20 dark:bg-amber-950/10">
+              <div className="text-[9px] font-medium text-amber-600/70 dark:text-amber-400/70 uppercase tracking-wider mb-0.5">Bottom 5%</div>
+              <div className="text-sm font-semibold tabular-nums">{otdPercentiles?.otd_p95 != null ? <AnimatedNumber value={otdPercentiles.otd_p95} decimals={1} /> : '—'}</div>
+              <div className="text-[9px] text-zinc-400 dark:text-zinc-500">calendar days</div>
+            </div>
+          </div>
+          {/* Row 2: Delivery stages breakdown */}
+          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-4 py-2.5 border-b border-border bg-orange-50/30 dark:bg-orange-950/10">
+            Delivery Stages
+          </div>
+          <div className="grid grid-cols-3 border-b border-border">
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-amber-50/30 dark:bg-amber-950/10">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
+              <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={fulfillTime} decimals={1} /></div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
+            </div>
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-emerald-50/30 dark:bg-emerald-950/10">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
+              <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={regionalMile} decimals={1} /></div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+            </div>
+            <div className="flex flex-col items-center justify-center px-3 py-3.5 bg-sky-50/30 dark:bg-sky-950/10">
+              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
+              <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={stateData.avgCarrierTransitDays} decimals={1} /></div>
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
             </div>
           </div>
         </div>

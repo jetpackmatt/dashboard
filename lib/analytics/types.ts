@@ -286,9 +286,12 @@ export interface StatePerformance {
 // Order-to-Delivery Percentile Types
 
 export interface OtdPercentiles {
+  otd_p5: number | null
   otd_p20: number | null
   otd_p50: number | null
   otd_p80: number | null
+  otd_p95: number | null
+  otd_mean: number | null
   sample_count: number
 }
 

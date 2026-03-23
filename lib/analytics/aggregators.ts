@@ -141,7 +141,8 @@ export function getDaysAgo(days: number): Date {
 }
 
 export function getDateRangeFromPreset(preset: string): DateRange {
-  const to = new Date()
+  const now = new Date()
+  const to = new Date(now)
   to.setHours(23, 59, 59, 999)
   let from: Date
 
@@ -158,15 +159,31 @@ export function getDateRangeFromPreset(preset: string): DateRange {
     case '90d':
       from = getDaysAgo(90)
       break
-    case '6mo':
-      from = getDaysAgo(182)
+    case '6mo': {
+      // Last 6 complete months (exclude current partial month)
+      // Use Date.UTC so toISOString().split('T')[0] returns the intended date
+      const year = now.getFullYear(), month = now.getMonth()
+      const eol = new Date(Date.UTC(year, month, 0)) // last day of prev month in UTC
+      from = new Date(Date.UTC(eol.getUTCFullYear(), eol.getUTCMonth() - 5, 1))
+      to.setTime(eol.getTime())
       break
-    case '1yr':
-      from = getDaysAgo(365)
+    }
+    case '1yr': {
+      // Last 12 complete months (exclude current partial month)
+      const year = now.getFullYear(), month = now.getMonth()
+      const eol = new Date(Date.UTC(year, month, 0))
+      from = new Date(Date.UTC(eol.getUTCFullYear(), eol.getUTCMonth() - 11, 1))
+      to.setTime(eol.getTime())
       break
-    case 'all':
-      from = getDaysAgo(365 * 3) // ~3 years back
+    }
+    case 'all': {
+      // All complete months up to last month
+      const year = now.getFullYear(), month = now.getMonth()
+      const eol = new Date(Date.UTC(year, month, 0))
+      from = new Date(Date.UTC(2023, 0, 1))
+      to.setTime(eol.getTime())
       break
+    }
     default:
       from = getDaysAgo(30)
   }

@@ -2,6 +2,7 @@
 
 import { MapPinIcon } from "lucide-react"
 import { StateVolumeData, ZipCodeVolumeData } from "@/lib/analytics/types"
+import { AnimatedNumber } from "@/components/analytics/animated-number"
 
 interface NationalVolumeOverviewPanelProps {
   stateData: StateVolumeData[]
@@ -38,11 +39,11 @@ export function NationalVolumeOverviewPanel({ stateData, cityData }: NationalVol
         <div className="grid grid-cols-2">
           <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
-            <div className="text-2xl font-bold tabular-nums">{totalOrders.toLocaleString()}</div>
+            <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={totalOrders} locale /></div>
           </div>
           <div className="text-center px-3 py-4 bg-emerald-50/40 dark:bg-emerald-950/15">
             <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg Orders/Day</div>
-            <div className="text-2xl font-bold tabular-nums">{totalAvgPerDay.toFixed(1)}</div>
+            <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={totalAvgPerDay} decimals={1} /></div>
           </div>
         </div>
         <div className="text-[10px] text-muted-foreground px-5 py-2 border-t border-border bg-indigo-50/30 dark:bg-indigo-950/10">
@@ -65,9 +66,9 @@ export function NationalVolumeOverviewPanel({ stateData, cityData }: NationalVol
               {topCities.map((city, index) => (
                 <div key={`${city.city}-${city.state}-${index}`} className="flex items-center px-5 py-3 border-t border-border hover:bg-muted/30">
                   <span className="text-xs text-muted-foreground w-5 tabular-nums">{index + 1}</span>
-                  <span className="text-xs font-medium flex-1">{capitalizeCity(city.city)}</span>
-                  <span className="text-xs text-muted-foreground w-8">{city.state}</span>
-                  <span className="text-xs font-medium tabular-nums ml-4">{city.orderCount.toLocaleString()}</span>
+                  <span className="text-xs font-medium flex-1 min-w-0 truncate">{capitalizeCity(city.city)}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap ml-3">{city.state}</span>
+                  <span className="text-xs font-medium tabular-nums ml-3 whitespace-nowrap">{city.orderCount.toLocaleString()}</span>
                 </div>
               ))}
             </div>

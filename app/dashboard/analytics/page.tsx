@@ -12,6 +12,7 @@ import {
   AreaChart,
   Bar,
   BarChart,
+  Cell,
   Line,
   ComposedChart,
   CartesianGrid,
@@ -26,13 +27,13 @@ import { Separator } from "@/components/ui/separator"
 import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
 import { PerformanceMap } from "@/components/analytics/performance-map"
 import { COUNTRY_CONFIGS } from "@/lib/analytics/geo-config"
-import { StateDetailsPanel } from "@/components/analytics/state-details-panel"
+import { PerformanceDetailsPanel } from "@/components/analytics/performance-details-panel"
 import { StateVolumeDetailsPanel } from "@/components/analytics/state-volume-details-panel"
 import { NationalVolumeOverviewPanel } from "@/components/analytics/national-volume-overview-panel"
-import { NationalPerformanceOverviewPanel } from "@/components/analytics/national-performance-overview-panel"
 import { LayeredVolumeHeatMap } from "@/components/analytics/layered-volume-heat-map"
 import { CostSpeedStateMap } from "@/components/analytics/cost-speed-state-map"
 import { KpiTooltip, KPI_TOOLTIPS } from "@/components/analytics/kpi-tooltip"
+import { AnimatedNumber } from "@/components/analytics/animated-number"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -86,6 +87,7 @@ import type {
   UndeliveredByCarrier,
   UndeliveredByStatus,
   UndeliveredByAge,
+  OtdPercentiles,
 } from "@/lib/analytics/types"
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
 import { getDateRangeFromPreset } from "@/lib/analytics/aggregators"
@@ -131,6 +133,7 @@ function useChartDateRange(
   cache: React.MutableRefObject<Map<string, any>>,
   lockedCountry?: string,
   extraParams?: Record<string, string>,
+  fetchTab?: string,
 ) {
   const [chartPreset, setChartPreset] = React.useState<DateRangePreset>(pageDateRange)
   const [chartCountry, setChartCountry] = React.useState<string>(lockedCountry || pageCountry)
@@ -154,8 +157,9 @@ function useChartDateRange(
       return
     }
 
-    // Check cache (include extraParams in cache key)
-    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}${extraParamsKey ? ':' + extraParamsKey : ''}`
+    // Check cache (include extraParams + fetchTab in cache key)
+    const tabKey = fetchTab || 'sp'
+    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached[fieldName])
@@ -176,7 +180,7 @@ function useChartDateRange(
       datePreset: chartPreset,
       country: chartCountry,
       timezone,
-      tab: 'state-performance', // Core data only — skip expensive raw-table queries
+      tab: fetchTab || 'state-performance',
       ...extraParams,
     })
 
@@ -192,7 +196,7 @@ function useChartDateRange(
       .finally(() => { if (!cancelled) setIsFetching(false) })
 
     return () => { cancelled = true }
-  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, fieldName, cache, extraParamsKey])
+  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, fieldName, cache, extraParamsKey, fetchTab])
 
   return {
     data: chartData ?? pageFieldData,
@@ -214,6 +218,7 @@ function useChartSectionRange(
   cache: React.MutableRefObject<Map<string, any>>,
   lockedCountry?: string,
   extraParams?: Record<string, string>,
+  fetchTab?: string,
 ) {
   const [chartPreset, setChartPreset] = React.useState<DateRangePreset>(pageDateRange)
   const [chartCountry, setChartCountry] = React.useState<string>(lockedCountry || pageCountry)
@@ -233,7 +238,8 @@ function useChartSectionRange(
       setChartData(null)
       return
     }
-    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}${extraParamsKey ? ':' + extraParamsKey : ''}`
+    const tabKey = fetchTab || 'sp'
+    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached)
@@ -250,7 +256,7 @@ function useChartSectionRange(
       datePreset: chartPreset,
       country: chartCountry,
       timezone,
-      tab: 'state-performance', // Core data only — skip expensive raw-table queries
+      tab: fetchTab || 'state-performance',
       ...extraParams,
     })
     fetch(`/api/data/analytics/tab-data?${params}`)
@@ -264,7 +270,7 @@ function useChartSectionRange(
       .catch(() => {})
       .finally(() => { if (!cancelled) setIsFetching(false) })
     return () => { cancelled = true }
-  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, cache, extraParamsKey])
+  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, cache, extraParamsKey, fetchTab])
 
   return {
     data: chartData ?? pageData,
@@ -303,7 +309,7 @@ function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hide
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="end" className="font-roboto text-xs">
-            {!hideAllCountry && <SelectItem value="ALL">All</SelectItem>}
+            {!hideAllCountry && <SelectItem value="ALL">All Regions</SelectItem>}
             <SelectItem value="US">USA</SelectItem>
             {availableCountries.includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
           </SelectContent>
@@ -392,11 +398,6 @@ export default function AnalyticsPage() {
   })
 
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
-  type OtdP = { otd_p20: number | null; otd_p50: number | null; otd_p80: number | null; sample_count: number }
-  const [nationalOtdClean, setNationalOtdClean] = React.useState<OtdP | null>(null)
-  const [nationalOtdWithDelayed, setNationalOtdWithDelayed] = React.useState<OtdP | null>(null)
-  const [stateOtdClean, setStateOtdClean] = React.useState<OtdP | null>(null)
-  const [stateOtdWithDelayed, setStateOtdWithDelayed] = React.useState<OtdP | null>(null)
   const [selectedCountry, setSelectedCountry] = React.useState('US')
   // Performance tab needs a specific country (map requires config) — fall back to US when ALL
   const perfCountry = selectedCountry === 'ALL' ? 'US' : selectedCountry
@@ -407,6 +408,7 @@ export default function AnalyticsPage() {
 
   // Include International toggle for Cost & Speed — default: domestic only
   const [includeInternational, setIncludeInternational] = React.useState(false)
+  const [includeIntlZones, setIncludeIntlZones] = React.useState(false)
 
   // SLA-specific filters
   const [selectedFulfillmentCenters, setSelectedFulfillmentCenters] = React.useState<string[]>([])
@@ -443,49 +445,24 @@ export default function AnalyticsPage() {
     })
   }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone])
 
-  // Fetch OTD percentiles (both clean + with-delayed variants, national + state)
-  // Both variants fetched upfront so the toggle switches instantly (no network delay)
-  React.useEffect(() => {
-    if (!effectiveClientId || !currentDateRange) {
-      setNationalOtdClean(null)
-      setNationalOtdWithDelayed(null)
-      setStateOtdClean(null)
-      setStateOtdWithDelayed(null)
-      return
+  // OTD percentiles — pre-loaded for all states in one query via tab-data route
+  // Both clean and with-delayed variants fetched so the toggle switches instantly
+  const buildOtdMap = React.useCallback((otdData: any) => {
+    const map = new Map<string, OtdPercentiles>()
+    if (!otdData) return map
+    if (otdData.national) map.set('_NATIONAL_', otdData.national)
+    if (otdData.by_state) {
+      for (const s of otdData.by_state) {
+        if (s.state) map.set(s.state, s)
+      }
     }
-    let cancelled = false
-    const startDate = currentDateRange.from.toISOString().split('T')[0]
-    const endDate = currentDateRange.to.toISOString().split('T')[0]
-    const base: Record<string, string> = {
-      clientId: effectiveClientId,
-      startDate,
-      endDate,
-      country: perfCountry,
-    }
-    const fetchOtd = (extra: Record<string, string> = {}) =>
-      fetch(`/api/data/analytics/otd-percentiles?${new URLSearchParams({ ...base, ...extra })}`)
-        .then(res => res.ok ? res.json() : null)
-    // National: both variants
-    fetchOtd({ includeDelayed: 'false' })
-      .then(data => { if (!cancelled) setNationalOtdClean(data) })
-      .catch(() => { if (!cancelled) setNationalOtdClean(null) })
-    fetchOtd({ includeDelayed: 'true' })
-      .then(data => { if (!cancelled) setNationalOtdWithDelayed(data) })
-      .catch(() => { if (!cancelled) setNationalOtdWithDelayed(null) })
-    // State-level: both variants if state selected
-    if (selectedState) {
-      fetchOtd({ includeDelayed: 'false', state: selectedState })
-        .then(data => { if (!cancelled) setStateOtdClean(data) })
-        .catch(() => { if (!cancelled) setStateOtdClean(null) })
-      fetchOtd({ includeDelayed: 'true', state: selectedState })
-        .then(data => { if (!cancelled) setStateOtdWithDelayed(data) })
-        .catch(() => { if (!cancelled) setStateOtdWithDelayed(null) })
-    } else {
-      setStateOtdClean(null)
-      setStateOtdWithDelayed(null)
-    }
-    return () => { cancelled = true }
-  }, [selectedState, effectiveClientId, currentDateRange, perfCountry])
+    return map
+  }, [])
+  const otdMapClean = React.useMemo(() => buildOtdMap(analyticsData?.otdPercentilesByStateClean), [analyticsData?.otdPercentilesByStateClean, buildOtdMap])
+  const otdMapDelayed = React.useMemo(() => buildOtdMap(analyticsData?.otdPercentilesByStateDelayed), [analyticsData?.otdPercentilesByStateDelayed, buildOtdMap])
+  const otdMap = includeDelayedOrders ? otdMapDelayed : otdMapClean
+  const nationalOtdPercentiles = otdMap.get('_NATIONAL_') || null
+  const stateOtdPercentiles = selectedState ? (otdMap.get(selectedState) || nationalOtdPercentiles) : null
 
   // Fetch pre-aggregated data from server when client, date range, or country changes
   React.useEffect(() => {
@@ -602,6 +579,82 @@ export default function AnalyticsPage() {
 
   const delayImpact = analyticsData?.delayImpact || null
 
+  // Unified performance panel props — computed once, same component always renders
+  const perfPanelProps = React.useMemo(() => {
+    const regionLabelPlural = COUNTRY_CONFIGS[perfCountry]?.regionLabelPlural || 'States'
+    const regionLabel = COUNTRY_CONFIGS[perfCountry]?.regionLabel || 'State'
+    const knownCodes = new Set(Object.keys(COUNTRY_CONFIGS[perfCountry]?.codeToName || {}))
+    const filteredData = statePerformance.filter(s => knownCodes.has(s.state))
+    const selectedStateData = selectedState ? statePerformance.find(s => s.state === selectedState) : null
+
+    if (selectedStateData) {
+      // State mode: direct values, top 5 cities
+      const cityData = analyticsData?.perfCityData || []
+      const topCities = cityData
+        .filter((c: any) => c.state === selectedState && c.orderCount > 0)
+        .sort((a: any, b: any) => b.orderCount - a.orderCount)
+        .slice(0, 5)
+
+      return {
+        title: selectedStateData.stateName,
+        orderCount: selectedStateData.orderCount,
+        otdPercentiles: stateOtdPercentiles,
+        fulfillTime: selectedStateData.avgFulfillTimeHours,
+        middleMile: selectedStateData.avgRegionalMileDays,
+        lastMile: selectedStateData.avgCarrierTransitDays,
+        listTitle: 'Top 5 Cities',
+        listItems: topCities.map((c: any) => ({
+          key: c.city,
+          label: c.city,
+          value: c.orderCount.toLocaleString(),
+        })),
+        clickHint: undefined as string | undefined,
+      }
+    }
+
+    // National mode: weighted averages, top 5 fastest states
+    const totalShipped = filteredData.reduce((sum, s) => sum + s.shippedCount, 0)
+    const totalDelivered = filteredData.reduce((sum, s) => sum + s.deliveredCount, 0)
+    const avgFulfillTime = totalShipped > 0
+      ? filteredData.reduce((sum, s) => sum + (s.avgFulfillTimeHours * s.shippedCount), 0) / totalShipped : 0
+    const avgCarrierTransit = totalDelivered > 0
+      ? filteredData.reduce((sum, s) => sum + (s.avgCarrierTransitDays * s.deliveredCount), 0) / totalDelivered : 0
+    const avgRegionalMile = totalDelivered > 0
+      ? filteredData.reduce((sum, s) => {
+          const rm = s.avgDeliveryTimeDays > 0 ? Math.max(0, s.avgDeliveryTimeDays - s.avgFulfillTimeHours / 24 - s.avgCarrierTransitDays) : 0
+          return sum + (rm * s.deliveredCount)
+        }, 0) / totalDelivered : 0
+
+    const eligible = filteredData.filter(s => s.avgDeliveryTimeDays > 0)
+    const strict = eligible.filter(s => s.deliveredCount >= 10)
+    const fastest = (strict.length >= 3 ? strict : eligible.filter(s => s.deliveredCount >= 1))
+      .sort((a, b) => a.avgDeliveryTimeDays - b.avgDeliveryTimeDays)
+      .slice(0, 5)
+
+    const getBadge = (d: number) => {
+      if (d < 3) return React.createElement(Badge, { className: 'bg-green-500 text-[10px] px-1.5 py-0' }, 'Fast')
+      if (d < 5) return React.createElement(Badge, { className: 'bg-[hsl(203,61%,50%)] text-[10px] px-1.5 py-0' }, 'Good')
+      return React.createElement(Badge, { className: 'bg-orange-500 text-[10px] px-1.5 py-0' }, 'Slow')
+    }
+
+    return {
+      title: `${perfCountry === 'US' ? 'USA' : COUNTRY_CONFIGS[perfCountry]?.label} National Average`,
+      orderCount: null as number | null,
+      otdPercentiles: nationalOtdPercentiles,
+      fulfillTime: avgFulfillTime,
+      middleMile: avgRegionalMile,
+      lastMile: avgCarrierTransit,
+      listTitle: `Top 5 Fastest ${regionLabelPlural}`,
+      listItems: fastest.map(s => ({
+        key: s.state,
+        label: s.stateName,
+        value: `${s.avgDeliveryTimeDays.toFixed(1)}d`,
+        badge: getBadge(s.avgDeliveryTimeDays),
+      })),
+      clickHint: `Click a ${regionLabel.toLowerCase()} on the map to view detailed metrics`,
+    }
+  }, [selectedState, statePerformance, analyticsData?.perfCityData, perfCountry, nationalOtdPercentiles, stateOtdPercentiles])
+
   const kpiData: KPIMetrics = analyticsData?.kpis || {
     totalCost: 0, orderCount: 0, avgTransitTime: 0, avgFulfillTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0,
     periodChange: { totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0 }
@@ -712,25 +765,22 @@ export default function AnalyticsPage() {
     chartDataCache.current.set(cacheKey, analyticsData)
   }, [analyticsData, dateRange, selectedCountry, settings.timezone, effectiveClientId])
   // === Order Volume tab hooks ===
-  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
 
   // === Cost + Speed tab hooks ===
-  // When includeInternational is false (default), pass domesticOnly=true via extraParams
-  // to filter out international destinations. When true, no extra params needed (use page data as-is).
-  const costSpeedExtraParams = React.useMemo(
-    () => includeInternational ? undefined : { domesticOnly: 'true' },
-    [includeInternational]
-  )
-  const costSpeedKpiSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  // Page data includes all destinations. The "Include International" checkbox filters via
+  // page-level re-fetch (buildFetchParams includes domesticOnly when needed).
+  // All hooks use page data directly — no independent per-hook fetching.
+  const costSpeedKpiSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const costSpeedMapSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const costTrendChart = useChartDateRange(costTrendData, 'costTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
-  const deliverySpeedChart = useChartDateRange(analyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const costTrendChart = useChartDateRange(costTrendData, 'costTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const deliverySpeedChart = useChartDateRange(analyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const zoneCostChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const shipOptionChart = useChartDateRange(shipOptionPerformanceData, 'shipOptionPerformance', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, costSpeedExtraParams)
+  const shipOptionChart = useChartDateRange(shipOptionPerformanceData, 'shipOptionPerformance', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
   // === carriers-zones tab data (declared here so hooks below can use it) ===
   const carrierPerformance: CarrierPerformance[] = analyticsData?.carrierPerformance || []
@@ -754,19 +804,30 @@ export default function AnalyticsPage() {
   // Financials always uses 'ALL' via lockedCountry — invoices can't be split by country.
   // pageCountry = selectedCountry (truthful about what page data contains) so the hook
   // knows when to use page data vs fetch independently with country='ALL'.
-  const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
 
   // === SLA tab hooks ===
   const slaTrendChart = useChartDateRange(analyticsData?.onTimeTrend || [], 'onTimeTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const fulfillTrendChart = useChartDateRange(analyticsData?.fulfillmentTrend || [], 'fulfillmentTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const fcFulfillChart = useChartDateRange(fcFulfillmentMetrics, 'fcFulfillmentMetrics', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+
+  // Aggregate chart-level fetching state for loading overlay
+  const isAnyChartFetching = financialsSection.isFetching || costSpeedKpiSection.isFetching ||
+    costSpeedMapSection.isFetching || carrierSection.isFetching ||
+    dailyVolumeChart.isFetching || hourChart.isFetching || dowChart.isFetching ||
+    fcChart.isFetching || storeChart.isFetching || costTrendChart.isFetching ||
+    deliverySpeedChart.isFetching || zoneCostChart.isFetching || shipOptionChart.isFetching ||
+    billingTrendChart.isFetching || costDistChart.isFetching || feeBreakdownChart.isFetching ||
+    pickPackChart.isFetching || costPerOrderChart.isFetching || shippingByZoneChart.isFetching ||
+    additionalSvcChart.isFetching || carrierZoneChart.isFetching || zoneDeepDiveChart.isFetching ||
+    slaTrendChart.isFetching || fulfillTrendChart.isFetching || fcFulfillChart.isFetching
 
   // === Cost+Speed KPI section derived data ===
   const kpiSectionData = costSpeedKpiSection.data
@@ -871,13 +932,41 @@ export default function AnalyticsPage() {
   }
 
   const chartZoneCostData = React.useMemo(() => bucketZoneCost(zoneCostChart.data as ZoneCostData[], zoneCostChart.country), [zoneCostChart.data, zoneCostChart.country])
-  const carrierZoneCostData = React.useMemo(() => bucketZoneCost(carrierZoneChart.data as ZoneCostData[], carrierZoneChart.country), [carrierZoneChart.data, carrierZoneChart.country])
+  const carrierZoneCostDataAll = React.useMemo(() => bucketZoneCost(carrierZoneChart.data as ZoneCostData[], carrierZoneChart.country), [carrierZoneChart.data, carrierZoneChart.country])
+  const carrierZoneCostData = React.useMemo(() => includeIntlZones ? carrierZoneCostDataAll : carrierZoneCostDataAll.filter(z => z.zone !== 'Intl'), [carrierZoneCostDataAll, includeIntlZones])
   const zoneDeepDiveData = React.useMemo(() => bucketZoneCost(zoneDeepDiveChart.data as ZoneCostData[], zoneDeepDiveChart.country), [zoneDeepDiveChart.data, zoneDeepDiveChart.country])
 
   const carrierSectionData = carrierSection.data
-  const chartCarrierPerformance: CarrierPerformance[] = carrierSectionData?.carrierPerformance || carrierPerformance
+  const [carrierShipOption, setCarrierShipOption] = React.useState<string>('Standard / Economy')
+  const rawShipOptions: { name: string; count: number }[] = carrierSectionData?.availableShipOptions || analyticsData?.availableShipOptions || []
+  // Only show ship options where at least one carrier has 50+ orders
+  const availableShipOptions = React.useMemo(() => {
+    const byShipOptionPerf = carrierSectionData?.carrierPerformanceByShipOption || analyticsData?.carrierPerformanceByShipOption || {}
+    return rawShipOptions.filter(so => {
+      const carriers: any[] = byShipOptionPerf[so.name] || []
+      return carriers.some(c => c.orderCount >= 50)
+    })
+  }, [rawShipOptions, carrierSectionData, analyticsData])
+  // Reset to Standard / Economy if current selection no longer available
+  React.useEffect(() => {
+    if (availableShipOptions.length > 0 && !availableShipOptions.some(so => so.name === carrierShipOption)) {
+      setCarrierShipOption(availableShipOptions[0].name)
+    }
+  }, [availableShipOptions, carrierShipOption])
+  const chartCarrierPerformance: CarrierPerformance[] = React.useMemo(() => {
+    const allData = carrierSectionData?.carrierPerformance || carrierPerformance
+    if (carrierShipOption === 'All') return allData
+    const byShipOption = carrierSectionData?.carrierPerformanceByShipOption || analyticsData?.carrierPerformanceByShipOption || {}
+    return byShipOption[carrierShipOption] || allData
+  }, [carrierSectionData, carrierPerformance, analyticsData, carrierShipOption])
   const chartTransitDistribution: TransitTimeDistributionData[] = carrierSectionData?.transitDistribution || transitTimeDistributionData
-  const chartCarrierZoneBreakdown: { carrier: string; zone: string; orderCount: number }[] = carrierSectionData?.carrierZoneBreakdown || analyticsData?.carrierZoneBreakdown || []
+  const chartCarrierZoneBreakdown: { carrier: string; zone: string; orderCount: number; avgTransitTime?: number }[] = React.useMemo(() => {
+    const allData = carrierSectionData?.carrierZoneBreakdown || analyticsData?.carrierZoneBreakdown || []
+    if (carrierShipOption === 'All') return allData
+    const byShipOption = carrierSectionData?.carrierZoneByShipOption || analyticsData?.carrierZoneByShipOption || {}
+    return byShipOption[carrierShipOption] || allData
+  }, [carrierSectionData, analyticsData, carrierShipOption])
+  const chartCarrierZoneCost: ZoneCostData[] = carrierSectionData?.zoneCost || analyticsData?.zoneCost || []
 
 
   // Background pre-fetch all presets so chart selector changes are instant
@@ -982,7 +1071,7 @@ export default function AnalyticsPage() {
   }, [finBillingTrend])
 
   // === sla tab ===
-  const slaMetrics = React.useMemo(() => {
+  const slaMetricsBase = React.useMemo(() => {
     if (!analyticsData?.slaMetrics) {
       return { onTimePercent: 0, breachedCount: 0, totalShipments: 0, shipments: [] as SLAMetrics[] }
     }
@@ -996,6 +1085,16 @@ export default function AnalyticsPage() {
       ] as SLAMetrics[],
     }
   }, [analyticsData?.slaMetrics])
+
+  // Compute SLA average from the chart's displayed trend data so KPI always matches chart
+  const slaMetrics = React.useMemo(() => {
+    const chartData = slaTrendChart.data as any[]
+    if (!chartData || chartData.length === 0) return slaMetricsBase
+    const valid = chartData.filter((d: any) => d.onTimePercent != null && d.onTimePercent >= 0)
+    if (valid.length === 0) return slaMetricsBase
+    const avg = valid.reduce((sum: number, d: any) => sum + d.onTimePercent, 0) / valid.length
+    return { ...slaMetricsBase, onTimePercent: avg }
+  }, [slaMetricsBase, slaTrendChart.data])
 
   const fulfillmentTrendData: FulfillmentTrendData[] = React.useMemo(() => {
     const raw = analyticsData?.fulfillmentTrend || []
@@ -1120,7 +1219,7 @@ export default function AnalyticsPage() {
           </div>
         )}
       </SiteHeader>
-      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
+      <div className="flex flex-1 flex-col overflow-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col w-full font-roboto">
           <div className="flex flex-col w-full px-4 lg:px-6">
             {/* Tabs for Different Reports */}
@@ -1139,8 +1238,18 @@ export default function AnalyticsPage() {
                 <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
               )}
 
-              {/* Tab content wrapper - greyed out during loading or tab transition */}
-              <div className={(isLoadingData || isTabTransitioning) ? "opacity-20 pointer-events-none" : "transition-opacity duration-150"}>
+              {/* Loading overlay - fixed to viewport so it's always visible regardless of scroll */}
+              {(isLoadingData || isLoadingTabData || isTabTransitioning || isAnyChartFetching) && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
+                  <div className="flex flex-col items-center gap-2 bg-background/90 backdrop-blur-sm rounded-xl px-6 py-4 shadow-lg border border-border/50 pointer-events-auto">
+                    <JetpackLoader size="md" />
+                    <span className="text-xs text-muted-foreground">Loading analytics</span>
+                  </div>
+                </div>
+              )}
+              {/* Tab content wrapper - dimmed during loading or tab transition */}
+              <div className="relative">
+              <div className={(isLoadingData || isTabTransitioning || isAnyChartFetching) ? "opacity-30 pointer-events-none transition-opacity duration-300" : "transition-opacity duration-150"}>
 
               {/* Tab 1: Financials */}
               <TabsContent value="financials" className="mt-0">
@@ -1183,7 +1292,7 @@ export default function AnalyticsPage() {
                             </linearGradient>
                           </defs>
                           <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
-                          <XAxis dataKey="monthLabel" tickLine={false} axisLine={false} tickMargin={8} fontSize={12} tick={{ fill: 'hsl(var(--foreground))' }} />
+                          <XAxis dataKey="monthLabel" tickLine={false} axisLine={false} tickMargin={8} fontSize={12} height={28} tick={{ fill: 'hsl(var(--foreground))' }} />
                           <YAxis tickLine={false} axisLine={false} tickMargin={8} fontSize={11} allowDecimals={false} domain={billingChartYDomain} allowDataOverflow tickFormatter={(value) => `$${(value / 1000).toFixed(1)}k`} />
                           <ChartTooltip
                             content={({ active, payload, label }) => {
@@ -1250,9 +1359,9 @@ export default function AnalyticsPage() {
                       </div>
                       {/* Row 1: Total Cost — full width */}
                       <div className="flex flex-col items-center justify-center px-4 bg-sky-50/50 dark:bg-sky-950/20 border-b border-border flex-1">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Total Cost</div>
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Total Cost <KpiTooltip text={KPI_TOOLTIPS.totalCost} /></div>
                         <div className="text-3xl font-bold tabular-nums">
-                          ${finBillingSummary.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <AnimatedNumber value={finBillingSummary.totalCost} prefix="$" decimals={2} locale />
                         </div>
                         <div className={cn(
                           "text-xs mt-1",
@@ -1264,8 +1373,8 @@ export default function AnalyticsPage() {
                       {/* Row 2: Orders | Cost per Order */}
                       <div className="grid grid-cols-2 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-3 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Orders</div>
-                          <div className="text-2xl font-bold tabular-nums">{finBillingSummary.orderCount.toLocaleString()}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Orders <KpiTooltip text={KPI_TOOLTIPS.orders} /></div>
+                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.orderCount} locale /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
                             finBillingSummary.periodChange.orderCount > 0 ? "text-green-500" : finBillingSummary.periodChange.orderCount < 0 ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
@@ -1274,8 +1383,8 @@ export default function AnalyticsPage() {
                           </div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-3 bg-amber-50/40 dark:bg-amber-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Cost / Order</div>
-                          <div className="text-2xl font-bold tabular-nums">${finBillingSummary.costPerOrder.toFixed(2)}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Cost / Order <KpiTooltip text={KPI_TOOLTIPS.costPerOrder} /></div>
+                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.costPerOrder} prefix="$" decimals={2} /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
                             finBillingSummary.periodChange.costPerOrder > 0 ? "text-red-500" : finBillingSummary.periodChange.costPerOrder < 0 ? "text-green-500" : "text-zinc-400 dark:text-zinc-500"
@@ -1287,41 +1396,40 @@ export default function AnalyticsPage() {
                       {/* Row 3: Cost/Item | Items/Order | % of Revenue */}
                       <div className="grid grid-cols-3 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cost / Item</div>
-                          <div className="text-lg font-bold tabular-nums">${(finBillingEfficiency?.costPerItem ?? 0).toFixed(2)}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cost / Item <KpiTooltip text={KPI_TOOLTIPS.costPerItem} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.costPerItem ?? 0} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Items / Order</div>
-                          <div className="text-lg font-bold tabular-nums">{(finBillingEfficiency?.avgItemsPerOrder ?? 0).toFixed(1)}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Items / Order <KpiTooltip text={KPI_TOOLTIPS.itemsPerOrder} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgItemsPerOrder ?? 0} decimals={1} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Revenue</div>
-                          <div className="text-lg font-bold tabular-nums">{(finBillingEfficiency?.fulfillmentAsPercentOfRevenue ?? 0).toFixed(1)}%</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Revenue <KpiTooltip text={KPI_TOOLTIPS.pctOfRevenue} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.fulfillmentAsPercentOfRevenue ?? 0} decimals={1} suffix="%" /></div>
                         </div>
                       </div>
                       {/* Row 4: Avg Rev/Order | Surcharge % | Credits */}
                       <div className="grid grid-cols-3 flex-1 border-b border-border">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order</div>
-                          <div className="text-lg font-bold tabular-nums">${(finBillingEfficiency?.avgRevenuePerOrder ?? 0).toFixed(2)}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgRevenuePerOrder ?? 0} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Surcharges</div>
-                          <div className="text-lg font-bold tabular-nums">{(finBillingEfficiency?.surchargePercentOfCost ?? 0).toFixed(1)}%</div>
-                          <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">of fulfillment cost</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Surcharges <KpiTooltip text={KPI_TOOLTIPS.surcharges} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.surchargePercentOfCost ?? 0} decimals={1} suffix="%" /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 bg-green-50/50 dark:bg-green-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Credits</div>
-                          <div className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400">-${(finBillingEfficiency?.totalCredits ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</div>
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Credits <KpiTooltip text={KPI_TOOLTIPS.credits} /></div>
+                          <div className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400"><AnimatedNumber value={finBillingEfficiency?.totalCredits ?? 0} prefix="$" locale /></div>
                         </div>
                       </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="px-5 lg:px-8 py-5 space-y-5">
+                  <div className="px-5 lg:px-8 py-8 space-y-12">
                 {/* Row 2: Cost Distribution + Pick/Pack + Cost per Order Trend */}
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-[50px] md:grid-cols-2 lg:grid-cols-3">
                   {/* Cost Distribution */}
                   <Card className="bg-transparent shadow-none">
                     <CardHeader className="pb-0">
@@ -1409,59 +1517,69 @@ export default function AnalyticsPage() {
                   </Card>
 
                   {/* Pick/Pack Distribution */}
-                  <Card className="bg-transparent shadow-none">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                  <Card className="bg-transparent shadow-none flex flex-col">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[55px]">
                       <div>
                         <div className="text-sm font-semibold">Pick &amp; Pack Distribution</div>
                         <div className="text-xs text-muted-foreground mt-0.5">Orders by item count</div>
                       </div>
                       <ChartSelectors chart={pickPackChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
                     </div>
-                    <CardContent>
+                    <CardContent className="flex-1 flex flex-col">
+                      {(() => {
+                        const ppData = (pickPackChart.data as PickPackDistribution[]) || []
+                        return (
                       <ChartContainer
                         config={{
                           orderCount: { label: "Orders", color: "hsl(var(--chart-1))" },
                         }}
-                        className="h-[240px] w-full"
+                        className="w-full flex-1 min-h-[280px]"
                       >
-                        <BarChart data={pickPackChart.data as PickPackDistribution[]} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
-                          <CartesianGrid vertical={false} />
-                          <XAxis type="category" dataKey="itemCount" tickLine={false} axisLine={false} fontSize={11} />
-                          <YAxis type="number" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => v.toLocaleString()} />
+                        <BarChart data={ppData} margin={{ top: 10, right: 0, left: 0, bottom: 17 }}>
+                          <XAxis type="category" dataKey="itemCount" tickLine={false} axisLine={false} fontSize={11} tick={(tickProps: any) => {
+                            const { x, y, payload } = tickProps
+                            const pp = ppData.find(d => d.itemCount === payload.value)
+                            if (!pp) return <g />
+                            return (
+                              <g transform={`translate(${x},${y + 8})`}>
+                                <text textAnchor="middle" fontSize={12} fontWeight={600} fill="currentColor">{pp.percent.toFixed(1)}%</text>
+                                <text textAnchor="middle" y={16} fontSize={10} fill="currentColor" opacity={0.5}>{pp.orderCount.toLocaleString()} orders</text>
+                                <text textAnchor="middle" y={30} fontSize={11} fontWeight={500} fill="currentColor" style={{ fontVariantNumeric: 'tabular-nums' }}>{pp.itemCount} {pp.itemCount === '1' ? 'item' : 'items'}</text>
+                              </g>
+                            )
+                          }} />
+                          <YAxis type="number" hide />
                           <ChartTooltip
                             content={<ChartTooltipContent indicator="dot" />}
                           />
-                          <Bar dataKey="orderCount" fill="var(--color-orderCount)" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="orderCount" radius={[4, 4, 0, 0]} barSize={48}>
+                            {ppData.map((_, i) => (
+                              <Cell key={i} fill={`hsl(217, 72%, ${42 + i * (30 / Math.max(ppData.length - 1, 1))}%)`} />
+                            ))}
+                            <LabelList dataKey="orderCount" position="top" fontSize={11} fontWeight={500} className="fill-muted-foreground" style={{ fontVariantNumeric: 'tabular-nums' }} formatter={(v: number) => v.toLocaleString()} />
+                          </Bar>
                         </BarChart>
                       </ChartContainer>
-                      {/* Stats */}
-                      <div className="grid grid-cols-5 gap-2 mt-3 text-center">
-                        {(pickPackChart.data as PickPackDistribution[]).map((pp) => (
-                          <div key={pp.itemCount} className="p-2 bg-muted/30 rounded">
-                            <div className="text-[10px] text-muted-foreground">{pp.itemCount} {pp.itemCount === '1' ? 'item' : 'items'}</div>
-                            <div className="text-sm font-semibold tabular-nums">{pp.percent.toFixed(1)}%</div>
-                            <div className="text-[10px] text-muted-foreground tabular-nums">{pp.orderCount.toLocaleString()} orders</div>
-                          </div>
-                        ))}
-                      </div>
+                        )
+                      })()}
                     </CardContent>
                   </Card>
 
                   {/* Cost per Order Trend */}
-                  <Card className="bg-transparent shadow-none">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                  <Card className="bg-transparent shadow-none flex flex-col">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[48px]">
                       <div>
                         <div className="text-sm font-semibold">Cost per Order Trend</div>
                         <div className="text-xs text-muted-foreground mt-0.5">Average cost over time</div>
                       </div>
                       <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
                     </div>
-                    <CardContent>
+                    <CardContent className="flex-1 flex flex-col">
                       <ChartContainer
                         config={{
                           costPerOrder: { label: "Cost per Order", color: "hsl(var(--chart-1))" },
                         }}
-                        className="h-[240px] w-full"
+                        className="w-full flex-1 min-h-[240px]"
                       >
                         <AreaChart data={costPerOrderChart.data as CostPerOrderTrend[]} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                           <defs>
@@ -1517,77 +1635,31 @@ export default function AnalyticsPage() {
                   </Card>
                 </div>
 
-                {/* Row 3: Shipping by Zone + Surcharge Breakdown */}
-                <div className="grid gap-6 md:grid-cols-2">
-                  {/* Shipping Cost by Zone */}
+                {/* Non-Shipping Cost Breakdown — full width */}
+                <div>
                   <Card className="bg-transparent shadow-none">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[15px]">
                       <div>
-                        <div className="text-sm font-semibold">Shipping Cost by Zone</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">Zone-based shipping analysis</div>
-                      </div>
-                      <ChartSelectors chart={shippingByZoneChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
-                    </div>
-                    <CardContent>
-                      <ChartContainer
-                        config={{
-                          avgShipping: { label: "Avg Shipping", color: "hsl(var(--chart-1))" },
-                        }}
-                        className="h-[260px] w-full"
-                      >
-                        <ComposedChart data={shippingCostByZone} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                          <CartesianGrid vertical={false} />
-                          <XAxis dataKey="zone" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => v === 'Intl' ? 'Intl' : `Zone ${v}`} />
-                          <YAxis yAxisId="left" tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} tickFormatter={(v) => `$${v}`} />
-                          <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} fontSize={11} allowDecimals={false} tickFormatter={(v) => v.toLocaleString()} />
-                          <ChartTooltip
-                            content={
-                              <ChartTooltipContent
-                                indicator="dot"
-                                labelFormatter={(value) => value === 'Intl' ? 'International' : `Zone ${value}`}
-                                formatter={(value, name, item) => (
-                                  <>
-                                    <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
-                                    <div className="flex flex-1 justify-between items-center leading-none">
-                                      <span className="text-muted-foreground">{name === 'avgShipping' ? 'Avg Shipping' : 'Orders'}</span>
-                                      <span className="font-mono font-medium tabular-nums text-foreground ml-4">{name === 'avgShipping' ? `$${Number(value).toFixed(2)}` : Number(value).toLocaleString()}</span>
-                                    </div>
-                                  </>
-                                )}
-                              />
-                            }
-                          />
-                          <Bar yAxisId="left" dataKey="avgShipping" fill="var(--color-avgShipping)" radius={[4, 4, 0, 0]} />
-                          <Line yAxisId="right" type="monotone" dataKey="orderCount" stroke="hsl(0, 0%, 25%)" strokeWidth={2} dot={{ fill: 'hsl(0, 0%, 25%)', strokeWidth: 0, r: 4 }} />
-                        </ComposedChart>
-                      </ChartContainer>
-                      <div className="flex justify-center gap-6 mt-2 text-xs">
-                        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ backgroundColor: 'hsl(var(--chart-1))' }} /><span>Avg Shipping Cost</span></div>
-                        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ backgroundColor: 'hsl(0, 0%, 25%)' }} /><span>Order Volume</span></div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Additional Services Breakdown */}
-                  <Card className="bg-transparent shadow-none">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
-                      <div>
-                        <div className="text-sm font-semibold">Additional Services Breakdown</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">Breakdown of additional service fees</div>
+                        <div className="text-sm font-semibold">Non-Shipping Cost Breakdown</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">All fulfillment fees excluding shipping and credits</div>
                       </div>
                       <ChartSelectors chart={additionalSvcChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
                     </div>
                     <CardContent>
+                      {(() => {
+                        const svcData = (additionalSvcChart.data as AdditionalServicesBreakdown[]) || []
+                        const totalAmount = svcData.reduce((s, d) => s + d.amount, 0)
+                        const yAxisWidth = Math.max(80, ...svcData.map(d => d.category.length * 6 + 12))
+                        return (
                       <ChartContainer
                         config={{
                           amount: { label: "Amount", color: "hsl(var(--chart-1))" },
                         }}
-                        className="w-full" style={{ height: `${Math.max(200, ((additionalSvcChart.data as AdditionalServicesBreakdown[])?.length || 0) * 28 + 30)}px` }}
+                        className="w-full [&_svg]:overflow-visible" style={{ height: `${Math.max(200, svcData.length * 34 + 20)}px` }}
                       >
-                        <BarChart data={additionalSvcChart.data as AdditionalServicesBreakdown[]} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                          <CartesianGrid vertical={false} />
-                          <XAxis type="number" tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => `$${v.toLocaleString()}`} />
-                          <YAxis type="category" dataKey="category" tickLine={false} axisLine={false} fontSize={10} width={120} interval={0} />
+                        <BarChart data={svcData} layout="vertical" margin={{ top: 0, right: 0, left: 0, bottom: 0 }} barCategoryGap="20%">
+                          <XAxis type="number" hide />
+                          <YAxis type="category" dataKey="category" tickLine={false} axisLine={false} fontSize={11} fontWeight={500} width={yAxisWidth} interval={0} tick={{ textAnchor: 'start', dx: -(yAxisWidth - 8) }} />
                           <ChartTooltip
                             content={
                               <ChartTooltipContent
@@ -1604,32 +1676,22 @@ export default function AnalyticsPage() {
                               />
                             }
                           />
-                          <Bar dataKey="amount" fill="var(--color-amount)" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="amount" radius={4} barSize={18}>
+                            {svcData.map((_, i) => {
+                              const opacity = 1 - (i / Math.max(svcData.length - 1, 1)) * 0.55
+                              return <Cell key={i} fill={`hsl(217, 72%, ${42 + i * (30 / Math.max(svcData.length - 1, 1))}%)`} fillOpacity={opacity} />
+                            })}
+                            <LabelList dataKey="amount" position="right" content={(props: any) => {
+                              const { x, y, width, height, value } = props
+                              const pct = totalAmount > 0 ? (value / totalAmount * 100).toFixed(1) : '0'
+                              const label = `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct}%)`
+                              return <text x={x + width + 6} y={y + height / 2} dominantBaseline="central" fontSize={11} fontWeight={500} fill="currentColor" style={{ fontVariantNumeric: 'tabular-nums' }}>{label}</text>
+                            }} />
+                          </Bar>
                         </BarChart>
                       </ChartContainer>
-                      {/* Additional services summary stats */}
-                      <div className="grid grid-cols-3 gap-3 mt-4 pt-3 border-t">
-                        <div className="text-center">
-                          <div className="text-[10px] text-muted-foreground">Total Fees</div>
-                          <div className="text-sm font-bold tabular-nums">
-                            ${(additionalSvcChart.data as AdditionalServicesBreakdown[]).reduce((s, d) => s + d.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-muted-foreground">Transactions</div>
-                          <div className="text-sm font-bold tabular-nums">
-                            {(additionalSvcChart.data as AdditionalServicesBreakdown[]).reduce((s, d) => s + d.transactionCount, 0).toLocaleString()}
-                          </div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-muted-foreground">Avg Fee</div>
-                          <div className="text-sm font-bold tabular-nums">
-                            ${(additionalSvcChart.data as AdditionalServicesBreakdown[]).length > 0 && (additionalSvcChart.data as AdditionalServicesBreakdown[]).reduce((s, d) => s + d.transactionCount, 0) > 0
-                              ? ((additionalSvcChart.data as AdditionalServicesBreakdown[]).reduce((s, d) => s + d.amount, 0) / (additionalSvcChart.data as AdditionalServicesBreakdown[]).reduce((s, d) => s + d.transactionCount, 0)).toFixed(2)
-                              : '0.00'}
-                          </div>
-                        </div>
-                      </div>
+                        )
+                      })()}
                     </CardContent>
                   </Card>
                 </div>
@@ -1654,6 +1716,50 @@ export default function AnalyticsPage() {
                   <CardContent className="pt-[7px]">
                     {(() => {
                       const feeData = [...(feeBreakdownChart.data as MonthlyBillingTrend[])].reverse()
+
+                      // Column color tinting — matches stacked area chart colors
+                      const tint = (h: number, s: number, l: number, max: number) =>
+                        (v: number) => v <= 0 ? 'transparent' : `hsla(${h}, ${s}%, ${l}%, ${(0.04 + (v / (max || 1)) * 0.13).toFixed(2)})`
+
+                      const t = {
+                        orders:      tint(224, 60, 55, Math.max(...feeData.map(m => m.orderCount), 1)),
+                        shipping:    tint(215, 65, 55, Math.max(...feeData.map(m => m.shipping), 1)),
+                        surcharges:  tint(200, 50, 45, Math.max(...feeData.map(m => m.surcharges), 1)),
+                        extraPicks:  tint(25, 85, 55, Math.max(...feeData.map(m => m.extraPicks), 1)),
+                        warehousing: tint(260, 55, 58, Math.max(...feeData.map(m => m.warehousing), 1)),
+                        multiHubIQ:  tint(45, 80, 50, Math.max(...feeData.map(m => m.multiHubIQ), 1)),
+                        b2b:         tint(340, 70, 55, Math.max(...feeData.map(m => m.b2b), 1)),
+                        vasKitting:  tint(280, 60, 55, Math.max(...feeData.map(m => m.vasKitting), 1)),
+                        receiving:   tint(160, 55, 42, Math.max(...feeData.map(m => m.receiving), 1)),
+                        returns:     tint(0, 65, 52, Math.max(...feeData.map(m => m.returns), 1)),
+                        dutyTax:     tint(195, 60, 40, Math.max(...feeData.map(m => m.dutyTax), 1)),
+                        other:       tint(90, 45, 45, Math.max(...feeData.map(m => m.other), 1)),
+                        credit:      tint(142, 55, 42, Math.max(...feeData.map(m => Math.abs(m.credit)), 1)),
+                        total:       tint(220, 15, 50, Math.max(...feeData.map(m => m.total), 1)),
+                        cpo:         tint(220, 15, 50, Math.max(...feeData.map(m => m.costPerOrder), 1)),
+                      }
+
+                      // Totals for footer
+                      const totals = {
+                        orders: feeData.reduce((s, m) => s + m.orderCount, 0),
+                        shipping: feeData.reduce((s, m) => s + m.shipping, 0),
+                        surcharges: feeData.reduce((s, m) => s + m.surcharges, 0),
+                        extraPicks: feeData.reduce((s, m) => s + m.extraPicks, 0),
+                        warehousing: feeData.reduce((s, m) => s + m.warehousing, 0),
+                        multiHubIQ: feeData.reduce((s, m) => s + m.multiHubIQ, 0),
+                        b2b: feeData.reduce((s, m) => s + m.b2b, 0),
+                        vasKitting: feeData.reduce((s, m) => s + m.vasKitting, 0),
+                        receiving: feeData.reduce((s, m) => s + m.receiving, 0),
+                        returns: feeData.reduce((s, m) => s + m.returns, 0),
+                        dutyTax: feeData.reduce((s, m) => s + m.dutyTax, 0),
+                        other: feeData.reduce((s, m) => s + m.other, 0),
+                        credit: feeData.reduce((s, m) => s + m.credit, 0),
+                        total: feeData.reduce((s, m) => s + m.total, 0),
+                      }
+                      const totalCpo = totals.orders > 0 ? totals.total / totals.orders : 0
+
+                      const fmt = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
                       return (
                     <div className="rounded-md border overflow-hidden">
                       <div className="overflow-x-auto">
@@ -1682,46 +1788,44 @@ export default function AnalyticsPage() {
                             {feeData.map((month, idx) => (
                               <tr key={month.month} className={cn("border-b", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
                                 <td className="px-2 py-1.5 font-medium whitespace-nowrap">{month.monthLabel}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">{month.orderCount.toLocaleString()}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.shipping.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.surcharges.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.extraPicks.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.warehousing.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.multiHubIQ.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.b2b.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.vasKitting.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.receiving.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.returns.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.dutyTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums">${month.other.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className={cn("px-2 py-1.5 text-right tabular-nums", month.credit < 0 ? "text-green-600" : "")}>
-                                  ${month.credit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.orders(month.orderCount) }}>{month.orderCount.toLocaleString()}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.shipping(month.shipping) }}>{fmt(month.shipping)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.surcharges(month.surcharges) }}>{fmt(month.surcharges)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.extraPicks(month.extraPicks) }}>{fmt(month.extraPicks)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.warehousing(month.warehousing) }}>{fmt(month.warehousing)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.multiHubIQ(month.multiHubIQ) }}>{fmt(month.multiHubIQ)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.b2b(month.b2b) }}>{fmt(month.b2b)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.vasKitting(month.vasKitting) }}>{fmt(month.vasKitting)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.receiving(month.receiving) }}>{fmt(month.receiving)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.returns(month.returns) }}>{fmt(month.returns)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.dutyTax(month.dutyTax) }}>{fmt(month.dutyTax)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.other(month.other) }}>{fmt(month.other)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-green-600" style={{ backgroundColor: t.credit(Math.abs(month.credit)) }}>
+                                  {fmt(month.credit)}
                                 </td>
-                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold">${month.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">${month.costPerOrder.toFixed(2)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ backgroundColor: t.total(month.total) }}>{fmt(month.total)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" style={{ backgroundColor: t.cpo(month.costPerOrder) }}>${month.costPerOrder.toFixed(2)}</td>
                               </tr>
                             ))}
                           </tbody>
                           <tfoot>
-                            <tr className="border-t-2 bg-muted/30 font-semibold">
+                            <tr className="bg-muted/60 font-semibold">
                               <td className="px-2 py-1.5">Total</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{feeData.reduce((s, m) => s + m.orderCount, 0).toLocaleString()}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.shipping, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.surcharges, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.extraPicks, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.warehousing, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.multiHubIQ, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.b2b, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.vasKitting, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.receiving, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.returns, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.dutyTax, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.other, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-green-600">${feeData.reduce((s, m) => s + m.credit, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">${feeData.reduce((s, m) => s + m.total, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
-                                ${feeData.length > 0 ? (feeData.reduce((s, m) => s + m.total, 0) / feeData.reduce((s, m) => s + m.orderCount, 0)).toFixed(2) : '0.00'}
-                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{totals.orders.toLocaleString()}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.shipping)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.surcharges)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.extraPicks)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.warehousing)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.multiHubIQ)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.b2b)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.vasKitting)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.receiving)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.returns)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.dutyTax)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.other)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-green-600">{fmt(totals.credit)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.total)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">${totalCpo.toFixed(2)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -1738,12 +1842,14 @@ export default function AnalyticsPage() {
               {/* Tab 2: Cost & Speed Analysis */}
               <TabsContent value="cost-speed" className="mt-0">
                 <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-gradient-to-b from-zinc-100 via-zinc-50 to-white dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-950">
-                  <div className="flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-2">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-4 px-5 lg:px-8 pt-8 pb-4">
                     <div>
                       <div className="text-lg font-semibold">Shipping Cost + Speed</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">Average shipping cost and transit time analysis</div>
+                      <div className="text-xs text-muted-foreground mt-1">Average shipping cost and transit time analysis</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      <ChartSelectors chart={costSpeedKpiSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                       <label className="flex items-center gap-1.5 cursor-pointer select-none">
                         <Checkbox
                           checked={includeInternational}
@@ -1752,38 +1858,46 @@ export default function AnalyticsPage() {
                         />
                         <span className="text-[11px] text-muted-foreground whitespace-nowrap">Include International</span>
                       </label>
-                      <ChartSelectors chart={costSpeedKpiSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
                   </div>
 
-                  {/* KPI Summary Row */}
+                  {/* KPI strip: hero cost left + 2x2 speed grid right */}
                   <div className="border-y border-border mt-4">
-                    <div className="grid grid-cols-2 lg:grid-cols-4">
-                      <div className="text-center px-4 py-5 border-r border-border/50 bg-indigo-50/30 dark:bg-indigo-950/10">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Period Avg. Shipping Cost</div>
-                        <div className="text-2xl font-bold tabular-nums">{kpiSectionAvgCost !== null ? `$${kpiSectionAvgCost.toFixed(2)}` : '—'}</div>
+                    <div className="flex items-stretch">
+                      <div className="flex flex-col items-center justify-center px-8 py-6 border-r border-border bg-gradient-to-b from-white/60 to-indigo-100/50 dark:from-indigo-950/5 dark:to-indigo-950/20 w-[35%]">
+                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Shipping Cost</div>
+                        <div className="text-3xl font-bold tabular-nums">{kpiSectionAvgCost !== null ? <><AnimatedNumber value={kpiSectionAvgCost} prefix="$" decimals={2} /></> : '—'}</div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">per order</div>
                       </div>
-                      <div className="text-center px-4 py-5 lg:border-r border-border/50 bg-amber-50/30 dark:bg-amber-950/10">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
-                        <div className="text-2xl font-bold tabular-nums">
-                          {kpiSectionKpis.avgFulfillTime > 0 ? kpiSectionKpis.avgFulfillTime.toFixed(1) : '—'}
+                      <div className="grid grid-cols-2 flex-1">
+                        <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-b border-border bg-gradient-to-b from-white/50 to-emerald-100/40 dark:from-emerald-950/5 dark:to-emerald-950/15">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
+                          <div className="text-xl font-bold tabular-nums">
+                            {kpiSectionKpis.avgFulfillTime > 0 ? <AnimatedNumber value={kpiSectionKpis.avgFulfillTime} decimals={1} /> : '—'}
+                          </div>
+                          <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
                         </div>
-                        <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">operating hours</div>
-                      </div>
-                      <div className="text-center px-4 py-5 border-t lg:border-t-0 border-r border-border/50 bg-emerald-50/40 dark:bg-emerald-950/15">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
-                        <div className="text-2xl font-bold tabular-nums">
-                          {kpiSectionMiddleMile > 0 ? kpiSectionMiddleMile.toFixed(1) : '—'}
+                        <div className="flex flex-col items-center justify-center px-5 py-4 border-b border-border bg-gradient-to-b from-white/50 to-indigo-100/40 dark:from-indigo-950/5 dark:to-indigo-950/15">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
+                          <div className="text-xl font-bold tabular-nums">
+                            {kpiSectionMiddleMile > 0 ? <AnimatedNumber value={kpiSectionMiddleMile} decimals={1} /> : '—'}
+                          </div>
+                          <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
                         </div>
-                        <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">calendar days</div>
-                      </div>
-                      <div className="text-center px-4 py-5 border-t lg:border-t-0 bg-sky-50/40 dark:bg-sky-950/15">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
-                        <div className="text-2xl font-bold tabular-nums">
-                          {kpiSectionKpis.avgTransitTime > 0 ? kpiSectionKpis.avgTransitTime.toFixed(1) : '—'}
+                        <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-border bg-gradient-to-b from-white/50 to-amber-100/40 dark:from-amber-950/5 dark:to-amber-950/15">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
+                          <div className="text-xl font-bold tabular-nums">
+                            {kpiSectionKpis.avgTransitTime > 0 ? <AnimatedNumber value={kpiSectionKpis.avgTransitTime} decimals={1} /> : '—'}
+                          </div>
+                          <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
                         </div>
-                        <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">calendar days</div>
+                        <div className="flex flex-col items-center justify-center px-5 py-4 bg-gradient-to-b from-white/40 to-zinc-100/50 dark:from-zinc-800/10 dark:to-zinc-800/20">
+                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Orders</div>
+                          <div className="text-xl font-bold tabular-nums">
+                            {kpiSectionKpis.orderCount > 0 ? <AnimatedNumber value={kpiSectionKpis.orderCount} decimals={0} /> : '—'}
+                          </div>
+                          <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">in period</div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1800,8 +1914,8 @@ export default function AnalyticsPage() {
                     const showCA = mapCountry === 'CA' || (mapCountry === 'ALL' && caData.length > 0)
                     if (!showUS && !showCA) return null
                     return (
-                      <div className="border-b border-border">
-                        <div className="flex items-start justify-between gap-4 px-5 lg:px-8 pt-5 pb-2">
+                      <div className="border-b border-border mt-6">
+                        <div className="flex items-start justify-between gap-4 px-5 lg:px-8 pt-6 pb-3">
                           <div>
                             <div className="text-sm font-semibold">
                               Cost + Last Mile Transit Time by {mapCountry === 'CA' ? 'Province' : mapCountry === 'ALL' ? 'State / Province' : 'State'}
@@ -1813,7 +1927,7 @@ export default function AnalyticsPage() {
                         <div className="px-5 lg:px-8 pt-5 pb-5">
                           <div className="grid gap-6 md:grid-cols-2">
                             <div>
-                              <div className="text-sm font-medium text-center mb-0 mt-3">Average Shipping Cost</div>
+                              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-0 mt-3">Average Shipping Cost</div>
                               {showCA && (
                                 <CostSpeedStateMap data={caData} metric="cost" title="" country="CA" />
                               )}
@@ -1822,7 +1936,7 @@ export default function AnalyticsPage() {
                               )}
                             </div>
                             <div>
-                              <div className="text-sm font-medium text-center mb-0 mt-3">Average Last Mile Transit</div>
+                              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-0 mt-3">Average Last Mile Transit</div>
                               {showCA && (
                                 <CostSpeedStateMap data={caData} metric="transit" title="" country="CA" />
                               )}
@@ -2262,7 +2376,6 @@ export default function AnalyticsPage() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent align="end">
-                                  <SelectItem value="ALL">All Countries</SelectItem>
                                   <SelectItem value="US">USA</SelectItem>
                                   {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                                 </SelectContent>
@@ -2324,7 +2437,7 @@ export default function AnalyticsPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent align="end" className="font-roboto text-xs">
-                            <SelectItem value="ALL">All</SelectItem>
+                            <SelectItem value="ALL">All Regions</SelectItem>
                             <SelectItem value="US">USA</SelectItem>
                             {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                           </SelectContent>
@@ -2421,7 +2534,7 @@ export default function AnalyticsPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent align="end" className="font-roboto text-xs">
-                              <SelectItem value="ALL">All</SelectItem>
+                              <SelectItem value="ALL">All Regions</SelectItem>
                               <SelectItem value="US">USA</SelectItem>
                               {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                             </SelectContent>
@@ -2504,7 +2617,7 @@ export default function AnalyticsPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent align="end" className="font-roboto text-xs">
-                              <SelectItem value="ALL">All</SelectItem>
+                              <SelectItem value="ALL">All Regions</SelectItem>
                               <SelectItem value="US">USA</SelectItem>
                               {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                             </SelectContent>
@@ -2580,7 +2693,7 @@ export default function AnalyticsPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent align="end" className="font-roboto text-xs">
-                              <SelectItem value="ALL">All</SelectItem>
+                              <SelectItem value="ALL">All Regions</SelectItem>
                               <SelectItem value="US">USA</SelectItem>
                               {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                             </SelectContent>
@@ -2634,7 +2747,7 @@ export default function AnalyticsPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent align="end" className="font-roboto text-xs">
-                              <SelectItem value="ALL">All</SelectItem>
+                              <SelectItem value="ALL">All Regions</SelectItem>
                               <SelectItem value="US">USA</SelectItem>
                               {(analyticsData?.availableCountries || []).includes('CA') && <SelectItem value="CA">Canada</SelectItem>}
                             </SelectContent>
@@ -2671,22 +2784,88 @@ export default function AnalyticsPage() {
               {/* Tab 4: Carriers + Zones */}
               <TabsContent value="carriers-zones" className="mt-0">
                 <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-zinc-50 dark:bg-zinc-900">
-                  <div className="px-5 lg:px-8 pt-6 pb-2">
-                    <div className="text-lg font-semibold">Carriers + Zones</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">Carrier performance and zone-level cost analysis</div>
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-4 px-5 lg:px-8 pt-8 pb-4">
+                    <div>
+                      <div className="text-lg font-semibold">Carriers + Zones</div>
+                      <div className="text-xs text-muted-foreground mt-1">Carrier performance and zone-level cost analysis</div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <ChartSelectors chart={carrierZoneChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideAllCountry />
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <Checkbox
+                          checked={includeIntlZones}
+                          onCheckedChange={(checked) => setIncludeIntlZones(checked === true)}
+                          className="h-3.5 w-3.5"
+                        />
+                        <span className="text-[11px] text-muted-foreground whitespace-nowrap">Include International</span>
+                      </label>
+                    </div>
                   </div>
+
+                  {/* KPI strip: hero avg zone + 2x2 grid */}
+                  <div className="border-y border-border mt-4">
+                    <div className="flex items-stretch">
+                      {(() => {
+                        const zoneData = carrierZoneCostData
+                        const totalOrders = zoneData.reduce((sum, z) => sum + z.orderCount, 0)
+                        const avgTransit = totalOrders > 0
+                          ? zoneData.reduce((sum, z) => sum + (z.avgTransitTime * z.orderCount), 0) / totalOrders
+                          : 0
+                        const avgCost = totalOrders > 0
+                          ? zoneData.reduce((sum, z) => sum + (z.avgCost * z.orderCount), 0) / totalOrders
+                          : 0
+                        const numericZones = zoneData.filter(z => !isNaN(Number(z.zone)))
+                        const numericTotal = numericZones.reduce((sum, z) => sum + z.orderCount, 0)
+                        const avgZone = numericTotal > 0
+                          ? numericZones.reduce((sum, z) => sum + Number(z.zone) * z.orderCount, 0) / numericTotal
+                          : 0
+                        return (
+                          <>
+                            <div className="flex flex-col items-center justify-center px-8 py-6 border-r border-border bg-gradient-to-b from-white/60 to-indigo-100/50 dark:from-indigo-950/5 dark:to-indigo-950/20 w-[35%]">
+                              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Average Zone</div>
+                              <div className="text-3xl font-bold tabular-nums">{avgZone > 0 ? <AnimatedNumber value={avgZone} decimals={1} /> : '—'}</div>
+                              <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">weighted by volume</div>
+                            </div>
+                            <div className="grid grid-cols-2 flex-1">
+                              <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-b border-border bg-gradient-to-b from-white/50 to-emerald-100/40 dark:from-emerald-950/5 dark:to-emerald-950/15">
+                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Shipments</div>
+                                <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={totalOrders} locale /></div>
+                                <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">in period</div>
+                              </div>
+                              <div className="flex flex-col items-center justify-center px-5 py-4 border-b border-border bg-gradient-to-b from-white/50 to-indigo-100/40 dark:from-indigo-950/5 dark:to-indigo-950/15">
+                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Cost</div>
+                                <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={avgCost} prefix="$" decimals={2} /></div>
+                                <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">per shipment</div>
+                              </div>
+                              <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-border bg-gradient-to-b from-white/50 to-amber-100/40 dark:from-amber-950/5 dark:to-amber-950/15">
+                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Last Mile</div>
+                                <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={avgTransit} decimals={1} /></div>
+                                <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
+                              </div>
+                              <div className="flex flex-col items-center justify-center px-5 py-4 bg-gradient-to-b from-white/40 to-zinc-100/50 dark:from-zinc-800/10 dark:to-zinc-800/20">
+                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Zones</div>
+                                <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={zoneData.length} decimals={0} /></div>
+                                <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">active</div>
+                              </div>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </div>
+
                   <div className="px-5 lg:px-8 py-5 space-y-5">
                 {/* Zone Performance Landscape - Feature Chart */}
-                <div className="rounded-xl border border-border/60 overflow-hidden bg-background">
-                  <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                <div>
+                  <div className="flex items-start justify-between gap-4 px-1 pt-4 pb-2">
                     <div>
                       <div className="text-sm font-semibold">Zone Performance Landscape</div>
                       <div className="text-xs text-muted-foreground mt-0.5">How shipping cost and transit time scale with distance</div>
                     </div>
-                    <ChartSelectors chart={carrierZoneChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideAllCountry />
                   </div>
-                  <div className="px-6 pb-6 pt-2">
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                  <div className="pb-6 pt-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
                       {/* Main Chart */}
                       <div className="lg:col-span-3">
                         <ChartContainer
@@ -2695,7 +2874,7 @@ export default function AnalyticsPage() {
                             avgTransitTime: { label: "Avg Transit", color: "hsl(var(--chart-2))" },
                             orderCount: { label: "Orders", color: "hsl(var(--chart-3))" },
                           }}
-                          style={{ height: `${Math.max(280, Math.min(520, 32 + carrierZoneCostData.length * 44))}px` }}
+                          style={{ height: `clamp(250px, calc(100vh - 520px), 520px)` }}
                           className="w-full"
                         >
                           <ComposedChart
@@ -2774,7 +2953,7 @@ export default function AnalyticsPage() {
                       </div>
 
                       {/* Zone Summary Stats */}
-                      <div className="space-y-3 overflow-y-auto pr-2" style={{ maxHeight: '520px' }}>
+                      <div className="space-y-3 overflow-y-auto pr-2">
                         <div className="text-sm font-medium text-muted-foreground">Zone Distribution</div>
                         {carrierZoneCostData.map((zone) => {
                           const totalOrders = carrierZoneCostData.reduce((sum, z) => sum + z.orderCount, 0)
@@ -2782,7 +2961,7 @@ export default function AnalyticsPage() {
                           return (
                             <div key={zone.zone} className="space-y-1">
                               <div className="flex justify-between text-sm">
-                                <span className="font-medium">Zone {zone.zone}</span>
+                                <span className="font-medium">{zone.zone === 'Intl' ? 'International' : `Zone ${zone.zone}`}</span>
                                 <span className="text-muted-foreground tabular-nums">{percent.toFixed(1)}%</span>
                               </div>
                               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -2802,265 +2981,138 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                {/* Network Summary Row — driven by carrierZoneChart selectors */}
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                  {(() => {
-                    const zoneData = carrierZoneCostData
-                    const totalOrders = zoneData.reduce((sum, z) => sum + z.orderCount, 0)
-                    const avgTransit = totalOrders > 0
-                      ? zoneData.reduce((sum, z) => sum + (z.avgTransitTime * z.orderCount), 0) / totalOrders
-                      : 0
-                    const avgCost = totalOrders > 0
-                      ? zoneData.reduce((sum, z) => sum + (z.avgCost * z.orderCount), 0) / totalOrders
-                      : 0
-
-                    return (
-                      <>
-                        <Card className="bg-transparent shadow-none">
-                          <CardContent className="pt-6">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold tabular-nums">{totalOrders.toLocaleString()}</div>
-                              <div className="text-sm text-muted-foreground mt-1">Total Shipments</div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                        <Card className="bg-transparent shadow-none">
-                          <CardContent className="pt-6">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold tabular-nums">{zoneData.length}</div>
-                              <div className="text-sm text-muted-foreground mt-1">Shipping Zones</div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                        <Card className="bg-transparent shadow-none">
-                          <CardContent className="pt-6">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold tabular-nums">{avgTransit.toFixed(1)} <span className="text-lg font-normal">days</span></div>
-                              <div className="text-sm text-muted-foreground mt-1">Average Last Mile</div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                        <Card className="bg-transparent shadow-none">
-                          <CardContent className="pt-6">
-                            <div className="text-center">
-                              <div className="text-3xl font-bold tabular-nums">${avgCost.toFixed(2)}</div>
-                              <div className="text-sm text-muted-foreground mt-1">Avg Cost per Shipment</div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </>
-                    )
-                  })()}
-                </div>
 
                 {/* Your Carrier Network Section */}
                 <div className="rounded-xl border border-border/60 overflow-hidden bg-background">
                   <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
                     <div>
                       <div className="text-sm font-semibold">Your Carrier Network</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">Distributed across {chartCarrierPerformance.length} carriers for optimal coverage</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Distributed across {chartCarrierPerformance.filter(cp => cp.orderCount >= 50).length} carriers for optimal coverage</div>
                     </div>
-                    <ChartSelectors chart={carrierSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideAllCountry />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <ChartSelectors chart={carrierSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideAllCountry />
+                      {availableShipOptions.length > 0 && (
+                        <Select value={carrierShipOption} onValueChange={setCarrierShipOption}>
+                          <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
+                            <SelectValue>{carrierShipOption}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent align="end" className="font-roboto text-xs">
+                            {availableShipOptions.map(so => (
+                              <SelectItem key={so.name} value={so.name}>
+                                {so.name} ({so.count.toLocaleString()})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
                   </div>
                   <div className="px-6 pb-6 pt-2">
                     {(() => {
                       const totalOrders = chartCarrierPerformance.reduce((sum, c) => sum + c.orderCount, 0)
-                      // Build per-carrier zone distribution lookup
-                      const zonesByCarrier = new Map<string, { zone: string; count: number; percent: number }[]>()
+                      // Build carrier → zone → volume percentage matrix
+                      const carrierZoneVolume = new Map<string, Map<string, number>>()
                       for (const row of chartCarrierZoneBreakdown) {
-                        if (!zonesByCarrier.has(row.carrier)) zonesByCarrier.set(row.carrier, [])
-                        zonesByCarrier.get(row.carrier)!.push({ zone: row.zone, count: row.orderCount, percent: 0 })
+                        if (!carrierZoneVolume.has(row.carrier)) carrierZoneVolume.set(row.carrier, new Map())
+                        const zoneMap = carrierZoneVolume.get(row.carrier)!
+                        zoneMap.set(row.zone, (zoneMap.get(row.zone) || 0) + row.orderCount)
                       }
-                      // Calculate percentages and sort by zone number
-                      for (const [, zones] of zonesByCarrier) {
-                        const carrierTotal = zones.reduce((s, z) => s + z.count, 0)
-                        for (const z of zones) z.percent = carrierTotal > 0 ? (z.count / carrierTotal) * 100 : 0
-                        zones.sort((a, b) => {
-                          const na = parseInt(a.zone) || 99
-                          const nb = parseInt(b.zone) || 99
-                          return na - nb
-                        })
-                      }
-                      // Zone color scale: light → dark blue by distance
-                      const zoneColor = (zone: string): string => {
-                        const z = parseInt(zone) || 0
-                        const colors: Record<number, string> = {
-                          1: 'hsl(203 75% 82%)',
-                          2: 'hsl(203 70% 72%)',
-                          3: 'hsl(203 65% 62%)',
-                          4: 'hsl(203 62% 54%)',
-                          5: 'hsl(203 61% 47%)',
-                          6: 'hsl(203 65% 40%)',
-                          7: 'hsl(203 70% 33%)',
-                          8: 'hsl(203 75% 26%)',
+                      // Convert to percentages
+                      for (const [, zoneMap] of carrierZoneVolume) {
+                        const total = Array.from(zoneMap.values()).reduce((s, v) => s + v, 0)
+                        for (const [zone, count] of zoneMap) {
+                          zoneMap.set(zone, total > 0 ? (count / total) * 100 : 0)
                         }
-                        return colors[z] || 'hsl(203 30% 70%)'
                       }
-                      // Build transit distribution lookup and find global max for consistent scale
-                      const transitByCarrier = new Map(chartTransitDistribution.map(t => [t.carrier, t]))
-                      const globalMaxTransit = chartTransitDistribution.length > 0
-                        ? Math.max(...chartTransitDistribution.map(t => t.max))
-                        : 1
-                      // Generate nice tick marks for the shared axis
-                      const axisTicks: number[] = []
-                      const tickStep = 2
-                      for (let t = 0; t <= globalMaxTransit; t += tickStep) axisTicks.push(t)
+                      // Get all zones sorted, only from carriers that pass the 50-order filter
+                      const filteredCarriers = new Set(chartCarrierPerformance.filter(cp => cp.orderCount >= 50).map(cp => cp.carrier))
+                      const allZones = Array.from(new Set(
+                        Array.from(carrierZoneVolume.entries())
+                          .filter(([carrier]) => filteredCarriers.has(carrier))
+                          .flatMap(([, zoneMap]) => Array.from(zoneMap.keys()))
+                      )).sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99))
+
+                      // Find max percentage for color scaling
+                      let maxPct = 0
+                      for (const [carrier, zoneMap] of carrierZoneVolume) {
+                        if (!filteredCarriers.has(carrier)) continue
+                        for (const pct of zoneMap.values()) maxPct = Math.max(maxPct, pct)
+                      }
+                      maxPct = Math.max(maxPct, 1)
+
+                      // Cell background: transparent (0%) → emerald (high %)
+                      const cellBg = (pct: number): string => {
+                        if (pct <= 0) return 'transparent'
+                        const t = Math.min(1, pct / maxPct)
+                        const opacity = 0.08 + t * 0.42 // 0.08 → 0.50
+                        return `hsla(152, 55%, 48%, ${opacity.toFixed(2)})`
+                      }
+
+                      // Metric column tints (computed from filtered carriers)
+                      const filtered = chartCarrierPerformance.filter(cp => cp.orderCount >= 50)
+                      const maxOrders = Math.max(...filtered.map(c => c.orderCount), 1)
+                      const maxCost = Math.max(...filtered.map(c => c.avgCost), 1)
+                      const minCost = Math.min(...filtered.map(c => c.avgCost))
+                      const maxTransit = Math.max(...filtered.map(c => c.avgTransitTime), 1)
+                      const minTransit = Math.min(...filtered.map(c => c.avgTransitTime))
+                      const costRange = maxCost - minCost || 1
+                      const transitRange = maxTransit - minTransit || 1
+                      // Indigo tint for volume (higher = more prominent)
+                      const ordersBg = (v: number) => `hsla(224, 60%, 55%, ${(0.04 + (v / maxOrders) * 0.14).toFixed(2)})`
+                      // Amber tint for cost (higher = warmer)
+                      const costBg = (v: number) => `hsla(35, 70%, 50%, ${(0.04 + ((v - minCost) / costRange) * 0.14).toFixed(2)})`
+                      // Sky tint for transit (lower = cooler/better, but no judgment — just visual interest)
+                      const transitBg = (v: number) => `hsla(200, 60%, 50%, ${(0.04 + ((v - minTransit) / transitRange) * 0.14).toFixed(2)})`
+
                       return (
-                        <div className="rounded-md border">
+                        <div className="rounded-md border overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead className="bg-muted">
                               <tr className="border-b text-xs">
-                                <th className="py-2.5 px-3 text-left font-semibold w-[140px]">Carrier</th>
+                                <th className="py-2.5 px-3 text-left font-semibold w-[140px] sticky left-0 bg-muted z-10">Carrier</th>
                                 <th className="py-2.5 px-2 text-right font-semibold w-[70px]">Orders</th>
                                 <th className="py-2.5 px-2 text-right font-semibold w-[50px]">Vol %</th>
                                 <th className="py-2.5 px-2 text-right font-semibold w-[70px]">Avg Cost</th>
                                 <th className="py-2.5 px-2 text-right font-semibold whitespace-nowrap w-[65px]">Transit</th>
-                                <th className="p-3 text-left font-semibold pl-5" style={{ minWidth: 220 }}>
-                                  <div className="flex items-center justify-between">
-                                    <span className="whitespace-nowrap">Transit Time Distribution</span>
-                                    <span className="font-normal text-[10px] text-muted-foreground flex items-center gap-2.5 pr-1">
-                                      <span className="flex items-center gap-1">
-                                        <span className="inline-block w-5 h-1 rounded-full" style={{ backgroundColor: 'hsl(203 61% 50% / 0.2)' }} />
-                                        P5–P95
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <span className="inline-block w-3.5 h-2 rounded" style={{ backgroundColor: 'hsl(203 61% 50% / 0.45)' }} />
-                                        mid 50%
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <span className="inline-block w-0.5 h-2.5" style={{ backgroundColor: 'hsl(203 61% 50%)' }} />
-                                        median
-                                      </span>
-                                    </span>
-                                  </div>
-                                </th>
-                                {carrierSection.country === 'US' && (
-                                <th className="p-3 text-left font-semibold pl-4" style={{ minWidth: 160 }}>
-                                  <div className="flex items-center justify-between">
-                                    <span className="whitespace-nowrap">Zone Distribution</span>
-                                    <span className="font-normal text-[10px] text-muted-foreground flex items-center gap-1.5 pr-1">
-                                      {[1,3,5,7].map(z => (
-                                        <span key={z} className="flex items-center gap-0.5">
-                                          <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: zoneColor(String(z)) }} />
-                                          <span>{z}</span>
-                                        </span>
-                                      ))}
-                                    </span>
-                                  </div>
-                                </th>
-                                )}
+                                {allZones.map(zone => (
+                                  <th key={zone} className="py-2.5 px-1 text-center font-semibold w-[52px] text-[10px] text-muted-foreground">
+                                    Z{zone}
+                                  </th>
+                                ))}
                               </tr>
                             </thead>
                             <tbody>
-                              {/* Top axis scale */}
-                              <tr className="border-b">
-                                <td colSpan={5} />
-                                <td className="px-3 pl-5 py-1">
-                                  <div className="relative h-3">
-                                    {axisTicks.map(t => (
-                                      <span key={t} className="absolute text-[9px] text-muted-foreground tabular-nums -translate-x-1/2" style={{ left: `${(t / globalMaxTransit) * 100}%` }}>
-                                        {t}d
-                                      </span>
-                                    ))}
-                                  </div>
-                                </td>
-                                {carrierSection.country === 'US' && <td />}
-                              </tr>
-                              {chartCarrierPerformance.map((cp, idx) => {
+                              {chartCarrierPerformance.filter(cp => cp.orderCount >= 50).map((cp, idx) => {
                                 const volumePercent = totalOrders > 0 ? (cp.orderCount / totalOrders * 100) : 0
-                                const dist = transitByCarrier.get(cp.carrier)
+                                const zoneMap = carrierZoneVolume.get(cp.carrier)
                                 return (
                                   <tr key={cp.carrier} className={cn("border-b text-xs", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
-                                    <td className="py-2.5 px-3 font-medium">{cp.carrier}</td>
-                                    <td className="py-2.5 px-2 text-right tabular-nums">{cp.orderCount.toLocaleString()}</td>
-                                    <td className="py-2.5 px-2 text-right tabular-nums text-muted-foreground">{volumePercent.toFixed(1)}%</td>
-                                    <td className="py-2.5 px-2 text-right tabular-nums">${cp.avgCost.toFixed(2)}</td>
-                                    <td className="py-2.5 px-2 text-right tabular-nums">{cp.avgTransitTime.toFixed(1)}d</td>
-                                    <td className="p-3 pl-5">
-                                      {dist ? (
-                                        <div>
-                                          <div className="relative h-5 rounded overflow-hidden">
-                                            {/* Background */}
-                                            <div className="absolute inset-0 bg-zinc-100 dark:bg-zinc-800 rounded" />
-                                            {/* Tick marks */}
-                                            {axisTicks.map(t => (
-                                              <div key={t} className="absolute top-0 bottom-0 w-px bg-zinc-200 dark:bg-zinc-700" style={{ left: `${(t / globalMaxTransit) * 100}%` }} />
-                                            ))}
-                                            {/* Range bar (min to max) */}
-                                            <div
-                                              className="absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full"
-                                              style={{
-                                                left: `${(dist.min / globalMaxTransit) * 100}%`,
-                                                width: `${((dist.max - dist.min) / globalMaxTransit) * 100}%`,
-                                                backgroundColor: 'hsl(203 61% 50% / 0.2)',
-                                              }}
-                                            />
-                                            {/* IQR bar (Q1 to Q3) */}
-                                            <div
-                                              className="absolute top-1/2 -translate-y-1/2 h-3 rounded"
-                                              style={{
-                                                left: `${(dist.q1 / globalMaxTransit) * 100}%`,
-                                                width: `${Math.max(1, ((dist.q3 - dist.q1) / globalMaxTransit) * 100)}%`,
-                                                backgroundColor: 'hsl(203 61% 50% / 0.45)',
-                                              }}
-                                            />
-                                            {/* Median line */}
-                                            <div
-                                              className="absolute top-1/2 -translate-y-1/2 h-4 w-0.5"
-                                              style={{
-                                                left: `${(dist.median / globalMaxTransit) * 100}%`,
-                                                backgroundColor: 'hsl(203 61% 50%)',
-                                              }}
-                                            />
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <span className="text-xs text-muted-foreground">—</span>
-                                      )}
-                                    </td>
-                                    {carrierSection.country === 'US' && (
-                                    <td className="p-3 pl-4">
-                                      {(() => {
-                                        const zones = zonesByCarrier.get(cp.carrier)
-                                        if (!zones || zones.length === 0) return <span className="text-xs text-muted-foreground">—</span>
-                                        return (
-                                          <div className="flex h-5 rounded overflow-hidden" title={zones.map(z => `Zone ${z.zone}: ${z.percent.toFixed(1)}%`).join('\n')}>
-                                            {zones.map(z => (
-                                              <div
-                                                key={z.zone}
-                                                className="h-full flex items-center justify-center text-[9px] font-medium overflow-hidden"
-                                                style={{
-                                                  width: `${z.percent}%`,
-                                                  backgroundColor: zoneColor(z.zone),
-                                                  color: parseInt(z.zone) >= 5 ? 'hsl(0 0% 100%)' : 'hsl(203 50% 20%)',
-                                                  minWidth: z.percent > 0 ? 2 : 0,
-                                                }}
-                                              >
-                                                {z.percent >= 12 ? z.zone : ''}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )
-                                      })()}
-                                    </td>
-                                    )}
+                                    <td className={cn("py-2.5 px-3 font-medium sticky left-0 z-10", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>{cp.carrier}</td>
+                                    <td className="py-2.5 px-2 text-right tabular-nums" style={{ backgroundColor: ordersBg(cp.orderCount) }}>{cp.orderCount.toLocaleString()}</td>
+                                    <td className="py-2.5 px-2 text-right tabular-nums text-muted-foreground" style={{ backgroundColor: `hsla(220, 10%, 50%, ${(0.04 + (volumePercent / 100) * 0.14).toFixed(2)})` }}>{volumePercent.toFixed(1)}%</td>
+                                    <td className="py-2.5 px-2 text-right tabular-nums" style={{ backgroundColor: costBg(cp.avgCost) }}>${cp.avgCost.toFixed(2)}</td>
+                                    <td className="py-2.5 px-2 text-right tabular-nums" style={{ backgroundColor: transitBg(cp.avgTransitTime) }}>{cp.avgTransitTime.toFixed(1)}d</td>
+                                    {allZones.map(zone => {
+                                      const pct = zoneMap?.get(zone) || 0
+                                      return (
+                                        <td
+                                          key={zone}
+                                          className="py-2.5 px-1 text-center tabular-nums text-[10px]"
+                                          style={{ backgroundColor: cellBg(pct) }}
+                                        >
+                                          {pct > 0 ? (
+                                            <span className={pct >= 10 ? 'font-medium text-emerald-900 dark:text-emerald-100' : 'text-muted-foreground'}>
+                                              {pct < 1 ? '<1' : Math.round(pct)}%
+                                            </span>
+                                          ) : (
+                                            <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                          )}
+                                        </td>
+                                      )
+                                    })}
                                   </tr>
                                 )
                               })}
-                              {/* Shared axis scale */}
-                              <tr>
-                                <td colSpan={5} />
-                                <td className="px-3 pl-5 pb-2 pt-0">
-                                  <div className="relative h-3">
-                                    {axisTicks.map(t => (
-                                      <span key={t} className="absolute text-[9px] text-muted-foreground tabular-nums -translate-x-1/2" style={{ left: `${(t / globalMaxTransit) * 100}%` }}>
-                                        {t}d
-                                      </span>
-                                    ))}
-                                  </div>
-                                </td>
-                                {carrierSection.country === 'US' && <td />}
-                              </tr>
                             </tbody>
                           </table>
                         </div>
@@ -3079,46 +3131,64 @@ export default function AnalyticsPage() {
                     <ChartSelectors chart={zoneDeepDiveChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideAllCountry />
                   </div>
                   <div className="px-6 pb-6 pt-2">
-                    <div className="rounded-md border">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted">
-                          <tr className="border-b">
-                            <th className="p-3 text-left font-semibold">Zone</th>
-                            <th className="p-3 text-right font-semibold">Orders</th>
-                            <th className="p-3 text-right font-semibold">% of Total</th>
-                            <th className="p-3 text-right font-semibold">Avg Cost</th>
-                            <th className="p-3 text-right font-semibold">Avg Transit</th>
-                            {zoneDeepDiveChart.country === 'US' && <th className="p-3 text-left font-semibold">Distance</th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {zoneDeepDiveData.map((zone, idx) => {
-                            const totalOrders = zoneDeepDiveData.reduce((sum, z) => sum + z.orderCount, 0)
-                            const percent = totalOrders > 0 ? (zone.orderCount / totalOrders * 100) : 0
-                            const distanceLabels: Record<string, string> = {
-                              '1': 'Local (same region)',
-                              '2': 'Very close',
-                              '3': 'Regional',
-                              '4': 'Medium distance',
-                              '5': 'Farther',
-                              '6': 'Far',
-                              '7': 'Very far',
-                              '8': 'Coast to coast'
-                            }
-                            return (
-                              <tr key={zone.zone} className={cn("border-b", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
-                                <td className="p-3 font-medium">{zone.zone === 'Intl' ? 'International' : `Zone ${zone.zone}`}</td>
-                                <td className="p-3 text-right tabular-nums">{zone.orderCount.toLocaleString()}</td>
-                                <td className="p-3 text-right tabular-nums text-muted-foreground">{percent.toFixed(1)}%</td>
-                                <td className="p-3 text-right tabular-nums">${zone.avgCost.toFixed(2)}</td>
-                                <td className="p-3 text-right tabular-nums">{zone.avgTransitTime.toFixed(1)} days</td>
-                                {zoneDeepDiveChart.country === 'US' && <td className="p-3 text-muted-foreground">{distanceLabels[zone.zone] || ''}</td>}
+                    {(() => {
+                      const totalOrders = zoneDeepDiveData.reduce((sum, z) => sum + z.orderCount, 0)
+                      const maxZoneOrders = Math.max(...zoneDeepDiveData.map(z => z.orderCount), 1)
+                      const costs = zoneDeepDiveData.map(z => z.avgCost)
+                      const transits = zoneDeepDiveData.filter(z => z.avgTransitTime > 0).map(z => z.avgTransitTime)
+                      const minZoneCost = Math.min(...costs)
+                      const maxZoneCost = Math.max(...costs)
+                      const zoneCostRange = maxZoneCost - minZoneCost || 1
+                      const minZoneTransit = transits.length > 0 ? Math.min(...transits) : 0
+                      const maxZoneTransit = transits.length > 0 ? Math.max(...transits) : 1
+                      const zoneTransitRange = maxZoneTransit - minZoneTransit || 1
+
+                      // Color functions matching the carrier table above
+                      const zoneOrdersBg = (v: number) => `hsla(224, 60%, 55%, ${(0.04 + (v / maxZoneOrders) * 0.16).toFixed(2)})`
+                      const zoneVolBg = (pct: number) => `hsla(152, 55%, 48%, ${(0.04 + (pct / 100) * 0.20).toFixed(2)})`
+                      const zoneCostBg = (v: number) => `hsla(35, 70%, 50%, ${(0.04 + ((v - minZoneCost) / zoneCostRange) * 0.16).toFixed(2)})`
+                      const zoneTransitBg = (v: number) => v > 0 ? `hsla(200, 60%, 50%, ${(0.04 + ((v - minZoneTransit) / zoneTransitRange) * 0.16).toFixed(2)})` : 'transparent'
+
+                      return (
+                        <div className="rounded-md border overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted">
+                              <tr className="border-b text-xs">
+                                <th className="py-2.5 px-3 text-left font-semibold w-[140px]">Zone</th>
+                                <th className="py-2.5 px-3 text-right font-semibold w-[90px]">Orders</th>
+                                <th className="py-2.5 px-3 text-right font-semibold w-[80px]">% of Total</th>
+                                <th className="py-2.5 px-3 text-right font-semibold w-[90px]">Avg Cost</th>
+                                <th className="py-2.5 px-3 text-right font-semibold w-[90px]">Avg Transit</th>
                               </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                            </thead>
+                            <tbody>
+                              {zoneDeepDiveData.map((zone, idx) => {
+                                const percent = totalOrders > 0 ? (zone.orderCount / totalOrders * 100) : 0
+                                return (
+                                  <tr key={zone.zone} className={cn("border-b text-xs", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
+                                    <td className={cn("py-2.5 px-3 font-medium", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
+                                      {zone.zone === 'Intl' ? 'International' : `Zone ${zone.zone}`}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ backgroundColor: zoneOrdersBg(zone.orderCount) }}>
+                                      {zone.orderCount.toLocaleString()}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ backgroundColor: zoneVolBg(percent) }}>
+                                      {percent.toFixed(1)}%
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ backgroundColor: zoneCostBg(zone.avgCost) }}>
+                                      ${zone.avgCost.toFixed(2)}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right tabular-nums" style={{ backgroundColor: zoneTransitBg(zone.avgTransitTime) }}>
+                                      {zone.avgTransitTime > 0 ? `${zone.avgTransitTime.toFixed(1)}d` : '—'}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
                   </div>
@@ -3199,9 +3269,8 @@ export default function AnalyticsPage() {
                         />
                         <YAxis
                           type="number"
-                          domain={[90, 100]}
-                          ticks={[90, 92, 94, 96, 98, 100]}
-                          allowDataOverflow={false}
+                          domain={[0, 100]}
+                          allowDataOverflow
                           tickLine={false}
                           axisLine={false}
                           tickFormatter={(value) => `${value}%`}
@@ -3259,7 +3328,7 @@ export default function AnalyticsPage() {
                     <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
                       <div>
                         <div className="text-sm font-semibold">Time to Fulfill Trends</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">How long does it take to fulfill orders?</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">Operating hours from order import to carrier sortation (7-day avg)</div>
                       </div>
                       <ChartSelectors chart={fulfillTrendChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
@@ -3269,10 +3338,6 @@ export default function AnalyticsPage() {
                           avgFulfillmentHours: {
                             label: "Average",
                             color: "hsl(var(--chart-1))",
-                          },
-                          p90FulfillmentHours: {
-                            label: "90th Percentile",
-                            color: "hsl(var(--chart-2))",
                           },
                         }}
                         className="h-[300px] w-full"
@@ -3323,7 +3388,7 @@ export default function AnalyticsPage() {
                                   <>
                                     <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
                                     <div className="flex flex-1 justify-between items-center leading-none">
-                                      <span className="text-muted-foreground">{name === 'avgFulfillmentHours' ? 'Average' : '90th Pctl'}</span>
+                                      <span className="text-muted-foreground">Avg Fulfill Time</span>
                                       <span className="font-mono font-medium tabular-nums text-foreground ml-4">{Number(value).toFixed(1)}h</span>
                                     </div>
                                   </>
@@ -3338,14 +3403,6 @@ export default function AnalyticsPage() {
                             fill="url(#fillAvg)"
                             dot={false}
                           />
-                          <Line
-                            type="monotone"
-                            dataKey="p90FulfillmentHours"
-                            stroke="var(--color-p90FulfillmentHours)"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                          <ChartLegend content={<ChartLegendContent />} />
                         </ComposedChart>
                       </ChartContainer>
                     </div>
@@ -3430,60 +3487,6 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                {/* Recent SLA Breaches */}
-                <Card className="bg-transparent shadow-none">
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium"><div>Recent SLA Breaches</div></CardTitle>
-                    <CardDescription className="text-xs">Orders that missed their fulfillment deadline</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="rounded-md border">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted">
-                          <tr className="border-b">
-                            <th className="p-3 text-left font-semibold">Order ID</th>
-                            <th className="p-3 text-left font-semibold">Customer</th>
-                            <th className="p-3 text-left font-semibold">Order Received</th>
-                            <th className="p-3 text-left font-semibold">Label Generated</th>
-                            <th className="p-3 text-right font-semibold">Time to Ship</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {slaMetrics.shipments
-                            .filter(s => !s.isOnTime)
-                            .slice(0, 10)
-                            .map((s, idx) => (
-                              <tr key={s.orderId} className={cn("border-b", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
-                                <td className="p-3 font-medium">{s.orderId}</td>
-                                <td className="p-3">{s.customerName}</td>
-                                <td className="p-3">
-                                  {new Date(s.orderInsertTimestamp).toLocaleString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    hour: "numeric",
-                                    minute: "2-digit"
-                                  })}
-                                </td>
-                                <td className="p-3">
-                                  {new Date(s.labelGenerationTimestamp).toLocaleString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    hour: "numeric",
-                                    minute: "2-digit"
-                                  })}
-                                </td>
-                                <td className="p-3 text-right">
-                                  <span className="text-destructive font-medium">
-                                    {s.timeToShipHours.toFixed(1)}h
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
                   </div>
                 </div>
               </TabsContent>
@@ -3595,25 +3598,12 @@ export default function AnalyticsPage() {
                         <div className="h-full flex items-center justify-center">
                           <div className="text-xs text-muted-foreground py-16">Check back once more data has accumulated</div>
                         </div>
-                      ) : selectedState && statePerformance.find(s => s.state === selectedState) ? (
-                        <StateDetailsPanel
-                          stateData={statePerformance.find(s => s.state === selectedState)!}
-                          cityData={analyticsData?.perfCityData || []}
-                          delayImpact={delayImpact}
-                          includeDelayed={includeDelayedOrders}
-                          onToggleDelayed={setIncludeDelayedOrders}
-                          otdPercentiles={includeDelayedOrders ? stateOtdWithDelayed : stateOtdClean}
-                        />
                       ) : (
-                        <NationalPerformanceOverviewPanel
-                          stateData={statePerformance}
-                          country={perfCountry}
-                          regionLabel={COUNTRY_CONFIGS[perfCountry]?.regionLabel}
-                          regionLabelPlural={COUNTRY_CONFIGS[perfCountry]?.regionLabelPlural}
+                        <PerformanceDetailsPanel
+                          {...perfPanelProps}
                           delayImpact={delayImpact}
                           includeDelayed={includeDelayedOrders}
                           onToggleDelayed={setIncludeDelayedOrders}
-                          otdPercentiles={includeDelayedOrders ? nationalOtdWithDelayed : nationalOtdClean}
                         />
                       )}
                     </div>
@@ -3634,28 +3624,28 @@ export default function AnalyticsPage() {
                   <Card className="bg-transparent shadow-none">
                     <CardContent className="pt-6">
                       <p className="text-sm text-muted-foreground">Total Undelivered</p>
-                      <p className="text-2xl font-bold">{undeliveredSummary.totalUndelivered.toLocaleString()}</p>
+                      <p className="text-2xl font-bold"><AnimatedNumber value={undeliveredSummary.totalUndelivered} locale /></p>
                     </CardContent>
                   </Card>
 
                   <Card className="bg-transparent shadow-none">
                     <CardContent className="pt-6">
                       <p className="text-sm text-muted-foreground">Avg Days in Transit</p>
-                      <p className="text-2xl font-bold">{undeliveredSummary.avgDaysInTransit.toFixed(1)}</p>
+                      <p className="text-2xl font-bold"><AnimatedNumber value={undeliveredSummary.avgDaysInTransit} decimals={1} /></p>
                     </CardContent>
                   </Card>
 
                   <Card className="bg-transparent shadow-none">
                     <CardContent className="pt-6">
                       <p className="text-sm text-muted-foreground">Critical (7+ days)</p>
-                      <p className="text-2xl font-bold text-red-600 dark:text-red-400">{undeliveredSummary.criticalCount.toLocaleString()}</p>
+                      <p className="text-2xl font-bold text-red-600 dark:text-red-400"><AnimatedNumber value={undeliveredSummary.criticalCount} locale /></p>
                     </CardContent>
                   </Card>
 
                   <Card className="bg-transparent shadow-none">
                     <CardContent className="pt-6">
                       <p className="text-sm text-muted-foreground">On Track (&lt;5 days)</p>
-                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{undeliveredSummary.onTrackCount.toLocaleString()}</p>
+                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400"><AnimatedNumber value={undeliveredSummary.onTrackCount} locale /></p>
                     </CardContent>
                   </Card>
                 </div>
@@ -3708,7 +3698,7 @@ export default function AnalyticsPage() {
                     <CardContent>
                       {/* Total count header */}
                       <div className="text-center mb-6 pb-4 border-b">
-                        <p className="text-3xl font-bold">{undeliveredSummary.totalUndelivered.toLocaleString()}</p>
+                        <p className="text-3xl font-bold"><AnimatedNumber value={undeliveredSummary.totalUndelivered} locale /></p>
                         <p className="text-sm text-muted-foreground">Total Undelivered</p>
                       </div>
                       {/* Status bars */}
@@ -3859,6 +3849,7 @@ export default function AnalyticsPage() {
                 </div>
               </TabsContent>
 
+              </div>
               </div>
             </Tabs>
           </div>
