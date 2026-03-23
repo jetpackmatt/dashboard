@@ -255,8 +255,12 @@ async function main() {
         if (storeErr) console.log(`    WARNING: checkpoint store error: ${storeErr.message}`)
       }
 
-      const isDelivered = trackingData.delivery_status === 'delivered' || /^delivered/i.test(latestDesc)
+      // Check RTS BEFORE delivered — "delivered back to sender" is RTS, not delivered
       const isRTS = RTS_PATTERNS.some(p => p.test(latestDesc)) && !/reminder to schedule redelivery/i.test(latestDesc)
+      const isDelivered = !isRTS && (
+        trackingData.delivery_status === 'delivered' ||
+        (/^delivered/i.test(latestDesc) && !/delivery attempt/i.test(latestDesc) && !/undelivered/i.test(latestDesc))
+      )
       const daysSince = Math.floor((Date.now() - new Date(latestDate).getTime()) / (1000 * 60 * 60 * 24))
       const eligibilityThreshold = entry.is_international ? 20 : 15
       let newStatus = entry.claim_eligibility_status

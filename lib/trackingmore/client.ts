@@ -529,39 +529,63 @@ function processTrackingResponse(tracking: TrackingMoreTracking): TrackingResult
 }
 
 /**
- * Check if a tracking shows the package as delivered
- * Checks both the status field AND the latest event description
- * (TrackingMore sometimes doesn't set status='delivered' immediately after create)
+ * Check if a tracking shows the package as delivered.
+ *
+ * IMPORTANT: Only trust the official delivery_status field and the LATEST checkpoint.
+ * Do NOT scan all checkpoints — a package can have an early "delivered" scan
+ * followed by a return/exception. The latest state is what matters.
+ *
+ * Also exclude false positives:
+ * - "delivery attempted" ≠ delivered
+ * - "delivered back to sender" = RTS, not delivered
+ * - "undelivered" = not delivered
  */
 export function isDelivered(tracking: TrackingMoreTracking): boolean {
-  // Check official status field
-  if (tracking.status === 'delivered') return true
+  // Check official status field — most reliable signal
+  if (tracking.delivery_status === 'delivered') return true
 
-  // Also check latest_event for delivery keywords
-  // This catches cases where status isn't updated but checkpoint shows delivered
+  // Check latest_event only (NOT all checkpoints — later events override earlier ones)
   const latestEvent = (tracking.latest_event || '').toLowerCase()
-  if (latestEvent.includes('delivered') && !latestEvent.includes('undelivered')) {
+
+  // Exclude false positives before checking for "delivered"
+  const FALSE_POSITIVE_PATTERNS = [
+    'undelivered',
+    'delivery attempted',
+    'delivery attempt',
+    'delivered back to sender',
+    'delivered to sender',
+    'returned',
+    'return to sender',
+    'return in progress',
+    'return initiated',
+    'being returned',
+    'refused',
+  ]
+
+  if (FALSE_POSITIVE_PATTERNS.some(p => latestEvent.includes(p))) {
+    return false
+  }
+
+  // Now safe to check for delivered
+  if (latestEvent.includes('delivered')) {
     return true
   }
+
   // DHL third-party delivery pattern (handed off to local delivery service)
   if (latestEvent.includes('delivery has been arranged')) {
     return true
   }
 
-  // Check checkpoints for delivery status
+  // Check the LATEST checkpoint only (sorted by date, newest first)
   const checkpoints = [
     ...(tracking.origin_info?.trackinfo || []),
     ...(tracking.destination_info?.trackinfo || []),
-  ]
+  ].sort((a, b) => new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime())
 
-  for (const checkpoint of checkpoints) {
-    const status = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
-    const detail = (checkpoint.tracking_detail || '').toLowerCase()
-
+  if (checkpoints.length > 0) {
+    const latest = checkpoints[0]
+    const status = (latest.checkpoint_delivery_status || '').toLowerCase()
     if (status === 'delivered') return true
-    if (detail.includes('delivered') && !detail.includes('undelivered')) return true
-    // DHL third-party delivery pattern
-    if (detail.includes('delivery has been arranged')) return true
   }
 
   return false

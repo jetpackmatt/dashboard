@@ -225,13 +225,15 @@ async function main() {
         if (storeErr) console.log(`    WARNING: checkpoint store error: ${storeErr.message}`)
       }
 
-      // Check if delivered
-      const isDelivered = trackingData.delivery_status === 'delivered' ||
-        /^delivered/i.test(latestDesc)
-
-      // Check if RTS
+      // Check RTS BEFORE delivered — "delivered back to sender" is RTS, not delivered
       const isRTS = RTS_PATTERNS.some(p => p.test(latestDesc)) &&
         !/reminder to schedule redelivery/i.test(latestDesc)
+
+      // Check if delivered (only if NOT RTS — avoid false positives like "delivery attempted")
+      const isDelivered = !isRTS && (
+        trackingData.delivery_status === 'delivered' ||
+        (/^delivered/i.test(latestDesc) && !/delivery attempt/i.test(latestDesc) && !/undelivered/i.test(latestDesc))
+      )
 
       // Calculate days since last scan
       const lastScanDate = new Date(latestDate)
