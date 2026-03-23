@@ -300,8 +300,11 @@ export async function POST(request: NextRequest) {
             is_international: isInternational,
             claim_eligibility_status: claimEligibilityStatus,
             eligible_after: eligibleAfterDate.toISOString().split('T')[0],
-            last_scan_date: checkpointData?.last_scan_date || null,
-            last_scan_description: checkpointData?.last_scan_description || null,
+            // Use carrier scan date if available, otherwise fall back to label date.
+            // Label date acts as "last known activity" when carrier has no scans —
+            // the eligibility timer (15 days domestic, 20 days international) starts from this date.
+            last_scan_date: checkpointData?.last_scan_date || shipment.event_labeled,
+            last_scan_description: checkpointData?.last_scan_description || 'Label created (no carrier scan)',
             trackingmore_tracking_id: trackingMoreId,
             first_checked_at: now.toISOString(),
             days_in_transit: daysInTransit,
