@@ -43,7 +43,7 @@ function daysSince(dateStr: string | null): number | null {
 /**
  * GET /api/data/monitoring/shipments
  *
- * Returns monitored shipments for Lookout AI dashboard.
+ * Returns monitored shipments for Delivery IQ dashboard.
  * Filters by claim eligibility status and AI-derived fields.
  */
 export async function GET(request: NextRequest) {
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get('offset') || '0')
 
   try {
-    // Build query - note: days_since_last_update is calculated from last_scan_date
+    // Build query - daysSilent is calculated from last_scan_date on the client
     let query = supabase
       .from('lost_in_transit_checks')
       .select(`
@@ -118,8 +118,11 @@ export async function GET(request: NextRequest) {
       case 'claim_filed':
         query = query.eq('claim_eligibility_status', 'claim_filed')
         break
+      case 'returned_to_sender':
+        query = query.eq('claim_eligibility_status', 'returned_to_sender')
+        break
       case 'all':
-        // All active (excludes archived)
+        // All active (excludes archived and RTS)
         query = query.in('claim_eligibility_status', ['at_risk', 'eligible', 'claim_filed'])
         break
       case 'archived':

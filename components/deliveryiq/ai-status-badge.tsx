@@ -92,7 +92,7 @@ export function AiStatusBadge({ statusBadge, assessment, claimStatus }: AiStatus
   // If no AI assessment yet, show claim status badge
   if (!statusBadge && !assessment) {
     const claimStatusConfig: Record<string, { color: string; label: string }> = {
-      at_risk: { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'At Risk' },
+      at_risk: { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'On Watch' },
       eligible: { color: 'bg-red-100 text-red-700 border-red-200', label: 'Claim Ready' },
       claim_filed: { color: 'bg-blue-100 text-blue-700 border-blue-200', label: 'Filed' },
       approved: { color: 'bg-green-100 text-green-700 border-green-200', label: 'Approved' },

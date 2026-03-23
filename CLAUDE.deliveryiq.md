@@ -1,4 +1,4 @@
-# Delivery IQ (Lookout) System
+# Delivery IQ System
 
 **Read this when:** Working on proactive shipment monitoring, at-risk detection, transit benchmarks, tracking timeline, AI assessments, or the Delivery Intelligence Engine.
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-Delivery IQ (also called "Lookout") proactively identifies shipments that may be Lost in Transit BEFORE customers file claims. It uses transit benchmarks and carrier checkpoint data to detect shipments that are taking longer than expected.
+Delivery IQ proactively identifies shipments that may be Lost in Transit BEFORE customers file claims. It uses transit benchmarks and carrier checkpoint data to detect shipments that are taking longer than expected.
 
 **Key capabilities:**
 1. **Monitoring** - Track all in-transit shipments automatically
@@ -25,7 +25,7 @@ ShipBob (Shipments) → Our Database → TrackingMore API → Lost-in-Transit De
                                            ↓                     ↓
                               Delivery Intelligence Engine (AI probability)
                                            ↓
-                              Delivery IQ Dashboard (Lookout Page)
+                              Delivery IQ Dashboard
                                            ↓
                                   Claim Filing → Care Tickets
 ```
@@ -65,6 +65,7 @@ When no benchmark data exists:
 | `claim_filed` | Claim has been submitted | Gray "Claim Filed" badge | Track claim status |
 | `approved` | Claim was approved | Green badge | Complete |
 | `denied` | Claim was denied | Red badge | Appeal or close |
+| `returned_to_sender` | Carrier indicates RTS | Purple "Returned" badge | Not claim-eligible |
 | `missed_window` | Exceeded maximum claim window | Strikethrough | Too late |
 
 ### Eligibility Thresholds
@@ -474,7 +475,7 @@ Shipments in monitoring can be assessed by AI to predict outcomes.
 | `carrier` | text | |
 | `is_international` | boolean | origin_country ≠ destination_country |
 | `days_in_transit` | integer | Days since label created |
-| `days_since_last_update` | integer | Days since last carrier scan |
+| ~~`days_since_last_update`~~ | ~~integer~~ | **REMOVED** — calculated client-side from `last_scan_date` |
 | `eligible_after` | date | When claim becomes eligible |
 | `claim_eligibility_status` | text | at_risk, eligible, claim_filed, approved, denied, missed_window |
 | `trackingmore_tracking_id` | text | TrackingMore's internal ID |
@@ -503,7 +504,7 @@ Shipments in monitoring can be assessed by AI to predict outcomes.
 
 ## UI Components
 
-### Lookout Dashboard (`/dashboard/lookout`)
+### Delivery IQ Dashboard (`/dashboard/deliveryiq`)
 
 **Quick Filters:**
 - At Risk - Shipments exceeding threshold but not claim-eligible
@@ -545,10 +546,10 @@ Shows combined timeline:
 
 | File | Purpose |
 |------|---------|
-| `app/dashboard/lookout/page.tsx` | Lookout dashboard page |
-| `components/lookout/lookout-table.tsx` | At-risk shipments table |
-| `components/lookout/quick-filters.tsx` | Filter tabs |
-| `components/lookout/tracking-timeline-drawer.tsx` | Tracking timeline slideout |
+| `app/dashboard/deliveryiq/page.tsx` | Delivery IQ dashboard page |
+| `components/deliveryiq/deliveryiq-table.tsx` | At-risk shipments table |
+| `components/deliveryiq/quick-filters.tsx` | Filter tabs |
+| `components/deliveryiq/tracking-timeline-drawer.tsx` | Tracking timeline slideout |
 | `components/claims/claim-submission-dialog.tsx` | Claim filing modal |
 
 ### API Routes
@@ -591,7 +592,7 @@ Shows combined timeline:
 | `lib/ai/format-tracking-events.ts` | AI event formatting |
 | `lib/ai/delivery-summary.ts` | AI summary generation |
 | `app/api/cron/compute-survival-curves/route.ts` | Daily curve recomputation |
-| `components/lookout/scout-insight-card.tsx` | UI component for Scout |
+| `components/deliveryiq/scout-insight-card.tsx` | UI component for Scout |
 
 ---
 

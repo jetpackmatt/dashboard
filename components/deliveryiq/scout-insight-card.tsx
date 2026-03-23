@@ -330,7 +330,7 @@ export function ScoutInsightCard({
           "text-xs font-medium uppercase tracking-wide",
           isCritical ? "text-red-600" : "text-gray-500"
         )}>
-          {isCritical ? 'At Risk' : 'Delivery Analysis'}
+          {isCritical ? 'On Watch' : 'Delivery Analysis'}
         </span>
         {data.sampleSize > 0 && (
           <span className="text-[10px] text-gray-400">n={data.sampleSize.toLocaleString()}</span>

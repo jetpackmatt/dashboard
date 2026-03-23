@@ -540,7 +540,7 @@ export interface Shipment {
   isVoided?: boolean
   // Dispute status (transaction held for rebilling or removed from client)
   disputeStatus?: string | null
-  // Claim eligibility status (for At Risk / File a Claim badges)
+  // Claim eligibility status (for On Watch / File a Claim badges)
   claimEligibilityStatus?: 'at_risk' | 'eligible' | null
   claimDaysRemaining?: number | null
   // TrackingMore substatus for granular tracking info
@@ -928,13 +928,13 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       )
     }
 
-    // "At Risk" - show granular TrackingMore substatus with tooltip for details
+    // "On Watch" - show granular TrackingMore substatus with tooltip for details
     if (row.claimEligibilityStatus === 'at_risk') {
       const daysRemaining = row.claimDaysRemaining ?? 0
       const substatus = row.claimSubstatusCategory
       const lastScan = row.claimLastScanDescription
 
-      // If we have a substatus from TrackingMore, show that instead of generic "At Risk"
+      // If we have a substatus from TrackingMore, show that instead of generic "On Watch"
       // Pass isEligible=false for neutral/non-alarming labels
       if (substatus) {
         const displayName = getSubstatusDisplayName(substatus, false)
@@ -968,7 +968,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
         )
       }
 
-      // Fallback to generic "At Risk" if no substatus
+      // Fallback to generic "On Watch" if no substatus
       return (
         <TooltipProvider>
           <Tooltip delayDuration={300}>
@@ -978,7 +978,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
                 className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
               >
                 <ClockIcon className="h-3.5 w-3.5" />
-                At Risk
+                On Watch
               </Badge>
             </TooltipTrigger>
             <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">
@@ -1478,13 +1478,13 @@ export function createShipmentCellRenderers(options?: {
         )
       }
 
-      // "At Risk" - show granular TrackingMore substatus with tooltip for details
+      // "On Watch" - show granular TrackingMore substatus with tooltip for details
       if (row.claimEligibilityStatus === 'at_risk') {
         const daysRemaining = row.claimDaysRemaining ?? 0
         const substatus = row.claimSubstatusCategory
         const lastScan = row.claimLastScanDescription
 
-        // If we have a substatus from TrackingMore, show that instead of generic "At Risk"
+        // If we have a substatus from TrackingMore, show that instead of generic "On Watch"
         // Pass isEligible=false for neutral/non-alarming labels
         if (substatus) {
           const displayName = getSubstatusDisplayName(substatus, false)
@@ -1518,7 +1518,7 @@ export function createShipmentCellRenderers(options?: {
           )
         }
 
-        // Fallback to generic "At Risk" if no substatus
+        // Fallback to generic "On Watch" if no substatus
         return (
           <TooltipProvider>
             <Tooltip delayDuration={300}>
@@ -1528,7 +1528,7 @@ export function createShipmentCellRenderers(options?: {
                   className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-amber-100/50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800/30"
                 >
                   <ClockIcon className="h-3.5 w-3.5" />
-                  At Risk
+                  On Watch
                 </Badge>
               </TooltipTrigger>
               <TooltipContent side="top" className="bg-popover text-popover-foreground border shadow-md">

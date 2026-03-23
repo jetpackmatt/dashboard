@@ -72,7 +72,7 @@ const baseNavItems = [
   },
   {
     title: "Delivery IQ",
-    url: "/dashboard/lookout",
+    url: "/dashboard/deliveryiq",
     icon: BinocularsIcon,
   },
   {

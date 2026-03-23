@@ -532,7 +532,31 @@ export async function GET(
     }
     let currentStatus = shipment.status || 'Unknown'
 
-    // First, check for stored normalized checkpoints
+    // Always fetch fresh tracking from TrackingMore (FREE for existing trackings)
+    // then store any new checkpoints and build timeline from the complete stored set.
+    // This ensures the timeline always shows the latest carrier events.
+    const carrierCode = getTrackingMoreCarrierCode(shipment.carrier)
+    if (carrierCode) {
+      try {
+        const trackingResult = await getTracking(trackingNumber, shipment.carrier)
+        if (trackingResult.success && trackingResult.tracking) {
+          const tracking = trackingResult.tracking
+          currentStatus = tracking.status || currentStatus
+
+          // Store ALL checkpoints (deduplication handled by content_hash)
+          try {
+            await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
+          } catch (storeError) {
+            console.error('[Tracking Timeline] Failed to store checkpoints:', storeError)
+          }
+        }
+      } catch (tmError) {
+        // TrackingMore fetch failed - fall through to use stored checkpoints
+        console.error('[Tracking Timeline] TrackingMore fetch failed, using stored data:', tmError)
+      }
+    }
+
+    // Read all stored checkpoints (now includes any fresh data just stored)
     const { data: storedCheckpoints } = await supabase
       .from('tracking_checkpoints')
       .select('*')
@@ -540,7 +564,6 @@ export async function GET(
       .order('checkpoint_date', { ascending: false })
 
     if (storedCheckpoints && storedCheckpoints.length > 0) {
-      // Use stored normalized checkpoints (preferred path)
       console.log('[Tracking Timeline] Using', storedCheckpoints.length, 'stored checkpoints')
 
       // Set current status from most recent checkpoint
@@ -578,19 +601,20 @@ export async function GET(
         // Use AI display_title if available, otherwise fall back to regex extraction
         let title = cp.display_title
         if (!title) {
-          // Fallback: extract title from raw description using regex
           title = extractCarrierTitle(cp.raw_description || '')
         }
 
-        // Dedupe key: normalize date to day-only + title + location
-        // This catches duplicates from origin_info vs destination_info
+        // Also dedupe by raw_description when titles differ but description is identical
+        // This catches cases where the same scan gets different extracted titles
         const dateDay = cp.checkpoint_date.split('T')[0]
         const dedupeKey = `${dateDay}|${title.toLowerCase()}|${(cp.raw_location || '').toLowerCase()}`
+        const descDedupeKey = `${dateDay}|${(cp.raw_description || '').toLowerCase().trim()}|${(cp.raw_location || '').toLowerCase()}`
 
-        if (seenEvents.has(dedupeKey)) {
+        if (seenEvents.has(dedupeKey) || seenEvents.has(descDedupeKey)) {
           continue // Skip duplicate
         }
         seenEvents.add(dedupeKey)
+        seenEvents.add(descDedupeKey)
 
         carrierTimeline.push({
           timestamp: cp.checkpoint_date,
@@ -603,88 +627,6 @@ export async function GET(
           normalizedType: cp.normalized_type || undefined,
           sentiment: cp.sentiment || undefined,
         })
-      }
-    } else {
-      // Fallback: Fetch from TrackingMore and store (FREE for existing trackings)
-      const carrierCode = getTrackingMoreCarrierCode(shipment.carrier)
-      if (carrierCode) {
-        const trackingResult = await getTracking(trackingNumber, shipment.carrier)
-
-        if (trackingResult.success && trackingResult.tracking) {
-          const tracking = trackingResult.tracking
-          currentStatus = tracking.status || currentStatus
-
-          // Store ALL checkpoints for Delivery IQ (permanent storage)
-          try {
-            await storeCheckpoints(shipment.shipment_id, tracking, shipment.carrier)
-          } catch (storeError) {
-            // Log but don't fail the request if storage fails
-            console.error('[Tracking Timeline] Failed to store checkpoints:', storeError)
-          }
-
-          // Combine origin and destination checkpoints
-          const checkpoints = [
-            ...(tracking.origin_info?.trackinfo || []),
-            ...(tracking.destination_info?.trackinfo || []),
-          ]
-
-          // Sort by date descending and get the latest
-          checkpoints.sort((a, b) =>
-            new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime()
-          )
-
-          if (checkpoints.length > 0) {
-            const latest = checkpoints[0]
-            lastCarrierScan = {
-              date: latest.checkpoint_date,
-              description: latest.tracking_detail,
-              displayTitle: null, // No AI normalization yet
-              location: latest.location || [latest.city, latest.state].filter(Boolean).join(', ') || null,
-              daysSince: Math.floor((Date.now() - new Date(latest.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24)),
-              normalizedType: null,
-              sentiment: null,
-            }
-          }
-
-          // Add all checkpoints to timeline with deduplication
-          // (skip InfoReceived - redundant with warehouse label events)
-          const seenCheckpoints = new Set<string>()
-
-          for (const checkpoint of checkpoints) {
-            const statusLower = (checkpoint.checkpoint_delivery_status || '').toLowerCase()
-
-            // Skip "InfoReceived" status - it's just carrier acknowledging label data
-            // which is redundant with our warehouse "Shipping Label Created" event
-            if (statusLower === 'inforeceived') continue
-
-            const { title, type } = mapCarrierStatus(
-              checkpoint.checkpoint_delivery_status,
-              checkpoint.checkpoint_delivery_substatus,
-              checkpoint.tracking_detail || ''
-            )
-
-            const location = checkpoint.location || [checkpoint.city, checkpoint.state].filter(Boolean).join(', ') || null
-
-            // Dedupe key: normalize date to day-only + title + location
-            const dateDay = checkpoint.checkpoint_date.split('T')[0]
-            const dedupeKey = `${dateDay}|${title.toLowerCase()}|${(location || '').toLowerCase()}`
-
-            if (seenCheckpoints.has(dedupeKey)) {
-              continue // Skip duplicate
-            }
-            seenCheckpoints.add(dedupeKey)
-
-            carrierTimeline.push({
-              timestamp: checkpoint.checkpoint_date,
-              title,
-              description: checkpoint.tracking_detail || '',
-              location,
-              source: 'carrier',
-              type,
-              status: checkpoint.checkpoint_delivery_status,
-            })
-          }
-        }
       }
     }
 

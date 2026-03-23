@@ -507,7 +507,7 @@ See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) for full system documentation.
 | `carrier` | text | |
 | `is_international` | boolean | origin_country ≠ destination_country |
 | `days_in_transit` | integer | Days since label created |
-| `days_since_last_update` | integer | Days since last carrier scan |
+| ~~`days_since_last_update`~~ | ~~integer~~ | **REMOVED** — calculated client-side from `last_scan_date` |
 | `eligible_after` | date | When claim becomes eligible |
 | `claim_eligibility_status` | text | See status values below |
 | `trackingmore_tracking_id` | text | TrackingMore's tracking ID |

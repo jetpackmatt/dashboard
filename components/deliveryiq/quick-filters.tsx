@@ -12,13 +12,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDownIcon } from "lucide-react"
+import { ChevronDownIcon, SparklesIcon } from "lucide-react"
 
 // Quick filter values
 export type QuickFilterValue =
   | 'at_risk'
   | 'eligible'
   | 'claim_filed'
+  | 'returned_to_sender'
   | 'all'
   | 'archived'
   // AI-driven filters
@@ -30,10 +31,11 @@ export type QuickFilterValue =
   | 'lost'
 
 // Stats interface for counts
-interface LookoutStats {
+interface DeliveryIQStats {
   atRisk: number
   eligible: number
   claimFiled: number
+  returnedToSender: number
   total: number
   archived: number
   reshipNow: number
@@ -47,16 +49,17 @@ interface LookoutStats {
 interface QuickFiltersProps {
   value: QuickFilterValue
   onChange: (value: QuickFilterValue) => void
-  stats: LookoutStats
+  stats: DeliveryIQStats
 }
 
 // Primary filter buttons (claim lifecycle)
-const PRIMARY_FILTERS: { value: QuickFilterValue; label: string; color: string }[] = [
-  { value: 'at_risk', label: 'At Risk', color: 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200/50' },
-  { value: 'eligible', label: 'Ready to File', color: 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/50' },
-  { value: 'claim_filed', label: 'Claim Filed', color: 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200/50' },
-  { value: 'all', label: 'All Active', color: 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200/50' },
-  { value: 'archived', label: 'Archived', color: 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200/50' },
+const PRIMARY_FILTERS: { value: QuickFilterValue; label: string; activeColor: string }[] = [
+  { value: 'at_risk', label: 'On Watch', activeColor: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200' },
+  { value: 'eligible', label: 'Time to File', activeColor: 'bg-red-50 text-red-800 ring-1 ring-red-200' },
+  { value: 'claim_filed', label: 'Claim Filed', activeColor: 'bg-blue-50 text-blue-800 ring-1 ring-blue-200' },
+  { value: 'returned_to_sender', label: 'Returned', activeColor: 'bg-purple-50 text-purple-800 ring-1 ring-purple-200' },
+  { value: 'all', label: 'All', activeColor: 'bg-background text-foreground shadow-sm' },
+  { value: 'archived', label: 'Archived', activeColor: 'bg-background text-foreground shadow-sm' },
 ]
 
 // AI-driven filter options (in dropdown)
@@ -69,107 +72,111 @@ const AI_FILTERS: { value: QuickFilterValue; label: string; color: string }[] = 
   { value: 'lost', label: 'Lost', color: 'text-red-600' },
 ]
 
-export function QuickFilters({ value, onChange, stats }: QuickFiltersProps) {
-  // Get count for a filter value
-  const getCount = (filterValue: QuickFilterValue): number => {
-    switch (filterValue) {
-      case 'at_risk': return stats.atRisk
-      case 'eligible': return stats.eligible
-      case 'claim_filed': return stats.claimFiled
-      case 'all': return stats.total
-      case 'archived': return stats.archived
-      case 'reship_now': return stats.reshipNow
-      case 'consider_reship': return stats.considerReship
-      case 'customer_anxious': return stats.customerAnxious
-      case 'stuck': return stats.stuck
-      case 'returning': return stats.returning
-      case 'lost': return stats.lost
-      default: return 0
-    }
+// Helper to get count for a filter value
+function getCount(filterValue: QuickFilterValue, stats: DeliveryIQStats): number {
+  switch (filterValue) {
+    case 'at_risk': return stats.atRisk
+    case 'eligible': return stats.eligible
+    case 'claim_filed': return stats.claimFiled
+    case 'returned_to_sender': return stats.returnedToSender
+    case 'all': return stats.total
+    case 'archived': return stats.archived
+    case 'reship_now': return stats.reshipNow
+    case 'consider_reship': return stats.considerReship
+    case 'customer_anxious': return stats.customerAnxious
+    case 'stuck': return stats.stuck
+    case 'returning': return stats.returning
+    case 'lost': return stats.lost
+    default: return 0
   }
+}
 
-  // Check if an AI filter is active
+export function QuickFilters({ value, onChange, stats }: QuickFiltersProps) {
+  return (
+    <div className="inline-flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5 flex-nowrap">
+      {PRIMARY_FILTERS.map((filter) => {
+        const count = getCount(filter.value, stats)
+        const isActive = value === filter.value
+
+        return (
+          <button
+            key={filter.value}
+            onClick={() => onChange(filter.value)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all whitespace-nowrap",
+              "focus:outline-none focus-visible:outline-none",
+              isActive
+                ? filter.activeColor
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+            )}
+          >
+            {filter.label}
+            <span
+              className={cn(
+                "inline-flex items-center justify-center min-w-[16px] h-[16px] px-0.5 rounded text-[10px] font-medium tabular-nums leading-none",
+                isActive ? "opacity-70" : "text-muted-foreground/60"
+              )}
+            >
+              {count}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Separate AI filter dropdown — placed next to date picker
+export function AiFilterDropdown({ value, onChange, stats }: QuickFiltersProps) {
   const isAiFilterActive = AI_FILTERS.some(f => f.value === value)
   const activeAiFilter = AI_FILTERS.find(f => f.value === value)
 
   return (
-    <div className="flex items-center gap-3">
-      {/* Primary filter buttons - segmented control style */}
-      <div className="inline-flex rounded-lg bg-gray-100 p-0.5">
-        {PRIMARY_FILTERS.map((filter) => {
-          const count = getCount(filter.value)
-          const isActive = value === filter.value
-
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn(
+            "h-[30px] px-2.5 gap-1 text-xs whitespace-nowrap",
+            isAiFilterActive
+              ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+              : "text-muted-foreground"
+          )}
+        >
+          <SparklesIcon className="h-3 w-3" />
+          {isAiFilterActive ? activeAiFilter?.label : "AI"}
+          <ChevronDownIcon className="h-3 w-3 opacity-50" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          AI-Driven Filters
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {AI_FILTERS.map((filter) => {
+          const count = getCount(filter.value, stats)
           return (
-            <button
+            <DropdownMenuCheckboxItem
               key={filter.value}
-              onClick={() => onChange(filter.value)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all",
-                "focus:outline-none focus-visible:outline-none",
-                isActive
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
-              )}
+              checked={value === filter.value}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  onChange(filter.value)
+                } else {
+                  onChange('at_risk')
+                }
+              }}
+              className="justify-between"
             >
-              {filter.label}
-              <span
-                className={cn(
-                  "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded text-[10px] font-medium tabular-nums",
-                  isActive ? "bg-gray-100 text-gray-700" : "bg-gray-200/60 text-gray-500"
-                )}
-              >
+              <span className={filter.color}>{filter.label}</span>
+              <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] font-medium tabular-nums">
                 {count}
-              </span>
-            </button>
+              </Badge>
+            </DropdownMenuCheckboxItem>
           )
         })}
-      </div>
-
-      {/* AI-driven filters dropdown */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              "h-8 px-3 gap-1.5",
-              isAiFilterActive && "bg-indigo-100 text-indigo-700 border-indigo-200 ring-1 ring-offset-1"
-            )}
-          >
-            {isAiFilterActive ? activeAiFilter?.label : "AI Filters"}
-            <ChevronDownIcon className="h-4 w-4 opacity-50" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-48">
-          <DropdownMenuLabel className="text-xs text-muted-foreground">
-            AI-Driven Filters
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {AI_FILTERS.map((filter) => {
-            const count = getCount(filter.value)
-            return (
-              <DropdownMenuCheckboxItem
-                key={filter.value}
-                checked={value === filter.value}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    onChange(filter.value)
-                  } else {
-                    onChange('at_risk') // Reset to default
-                  }
-                }}
-                className="justify-between"
-              >
-                <span className={filter.color}>{filter.label}</span>
-                <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] font-medium tabular-nums">
-                  {count}
-                </Badge>
-              </DropdownMenuCheckboxItem>
-            )
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

@@ -21,13 +21,13 @@ import { ClientBadge } from "@/components/transactions/client-badge"
 import { getTrackingUrl, getCarrierDisplayName } from "@/components/transactions/cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { TrackingTimelineDrawer } from "./tracking-timeline-drawer"
-import { TrackingLink, useTrackingDrawer } from "@/components/tracking-link"
+import { TrackingLink } from "@/components/tracking-link"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
-import type { MonitoredShipment } from "@/app/dashboard/lookout/page"
+import type { MonitoredShipment } from "@/app/dashboard/deliveryiq/page"
 import type { QuickFilterValue } from "./quick-filters"
 
-interface LookoutTableProps {
+interface DeliveryIQTableProps {
   data: MonitoredShipment[]
   isLoading: boolean
   error: string | null
@@ -100,7 +100,7 @@ function getStatusLabel(claimStatus: string | null, careTicketStatus: string | n
 
   // For approved/denied from lost_in_transit_checks (archived items)
   switch (claimStatus) {
-    case 'at_risk': return 'At Risk'
+    case 'at_risk': return 'On Watch'
     case 'eligible': return 'Ready to File'
     case 'claim_filed': return 'Under Review' // Fallback if no care ticket status
     case 'approved': return 'Credit Approved'
@@ -110,26 +110,26 @@ function getStatusLabel(claimStatus: string | null, careTicketStatus: string | n
   }
 }
 
-export function LookoutTable({
+export function DeliveryIQTable({
   data,
   isLoading,
   error,
   showClientColumn,
   activeFilter,
   onRefresh,
-}: LookoutTableProps) {
+}: DeliveryIQTableProps) {
   // Show status column on 'all', 'archived', and 'claim_filed' tabs
   // For claim_filed, shows the actual care ticket status (Under Review, Credit Requested, etc.)
   const showStatusColumn = activeFilter === 'all' || activeFilter === 'archived' || activeFilter === 'claim_filed'
 
   // Global default page size
   const { settings: userSettings } = useUserSettings()
-  const lookoutPrefs = useTablePreferences('lookout', userSettings.defaultPageSize)
+  const deliveryiqPrefs = useTablePreferences('deliveryiq', userSettings.defaultPageSize)
 
   // Pagination state
   const [page, setPage] = React.useState(0)
-  const pageSize = lookoutPrefs.pageSize
-  const setPageSize = lookoutPrefs.setPageSize
+  const pageSize = deliveryiqPrefs.pageSize
+  const setPageSize = deliveryiqPrefs.setPageSize
 
   // Sorting state
   const [sortField, setSortField] = React.useState<string>('daysSilent')
@@ -233,14 +233,38 @@ export function LookoutTable({
   // Common header cell styles matching TransactionsTable
   const headerCellClass = "group/th px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
 
+  // Column definitions with proportional widths
+  const columns = React.useMemo(() => {
+    const cols: { id: string; width: number; shrink?: boolean }[] = []
+    if (showClientColumn) cols.push({ id: 'client', width: 0, shrink: true })
+    cols.push(
+      { id: 'shipmentId', width: 14 },
+      { id: 'tracking', width: 18 },
+      { id: 'shipDate', width: 12 },
+      { id: 'lastScan', width: 12 },
+      { id: 'silent', width: 7 },
+      { id: 'carrier', width: 10 },
+    )
+    if (showStatusColumn) cols.push({ id: 'status', width: 10 })
+    cols.push({ id: 'actions', width: 12 })
+    return cols
+  }, [showClientColumn, showStatusColumn])
+
+  const totalColSpan = columns.length
+
   return (
     <div className="flex flex-col h-full">
       {/* Table */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
         <table style={{ tableLayout: 'auto', width: '100%' }} className="text-[13px] font-roboto">
+          {/* Proportional width hints — browser distributes space */}
+          <colgroup>
+            {columns.map(c => (
+              <col key={c.id} style={c.shrink ? { width: '0px' } : { width: `${c.width}%` }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
             <tr className="h-[45px]">
-              {/* Client badge prefix column - no header, shrink-to-fit, only shown for admins viewing all */}
               {showClientColumn && (
                 <th className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle"></th>
               )}
@@ -309,13 +333,9 @@ export function LookoutTable({
                   </div>
                 </th>
               )}
-              <th
-                className={headerCellClass}
-              >
+              <th className={cn(headerCellClass, "pr-4 lg:pr-6")}>
                 Actions
               </th>
-              {/* Spacer column — absorbs all excess width so data columns stay content-tight */}
-              <th className="w-full"></th>
             </tr>
           </thead>
           <tbody>
@@ -323,7 +343,7 @@ export function LookoutTable({
               null
             ) : paginatedData.length === 0 ? (
               <tr>
-                <td colSpan={(showClientColumn ? 1 : 0) + 6 + (showStatusColumn ? 1 : 0) + 2} className="h-24 text-center text-muted-foreground">
+                <td colSpan={totalColSpan} className="h-24 text-center text-muted-foreground">
                   No monitored shipments found
                 </td>
               </tr>
@@ -337,7 +357,6 @@ export function LookoutTable({
                     className="h-[45px] border-b border-border/50 dark:bg-[hsl(220,8%,8%)] dark:hover:bg-[hsl(220,8%,10%)] hover:bg-muted/30 cursor-pointer"
                     onClick={() => handleRowClick(shipment.trackingNumber, shipment.carrier)}
                   >
-                    {/* Client badge prefix - first column, no click propagation needed */}
                     {showClientColumn && (
                       <td className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle">
                         <ClientBadge clientId={shipment.clientId} />
@@ -440,48 +459,27 @@ export function LookoutTable({
                         </Badge>
                       </td>
                     )}
-                    <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      {(() => {
-                        const showFileClaim = shipment.claimEligibilityStatus === 'eligible'
-                        // Use daysSilent (which we display) as fallback for daysInTransit
-                        const transitDays = shipment.daysInTransit ?? shipment.daysSilent ?? 0
-                        const showTrackingCheck = transitDays >= 8
-                        const bothButtons = showFileClaim && showTrackingCheck
-
-                        if (!showFileClaim && !showTrackingCheck) return null
-
-                        return (
-                          <div className="inline-flex items-center">
-                            {showFileClaim && (
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                className={cn(
-                                  "h-7 px-3 text-xs font-medium",
-                                  bothButtons && "rounded-r-none border-r-0"
-                                )}
-                              >
-                                File Claim
-                              </Button>
-                            )}
-                            {showTrackingCheck && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className={cn(
-                                  "h-7 px-3 text-xs font-medium",
-                                  bothButtons && "rounded-l-none"
-                                )}
-                              >
-                                Tracking Check
-                              </Button>
-                            )}
-                          </div>
-                        )
-                      })()}
+                    <td className="px-2 pr-4 lg:pr-6 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-1">
+                        <TrackingLink
+                          trackingNumber={shipment.trackingNumber}
+                          carrier={shipment.carrier}
+                          className="px-2 py-0.5 rounded text-[11px] font-medium text-blue-600 hover:bg-blue-100 hover:text-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/50 dark:hover:text-blue-300 transition-colors"
+                        >
+                          Track
+                        </TrackingLink>
+                        {shipment.claimEligibilityStatus === 'eligible' && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                            }}
+                            className="px-2 py-0.5 rounded text-[11px] font-medium text-orange-600 hover:bg-orange-100 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-900/50 dark:hover:text-orange-300 transition-colors"
+                          >
+                            Claim
+                          </button>
+                        )}
+                      </div>
                     </td>
-                    {/* Spacer cell */}
-                    <td></td>
                   </tr>
                 )
               })

@@ -27,7 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { cn } from "@/lib/utils"
 import { getCarrierDisplayName, getTrackingUrl } from "@/components/transactions/cell-renderers"
-import { ScoutInsightCard, useScoutData, type ScoutProbabilityData } from "@/components/lookout/scout-insight-card"
+import { ScoutInsightCard, useScoutData, type ScoutProbabilityData } from "@/components/deliveryiq/scout-insight-card"
 
 // ============================================
 // TYPES
@@ -305,7 +305,7 @@ function IntelligentStatusBadge({
     if (riskLevel === 'critical') {
       return (
         <Badge variant="destructive" className="bg-red-100 text-red-800 hover:bg-red-100">
-          At Risk
+          On Watch
         </Badge>
       )
     }

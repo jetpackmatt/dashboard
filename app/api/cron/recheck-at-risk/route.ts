@@ -28,6 +28,31 @@ function isLostStatus(description: string | null): boolean {
   return LOST_STATUS_PATTERNS.some(pattern => pattern.test(description))
 }
 
+// Patterns that indicate the package is being returned to sender
+const RTS_PATTERNS = [
+  /returned to sender/i,
+  /returned to shipper/i,
+  /returned to seller/i,
+  /return to sender/i,
+  /return in progress/i,
+  /return initiated/i,
+  /returninitiated/i,
+  /to original sender/i,
+  /being returned/i,
+  /was returned/i,
+  /return to shipper/i,
+  /refused/i,
+  /order is being returned/i,
+]
+
+// Check if a tracking description indicates return to sender
+function isReturnToSender(description: string | null): boolean {
+  if (!description) return false
+  // Exclude "reminder to schedule redelivery" — that's just a warning, not actual RTS
+  if (/reminder to schedule redelivery/i.test(description)) return false
+  return RTS_PATTERNS.some(pattern => pattern.test(description))
+}
+
 // Helper to extract delivery date from tracking checkpoints
 function getDeliveryDate(tracking: TrackingMoreTracking): string | null {
   const checkpoints = [
@@ -195,6 +220,25 @@ export async function GET(request: NextRequest) {
           const trackingResult = await recheckTrackingWithStorage(check.shipment_id, check.tracking_number, check.carrier)
 
           if (trackingResult.success && trackingResult.tracking) {
+            // Check if returned to sender
+            if (isReturnToSender(trackingResult.tracking.latest_event)) {
+              const rtsCheckpointDate = getLastCheckpointDate(trackingResult.tracking)
+              await supabase
+                .from('lost_in_transit_checks')
+                .update({
+                  claim_eligibility_status: 'returned_to_sender',
+                  last_recheck_at: new Date().toISOString(),
+                  last_scan_date: rtsCheckpointDate?.toISOString() || null,
+                  last_scan_description: trackingResult.tracking.latest_event || null,
+                })
+                .eq('id', check.id)
+
+              results.returnedToSender = (results.returnedToSender || 0) + 1
+              console.log(`[At-Risk Recheck] ${check.shipment_id} RETURNED TO SENDER (was eligible): "${trackingResult.tracking.latest_event}"`)
+              await new Promise(r => setTimeout(r, API_DELAY_MS))
+              continue
+            }
+
             // Check if now delivered
             if (isDelivered(trackingResult.tracking)) {
               // Update shipments table with delivery status
@@ -352,6 +396,26 @@ export async function GET(request: NextRequest) {
         // Check if now eligible based on days since last scan
         const daysSince = daysSinceLastCheckpoint(tracking)
         const lastCheckpointDate = getLastCheckpointDate(tracking)
+
+        // Check if package is being returned to sender
+        if (isReturnToSender(tracking.latest_event)) {
+          const { error: updateError } = await supabase
+            .from('lost_in_transit_checks')
+            .update({
+              claim_eligibility_status: 'returned_to_sender',
+              last_recheck_at: new Date().toISOString(),
+              last_scan_date: lastCheckpointDate?.toISOString() || null,
+              last_scan_description: tracking.latest_event || null,
+            })
+            .eq('id', check.id)
+
+          if (!updateError) {
+            results.returnedToSender = (results.returnedToSender || 0) + 1
+            console.log(`[At-Risk Recheck] ${check.shipment_id} RETURNED TO SENDER: "${tracking.latest_event}"`)
+          }
+          await new Promise(r => setTimeout(r, API_DELAY_MS))
+          continue
+        }
 
         // Check if carrier has admitted the package is lost
         // This overrides the day-based threshold - carrier admission means immediate eligibility

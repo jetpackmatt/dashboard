@@ -22,7 +22,7 @@ interface ShipmentCandidate {
 /**
  * POST /api/cron/monitoring-entry
  *
- * Hourly cron to add shipments to Lookout IQ monitoring.
+ * Hourly cron to add shipments to Delivery IQ monitoring.
  * Finds shipments that exceed transit benchmarks and haven't been delivered.
  *
  * Entry criteria:
@@ -218,7 +218,21 @@ export async function POST(request: NextRequest) {
         // Determine claim eligibility status
         let claimEligibilityStatus: string = 'at_risk'
         const eligibilityThreshold = isInternational ? 20 : 15
-        if (daysSinceLastScan && daysSinceLastScan >= eligibilityThreshold) {
+
+        // Check for return to sender first
+        const latestEvent = checkpointData?.last_scan_description || ''
+        const RTS_PATTERNS = [
+          /returned to sender/i, /returned to shipper/i, /returned to seller/i,
+          /return to sender/i, /return in progress/i, /return initiated/i,
+          /returninitiated/i, /to original sender/i, /being returned/i,
+          /was returned/i, /return to shipper/i,
+        ]
+        const isRTS = RTS_PATTERNS.some(p => p.test(latestEvent)) &&
+          !/reminder to schedule redelivery/i.test(latestEvent)
+
+        if (isRTS) {
+          claimEligibilityStatus = 'returned_to_sender'
+        } else if (daysSinceLastScan && daysSinceLastScan >= eligibilityThreshold) {
           claimEligibilityStatus = 'eligible'
         }
 
@@ -290,7 +304,6 @@ export async function POST(request: NextRequest) {
             last_scan_description: checkpointData?.last_scan_description || null,
             trackingmore_tracking_id: trackingMoreId,
             first_checked_at: now.toISOString(),
-            days_since_last_update: daysSinceLastScan,
             days_in_transit: daysInTransit,
             // AI fields
             ai_assessment: aiAssessment,

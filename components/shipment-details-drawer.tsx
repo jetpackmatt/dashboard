@@ -236,7 +236,7 @@ interface ShipmentDetails {
     }>
     jetpackInvoiceNumber: string | null
   } | null
-  // Lookout IQ AI Assessment
+  // Delivery IQ AI Assessment
   aiAssessment: {
     statusBadge: 'MOVING' | 'DELAYED' | 'WATCHLIST' | 'STALLED' | 'STUCK' | 'RETURNING' | 'LOST'
     riskLevel: 'low' | 'medium' | 'high' | 'critical'

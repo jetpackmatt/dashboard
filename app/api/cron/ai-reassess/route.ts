@@ -15,7 +15,7 @@ interface LostInTransitCheck {
   trackingmore_tracking_id: string | null
   last_scan_date: string | null
   days_in_transit: number | null
-  days_since_last_update: number | null
+  days_silent: number | null
   claim_eligibility_status: string | null
 }
 
@@ -69,7 +69,6 @@ export async function POST(request: NextRequest) {
         trackingmore_tracking_id,
         last_scan_date,
         days_in_transit,
-        days_since_last_update,
         claim_eligibility_status
       `)
       .lte('ai_next_check_at', now.toISOString())
@@ -198,7 +197,6 @@ export async function POST(request: NextRequest) {
             last_scan_date: checkpointData?.last_scan_date || check.last_scan_date,
             last_scan_description: checkpointData?.last_scan_description,
             last_recheck_at: now.toISOString(),
-            days_since_last_update: daysSinceLastScan,
             days_in_transit: daysInTransit,
             claim_eligibility_status: newClaimStatus,
             // AI fields
