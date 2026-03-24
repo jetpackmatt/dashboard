@@ -246,7 +246,7 @@ export async function GET(request: NextRequest) {
         .select('shipment_id')
         .in('shipment_id', shipmentIds)
 
-      const existingSet = new Set((existingEntries || []).map(e => e.shipment_id))
+      const existingSet = new Set((existingEntries || []).map((e: { shipment_id: string }) => e.shipment_id))
       const missing = [...byShipment.entries()].filter(([sid]) => !existingSet.has(sid))
 
       if (missing.length > 0) {
