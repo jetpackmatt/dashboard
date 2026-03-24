@@ -206,22 +206,28 @@ export async function evaluateMovement(
 date | description | location | status
 ${timeline}
 
-## WHAT COUNTS AS GENUINE MOVEMENT
-- Package arriving at a NEW physical location (different city/facility) — even if the description text is the same
-- A meaningful status progression (e.g., "in transit" → "out for delivery" → "delivered attempt")
-- Carrier picking up a package that was previously only "label created"
+## #1 SIGNAL: LOCATION CHANGE (most important)
+The strongest indicator of genuine movement is the package appearing at a NEW physical location (different city or facility). If recent checkpoints show the package at multiple distinct locations, it is moving — regardless of what the status text says. Even "In Transit" repeated 3 times is genuine movement if the locations are Chicago → Denver → Los Angeles.
+
+HOWEVER, these do NOT count as location changes:
+- Same city appearing with minor formatting differences (e.g., "MEMPHIS,TN" vs "Memphis, TN")
+- ShipBob internal warehouse transfers between ShipBob fulfillment centers — this is warehouse logistics, not delivery progress
+- Location toggling between just 2 locations repeatedly (package bouncing, not progressing)
+
+## #2 SIGNAL: STATUS PROGRESSION (secondary)
+A clear forward progression in delivery status is also genuine movement:
+- "Label Created" → first carrier scan (package was picked up)
+- Any status → "Out for Delivery" or "Delivery Attempted"
 
 ## WHAT DOES NOT COUNT AS GENUINE MOVEMENT
-- Same description repeating at the SAME location on different days (carrier auto-updating)
-- Alternating between 2-3 statuses at the same location (e.g., DHL cycling "Clearance Event" / "Shipment is on hold" daily at the same customs facility)
-- Informational updates that don't indicate physical movement ("label created", "shipping info received", "electronic notification")
-- Carrier posting "in transit" daily at the same location with no location change
+- Same description repeating at the SAME location on different days (carrier auto-updating stale data)
+- Alternating/cycling between 2-3 statuses at the same location (e.g., DHL cycling "Clearance Event" / "Shipment is on hold" daily at the same customs facility for weeks)
+- Informational-only updates ("label created", "shipping info received", "electronic notification")
 - "Awaiting collection" or "available for pickup" repeating — package is sitting, not moving
-- ShipBob internal warehouse transfers between ShipBob facilities that don't represent delivery progress
-- Exception/hold statuses repeating ("Hold for Instructions", "Shipment is on hold")
+- Exception/hold statuses repeating at the same location ("Hold for Instructions", "Shipment is on hold")
 
 ## YOUR TASK
-Look at the PATTERN of the most recent 5-10 checkpoints. Is the latest event evidence of genuine forward progress, or part of a stuck/cycling pattern?
+Examine the most recent 5-10 checkpoints. First, check if the package has appeared at genuinely new locations. Then check for status progression. If neither, check for stuck/cycling patterns.
 
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
