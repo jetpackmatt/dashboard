@@ -14,10 +14,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
   ResponsiveContainer,
   Tooltip,
 } from "recharts"
@@ -98,15 +94,6 @@ function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date
     default: return { from: subDays(today, 59), to: today }
   }
 }
-
-// Silence buckets for the aging chart
-const SILENCE_BUCKETS = [
-  { label: '0-3 days', min: 0, max: 3, color: 'hsl(142, 55%, 49%)' },
-  { label: '4-7 days', min: 4, max: 7, color: 'hsl(45, 85%, 55%)' },
-  { label: '8-14 days', min: 8, max: 14, color: 'hsl(25, 85%, 55%)' },
-  { label: '15-21 days', min: 15, max: 21, color: 'hsl(15, 80%, 48%)' },
-  { label: '21+ days', min: 22, max: Infinity, color: 'hsl(0, 72%, 51%)' },
-]
 
 // Donut center text
 function DonutCenter({ viewBox, line1, line2 }: { viewBox?: { cx: number; cy: number }; line1: string; line2: string }) {
@@ -201,47 +188,40 @@ export default function DeliveryIQPage() {
 
   // ── Computed KPI data ──────────────────────────────────────
 
-  // Panel 1: Needs Attention — shipments requiring action NOW
-  const needsAttentionData = React.useMemo(() => {
+  // Panel 1: Status — claim lifecycle breakdown
+  const statusData = React.useMemo(() => {
     return [
-      { name: 'Ready to File', value: stats.eligible, color: 'hsl(0, 72%, 51%)' },
       { name: 'On Watch', value: stats.atRisk, color: 'hsl(35, 92%, 50%)' },
-      { name: 'Claims Filed', value: stats.claimFiled, color: 'hsl(215, 65%, 55%)' },
+      { name: 'Ready to File', value: stats.eligible, color: 'hsl(0, 72%, 51%)' },
+      { name: 'Claim Filed', value: stats.claimFiled, color: 'hsl(215, 65%, 55%)' },
       { name: 'Returned', value: stats.returnedToSender, color: 'hsl(280, 55%, 58%)' },
     ].filter(d => d.value > 0)
   }, [stats])
-  const needsAttentionTotal = stats.eligible + stats.atRisk + stats.claimFiled + stats.returnedToSender
+  const statusTotal = stats.eligible + stats.atRisk + stats.claimFiled + stats.returnedToSender
 
-  // Panel 2: Silence aging — horizontal bars
-  const silenceData = React.useMemo(() => {
-    const buckets = SILENCE_BUCKETS.map(b => ({ ...b, count: 0 }))
-    shipments.forEach(s => {
-      const days = s.daysSilent ?? 0
-      const bucket = buckets.find(b => days >= b.min && days <= b.max)
-      if (bucket) bucket.count++
-    })
-    return buckets
-  }, [shipments])
+  // Panel 2: Days Silent — spectrum distribution
   const avgDaysSilent = React.useMemo(() => {
     if (shipments.length === 0) return 0
     return shipments.reduce((sum, s) => sum + (s.daysSilent ?? 0), 0) / shipments.length
   }, [shipments])
-
-  // Panel 3: Carrier exposure
-  const carrierData = React.useMemo(() => {
-    const counts: Record<string, number> = {}
+  const silenceSpectrum = React.useMemo(() => {
+    const bands = [
+      { label: '0–3d', min: 0, max: 3, color: 'hsl(142, 55%, 49%)', count: 0 },
+      { label: '4–7d', min: 4, max: 7, color: 'hsl(65, 70%, 45%)', count: 0 },
+      { label: '8–14d', min: 8, max: 14, color: 'hsl(35, 85%, 50%)', count: 0 },
+      { label: '15–21d', min: 15, max: 21, color: 'hsl(15, 80%, 48%)', count: 0 },
+      { label: '21d+', min: 22, max: Infinity, color: 'hsl(0, 72%, 51%)', count: 0 },
+    ]
     shipments.forEach(s => {
-      const c = (s.carrier || 'Unknown').replace(/Shipping/g, '').replace('Express', 'Exp').trim()
-      counts[c] = (counts[c] || 0) + 1
+      const d = s.daysSilent ?? 0
+      const band = bands.find(b => d >= b.min && d <= b.max)
+      if (band) band.count++
     })
-    const colors = ['hsl(215, 65%, 55%)', 'hsl(260, 55%, 58%)', 'hsl(25, 85%, 55%)', 'hsl(340, 70%, 55%)', 'hsl(142, 55%, 49%)']
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([carrier, count], i) => ({ carrier, count, color: colors[i % colors.length] }))
+    return bands
   }, [shipments])
-  // Panel 4: AI predicted outcomes
-  const outcomeData = React.useMemo(() => {
+
+  // Panel 3: Delivery Forecast — AI predicted outcomes
+  const forecastData = React.useMemo(() => {
     const outcomes = { delivered: 0, lost: 0, returned: 0, unassessed: 0 }
     shipments.forEach(s => {
       if (!s.aiPredictedOutcome) { outcomes.unassessed++; return }
@@ -249,16 +229,20 @@ export default function DeliveryIQPage() {
       else if (s.aiPredictedOutcome === 'lost') outcomes.lost++
       else if (s.aiPredictedOutcome === 'returned') outcomes.returned++
     })
-    const data = [
-      { name: 'Likely Delivered', value: outcomes.delivered, color: 'hsl(142, 55%, 49%)' },
+    return [
+      { name: 'Will Deliver', value: outcomes.delivered, color: 'hsl(142, 55%, 49%)' },
       { name: 'Likely Lost', value: outcomes.lost, color: 'hsl(0, 72%, 51%)' },
-      { name: 'Returning', value: outcomes.returned, color: 'hsl(260, 55%, 58%)' },
-      { name: 'Unassessed', value: outcomes.unassessed, color: 'hsl(var(--muted))' },
+      { name: 'Returning', value: outcomes.returned, color: 'hsl(280, 55%, 58%)' },
+      { name: 'Pending', value: outcomes.unassessed, color: 'hsl(var(--muted))' },
     ].filter(d => d.value > 0)
-    return data.length > 0 ? data : [{ name: 'No Data', value: 1, color: 'hsl(var(--muted))' }]
   }, [shipments])
-  const likelyLostCount = React.useMemo(() => {
-    return shipments.filter(s => s.aiPredictedOutcome === 'lost').length
+  const forecastTotal = shipments.length
+
+  // Panel 4: Packages Moving — % with recent carrier activity
+  const movingData = React.useMemo(() => {
+    if (shipments.length === 0) return { moving: 0, silent: 0, total: 0, pct: 0 }
+    const moving = shipments.filter(s => (s.daysSilent ?? 99) <= 2).length
+    return { moving, silent: shipments.length - moving, total: shipments.length, pct: Math.round((moving / shipments.length) * 100) }
   }, [shipments])
 
   // Tooltip styles
@@ -266,7 +250,7 @@ export default function DeliveryIQPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Delivery IQ" badge={<span className="relative -top-1.5 text-[8px] font-semibold uppercase tracking-wide px-0.5 rounded-sm bg-orange-500/15 text-orange-500 dark:bg-orange-400/15 dark:text-orange-400">Beta</span>}>
+      <SiteHeader sectionName="Delivery IQ" badge={<span className="text-[8px] font-semibold uppercase tracking-wide px-[4px] py-0.5 rounded-sm bg-blue-500/15 text-blue-600 dark:bg-blue-400/15 dark:text-blue-400">Beta</span>}>
         {(isLoading || isClientLoading) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
             <JetpackLoader size="md" />
@@ -282,165 +266,155 @@ export default function DeliveryIQPage() {
             <div className="px-6 lg:px-8 pt-5 pb-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
-                {/* ── Panel 1: Needs Attention ── */}
-                <div className="rounded-xl border border-border/60 bg-background overflow-hidden">
+                {/* ── Panel 1: Status ── */}
+                <div className="rounded-xl border border-border/60 bg-background overflow-hidden flex flex-col">
                   <div className="px-4 pt-4 pb-0">
-                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Needs Attention</div>
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Status</div>
                   </div>
-                  <div className="flex items-center justify-center py-3">
-                    <div className="w-[120px] h-[120px]">
+                  <div className="flex-1 flex items-center justify-center py-2">
+                    <div className="w-[110px] h-[110px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
-                            data={needsAttentionData.length > 0 ? needsAttentionData : [{ name: 'None', value: 1, color: 'hsl(var(--muted))' }]}
+                            data={statusData.length > 0 ? statusData : [{ name: 'None', value: 1, color: 'hsl(var(--muted))' }]}
                             cx="50%"
                             cy="50%"
-                            innerRadius={36}
-                            outerRadius={54}
+                            innerRadius={33}
+                            outerRadius={50}
                             paddingAngle={3}
                             dataKey="value"
                             strokeWidth={0}
                           >
-                            {(needsAttentionData.length > 0 ? needsAttentionData : [{ name: 'None', value: 1, color: 'hsl(var(--muted))' }]).map((entry, index) => (
+                            {(statusData.length > 0 ? statusData : [{ name: 'None', value: 1, color: 'hsl(var(--muted))' }]).map((entry, index) => (
                               <Cell key={index} fill={entry.color} />
                             ))}
-                            <DonutCenter line1={String(needsAttentionTotal)} line2="active" />
+                            <DonutCenter line1={String(statusTotal)} line2="active" />
                           </Pie>
                           <Tooltip contentStyle={tooltipStyle} formatter={(value: number, name: string) => [value, name]} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
-                  {/* Segmented status bar */}
-                  {needsAttentionTotal > 0 && (
-                    <div className="px-4 pb-4">
-                      <div className="flex rounded-full overflow-hidden h-1.5">
-                        {needsAttentionData.map(d => (
-                          <div
-                            key={d.name}
-                            className="h-full"
-                            style={{ width: `${(d.value / needsAttentionTotal) * 100}%`, backgroundColor: d.color }}
-                            title={`${d.name}: ${d.value}`}
-                          />
-                        ))}
-                      </div>
-                      <div className="flex justify-between mt-1.5 text-[10px] text-muted-foreground">
-                        {needsAttentionData.map(d => (
-                          <span key={d.name}>{d.value} {d.name.replace('Ready to File', 'Ready').replace('Claims Filed', 'Filed')}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="px-4 pb-3 grid grid-cols-2 gap-x-3 gap-y-1">
+                    {statusData.map(d => (
+                      <span key={d.name} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                        <span className="tabular-nums font-medium text-foreground">{d.value}</span>
+                        {d.name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
 
-                {/* ── Panel 2: Silence Aging ── */}
-                <div className="rounded-xl border border-border/60 bg-background overflow-hidden">
+                {/* ── Panel 2: Days Silent ── */}
+                <div className="rounded-xl border border-border/60 bg-background overflow-hidden flex flex-col">
                   <div className="px-4 pt-4 flex items-baseline justify-between">
-                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Silence Aging</div>
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Days Silent</div>
                     <div className="text-lg font-bold tabular-nums">{avgDaysSilent.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-0.5">d avg</span></div>
                   </div>
-                  <div className="px-3 pt-2 pb-4" style={{ height: 160 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={silenceData}
-                        layout="vertical"
-                        margin={{ left: 0, right: 16, top: 0, bottom: 0 }}
-                        barCategoryGap="25%"
-                      >
-                        <XAxis type="number" hide />
-                        <YAxis
-                          type="category"
-                          dataKey="label"
-                          width={58}
-                          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                          tickLine={false}
-                          axisLine={false}
-                        />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(value: number) => [value, 'Shipments']} />
-                        <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={14}>
-                          {silenceData.map((entry, index) => (
-                            <Cell key={index} fill={entry.color} />
+                  <div className="flex-1 flex flex-col justify-center px-4 py-3 gap-3">
+                    {/* Spectrum bar */}
+                    {shipments.length > 0 ? (
+                      <>
+                        <div className="flex rounded-full overflow-hidden h-5">
+                          {silenceSpectrum.map((band, i) => {
+                            const pct = shipments.length > 0 ? (band.count / shipments.length) * 100 : 0
+                            if (pct === 0) return null
+                            return (
+                              <div
+                                key={i}
+                                className="h-full flex items-center justify-center text-[9px] font-bold text-white/90 transition-all"
+                                style={{ width: `${pct}%`, backgroundColor: band.color, minWidth: band.count > 0 ? 16 : 0 }}
+                                title={`${band.label}: ${band.count} shipments`}
+                              >
+                                {pct >= 12 ? band.count : ''}
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <div className="flex justify-between text-[9px] text-muted-foreground">
+                          {silenceSpectrum.map((band, i) => (
+                            <span key={i} className="flex flex-col items-center">
+                              <span style={{ color: band.color }} className="font-medium">{band.count}</span>
+                              <span>{band.label}</span>
+                            </span>
                           ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* ── Panel 3: Carrier Exposure ── */}
-                <div className="rounded-xl border border-border/60 bg-background overflow-hidden">
-                  <div className="px-4 pt-4">
-                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Carrier Exposure</div>
-                  </div>
-                  <div className="px-3 pt-2 pb-4" style={{ height: 160 }}>
-                    {carrierData.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={carrierData}
-                          layout="vertical"
-                          margin={{ left: 0, right: 16, top: 0, bottom: 0 }}
-                          barCategoryGap="25%"
-                        >
-                          <XAxis type="number" hide />
-                          <YAxis
-                            type="category"
-                            dataKey="carrier"
-                            width={58}
-                            tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                            tickLine={false}
-                            axisLine={false}
-                          />
-                          <Tooltip contentStyle={tooltipStyle} formatter={(value: number) => [value, 'Shipments']} />
-                          <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={14}>
-                            {carrierData.map((entry, index) => (
-                              <Cell key={index} fill={entry.color} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                        </div>
+                      </>
                     ) : (
-                      <div className="flex items-center justify-center h-full text-xs text-muted-foreground">No carriers in view</div>
+                      <div className="text-xs text-muted-foreground text-center">No data</div>
                     )}
                   </div>
                 </div>
 
-                {/* ── Panel 4: AI Predictions ── */}
-                <div className="rounded-xl border border-border/60 bg-background overflow-hidden">
+                {/* ── Panel 3: Delivery Forecast ── */}
+                <div className="rounded-xl border border-border/60 bg-background overflow-hidden flex flex-col">
                   <div className="px-4 pt-4 pb-0">
-                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">AI Predictions</div>
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Delivery Forecast</div>
                   </div>
-                  <div className="flex items-center justify-center py-3">
-                    <div className="w-[120px] h-[120px]">
+                  <div className="flex-1 flex items-center justify-center py-2">
+                    <div className="w-[110px] h-[110px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
-                            data={outcomeData}
+                            data={forecastData.length > 0 ? forecastData : [{ name: 'No Data', value: 1, color: 'hsl(var(--muted))' }]}
                             cx="50%"
                             cy="50%"
-                            innerRadius={36}
-                            outerRadius={54}
+                            innerRadius={33}
+                            outerRadius={50}
                             paddingAngle={3}
                             dataKey="value"
                             strokeWidth={0}
                           >
-                            {outcomeData.map((entry, index) => (
+                            {(forecastData.length > 0 ? forecastData : [{ name: 'No Data', value: 1, color: 'hsl(var(--muted))' }]).map((entry, index) => (
                               <Cell key={index} fill={entry.color} />
                             ))}
-                            <DonutCenter line1={String(likelyLostCount)} line2="likely lost" />
+                            <DonutCenter line1={forecastTotal > 0 ? `${Math.round((forecastData.find(d => d.name === 'Will Deliver')?.value ?? 0) / forecastTotal * 100)}%` : '—'} line2="on track" />
                           </Pie>
                           <Tooltip contentStyle={tooltipStyle} formatter={(value: number, name: string) => [value, name]} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
-                  {/* Compact legend — only non-zero, no "No Data" */}
-                  <div className="px-4 pb-4 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-                    {outcomeData.filter(d => d.name !== 'No Data' && d.name !== 'Unassessed').map(d => (
-                      <span key={d.name} className="flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: d.color }} />
-                        {d.value} {d.name.replace('Likely ', '')}
+                  <div className="px-4 pb-3 grid grid-cols-2 gap-x-3 gap-y-1">
+                    {forecastData.filter(d => d.name !== 'No Data').map(d => (
+                      <span key={d.name} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                        <span className="tabular-nums font-medium text-foreground">{d.value}</span>
+                        {d.name}
                       </span>
                     ))}
+                  </div>
+                </div>
+
+                {/* ── Panel 4: Packages Moving ── */}
+                <div className="rounded-xl border border-border/60 bg-background overflow-hidden flex flex-col">
+                  <div className="px-4 pt-4 pb-0">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Packages Moving</div>
+                  </div>
+                  <div className="flex-1 flex flex-col items-center justify-center py-2 gap-1">
+                    {/* Ring progress */}
+                    <div className="relative w-[110px] h-[110px]">
+                      <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="hsl(var(--muted))" strokeWidth="8" opacity="0.3" />
+                        <circle
+                          cx="50" cy="50" r="42" fill="none"
+                          stroke={movingData.pct >= 70 ? 'hsl(142, 55%, 49%)' : movingData.pct >= 40 ? 'hsl(35, 92%, 50%)' : 'hsl(0, 72%, 51%)'}
+                          strokeWidth="8"
+                          strokeLinecap="round"
+                          strokeDasharray={`${movingData.pct * 2.64} 264`}
+                          className="transition-all duration-700"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-2xl font-bold tabular-nums leading-none">{movingData.pct}%</span>
+                        <span className="text-[9px] text-muted-foreground mt-0.5">moving</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="px-4 pb-3 flex justify-between text-[10px]">
+                    <span className="text-muted-foreground"><span className="tabular-nums font-medium text-green-600">{movingData.moving}</span> active scans</span>
+                    <span className="text-muted-foreground"><span className="tabular-nums font-medium text-amber-600">{movingData.silent}</span> gone quiet</span>
                   </div>
                 </div>
 

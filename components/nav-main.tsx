@@ -27,6 +27,7 @@ interface NavItem {
   icon?: LucideIcon
   isActive?: boolean
   items?: SubItem[]
+  badge?: string
 }
 
 export function NavMain({
@@ -79,6 +80,11 @@ export function NavMain({
                   <Link href={item.url} prefetch={false}>
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
+                    {item.badge && (
+                      <span className="text-[8px] font-semibold uppercase tracking-wide px-[3px] py-0 leading-[14px] rounded-sm bg-[#c9dafa] text-blue-600 dark:bg-blue-900 dark:text-blue-400">
+                        {item.badge}
+                      </span>
+                    )}
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

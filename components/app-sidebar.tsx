@@ -73,6 +73,7 @@ const baseNavItems = [
     title: "Delivery IQ",
     url: "/dashboard/deliveryiq",
     icon: BinocularsIcon,
+    badge: "Beta",
   },
   {
     title: "Invoices",

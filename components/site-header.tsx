@@ -5,10 +5,11 @@ import { ClientSelector } from "@/components/client-selector"
 
 interface SiteHeaderProps {
   sectionName?: string
+  badge?: React.ReactNode
   children?: React.ReactNode
 }
 
-export function SiteHeader({ sectionName = "Dashboard", children }: SiteHeaderProps) {
+export function SiteHeader({ sectionName = "Dashboard", badge, children }: SiteHeaderProps) {
   return (
     <header className="group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 flex h-12 shrink-0 items-center gap-2 transition-[width,height] ease-linear">
       <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -18,6 +19,7 @@ export function SiteHeader({ sectionName = "Dashboard", children }: SiteHeaderPr
           className="mx-2 data-[orientation=vertical]:h-4 bg-muted-foreground/30"
         />
         <h1 className="text-base font-medium">{sectionName}</h1>
+        {badge}
         {children}
         <div className="ml-auto flex items-center gap-2">
           <ClientSelector />
