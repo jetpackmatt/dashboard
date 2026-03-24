@@ -3,6 +3,8 @@ import { createHmac } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { isDelivered, isReturned, getLastCheckpointDate, type TrackingMoreTracking } from '@/lib/trackingmore/client'
+import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
+import { evaluateMovement } from '@/lib/ai/client'
 
 const RTS_PATTERNS = [
   /returned to sender/i, /returned to shipper/i, /returned to seller/i,
@@ -178,18 +180,42 @@ export async function POST(request: NextRequest) {
       newStatus = 'returned_to_sender'
     } else if (daysSinceLastScan !== null && daysSinceLastScan >= eligibilityThreshold && litEntry.claim_eligibility_status === 'at_risk') {
       newStatus = 'eligible'
-    } else if (daysSinceLastScan !== null && daysSinceLastScan < eligibilityThreshold && litEntry.claim_eligibility_status === 'eligible') {
-      // New scan arrived — package is moving again, revert to at_risk
-      newStatus = 'at_risk'
+    } else if (daysSinceLastScan !== null && daysSinceLastScan < 8 && ['at_risk', 'eligible'].includes(litEntry.claim_eligibility_status)) {
+      // Recent scan — evaluate whether this is genuine movement or a stuck pattern
+      // Fetch full checkpoint history from our stored data
+      const storedCheckpoints = await getCheckpoints(litEntry.shipment_id)
+
+      if (storedCheckpoints.length >= 2) {
+        const movementEval = await evaluateMovement(
+          litEntry.carrier || carrier,
+          storedCheckpoints.map(cp => ({
+            checkpoint_date: cp.checkpoint_date,
+            raw_description: cp.raw_description,
+            raw_location: cp.raw_location,
+            raw_status: cp.raw_status,
+          })),
+        )
+
+        if (movementEval.isGenuineMovement && movementEval.confidence >= 70) {
+          // Package is genuinely moving — remove from monitoring
+          await supabase.from('lost_in_transit_checks').delete().eq('id', litEntry.id)
+          console.log(`[Webhook TM] ${trackingNumber}: GENUINE MOVEMENT (${movementEval.confidence}%) — removed from monitoring. Reason: ${movementEval.reason}`)
+          return NextResponse.json({ success: true, action: 'movement_removed', checkpointsStored, movementEval })
+        }
+
+        console.log(`[Webhook TM] ${trackingNumber}: movement eval: genuine=${movementEval.isGenuineMovement}, confidence=${movementEval.confidence}%, reason=${movementEval.reason}`)
+      }
+
+      // Not genuine movement or low confidence — keep monitoring, update metadata
     }
 
     // Build location string from latest checkpoint
-    const checkpoints = [
+    const webhookCheckpoints = [
       ...(tracking.origin_info?.trackinfo || []),
       ...(tracking.destination_info?.trackinfo || []),
     ].sort((a, b) => new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime())
 
-    const latestCheckpoint = checkpoints[0]
+    const latestCheckpoint = webhookCheckpoints[0]
     const latestLocation = latestCheckpoint?.location ||
       [latestCheckpoint?.city, latestCheckpoint?.state].filter(Boolean).join(', ') || null
 
@@ -202,7 +228,8 @@ export async function POST(request: NextRequest) {
 
     if (lastCheckpointDate) {
       updateData.last_scan_date = lastCheckpointDate.toISOString()
-      updateData.last_scan_description = `${latestEvent},${latestLocation || ''},${lastCheckpointDate.toISOString()}`
+      updateData.last_scan_description = latestEvent
+      updateData.last_scan_location = latestLocation
       updateData.days_in_transit = daysSinceLastScan
     }
 

@@ -147,6 +147,111 @@ RESHIPMENT URGENCY SCORING:
   }
 }
 
+// Movement evaluation types
+export interface MovementEvaluation {
+  isGenuineMovement: boolean
+  confidence: number
+  reason: string
+}
+
+// Checkpoint data for movement evaluation (from our stored checkpoints)
+export interface CheckpointForEval {
+  checkpoint_date: string
+  raw_description: string
+  raw_location: string | null
+  raw_status: string | null
+}
+
+/**
+ * Evaluate whether a shipment is showing genuine new movement or is stuck in a
+ * repeating pattern. Called when a monitored shipment gets a new scan that drops
+ * daysSinceLastScan below 8.
+ *
+ * Uses Gemini Flash for nuanced interpretation — carrier tracking descriptions
+ * have too many edge cases for pure rule-based logic (DHL cycling "Clearance Event"
+ * / "Shipment is on hold" daily, USPS embedding dates in descriptions, same
+ * description at new locations = real movement, etc.)
+ *
+ * @returns MovementEvaluation with isGenuineMovement boolean
+ */
+export async function evaluateMovement(
+  carrier: string,
+  checkpoints: CheckpointForEval[],
+): Promise<MovementEvaluation> {
+  // Safety: if fewer than 2 checkpoints, can't evaluate patterns
+  if (checkpoints.length < 2) {
+    return { isGenuineMovement: false, confidence: 50, reason: 'Insufficient checkpoint history' }
+  }
+
+  // Pre-filter: if raw_status is "inforeceived" on the latest checkpoint, never real movement
+  if (checkpoints[0]?.raw_status === 'inforeceived') {
+    return { isGenuineMovement: false, confidence: 95, reason: 'Info received event, not physical movement' }
+  }
+
+  // Format the checkpoint timeline (limit to last 30 for context)
+  const timeline = checkpoints
+    .slice(0, 30)
+    .map(cp => {
+      const date = cp.checkpoint_date.split('T')[0]
+      const loc = cp.raw_location || 'no location'
+      return `${date} | ${cp.raw_description} | ${loc} | status:${cp.raw_status || 'unknown'}`
+    })
+    .join('\n')
+
+  const prompt = `You are a shipping logistics expert analyzing carrier tracking data. Your job is to determine whether a shipment that was being monitored as potentially lost is now showing GENUINE forward movement toward delivery, or is stuck in a repeating/cycling pattern.
+
+## CARRIER: ${carrier}
+
+## CHECKPOINT HISTORY (newest first, last ${Math.min(checkpoints.length, 30)} events)
+date | description | location | status
+${timeline}
+
+## WHAT COUNTS AS GENUINE MOVEMENT
+- Package arriving at a NEW physical location (different city/facility) — even if the description text is the same
+- A meaningful status progression (e.g., "in transit" → "out for delivery" → "delivered attempt")
+- Carrier picking up a package that was previously only "label created"
+
+## WHAT DOES NOT COUNT AS GENUINE MOVEMENT
+- Same description repeating at the SAME location on different days (carrier auto-updating)
+- Alternating between 2-3 statuses at the same location (e.g., DHL cycling "Clearance Event" / "Shipment is on hold" daily at the same customs facility)
+- Informational updates that don't indicate physical movement ("label created", "shipping info received", "electronic notification")
+- Carrier posting "in transit" daily at the same location with no location change
+- "Awaiting collection" or "available for pickup" repeating — package is sitting, not moving
+- ShipBob internal warehouse transfers between ShipBob facilities that don't represent delivery progress
+- Exception/hold statuses repeating ("Hold for Instructions", "Shipment is on hold")
+
+## YOUR TASK
+Look at the PATTERN of the most recent 5-10 checkpoints. Is the latest event evidence of genuine forward progress, or part of a stuck/cycling pattern?
+
+Respond ONLY with a JSON object (no markdown, no explanation):
+{
+  "isGenuineMovement": true/false,
+  "confidence": 0-100,
+  "reason": "brief explanation"
+}`
+
+  try {
+    const result = await geminiModel.generateContent(prompt)
+    const text = result.response.text()
+    const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const evaluation = JSON.parse(jsonText) as MovementEvaluation
+
+    // Validate
+    if (typeof evaluation.isGenuineMovement !== 'boolean') {
+      console.error('[AI] Invalid movement evaluation - missing isGenuineMovement')
+      return { isGenuineMovement: false, confidence: 0, reason: 'Invalid AI response' }
+    }
+
+    evaluation.confidence = Math.max(0, Math.min(100, evaluation.confidence || 50))
+
+    return evaluation
+  } catch (error) {
+    console.error('[AI] Error evaluating movement:', error)
+    // On error, default to keeping in monitoring (safe default)
+    return { isGenuineMovement: false, confidence: 0, reason: `AI evaluation failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+  }
+}
+
 /**
  * Calculate next check time based on current risk/status
  */
