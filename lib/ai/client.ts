@@ -298,7 +298,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
 
     const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(evaluation.watchReason)) {
-      evaluation.watchReason = 'HELD' // Safe default
+      evaluation.watchReason = 'STALLED' // Safe default
     }
 
     evaluation.confidence = Math.max(0, Math.min(100, evaluation.confidence || 50))
@@ -369,7 +369,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
 
     const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(parsed.watchReason)) {
-      parsed.watchReason = 'HELD'
+      parsed.watchReason = 'STALLED'
     }
 
     return parsed
