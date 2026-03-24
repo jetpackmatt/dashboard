@@ -167,6 +167,16 @@ export interface CheckpointForEval {
 }
 
 /**
+ * Check if a checkpoint description is a "label created" / info-received event
+ * that TrackingMore sometimes misclassifies as "transit"
+ */
+const LABEL_CREATED_PATTERNS = /^(readyforreceive|label created|shipping label created|shipping info(rmation)? received|electronic.*notification)/i
+
+function isInfoReceivedCheckpoint(cp: CheckpointForEval): boolean {
+  return cp.raw_status === 'inforeceived' || LABEL_CREATED_PATTERNS.test(cp.raw_description)
+}
+
+/**
  * Format checkpoint timeline for AI prompts
  */
 function formatCheckpointTimeline(checkpoints: CheckpointForEval[], limit: number = 30): string {
@@ -227,8 +237,8 @@ export async function evaluateMovement(
     return { isGenuineMovement: false, watchReason: 'STALLED', confidence: 50, reason: 'Insufficient checkpoint history' }
   }
 
-  // Pre-filter: if raw_status is "inforeceived" on the latest checkpoint, never real movement
-  if (checkpoints[0]?.raw_status === 'inforeceived') {
+  // Pre-filter: if all checkpoints are label-created / info-received, no physical scans exist
+  if (checkpoints.every(cp => isInfoReceivedCheckpoint(cp))) {
     return { isGenuineMovement: false, watchReason: 'NO SCANS', confidence: 95, reason: 'Only info received events, no physical scans' }
   }
 
@@ -330,8 +340,8 @@ export async function classifyWatchReason(
     return { watchReason: 'NO SCANS', reason: 'No carrier scan data exists' }
   }
 
-  // Code-detectable: only inforeceived events
-  const hasPhysicalScan = checkpoints.some(cp => cp.raw_status && cp.raw_status !== 'inforeceived')
+  // Code-detectable: only info-received / label-created events (no physical scans)
+  const hasPhysicalScan = checkpoints.some(cp => !isInfoReceivedCheckpoint(cp))
   if (!hasPhysicalScan) {
     return { watchReason: 'NO SCANS', reason: 'Only info received events, no physical carrier scans' }
   }
