@@ -147,9 +147,13 @@ RESHIPMENT URGENCY SCORING:
   }
 }
 
+// Watch reason badges for On Watch shipments
+export type WatchReason = 'SLOW' | 'STALLED' | 'CUSTOMS' | 'HELD' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING'
+
 // Movement evaluation types
 export interface MovementEvaluation {
   isGenuineMovement: boolean
+  watchReason: WatchReason
   confidence: number
   reason: string
 }
@@ -163,50 +167,83 @@ export interface CheckpointForEval {
 }
 
 /**
- * Evaluate whether a shipment is showing genuine new movement or is stuck in a
- * repeating pattern. Called when a monitored shipment gets a new scan that drops
- * daysSinceLastScan below 8.
- *
- * Uses Gemini Flash for nuanced interpretation — carrier tracking descriptions
- * have too many edge cases for pure rule-based logic (DHL cycling "Clearance Event"
- * / "Shipment is on hold" daily, USPS embedding dates in descriptions, same
- * description at new locations = real movement, etc.)
- *
- * @returns MovementEvaluation with isGenuineMovement boolean
+ * Format checkpoint timeline for AI prompts
  */
-export async function evaluateMovement(
-  carrier: string,
-  checkpoints: CheckpointForEval[],
-): Promise<MovementEvaluation> {
-  // Safety: if fewer than 2 checkpoints, can't evaluate patterns
-  if (checkpoints.length < 2) {
-    return { isGenuineMovement: false, confidence: 50, reason: 'Insufficient checkpoint history' }
-  }
-
-  // Pre-filter: if raw_status is "inforeceived" on the latest checkpoint, never real movement
-  if (checkpoints[0]?.raw_status === 'inforeceived') {
-    return { isGenuineMovement: false, confidence: 95, reason: 'Info received event, not physical movement' }
-  }
-
-  // Format the checkpoint timeline (limit to last 30 for context)
-  const timeline = checkpoints
-    .slice(0, 30)
+function formatCheckpointTimeline(checkpoints: CheckpointForEval[], limit: number = 30): string {
+  return checkpoints
+    .slice(0, limit)
     .map(cp => {
       const date = cp.checkpoint_date.split('T')[0]
       const loc = cp.raw_location || 'no location'
       return `${date} | ${cp.raw_description} | ${loc} | status:${cp.raw_status || 'unknown'}`
     })
     .join('\n')
+}
 
-  const prompt = `You are a shipping logistics expert analyzing carrier tracking data. Your job is to determine whether a shipment that was being monitored as potentially lost is now showing GENUINE forward movement toward delivery, or is stuck in a repeating/cycling pattern.
+/**
+ * Shared prompt section for watch reason classification
+ */
+const WATCH_REASON_PROMPT = `
+## WATCH REASON CLASSIFICATION
+Based on the checkpoint pattern, classify the shipment into exactly one category:
+
+- **SLOW**: Package is progressing through different locations, just at a slow pace. Checkpoints show the package appearing at multiple distinct cities/facilities over time.
+- **STALLED**: Package was moving but has stopped at a specific location. Recent checkpoints are all at the same location but the package was previously seen at other locations.
+- **CUSTOMS**: International package in customs processing. Checkpoint descriptions reference customs, clearance, import/export processing. No indication that shipper or recipient action is required.
+- **HELD**: Carrier has flagged a vague exception or hold with no clear action specified. Generic "delivery exception", "shipment on hold" without explanation of what's needed.
+- **NEEDS ACTION**: Tracking explicitly indicates that the shipper or recipient must take action. Examples: "available for pickup at post office" (recipient must collect), "additional documentation required" (shipper must provide customs docs), "address correction needed", "payment of duties required by recipient". The key distinction from HELD: there is a SPECIFIC action someone must take.
+- **STUCK**: Carrier is cycling/repeating the same 2-3 statuses at the same location over multiple days or weeks. The package is clearly not progressing despite the carrier posting "updates". Common pattern: DHL alternating "Clearance Event" / "Shipment is on hold" daily at the same facility.
+- **RETURNING**: Evidence the package is being returned to sender. Descriptions mention "return", "returned to sender", "RTS", "back to shipper".
+
+IMPORTANT DISTINCTIONS:
+- CUSTOMS vs NEEDS ACTION: If customs requires documents/payment from shipper or recipient, that's NEEDS ACTION, not CUSTOMS. CUSTOMS is only for routine customs processing with no action required.
+- HELD vs NEEDS ACTION: If the tracking says WHAT needs to happen (pickup, docs, address fix), it's NEEDS ACTION. If it's a vague hold/exception with no explanation, it's HELD.
+- STALLED vs STUCK: STALLED means the package stopped recently at one location. STUCK means the carrier has been cycling the same statuses at the same location for an extended period (many repeated checkpoints).
+- SLOW vs STALLED: SLOW means the package IS still appearing at new locations. STALLED means it has STOPPED appearing at new locations.`
+
+/**
+ * Evaluate whether a shipment is showing genuine new movement or is stuck in a
+ * repeating pattern. Called when a monitored shipment gets a new scan that drops
+ * daysSinceLastScan below 8.
+ *
+ * Also classifies the watch reason badge in the same AI call.
+ *
+ * Uses Gemini Flash for nuanced interpretation — carrier tracking descriptions
+ * have too many edge cases for pure rule-based logic.
+ *
+ * @returns MovementEvaluation with isGenuineMovement boolean and watchReason badge
+ */
+export async function evaluateMovement(
+  carrier: string,
+  checkpoints: CheckpointForEval[],
+  isInternational: boolean = false,
+): Promise<MovementEvaluation> {
+  // Safety: if fewer than 2 checkpoints, can't evaluate patterns
+  if (checkpoints.length < 2) {
+    return { isGenuineMovement: false, watchReason: 'STALLED', confidence: 50, reason: 'Insufficient checkpoint history' }
+  }
+
+  // Pre-filter: if raw_status is "inforeceived" on the latest checkpoint, never real movement
+  if (checkpoints[0]?.raw_status === 'inforeceived') {
+    return { isGenuineMovement: false, watchReason: 'NO SCANS', confidence: 95, reason: 'Only info received events, no physical scans' }
+  }
+
+  const timeline = formatCheckpointTimeline(checkpoints)
+
+  const prompt = `You are a shipping logistics expert analyzing carrier tracking data. You have TWO tasks:
+1. Determine whether this shipment is showing GENUINE forward movement toward delivery, or is stuck/cycling.
+2. Classify the watch reason (why this shipment needs monitoring).
 
 ## CARRIER: ${carrier}
+## INTERNATIONAL: ${isInternational ? 'Yes' : 'No'}
 
 ## CHECKPOINT HISTORY (newest first, last ${Math.min(checkpoints.length, 30)} events)
 date | description | location | status
 ${timeline}
 
-## #1 SIGNAL: LOCATION CHANGE (most important)
+## MOVEMENT EVALUATION
+
+### #1 SIGNAL: LOCATION CHANGE (most important)
 The strongest indicator of genuine movement is the package appearing at a NEW physical location (different city or facility). If recent checkpoints show the package at multiple distinct locations, it is moving — regardless of what the status text says. Even "In Transit" repeated 3 times is genuine movement if the locations are Chicago → Denver → Los Angeles.
 
 HOWEVER, these do NOT count as location changes:
@@ -214,24 +251,27 @@ HOWEVER, these do NOT count as location changes:
 - ShipBob internal warehouse transfers between ShipBob fulfillment centers — this is warehouse logistics, not delivery progress
 - Location toggling between just 2 locations repeatedly (package bouncing, not progressing)
 
-## #2 SIGNAL: STATUS PROGRESSION (secondary)
+### #2 SIGNAL: STATUS PROGRESSION (secondary)
 A clear forward progression in delivery status is also genuine movement:
 - "Label Created" → first carrier scan (package was picked up)
 - Any status → "Out for Delivery" or "Delivery Attempted"
 
-## WHAT DOES NOT COUNT AS GENUINE MOVEMENT
+### WHAT DOES NOT COUNT AS GENUINE MOVEMENT
 - Same description repeating at the SAME location on different days (carrier auto-updating stale data)
 - Alternating/cycling between 2-3 statuses at the same location (e.g., DHL cycling "Clearance Event" / "Shipment is on hold" daily at the same customs facility for weeks)
 - Informational-only updates ("label created", "shipping info received", "electronic notification")
 - "Awaiting collection" or "available for pickup" repeating — package is sitting, not moving
 - Exception/hold statuses repeating at the same location ("Hold for Instructions", "Shipment is on hold")
+${WATCH_REASON_PROMPT}
 
 ## YOUR TASK
-Examine the most recent 5-10 checkpoints. First, check if the package has appeared at genuinely new locations. Then check for status progression. If neither, check for stuck/cycling patterns.
+1. Examine the most recent 5-10 checkpoints for genuine movement (location changes first, then status progression).
+2. Classify the watch reason based on the overall checkpoint pattern.
 
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
   "isGenuineMovement": true/false,
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "HELD" | "NEEDS ACTION" | "STUCK" | "RETURNING",
   "confidence": 0-100,
   "reason": "brief explanation"
 }`
@@ -245,7 +285,12 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     // Validate
     if (typeof evaluation.isGenuineMovement !== 'boolean') {
       console.error('[AI] Invalid movement evaluation - missing isGenuineMovement')
-      return { isGenuineMovement: false, confidence: 0, reason: 'Invalid AI response' }
+      return { isGenuineMovement: false, watchReason: 'HELD', confidence: 0, reason: 'Invalid AI response' }
+    }
+
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'HELD', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    if (!validReasons.includes(evaluation.watchReason)) {
+      evaluation.watchReason = 'HELD' // Safe default
     }
 
     evaluation.confidence = Math.max(0, Math.min(100, evaluation.confidence || 50))
@@ -253,8 +298,89 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     return evaluation
   } catch (error) {
     console.error('[AI] Error evaluating movement:', error)
-    // On error, default to keeping in monitoring (safe default)
-    return { isGenuineMovement: false, confidence: 0, reason: `AI evaluation failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+    return { isGenuineMovement: false, watchReason: 'HELD', confidence: 0, reason: `AI evaluation failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+  }
+}
+
+/**
+ * Classify the watch reason for a monitored shipment without evaluating movement.
+ * Used by the ai-reassess cron for shipments that haven't had a recent scan
+ * (daysSince >= 8) and therefore don't need movement evaluation.
+ *
+ * @returns WatchReason badge and brief explanation
+ */
+export async function classifyWatchReason(
+  carrier: string,
+  checkpoints: CheckpointForEval[],
+  isInternational: boolean = false,
+): Promise<{ watchReason: WatchReason; reason: string }> {
+  // Code-detectable: no checkpoints at all
+  if (checkpoints.length === 0) {
+    return { watchReason: 'NO SCANS', reason: 'No carrier scan data exists' }
+  }
+
+  // Code-detectable: only inforeceived events
+  const hasPhysicalScan = checkpoints.some(cp => cp.raw_status && cp.raw_status !== 'inforeceived')
+  if (!hasPhysicalScan) {
+    return { watchReason: 'NO SCANS', reason: 'Only info received events, no physical carrier scans' }
+  }
+
+  const timeline = formatCheckpointTimeline(checkpoints)
+
+  const prompt = `You are a shipping logistics expert. Classify why this shipment needs monitoring based on its tracking history.
+
+## CARRIER: ${carrier}
+## INTERNATIONAL: ${isInternational ? 'Yes' : 'No'}
+
+## CHECKPOINT HISTORY (newest first, last ${Math.min(checkpoints.length, 30)} events)
+date | description | location | status
+${timeline}
+${WATCH_REASON_PROMPT}
+
+Respond ONLY with a JSON object (no markdown, no explanation):
+{
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "HELD" | "NEEDS ACTION" | "STUCK" | "RETURNING",
+  "reason": "brief explanation"
+}`
+
+  try {
+    const result = await geminiModel.generateContent(prompt)
+    const text = result.response.text()
+    const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const parsed = JSON.parse(jsonText) as { watchReason: WatchReason; reason: string }
+
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'HELD', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    if (!validReasons.includes(parsed.watchReason)) {
+      parsed.watchReason = 'HELD'
+    }
+
+    return parsed
+  } catch (error) {
+    console.error('[AI] Error classifying watch reason:', error)
+    return { watchReason: 'HELD', reason: `Classification failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+  }
+}
+
+/**
+ * Derive recheck interval from watch reason badge.
+ * Replaces the old riskLevel-based calculation.
+ */
+export function getNextCheckInterval(watchReason: WatchReason): number {
+  switch (watchReason) {
+    case 'STUCK':
+    case 'HELD':
+    case 'NEEDS ACTION':
+      return 60 * 60 * 1000 // 1 hour
+    case 'STALLED':
+    case 'RETURNING':
+      return 2 * 60 * 60 * 1000 // 2 hours
+    case 'CUSTOMS':
+    case 'SLOW':
+      return 4 * 60 * 60 * 1000 // 4 hours
+    case 'NO SCANS':
+      return 4 * 60 * 60 * 1000 // 4 hours (no point checking often)
+    default:
+      return 4 * 60 * 60 * 1000
   }
 }
 

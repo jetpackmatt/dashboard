@@ -10,7 +10,7 @@ import {
 } from '@/lib/trackingmore/at-risk'
 import { isDelivered, daysSinceLastCheckpoint, getLastCheckpointDate, type TrackingMoreTracking } from '@/lib/trackingmore/client'
 import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
-import { evaluateMovement } from '@/lib/ai/client'
+import { evaluateMovement, classifyWatchReason, getNextCheckInterval, type WatchReason } from '@/lib/ai/client'
 
 // Patterns that indicate the carrier has admitted the package is lost
 // These should trigger immediate promotion to "eligible" (Ready to File)
@@ -234,6 +234,7 @@ export async function GET(request: NextRequest) {
                   last_recheck_at: new Date().toISOString(),
                   last_scan_date: rtsCheckpointDate?.toISOString() || null,
                   last_scan_description: trackingResult.tracking.latest_event || null,
+                  watch_reason: 'RETURNING',
                 })
                 .eq('id', check.id)
 
@@ -295,17 +296,15 @@ export async function GET(request: NextRequest) {
             // Check if eligible shipment now has a recent scan (< 8 days) — may be moving again
             if (daysSince !== null && daysSince < 8) {
               const storedCheckpoints = await getCheckpoints(check.shipment_id)
+              const cpData = storedCheckpoints.map(cp => ({
+                checkpoint_date: cp.checkpoint_date,
+                raw_description: cp.raw_description,
+                raw_location: cp.raw_location,
+                raw_status: cp.raw_status,
+              }))
 
               if (storedCheckpoints.length >= 2) {
-                const movementEval = await evaluateMovement(
-                  check.carrier || 'Unknown',
-                  storedCheckpoints.map(cp => ({
-                    checkpoint_date: cp.checkpoint_date,
-                    raw_description: cp.raw_description,
-                    raw_location: cp.raw_location,
-                    raw_status: cp.raw_status,
-                  })),
-                )
+                const movementEval = await evaluateMovement(check.carrier || 'Unknown', cpData, isInternational)
 
                 if (movementEval.isGenuineMovement && movementEval.confidence >= 70) {
                   await supabase.from('lost_in_transit_checks').delete().eq('id', check.id)
@@ -315,17 +314,41 @@ export async function GET(request: NextRequest) {
                   continue
                 }
 
-                console.log(`[At-Risk Recheck] ${check.shipment_id} (eligible) movement eval: genuine=${movementEval.isGenuineMovement}, confidence=${movementEval.confidence}%. Keeping.`)
+                // Not moving — save the watch reason badge
+                await supabase
+                  .from('lost_in_transit_checks')
+                  .update({
+                    last_recheck_at: new Date().toISOString(),
+                    last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
+                    last_scan_description: trackingResult.tracking.latest_event || null,
+                    watch_reason: movementEval.watchReason,
+                    ai_next_check_at: new Date(Date.now() + getNextCheckInterval(movementEval.watchReason)).toISOString(),
+                  })
+                  .eq('id', check.id)
+
+                console.log(`[At-Risk Recheck] ${check.shipment_id} (eligible) watch_reason=${movementEval.watchReason}, confidence=${movementEval.confidence}%`)
+                results.stillEligible++
+                await new Promise(r => setTimeout(r, API_DELAY_MS))
+                continue
               }
             }
 
-            // Update last_scan_date with fresh data
+            // Update last_scan_date with fresh data (no movement eval done)
+            // Classify watch reason if not already set
+            const storedCps = await getCheckpoints(check.shipment_id)
+            const classification = await classifyWatchReason(
+              check.carrier || 'Unknown',
+              storedCps.map(cp => ({ checkpoint_date: cp.checkpoint_date, raw_description: cp.raw_description, raw_location: cp.raw_location, raw_status: cp.raw_status })),
+              isInternational,
+            )
             await supabase
               .from('lost_in_transit_checks')
               .update({
                 last_recheck_at: new Date().toISOString(),
                 last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
                 last_scan_description: trackingResult.tracking.latest_event || null,
+                watch_reason: classification.watchReason,
+                ai_next_check_at: new Date(Date.now() + getNextCheckInterval(classification.watchReason)).toISOString(),
               })
               .eq('id', check.id)
           } else {
@@ -381,14 +404,17 @@ export async function GET(request: NextRequest) {
               }
             }
           } else {
-            // Still at risk, update recheck time
+            // Still at risk, no tracking data — likely no scans
             await supabase
               .from('lost_in_transit_checks')
-              .update({ last_recheck_at: new Date().toISOString() })
+              .update({
+                last_recheck_at: new Date().toISOString(),
+                watch_reason: 'NO SCANS',
+              })
               .eq('id', check.id)
 
             results.stillAtRisk++
-            console.log(`[At-Risk Recheck] ${check.shipment_id} still at risk (tracking unavailable)`)
+            console.log(`[At-Risk Recheck] ${check.shipment_id} watch_reason=NO SCANS (tracking unavailable)`)
           }
 
           await new Promise(r => setTimeout(r, API_DELAY_MS))
@@ -437,11 +463,12 @@ export async function GET(request: NextRequest) {
               last_recheck_at: new Date().toISOString(),
               last_scan_date: lastCheckpointDate?.toISOString() || null,
               last_scan_description: tracking.latest_event || null,
+              watch_reason: 'RETURNING',
             })
             .eq('id', check.id)
 
           if (!updateError) {
-            results.returnedToSender = (results.returnedToSender || 0) + 1
+            results.returnedToSender++
             console.log(`[At-Risk Recheck] ${check.shipment_id} RETURNED TO SENDER: "${tracking.latest_event}"`)
           }
           await new Promise(r => setTimeout(r, API_DELAY_MS))
@@ -548,17 +575,18 @@ export async function GET(request: NextRequest) {
         } else if (daysSince !== null && daysSince < 8) {
           // Recent scan (< 8 days silent) — use AI to evaluate genuine movement vs stuck pattern
           const storedCheckpoints = await getCheckpoints(check.shipment_id)
+          const cpData = storedCheckpoints.map(cp => ({
+            checkpoint_date: cp.checkpoint_date,
+            raw_description: cp.raw_description,
+            raw_location: cp.raw_location,
+            raw_status: cp.raw_status,
+          }))
+
+          let watchReason: WatchReason = 'STALLED'
 
           if (storedCheckpoints.length >= 2) {
-            const movementEval = await evaluateMovement(
-              check.carrier || 'Unknown',
-              storedCheckpoints.map(cp => ({
-                checkpoint_date: cp.checkpoint_date,
-                raw_description: cp.raw_description,
-                raw_location: cp.raw_location,
-                raw_status: cp.raw_status,
-              })),
-            )
+            const movementEval = await evaluateMovement(check.carrier || 'Unknown', cpData, isInternational)
+            watchReason = movementEval.watchReason
 
             if (movementEval.isGenuineMovement && movementEval.confidence >= 70) {
               await supabase.from('lost_in_transit_checks').delete().eq('id', check.id)
@@ -567,11 +595,9 @@ export async function GET(request: NextRequest) {
               await new Promise(r => setTimeout(r, API_DELAY_MS))
               continue
             }
-
-            console.log(`[At-Risk Recheck] ${check.shipment_id} movement eval: genuine=${movementEval.isGenuineMovement}, confidence=${movementEval.confidence}%. Keeping in monitoring.`)
           }
 
-          // Not genuine movement — update metadata and keep monitoring
+          // Not genuine movement — update metadata with watch reason
           const newEligibleAfter = lastCheckpointDate
             ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
             : null
@@ -583,18 +609,30 @@ export async function GET(request: NextRequest) {
               last_scan_date: lastCheckpointDate?.toISOString() || null,
               last_scan_description: tracking.latest_event || null,
               eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+              watch_reason: watchReason,
+              ai_next_check_at: new Date(Date.now() + getNextCheckInterval(watchReason)).toISOString(),
             })
             .eq('id', check.id)
 
           results.stillAtRisk++
-          console.log(`[At-Risk Recheck] ${check.shipment_id} still at risk (recent scan but stuck pattern, ${daysSince} days silent)`)
+          console.log(`[At-Risk Recheck] ${check.shipment_id} watch_reason=${watchReason} (${daysSince} days silent)`)
         } else {
-          // 8+ days silent but below eligibility threshold — update metadata
+          // 8+ days silent but below eligibility threshold — classify and update
           const daysRemaining = daysSince !== null ? requiredDays - daysSince : null
           const newEligibleAfter = lastCheckpointDate
             ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
             : null
 
+          // Classify watch reason using stored checkpoints
+          const storedCps = await getCheckpoints(check.shipment_id)
+          const cpData = storedCps.map(cp => ({
+            checkpoint_date: cp.checkpoint_date,
+            raw_description: cp.raw_description,
+            raw_location: cp.raw_location,
+            raw_status: cp.raw_status,
+          }))
+          const classification = await classifyWatchReason(check.carrier || 'Unknown', cpData, isInternational)
+
           await supabase
             .from('lost_in_transit_checks')
             .update({
@@ -602,11 +640,13 @@ export async function GET(request: NextRequest) {
               last_scan_date: lastCheckpointDate?.toISOString() || null,
               last_scan_description: tracking.latest_event || null,
               eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+              watch_reason: classification.watchReason,
+              ai_next_check_at: new Date(Date.now() + getNextCheckInterval(classification.watchReason)).toISOString(),
             })
             .eq('id', check.id)
 
           results.stillAtRisk++
-          console.log(`[At-Risk Recheck] ${check.shipment_id} still at risk (${daysRemaining} days remaining)`)
+          console.log(`[At-Risk Recheck] ${check.shipment_id} watch_reason=${classification.watchReason} (${daysRemaining} days remaining)`)
         }
 
         await new Promise(r => setTimeout(r, API_DELAY_MS))

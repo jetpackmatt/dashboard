@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { isDelivered, isReturned, getLastCheckpointDate, type TrackingMoreTracking } from '@/lib/trackingmore/client'
 import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
-import { evaluateMovement } from '@/lib/ai/client'
+import { evaluateMovement, classifyWatchReason, getNextCheckInterval, type WatchReason } from '@/lib/ai/client'
 
 const RTS_PATTERNS = [
   /returned to sender/i, /returned to shipper/i, /returned to seller/i,
@@ -176,37 +176,60 @@ export async function POST(request: NextRequest) {
     const eligibilityThreshold = litEntry.is_international ? 20 : 15
     let newStatus = litEntry.claim_eligibility_status
 
+    // Track watch reason for badge update
+    let watchReason: WatchReason | null = null
+
     if (returned || isRTS) {
       newStatus = 'returned_to_sender'
+      watchReason = 'RETURNING'
     } else if (daysSinceLastScan !== null && daysSinceLastScan >= eligibilityThreshold && litEntry.claim_eligibility_status === 'at_risk') {
       newStatus = 'eligible'
     } else if (daysSinceLastScan !== null && daysSinceLastScan < 8 && ['at_risk', 'eligible'].includes(litEntry.claim_eligibility_status)) {
       // Recent scan — evaluate whether this is genuine movement or a stuck pattern
-      // Fetch full checkpoint history from our stored data
       const storedCheckpoints = await getCheckpoints(litEntry.shipment_id)
 
       if (storedCheckpoints.length >= 2) {
+        const cpData = storedCheckpoints.map(cp => ({
+          checkpoint_date: cp.checkpoint_date,
+          raw_description: cp.raw_description,
+          raw_location: cp.raw_location,
+          raw_status: cp.raw_status,
+        }))
+
         const movementEval = await evaluateMovement(
           litEntry.carrier || carrier,
-          storedCheckpoints.map(cp => ({
-            checkpoint_date: cp.checkpoint_date,
-            raw_description: cp.raw_description,
-            raw_location: cp.raw_location,
-            raw_status: cp.raw_status,
-          })),
+          cpData,
+          litEntry.is_international || false,
         )
 
+        watchReason = movementEval.watchReason
+
         if (movementEval.isGenuineMovement && movementEval.confidence >= 70) {
-          // Package is genuinely moving — remove from monitoring
           await supabase.from('lost_in_transit_checks').delete().eq('id', litEntry.id)
-          console.log(`[Webhook TM] ${trackingNumber}: GENUINE MOVEMENT (${movementEval.confidence}%) — removed from monitoring. Reason: ${movementEval.reason}`)
+          console.log(`[Webhook TM] ${trackingNumber}: GENUINE MOVEMENT (${movementEval.confidence}%) — removed. Reason: ${movementEval.reason}`)
           return NextResponse.json({ success: true, action: 'movement_removed', checkpointsStored, movementEval })
         }
 
-        console.log(`[Webhook TM] ${trackingNumber}: movement eval: genuine=${movementEval.isGenuineMovement}, confidence=${movementEval.confidence}%, reason=${movementEval.reason}`)
+        console.log(`[Webhook TM] ${trackingNumber}: watch_reason=${watchReason}, genuine=${movementEval.isGenuineMovement}, confidence=${movementEval.confidence}%`)
       }
+    }
 
-      // Not genuine movement or low confidence — keep monitoring, update metadata
+    // If we didn't get a watch reason from movement eval, classify separately
+    if (!watchReason && ['at_risk', 'eligible'].includes(newStatus)) {
+      const storedCheckpoints = await getCheckpoints(litEntry.shipment_id)
+      const cpData = storedCheckpoints.map(cp => ({
+        checkpoint_date: cp.checkpoint_date,
+        raw_description: cp.raw_description,
+        raw_location: cp.raw_location,
+        raw_status: cp.raw_status,
+      }))
+      const classification = await classifyWatchReason(
+        litEntry.carrier || carrier,
+        cpData,
+        litEntry.is_international || false,
+      )
+      watchReason = classification.watchReason
+      console.log(`[Webhook TM] ${trackingNumber}: classified watch_reason=${watchReason} (${classification.reason})`)
     }
 
     // Build location string from latest checkpoint
@@ -226,6 +249,11 @@ export async function POST(request: NextRequest) {
       trackingmore_tracking_id: tracking.id || undefined,
     }
 
+    if (watchReason) {
+      updateData.watch_reason = watchReason
+      updateData.ai_next_check_at = new Date(Date.now() + getNextCheckInterval(watchReason)).toISOString()
+    }
+
     if (lastCheckpointDate) {
       updateData.last_scan_date = lastCheckpointDate.toISOString()
       updateData.last_scan_description = latestEvent
@@ -243,11 +271,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: updateErr.message }, { status: 500 })
     }
 
-    console.log(`[Webhook TM] ${trackingNumber}: updated status=${newStatus}, daysSince=${daysSinceLastScan}, checkpoints=${checkpointsStored}`)
+    console.log(`[Webhook TM] ${trackingNumber}: status=${newStatus}, watch_reason=${watchReason}, daysSince=${daysSinceLastScan}`)
     return NextResponse.json({
       success: true,
       action: isRTS || returned ? 'rts_detected' : 'updated',
       newStatus,
+      watchReason,
       checkpointsStored,
     })
   } catch (error) {

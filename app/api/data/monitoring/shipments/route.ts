@@ -26,6 +26,7 @@ interface LostInTransitCheck {
   ai_predicted_outcome: string | null
   first_carrier_scan_at: string | null
   days_in_transit: number | null
+  watch_reason: string | null
   stuck_at_facility: string | null
   stuck_duration_days: number | null
   checked_at: string | null
@@ -97,6 +98,7 @@ export async function GET(request: NextRequest) {
         ai_predicted_outcome,
         first_carrier_scan_at,
         days_in_transit,
+        watch_reason,
         stuck_at_facility,
         stuck_duration_days,
         checked_at
@@ -244,6 +246,8 @@ export async function GET(request: NextRequest) {
       claimEligibilityStatus: check.claim_eligibility_status,
       // Care ticket status for filed claims (shows actual ticket status)
       careTicketStatus: careTicketMap.get(check.shipment_id) || null,
+      // Watch reason badge
+      watchReason: check.watch_reason,
       // AI fields
       aiStatusBadge: check.ai_status_badge,
       aiRiskLevel: check.ai_risk_level,

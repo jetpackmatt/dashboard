@@ -61,6 +61,21 @@ function getDaysSilentColor(days: number | null): string {
   return 'text-red-600 bg-red-50'
 }
 
+// Watch reason badge styling
+function getWatchReasonStyle(reason: string | null): { color: string; label: string } {
+  switch (reason) {
+    case 'SLOW': return { color: 'bg-slate-100 text-slate-600 border-slate-200', label: 'Slow' }
+    case 'STALLED': return { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'Stalled' }
+    case 'CUSTOMS': return { color: 'bg-blue-100 text-blue-700 border-blue-200', label: 'Customs' }
+    case 'HELD': return { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'Held' }
+    case 'NEEDS ACTION': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'Needs Action' }
+    case 'STUCK': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'Stuck' }
+    case 'NO SCANS': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'No Scans' }
+    case 'RETURNING': return { color: 'bg-purple-100 text-purple-700 border-purple-200', label: 'Returning' }
+    default: return { color: 'bg-gray-100 text-gray-500 border-gray-200', label: '-' }
+  }
+}
+
 // Claim status badge colors - supports both claim eligibility status and care ticket status
 function getStatusColor(claimStatus: string | null, careTicketStatus: string | null): string {
   // For filed claims, use the care ticket status for coloring
@@ -218,24 +233,8 @@ export function DeliveryIQTable({
   const canPrevPage = page > 0
   const canNextPage = page < totalPages - 1
 
-  // Column definitions with proportional widths (must be before early returns — hooks can't be conditional)
-  const columns = React.useMemo(() => {
-    const cols: { id: string; width: number; shrink?: boolean }[] = []
-    if (showClientColumn) cols.push({ id: 'client', width: 0, shrink: true })
-    cols.push(
-      { id: 'shipmentId', width: 14 },
-      { id: 'tracking', width: 18 },
-      { id: 'shipDate', width: 12 },
-      { id: 'lastScan', width: 12 },
-      { id: 'silent', width: 7 },
-      { id: 'carrier', width: 10 },
-    )
-    if (showStatusColumn) cols.push({ id: 'status', width: 10 })
-    cols.push({ id: 'actions', width: 12 })
-    return cols
-  }, [showClientColumn, showStatusColumn])
-
-  const totalColSpan = columns.length
+  // Total column count for colSpan (must be before early returns — hooks can't be conditional)
+  const totalColSpan = (showClientColumn ? 1 : 0) + 7 + (showStatusColumn ? 1 : 0)
 
   if (error) {
     return (
@@ -256,20 +255,26 @@ export function DeliveryIQTable({
     <div className="flex flex-col h-full">
       {/* Table */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-        <table style={{ tableLayout: 'auto', width: '100%' }} className="text-[13px] font-roboto">
-          {/* Proportional width hints — browser distributes space */}
+        <table className="w-full text-[13px] font-roboto" style={{ tableLayout: 'fixed' }}>
           <colgroup>
-            {columns.map(c => (
-              <col key={c.id} style={c.shrink ? { width: '0px' } : { width: `${c.width}%` }} />
-            ))}
+            {showClientColumn && <col style={{ width: '72px' }} />}
+            <col />{/* Shipment ID — flex */}
+            <col />{/* Tracking # — flex */}
+            <col />{/* Ship Date — flex */}
+            <col />{/* Last Scan — flex */}
+            <col style={{ width: '100px' }} />{/* Reason — badge */}
+            <col style={{ width: '72px' }} />{/* Silent — narrow */}
+            <col />{/* Carrier — flex */}
+            {showStatusColumn && <col />}
+            <col style={{ width: '104px' }} />{/* Actions — includes right edge padding */}
           </colgroup>
           <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
             <tr className="h-[45px]">
               {showClientColumn && (
-                <th className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle"></th>
+                <th className="pl-6 lg:pl-8 pr-1 align-middle"></th>
               )}
               <th
-                className={cn(headerCellClass, !showClientColumn && "pl-4 lg:pl-6")}
+                className={cn(headerCellClass, !showClientColumn && "pl-6 lg:pl-8")}
                 onClick={() => handleSort('shipmentId')}
               >
                 <div className="flex items-center gap-1">
@@ -306,6 +311,15 @@ export function DeliveryIQTable({
               </th>
               <th
                 className={headerCellClass}
+                onClick={() => handleSort('watchReason')}
+              >
+                <div className="flex items-center gap-1">
+                  Reason
+                  <SortIndicator field="watchReason" />
+                </div>
+              </th>
+              <th
+                className={headerCellClass}
                 onClick={() => handleSort('daysSilent')}
               >
                 <div className="flex items-center gap-1">
@@ -333,7 +347,7 @@ export function DeliveryIQTable({
                   </div>
                 </th>
               )}
-              <th className={cn(headerCellClass, "pr-4 lg:pr-6")}>
+              <th className={cn(headerCellClass, "pr-6 lg:pr-8")}>
                 Actions
               </th>
             </tr>
@@ -358,11 +372,11 @@ export function DeliveryIQTable({
                     onClick={() => handleRowClick(shipment.trackingNumber, shipment.carrier)}
                   >
                     {showClientColumn && (
-                      <td className="w-px whitespace-nowrap pl-4 lg:pl-6 pr-2 align-middle">
+                      <td className="pl-6 lg:pl-8 pr-1 align-middle overflow-hidden">
                         <ClientBadge clientId={shipment.clientId} />
                       </td>
                     )}
-                    <td className={cn("px-2 align-middle overflow-hidden whitespace-nowrap", !showClientColumn && "pl-4 lg:pl-6")} onClick={(e) => e.stopPropagation()}>
+                    <td className={cn("px-2 align-middle overflow-hidden whitespace-nowrap", !showClientColumn && "pl-6 lg:pl-8")} onClick={(e) => e.stopPropagation()}>
                       <div className="group/cell flex items-center gap-1.5">
                         <button
                           onClick={(e) => {
@@ -391,9 +405,9 @@ export function DeliveryIQTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-2 align-middle overflow-hidden whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-2 align-middle overflow-hidden" onClick={(e) => e.stopPropagation()}>
                       <div className="group/cell flex items-center gap-1.5">
-                        <div className="truncate min-w-0 font-mono" style={{ maxWidth: 'clamp(60px, 8vw, 180px)' }} title={shipment.trackingNumber}>
+                        <div className="truncate min-w-0 font-mono" title={shipment.trackingNumber}>
                           <TrackingLink
                             trackingNumber={shipment.trackingNumber}
                             carrier={shipment.carrier}
@@ -429,13 +443,23 @@ export function DeliveryIQTable({
                         )}
                       </div>
                     </td>
-                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
+                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis">
                       {formatDate(shipment.shipDate)}
                     </td>
-                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap">
+                    <td className="px-2 align-middle text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis">
                       {formatDate(shipment.lastScanDate)}
                     </td>
-                    <td className="px-2 align-middle whitespace-nowrap">
+                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden">
+                      {shipment.watchReason ? (() => {
+                        const style = getWatchReasonStyle(shipment.watchReason)
+                        return (
+                          <Badge variant="outline" className={cn("text-[11px]", style.color)}>
+                            {style.label}
+                          </Badge>
+                        )
+                      })() : <span className="text-muted-foreground text-[11px]">-</span>}
+                    </td>
+                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden">
                       <Badge
                         variant="outline"
                         className={cn(
@@ -446,7 +470,7 @@ export function DeliveryIQTable({
                         {shipment.daysSilent ?? '-'}
                       </Badge>
                     </td>
-                    <td className="px-2 align-middle whitespace-nowrap">
+                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden text-ellipsis">
                       {getCarrierDisplayName(shipment.carrier || '')}
                     </td>
                     {showStatusColumn && (
@@ -459,7 +483,7 @@ export function DeliveryIQTable({
                         </Badge>
                       </td>
                     )}
-                    <td className="px-2 pr-4 lg:pr-6 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-2 pr-6 lg:pr-8 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <TrackingLink
                           trackingNumber={shipment.trackingNumber}
@@ -488,7 +512,7 @@ export function DeliveryIQTable({
         </table>
         {/* Pagination - sticky at bottom of scrollable area */}
         {!isLoading && sortedData.length > 0 && (
-          <div className="sticky bottom-0 bg-background py-3 px-4 lg:px-6 flex items-center justify-between border-t border-border/40">
+          <div className="sticky bottom-0 bg-background py-3 px-6 lg:px-8 flex items-center justify-between border-t border-border/40">
             <div className="text-sm text-muted-foreground">
               {paginatedData.length.toLocaleString()} of {sortedData.length.toLocaleString()} shipments
             </div>

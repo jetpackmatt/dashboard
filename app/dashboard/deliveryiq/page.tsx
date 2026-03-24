@@ -36,6 +36,7 @@ export interface MonitoredShipment {
   daysInTransit: number
   claimEligibilityStatus: 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | 'missed_window' | null
   careTicketStatus: string | null
+  watchReason: 'SLOW' | 'STALLED' | 'CUSTOMS' | 'HELD' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING' | null
   aiStatusBadge: 'MOVING' | 'DELAYED' | 'WATCHLIST' | 'STALLED' | 'STUCK' | 'RETURNING' | 'LOST' | null
   aiRiskLevel: 'low' | 'medium' | 'high' | 'critical' | null
   aiReshipmentUrgency: number | null

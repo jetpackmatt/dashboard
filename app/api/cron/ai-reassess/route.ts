@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getTracking } from '@/lib/trackingmore/client'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
-import { generateAssessment, calculateNextCheckTime, type ShipmentDataForAssessment } from '@/lib/ai/client'
+import { generateAssessment, calculateNextCheckTime, classifyWatchReason, getNextCheckInterval, type ShipmentDataForAssessment } from '@/lib/ai/client'
+import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 
 // Types for database records
 interface LostInTransitCheck {
@@ -180,6 +181,21 @@ export async function POST(request: NextRequest) {
 
         const aiAssessment = await generateAssessment(shipmentDataForAI)
 
+        // Classify watch reason using stored checkpoints
+        const isInternational = (shipment?.origin_country || 'US') !== (shipment?.destination_country || 'US')
+        const storedCps = await getCheckpoints(check.shipment_id)
+        const cpData = storedCps.map(cp => ({
+          checkpoint_date: cp.checkpoint_date,
+          raw_description: cp.raw_description,
+          raw_location: cp.raw_location,
+          raw_status: cp.raw_status,
+        }))
+        const watchClassification = await classifyWatchReason(
+          check.carrier || 'Unknown',
+          cpData,
+          isInternational,
+        )
+
         // Update claim eligibility status if needed
         let newClaimStatus = check.claim_eligibility_status
         const eligibilityThreshold = check.is_international ? 20 : 15
@@ -187,8 +203,8 @@ export async function POST(request: NextRequest) {
           newClaimStatus = 'eligible'
         }
 
-        // Calculate next check time
-        const nextCheckAt = calculateNextCheckTime(aiAssessment, daysSinceLastScan)
+        // Use watch reason for next check interval
+        const nextCheckAt = new Date(now.getTime() + getNextCheckInterval(watchClassification.watchReason))
 
         // Update the record
         const { error: updateError } = await supabase
@@ -199,6 +215,8 @@ export async function POST(request: NextRequest) {
             last_recheck_at: now.toISOString(),
             days_in_transit: daysInTransit,
             claim_eligibility_status: newClaimStatus,
+            // Watch reason badge
+            watch_reason: watchClassification.watchReason,
             // AI fields
             ai_assessment: aiAssessment,
             ai_assessed_at: now.toISOString(),

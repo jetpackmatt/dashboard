@@ -162,18 +162,6 @@ export interface SLAMetrics {
   isBreach: boolean
 }
 
-export interface UndeliveredShipment {
-  trackingId: string
-  orderId: string
-  customerName: string
-  labelGenerationTimestamp: string
-  daysInTransit: number
-  status: string
-  carrier: string
-  destination: string
-  lastUpdate: string
-}
-
 export interface FulfillmentTrendData {
   date: string
   avgFulfillmentHours: number
@@ -519,43 +507,3 @@ export interface BillingEfficiencyMetrics {
   totalCredits: number
 }
 
-// Undelivered Analytics Types
-
-export interface UndeliveredSummary {
-  totalUndelivered: number
-  avgDaysInTransit: number
-  criticalCount: number // 7+ days
-  warningCount: number // 5-6 days
-  onTrackCount: number // 0-4 days
-  oldestDays: number
-}
-
-export interface UndeliveredByCarrier {
-  carrier: string
-  count: number
-  avgDaysInTransit: number
-  criticalCount: number
-  percent: number
-}
-
-export interface UndeliveredByStatus {
-  status: string
-  count: number
-  percent: number
-}
-
-export interface UndeliveredByAge {
-  bucket: string
-  minDays: number
-  maxDays: number
-  count: number
-  percent: number
-}
-
-export interface UndeliveredByState {
-  state: string
-  stateName: string
-  count: number
-  avgDaysInTransit: number
-  percent: number
-}
