@@ -60,7 +60,9 @@ export interface TrackingMoreTracking {
   id: string
   tracking_number: string
   carrier_code: string
-  status: string // "pending", "notfound", "transit", "pickup", "delivered", "expired", "undelivered", "exception", "inforeceived"
+  // V4 API uses delivery_status; some older code references status
+  delivery_status: string // "pending", "notfound", "transit", "pickup", "delivered", "expired", "undelivered", "exception", "inforeceived"
+  status?: string // Alias — some responses include both
   created_at: string
   updated_at: string
   original_country: string | null

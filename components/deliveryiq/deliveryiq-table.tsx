@@ -218,22 +218,7 @@ export function DeliveryIQTable({
   const canPrevPage = page > 0
   const canNextPage = page < totalPages - 1
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-        <p className="text-sm mb-4">Failed to load data: {error}</p>
-        <Button variant="outline" size="sm" onClick={onRefresh}>
-          <RefreshCwIcon className="h-4 w-4 mr-2" />
-          Try Again
-        </Button>
-      </div>
-    )
-  }
-
-  // Common header cell styles matching TransactionsTable
-  const headerCellClass = "group/th px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
-
-  // Column definitions with proportional widths
+  // Column definitions with proportional widths (must be before early returns — hooks can't be conditional)
   const columns = React.useMemo(() => {
     const cols: { id: string; width: number; shrink?: boolean }[] = []
     if (showClientColumn) cols.push({ id: 'client', width: 0, shrink: true })
@@ -251,6 +236,21 @@ export function DeliveryIQTable({
   }, [showClientColumn, showStatusColumn])
 
   const totalColSpan = columns.length
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+        <p className="text-sm mb-4">Failed to load data: {error}</p>
+        <Button variant="outline" size="sm" onClick={onRefresh}>
+          <RefreshCwIcon className="h-4 w-4 mr-2" />
+          Try Again
+        </Button>
+      </div>
+    )
+  }
+
+  // Common header cell styles matching TransactionsTable
+  const headerCellClass = "group/th px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
 
   return (
     <div className="flex flex-col h-full">

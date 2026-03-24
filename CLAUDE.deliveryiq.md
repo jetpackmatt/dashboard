@@ -20,15 +20,25 @@ Delivery IQ proactively identifies shipments that may be Lost in Transit BEFORE 
 
 ```
 ShipBob (Shipments) → Our Database → TrackingMore API → Lost-in-Transit Detection
-                                           ↓                     ↓
+                                           ↓  ↑                  ↓
                                     Tracking Events      Eligibility Status
+                                           ↓  ↑                  ↓
+                                    TM Webhooks (push)   Delivery IQ Dashboard
                                            ↓                     ↓
-                              Delivery Intelligence Engine (AI probability)
-                                           ↓
-                              Delivery IQ Dashboard
-                                           ↓
-                                  Claim Filing → Care Tickets
+                              Delivery Intelligence Engine   Claim Filing → Care Tickets
 ```
+
+### Data Freshness
+
+TrackingMore polls carriers every 4-6 hours. Our system receives updates via two channels:
+
+| Channel | Trigger | Latency | Cost |
+|---------|---------|---------|------|
+| **Webhook (push)** | TM gets new carrier data | Instant (after TM's 4-6hr poll) | FREE |
+| **Recheck cron (pull)** | Hourly scheduled job | Up to 1 hour + TM's poll cycle | FREE |
+| **On-demand (pull)** | User views shipment timeline | On request + TM's poll cycle | FREE |
+
+**Webhooks are the primary update channel.** The recheck cron serves as a fallback to catch anything webhooks miss.
 
 ---
 
@@ -144,6 +154,45 @@ Benchmarks are calculated daily from the last 90 days of delivered shipments.
 ### Cost Structure
 - **Create tracking (POST):** $0.04 per shipment (one-time)
 - **Get tracking (GET):** FREE (unlimited)
+- **Webhooks:** FREE (push notifications on status change)
+
+### API Versions
+
+| Version | Endpoint | Use Case | Cost |
+|---------|----------|----------|------|
+| V4 GET | `/v4/trackings/get` | Check cached tracking data | FREE |
+| V4 CREATE | `/v4/trackings/create` | Register for async monitoring | $0.04 |
+| V3 Realtime | `/v3/trackings/realtime` | Synchronous carrier lookup (first contact only) | $0.04 |
+
+**Important:** Both V3 realtime and V4 GET return TrackingMore's **cached** data (updated every 4-6 hours by TM's carrier polling). V3 realtime does NOT query the carrier in real-time — the name is misleading.
+
+### Webhook Integration
+
+TrackingMore pushes tracking updates to us via webhook whenever a tracked shipment's status changes.
+
+**Endpoint:** `POST /api/webhooks/trackingmore`
+**URL:** `https://pro.jetpack3pl.com/api/webhooks/trackingmore`
+**Security:** HMAC-SHA256 signature verification (`TRACKINGMORE_WEBHOOK_SECRET`)
+**Setup:** TrackingMore dashboard → Developer → Webhooks → Add endpoint
+
+**What triggers webhooks:** Any status change on ANY tracking we've ever created/fetched via V4. This includes:
+- Delivery IQ monitored shipments (sync-at-risk, monitoring-entry)
+- Shipment viewer trackings (timeline route)
+- Verify-lost-in-transit checks
+
+**Webhook handler flow:**
+1. Verify HMAC-SHA256 signature
+2. Parse tracking data from payload (same format as V4 GET response)
+3. Look up `tracking_number` in `lost_in_transit_checks` and `shipments`
+4. Store checkpoints via `storeCheckpoints()`
+5. If in Delivery IQ monitoring:
+   - Delivered → remove from monitoring
+   - RTS → update to `returned_to_sender`
+   - New scan → update `last_scan_date`, recalculate eligibility
+   - Terminal status (approved/denied/claim_filed) → skip update, store checkpoints only
+
+**Retry policy:** TM retries up to 13 times with exponential backoff (~2.8 days total window).
+**Whitelist IP:** `34.150.230.69`
 
 ### Carrier Code Mapping
 
@@ -559,6 +608,7 @@ Shows combined timeline:
 | `app/api/data/monitoring/shipments/route.ts` | Fetch monitored shipments |
 | `app/api/data/monitoring/stats/route.ts` | Fetch filter counts |
 | `app/api/data/tracking/[trackingNumber]/timeline/route.ts` | Fetch tracking timeline |
+| `app/api/webhooks/trackingmore/route.ts` | Receive TrackingMore webhook push updates |
 
 ### Cron Jobs
 
@@ -575,8 +625,9 @@ Shows combined timeline:
 
 | File | Purpose |
 |------|---------|
-| `lib/trackingmore/client.ts` | TrackingMore API client |
+| `lib/trackingmore/client.ts` | TrackingMore API client (V3 realtime + V4 CRUD) |
 | `lib/trackingmore/at-risk.ts` | At-risk detection logic |
+| `lib/trackingmore/checkpoint-storage.ts` | Store/retrieve checkpoints permanently |
 | `lib/ai/client.ts` | Current AI assessment (Haiku) |
 
 ### Intelligence Engine Files
@@ -617,6 +668,7 @@ See [CLAUDE.claims.md](CLAUDE.claims.md) for claim lifecycle details.
 | Variable | Purpose |
 |----------|---------|
 | `TRACKINGMORE_API_KEY` | TrackingMore API authentication |
+| `TRACKINGMORE_WEBHOOK_SECRET` | HMAC-SHA256 verification for webhook push notifications |
 | `CRON_SECRET` | Auth header for cron endpoints |
 | `GOOGLE_AI_API_KEY` | Gemini API key (for Intelligence Engine) |
 
@@ -664,6 +716,13 @@ See [CLAUDE.claims.md](CLAUDE.claims.md) for claim lifecycle details.
 - Lost status detection (carrier admission)
 - AI-powered assessment (Haiku-based)
 - Integrated with claims lifecycle
+
+**March 2026 Updates:**
+- TrackingMore webhook integration for push-based tracking updates
+- Fixed `isDelivered()` false positives (delivery attempted ≠ delivered, check latest checkpoint only)
+- Auto-create Delivery IQ entries for all Loss claims (advance-claims cron Part 3)
+- Label date as fallback `last_scan_date` when no carrier scan exists
+- Domain migration to `pro.jetpack3pl.com`
 
 **In Progress (Feb 2026):**
 - **Phase 0:** Checkpoint Storage Infrastructure - Store ALL TrackingMore checkpoints permanently in `tracking_checkpoints` table
