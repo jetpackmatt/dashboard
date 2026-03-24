@@ -15,7 +15,6 @@ import type {
   ShipOptionMetrics,
   ZoneMetrics,
   SLAMetrics,
-  UndeliveredShipment,
   DateRange,
   StatePerformance,
   FulfillmentTrendData,
@@ -45,11 +44,6 @@ import type {
   SurchargeBreakdown,
   AdditionalServicesBreakdown,
   BillingEfficiencyMetrics,
-  UndeliveredSummary,
-  UndeliveredByCarrier,
-  UndeliveredByStatus,
-  UndeliveredByAge,
-  UndeliveredByState,
   DeliverySpeedTrendData,
 } from './types'
 
@@ -609,36 +603,6 @@ export function calculateSLAMetrics(
     onTimePercent,
     breachedCount,
   }
-}
-
-// Undelivered Shipments
-
-export function getUndeliveredShipments(
-  shipments: ShipmentData[]
-): UndeliveredShipment[] {
-  const now = new Date()
-
-  return shipments
-    .filter(s => !s.deliveredDate)
-    .map(s => {
-      const labelGen = new Date(s.labelGenerationTimestamp)
-      const daysInTransit = Math.floor(
-        (now.getTime() - labelGen.getTime()) / (1000 * 60 * 60 * 24)
-      )
-
-      return {
-        trackingId: s.trackingId,
-        orderId: s.orderId,
-        customerName: s.customerName,
-        labelGenerationTimestamp: s.labelGenerationTimestamp,
-        daysInTransit,
-        status: daysInTransit > 14 ? 'Exception' : 'In Transit',
-        carrier: s.carrier,
-        destination: `${s.city}, ${s.state}`,
-        lastUpdate: s.labelGenerationTimestamp, // In real system, would have tracking updates
-      }
-    })
-    .sort((a, b) => b.daysInTransit - a.daysInTransit)
 }
 
 // State Performance Aggregations
@@ -2471,179 +2435,4 @@ export function calculateBillingEfficiencyMetrics(
     surchargePercentOfCost: totalCost > 0 ? (totalShipping / totalCost) * 100 : 0,
     totalCredits: 0,
   }
-}
-
-// =====================================
-// Undelivered Shipments Analytics
-// =====================================
-
-// Get days in transit for a shipment
-function getDaysInTransit(labelGenerationTimestamp: string): number {
-  const now = new Date()
-  const labelGen = new Date(labelGenerationTimestamp)
-  return Math.floor((now.getTime() - labelGen.getTime()) / (1000 * 60 * 60 * 24))
-}
-
-// Undelivered Summary KPIs
-export function getUndeliveredSummary(shipments: ShipmentData[]): UndeliveredSummary {
-  const undelivered = shipments.filter(s => !s.deliveredDate)
-
-  if (undelivered.length === 0) {
-    return {
-      totalUndelivered: 0,
-      avgDaysInTransit: 0,
-      criticalCount: 0,
-      warningCount: 0,
-      onTrackCount: 0,
-      oldestDays: 0,
-    }
-  }
-
-  const daysArray = undelivered.map(s => getDaysInTransit(s.labelGenerationTimestamp))
-  const totalDays = daysArray.reduce((sum, d) => sum + d, 0)
-  const maxDays = Math.max(...daysArray)
-
-  return {
-    totalUndelivered: undelivered.length,
-    avgDaysInTransit: totalDays / undelivered.length,
-    criticalCount: daysArray.filter(d => d >= 7).length,
-    warningCount: daysArray.filter(d => d >= 5 && d < 7).length,
-    onTrackCount: daysArray.filter(d => d < 5).length,
-    oldestDays: maxDays,
-  }
-}
-
-// Undelivered by Carrier
-export function getUndeliveredByCarrier(shipments: ShipmentData[]): UndeliveredByCarrier[] {
-  const undelivered = shipments.filter(s => !s.deliveredDate)
-  const total = undelivered.length
-
-  if (total === 0) return []
-
-  const carrierMap = new Map<string, { count: number; totalDays: number; criticalCount: number }>()
-
-  undelivered.forEach(s => {
-    const days = getDaysInTransit(s.labelGenerationTimestamp)
-    const existing = carrierMap.get(s.carrier) || { count: 0, totalDays: 0, criticalCount: 0 }
-    carrierMap.set(s.carrier, {
-      count: existing.count + 1,
-      totalDays: existing.totalDays + days,
-      criticalCount: existing.criticalCount + (days >= 7 ? 1 : 0),
-    })
-  })
-
-  return Array.from(carrierMap.entries())
-    .map(([carrier, data]) => ({
-      carrier,
-      count: data.count,
-      avgDaysInTransit: data.totalDays / data.count,
-      criticalCount: data.criticalCount,
-      percent: (data.count / total) * 100,
-    }))
-    .sort((a, b) => b.count - a.count)
-}
-
-// Undelivered by Status
-export function getUndeliveredByStatus(shipments: ShipmentData[]): UndeliveredByStatus[] {
-  const undelivered = shipments.filter(s => !s.deliveredDate)
-  const total = undelivered.length
-
-  if (total === 0) return []
-
-  const statusMap = new Map<string, number>()
-
-  undelivered.forEach(s => {
-    const days = getDaysInTransit(s.labelGenerationTimestamp)
-    // Determine status based on days in transit
-    let status: string
-    if (days >= 14) {
-      status = 'Exception'
-    } else if (days >= 7) {
-      status = 'Delayed'
-    } else if (days <= 1) {
-      status = 'Just Shipped'
-    } else {
-      status = 'In Transit'
-    }
-    statusMap.set(status, (statusMap.get(status) || 0) + 1)
-  })
-
-  // Define order for statuses
-  const statusOrder = ['Just Shipped', 'In Transit', 'Delayed', 'Exception']
-
-  return statusOrder
-    .filter(status => statusMap.has(status))
-    .map(status => ({
-      status,
-      count: statusMap.get(status)!,
-      percent: (statusMap.get(status)! / total) * 100,
-    }))
-}
-
-// Undelivered by Age Bucket
-export function getUndeliveredByAge(shipments: ShipmentData[]): UndeliveredByAge[] {
-  const undelivered = shipments.filter(s => !s.deliveredDate)
-  const total = undelivered.length
-
-  if (total === 0) return []
-
-  // Define age buckets
-  const buckets = [
-    { bucket: '0-2 days', minDays: 0, maxDays: 2 },
-    { bucket: '3-4 days', minDays: 3, maxDays: 4 },
-    { bucket: '5-6 days', minDays: 5, maxDays: 6 },
-    { bucket: '7-10 days', minDays: 7, maxDays: 10 },
-    { bucket: '11-14 days', minDays: 11, maxDays: 14 },
-    { bucket: '15+ days', minDays: 15, maxDays: 999 },
-  ]
-
-  const counts = new Map<string, number>()
-  buckets.forEach(b => counts.set(b.bucket, 0))
-
-  undelivered.forEach(s => {
-    const days = getDaysInTransit(s.labelGenerationTimestamp)
-    for (const b of buckets) {
-      if (days >= b.minDays && days <= b.maxDays) {
-        counts.set(b.bucket, counts.get(b.bucket)! + 1)
-        break
-      }
-    }
-  })
-
-  return buckets.map(b => ({
-    bucket: b.bucket,
-    minDays: b.minDays,
-    maxDays: b.maxDays,
-    count: counts.get(b.bucket)!,
-    percent: (counts.get(b.bucket)! / total) * 100,
-  }))
-}
-
-// Undelivered by State
-export function getUndeliveredByState(shipments: ShipmentData[]): UndeliveredByState[] {
-  const undelivered = shipments.filter(s => !s.deliveredDate)
-  const total = undelivered.length
-
-  if (total === 0) return []
-
-  const stateMap = new Map<string, { count: number; totalDays: number }>()
-
-  undelivered.forEach(s => {
-    const days = getDaysInTransit(s.labelGenerationTimestamp)
-    const existing = stateMap.get(s.state) || { count: 0, totalDays: 0 }
-    stateMap.set(s.state, {
-      count: existing.count + 1,
-      totalDays: existing.totalDays + days,
-    })
-  })
-
-  return Array.from(stateMap.entries())
-    .map(([state, data]) => ({
-      state,
-      stateName: STATE_NAMES[state] || state,
-      count: data.count,
-      avgDaysInTransit: data.totalDays / data.count,
-      percent: (data.count / total) * 100,
-    }))
-    .sort((a, b) => b.count - a.count)
 }
