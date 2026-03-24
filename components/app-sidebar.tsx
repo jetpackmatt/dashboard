@@ -67,7 +67,6 @@ const baseNavItems = [
       { title: "Carriers", value: "carriers-zones" },
       { title: "Financials", value: "financials" },
       { title: "Fulfillment", value: "sla" },
-      { title: "Undelivered", value: "undelivered" },
     ],
   },
   {

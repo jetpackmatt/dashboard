@@ -249,7 +249,8 @@ export function DeliveryIQTable({
   }
 
   // Common header cell styles matching TransactionsTable
-  const headerCellClass = "group/th px-2 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+  const headerCellBase = "group/th text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer select-none hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+  const headerCellClass = cn(headerCellBase, "px-2")
 
   return (
     <div className="flex flex-col h-full">
@@ -271,10 +272,10 @@ export function DeliveryIQTable({
           <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
             <tr className="h-[45px]">
               {showClientColumn && (
-                <th className="pl-6 lg:pl-8 pr-1 align-middle"></th>
+                <th className="pl-[26px] lg:pl-[34px] pr-1 align-middle"></th>
               )}
               <th
-                className={cn(headerCellClass, !showClientColumn && "pl-6 lg:pl-8")}
+                className={cn(headerCellBase, showClientColumn ? "px-2" : "pl-[26px] lg:pl-[34px] pr-2")}
                 onClick={() => handleSort('shipmentId')}
               >
                 <div className="flex items-center gap-1">
@@ -347,7 +348,7 @@ export function DeliveryIQTable({
                   </div>
                 </th>
               )}
-              <th className={cn(headerCellClass, "pr-6 lg:pr-8")}>
+              <th className={cn(headerCellBase, "pl-2 pr-6 lg:pr-8")}>
                 Actions
               </th>
             </tr>
@@ -372,11 +373,11 @@ export function DeliveryIQTable({
                     onClick={() => handleRowClick(shipment.trackingNumber, shipment.carrier)}
                   >
                     {showClientColumn && (
-                      <td className="pl-6 lg:pl-8 pr-1 align-middle overflow-hidden">
+                      <td className="pl-[26px] lg:pl-[34px] pr-1 align-middle overflow-hidden">
                         <ClientBadge clientId={shipment.clientId} />
                       </td>
                     )}
-                    <td className={cn("px-2 align-middle overflow-hidden whitespace-nowrap", !showClientColumn && "pl-6 lg:pl-8")} onClick={(e) => e.stopPropagation()}>
+                    <td className={cn("align-middle overflow-hidden whitespace-nowrap", showClientColumn ? "px-2" : "pl-[26px] lg:pl-[34px] pr-2")} onClick={(e) => e.stopPropagation()}>
                       <div className="group/cell flex items-center gap-1.5">
                         <button
                           onClick={(e) => {

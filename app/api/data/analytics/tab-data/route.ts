@@ -13,8 +13,6 @@ const cityCoords = new Map<string, { lon: number; lat: number }>(
 
 export const maxDuration = 60
 
-const PAGE_SIZE = 1000
-
 // ── Module-level cache (persists across warm Vercel invocations) ──────────
 const responseCache = new Map<string, { json: any; ts: number }>()
 const CACHE_TTL = 5 * 60 * 1000
@@ -43,23 +41,6 @@ const ZONE_LABELS: Record<string, string> = {
 
 // ── Day-of-week names ────────────────────────────────────────────────────
 const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-
-// ── Cursor-based pagination (only used for undelivered shipments) ─────────
-async function cursorPaginate(
-  buildQuery: (lastId: string | null) => any
-): Promise<any[]> {
-  const all: any[] = []
-  let lastId: string | null = null
-  while (true) {
-    const { data, error } = await buildQuery(lastId)
-    if (error) throw new Error(error.message)
-    if (!data?.length) break
-    all.push(...data)
-    lastId = data[data.length - 1].id
-    if (data.length < PAGE_SIZE) break
-  }
-  return all
-}
 
 // ── Time period key helper ───────────────────────────────────────────────
 function getTimeKey(dateStr: string, granularity: string): string {
@@ -126,7 +107,6 @@ export async function GET(request: NextRequest) {
   // Tab-based lazy loading: skip expensive raw-table queries unless the active tab needs them
   const needsTransit = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
   const needsSLA = tab === 'all' || tab === 'sla'
-  const needsUndelivered = tab === 'all' || tab === 'undelivered'
   const needsOrderVolume = tab === 'all' || tab === 'order-volume'
   const needsPerformance = tab === 'all' || tab === 'state-performance'
   const needsCarrierZone = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
@@ -183,7 +163,6 @@ export async function GET(request: NextRequest) {
       summaryResult,
       transitDistResult,
       slaDetailResult,
-      undeliveredRows,
       clientResult,
       fcNamesResult,
       fcLookupResult,
@@ -219,23 +198,6 @@ export async function GET(request: NextRequest) {
         ? timed('sla', supabase.rpc('get_sla_detail_records', { p_client_id: clientId, p_start_date: startDate, p_end_date: endDate }))
         : { data: null, error: null },
 
-      // Undelivered shipments — cursor pagination on raw shipments, only for undelivered tab
-      (needsUndelivered && !isAllClients)
-        ? timed('undelivered', cursorPaginate((lastId) => {
-            let q = supabase.from('shipments')
-              .select('id, tracking_id, shipbob_order_id, recipient_name, event_labeled, carrier, status, destination_country, fc_name')
-              .eq('client_id', clientId!)
-              .is('deleted_at', null)
-              .is('event_delivered', null)
-              .gte('event_labeled', startDate!)
-              .lte('event_labeled', endDate + 'T23:59:59.999Z')
-              .order('id', { ascending: true })
-              .limit(PAGE_SIZE)
-            if (lastId) q = q.gt('id', lastId)
-            return q
-          }))
-        : ([] as any[]),
-
       // Core: Client name (skip for 'all' — no single client)
       isAllClients
         ? { data: { company_name: 'All Brands' }, error: null }
@@ -244,10 +206,8 @@ export async function GET(request: NextRequest) {
       // Core: Distinct FC countries for this client
       timed('fcCountries', supabase.rpc('get_client_fc_countries', { p_client_id: rpcClientId, p_start: startDate, p_end: endDate })),
 
-      // FC name → country lookup — only needed for undelivered domestic filtering
-      needsUndelivered
-        ? timed('fcLookup', supabase.from('fulfillment_centers').select('name, country'))
-        : { data: null, error: null },
+      // FC name → country lookup (for domestic filtering)
+      { data: null, error: null },
 
       // Hour-of-day distribution — raw orders scan, only for order-volume tab
       (needsOrderVolume && !isAllClients)
@@ -442,7 +402,6 @@ export async function GET(request: NextRequest) {
       avgTransitTime: avgTransitCurrent,
       slaPercent: slaPercentCurrent,
       lateOrders: cleanBreachedCur,
-      undelivered: cur.undelivered_count,
       deliveryOnTimePercent: deliveryOnTimePercentCur,
       deliveryOnTimeCount: cur.delivery_on_time_count,
       deliveryLateCount: cur.delivery_late_count,
@@ -462,7 +421,6 @@ export async function GET(request: NextRequest) {
         avgTransitTime: pctChange(avgTransitCurrent, avgTransitPrev),
         slaPercent: slaPercentCurrent - slaPercentPrev,
         lateOrders: pctChange(cleanBreachedCur, prev.breached_count - (prev.delay_breached_count || 0)),
-        undelivered: pctChange(cur.undelivered_count, prev.undelivered_count),
         deliveryOnTimePercent: deliveryOnTimePercentCur - deliveryOnTimePercentPrev,
         transitVsBenchmark: transitVsBenchmarkCur - transitVsBenchmarkPrev,
       },
@@ -1364,98 +1322,6 @@ export async function GET(request: NextRequest) {
       avgFulfillHoursWithDelayed: cur.fulfill_count > 0 ? cur.total_fulfill_business_hours / cur.fulfill_count : 0,
     }
 
-    // ── Undelivered Tab ────────────────────────────────────────────────────
-    // Build FC name → country lookup for domestic-only filtering
-    const fcCountryMap = new Map<string, string>()
-    for (const fc of (fcLookupResult.data || [])) {
-      if (fc.name && fc.country) fcCountryMap.set(fc.name, fc.country)
-    }
-
-    const now = Date.now()
-    const undeliveredShipments = (undeliveredRows as any[])
-      // Domestic-only: FC country must match destination country
-      .filter(s => {
-        const fcCountry = fcCountryMap.get(s.fc_name)
-        return fcCountry && fcCountry === s.destination_country
-      })
-      .map(s => {
-        const labelDate = s.event_labeled ? new Date(s.event_labeled).getTime() : now
-        const daysInTransit = Math.floor((now - labelDate) / 86400000)
-        return {
-          trackingId: s.tracking_id || '',
-          orderId: s.shipbob_order_id || '',
-          customerName: s.recipient_name || '',
-          labelGenerationTimestamp: s.event_labeled || '',
-          daysInTransit,
-          status: s.status || 'Unknown',
-          carrier: s.carrier || '',
-          destination: s.destination_country || '',
-          lastUpdate: '',
-        }
-      }).sort((a, b) => b.daysInTransit - a.daysInTransit)
-
-    const totalUndelivered = undeliveredShipments.length
-    const avgDaysInTransit = totalUndelivered > 0
-      ? undeliveredShipments.reduce((s, u) => s + u.daysInTransit, 0) / totalUndelivered : 0
-    const criticalCount = undeliveredShipments.filter(u => u.daysInTransit >= 7).length
-    const warningCount = undeliveredShipments.filter(u => u.daysInTransit >= 5 && u.daysInTransit < 7).length
-    const onTrackCount = undeliveredShipments.filter(u => u.daysInTransit < 5).length
-
-    const undeliveredSummary = {
-      totalUndelivered,
-      avgDaysInTransit,
-      criticalCount,
-      warningCount,
-      onTrackCount,
-      oldestDays: undeliveredShipments.length > 0 ? undeliveredShipments[0].daysInTransit : 0,
-    }
-
-    // Undelivered by carrier
-    const undelByCarrier = new Map<string, { count: number; totalDays: number; critical: number }>()
-    for (const u of undeliveredShipments) {
-      const c = u.carrier || 'Unknown'
-      const existing = undelByCarrier.get(c)
-      if (existing) {
-        existing.count++
-        existing.totalDays += u.daysInTransit
-        if (u.daysInTransit >= 7) existing.critical++
-      } else {
-        undelByCarrier.set(c, { count: 1, totalDays: u.daysInTransit, critical: u.daysInTransit >= 7 ? 1 : 0 })
-      }
-    }
-    const undeliveredByCarrier = Array.from(undelByCarrier.entries()).map(([carrier, v]) => ({
-      carrier,
-      count: v.count,
-      avgDaysInTransit: v.count > 0 ? v.totalDays / v.count : 0,
-      criticalCount: v.critical,
-      percent: totalUndelivered > 0 ? (v.count / totalUndelivered) * 100 : 0,
-    })).sort((a, b) => b.count - a.count)
-
-    // Undelivered by status
-    const undelByStatus = new Map<string, number>()
-    for (const u of undeliveredShipments) {
-      undelByStatus.set(u.status, (undelByStatus.get(u.status) || 0) + 1)
-    }
-    const undeliveredByStatus = Array.from(undelByStatus.entries()).map(([status, count]) => ({
-      status,
-      count,
-      percent: totalUndelivered > 0 ? (count / totalUndelivered) * 100 : 0,
-    })).sort((a, b) => b.count - a.count)
-
-    // Undelivered by age
-    const ageBuckets = [
-      { bucket: '0-2 days', minDays: 0, maxDays: 2 },
-      { bucket: '3-4 days', minDays: 3, maxDays: 4 },
-      { bucket: '5-6 days', minDays: 5, maxDays: 6 },
-      { bucket: '7-10 days', minDays: 7, maxDays: 10 },
-      { bucket: '11-14 days', minDays: 11, maxDays: 14 },
-      { bucket: '15+ days', minDays: 15, maxDays: 999 },
-    ]
-    const undeliveredByAge = ageBuckets.map(b => {
-      const count = undeliveredShipments.filter(u => u.daysInTransit >= b.minDays && u.daysInTransit <= b.maxDays).length
-      return { ...b, count, percent: totalUndelivered > 0 ? (count / totalUndelivered) * 100 : 0 }
-    })
-
     // ── Build final result (only include tab-specific fields when computed) ──
     const result: Record<string, any> = {
       // Core fields — always included (from pre-aggregated summaries)
@@ -1518,13 +1384,6 @@ export async function GET(request: NextRequest) {
       result.dailyVolume = dailyVolume
       result.stateVolume = stateVolume
       result.cityVolume = cityVolume
-    }
-    if (needsUndelivered) {
-      result.undeliveredSummary = undeliveredSummary
-      result.undeliveredByCarrier = undeliveredByCarrier
-      result.undeliveredByStatus = undeliveredByStatus
-      result.undeliveredByAge = undeliveredByAge
-      result.undeliveredShipments = undeliveredShipments
     }
     if (needsPerformance) {
       if (otdByStateCleanResult?.data) result.otdPercentilesByStateClean = otdByStateCleanResult.data

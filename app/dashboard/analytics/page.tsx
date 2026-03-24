@@ -82,11 +82,6 @@ import type {
   BillingEfficiencyMetrics,
   FulfillmentTrendData,
   FCFulfillmentMetrics,
-  UndeliveredShipment,
-  UndeliveredSummary,
-  UndeliveredByCarrier,
-  UndeliveredByStatus,
-  UndeliveredByAge,
   OtdPercentiles,
 } from "@/lib/analytics/types"
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
@@ -100,7 +95,6 @@ const ANALYTICS_TABS = [
   { value: "carriers-zones", label: "Carriers + Zones" },
   { value: "financials", label: "Financials" },
   { value: "sla", label: "Fulfillment SLAs" },
-  { value: "undelivered", label: "Undelivered" },
 ]
 
 const DATE_RANGE_PRESETS = [
@@ -656,8 +650,8 @@ export default function AnalyticsPage() {
   }, [selectedState, statePerformance, analyticsData?.perfCityData, perfCountry, nationalOtdPercentiles, stateOtdPercentiles])
 
   const kpiData: KPIMetrics = analyticsData?.kpis || {
-    totalCost: 0, orderCount: 0, avgTransitTime: 0, avgFulfillTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0,
-    periodChange: { totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0, undelivered: 0 }
+    totalCost: 0, orderCount: 0, avgTransitTime: 0, avgFulfillTime: 0, slaPercent: 0, lateOrders: 0,
+    periodChange: { totalCost: 0, orderCount: 0, avgTransitTime: 0, slaPercent: 0, lateOrders: 0 }
   }
 
   // Shared axis tick style — Geist Sans, tabular nums, muted
@@ -1106,15 +1100,6 @@ export default function AnalyticsPage() {
       p90FulfillmentHours: d.avgFulfillmentHoursWithDelayed ?? d.p90FulfillmentHours,
     }))
   }, [analyticsData?.fulfillmentTrend, includeDelayedOrders])
-
-  // === undelivered tab ===
-  const undeliveredSummary: UndeliveredSummary = analyticsData?.undeliveredSummary || {
-    totalUndelivered: 0, avgDaysInTransit: 0, criticalCount: 0, warningCount: 0, onTrackCount: 0, oldestDays: 0
-  }
-  const undeliveredByCarrier: UndeliveredByCarrier[] = analyticsData?.undeliveredByCarrier || []
-  const undeliveredByStatus: UndeliveredByStatus[] = analyticsData?.undeliveredByStatus || []
-  const undeliveredByAge: UndeliveredByAge[] = analyticsData?.undeliveredByAge || []
-  const undeliveredShipments: UndeliveredShipment[] = analyticsData?.undeliveredShipments || []
 
   // Volume data from server (state + city volumes)
   // City-by-state detail is derived client-side from the full city volume data
@@ -3607,244 +3592,6 @@ export default function AnalyticsPage() {
                         />
                       )}
                     </div>
-                  </div>
-                </div>
-              </TabsContent>
-
-              {/* Tab 6: Undelivered Shipments */}
-              <TabsContent value="undelivered" className="mt-0">
-                <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-zinc-50 dark:bg-zinc-900">
-                  <div className="px-5 lg:px-8 pt-6 pb-2">
-                    <div className="text-lg font-semibold">Undelivered Shipments</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">Active shipments not yet delivered</div>
-                  </div>
-                  <div className="px-5 lg:px-8 py-5 space-y-5">
-                {/* KPI Summary Cards */}
-                <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-                  <Card className="bg-transparent shadow-none">
-                    <CardContent className="pt-6">
-                      <p className="text-sm text-muted-foreground">Total Undelivered</p>
-                      <p className="text-2xl font-bold"><AnimatedNumber value={undeliveredSummary.totalUndelivered} locale /></p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-transparent shadow-none">
-                    <CardContent className="pt-6">
-                      <p className="text-sm text-muted-foreground">Avg Days in Transit</p>
-                      <p className="text-2xl font-bold"><AnimatedNumber value={undeliveredSummary.avgDaysInTransit} decimals={1} /></p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-transparent shadow-none">
-                    <CardContent className="pt-6">
-                      <p className="text-sm text-muted-foreground">Critical (7+ days)</p>
-                      <p className="text-2xl font-bold text-red-600 dark:text-red-400"><AnimatedNumber value={undeliveredSummary.criticalCount} locale /></p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-transparent shadow-none">
-                    <CardContent className="pt-6">
-                      <p className="text-sm text-muted-foreground">On Track (&lt;5 days)</p>
-                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400"><AnimatedNumber value={undeliveredSummary.onTrackCount} locale /></p>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Charts Row */}
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {/* Age Distribution Chart */}
-                  <Card className="bg-transparent shadow-none">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium"><div>Age Distribution</div></CardTitle>
-                      <CardDescription className="text-xs">Days since label was generated</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ChartContainer
-                        config={{
-                          count: { label: "Shipments", color: "hsl(var(--chart-1))" },
-                        }}
-                        className="h-[280px] w-full"
-                      >
-                        <BarChart data={undeliveredByAge} layout="vertical" margin={{ left: 80, right: 20, top: 10, bottom: 10 }}>
-                          <CartesianGrid vertical={false} />
-                          <XAxis type="number" tickFormatter={(v) => v.toLocaleString()} />
-                          <YAxis type="category" dataKey="bucket" width={75} tick={{ fontSize: 12 }} />
-                          <ChartTooltip
-                            content={<ChartTooltipContent indicator="dot" />}
-                          />
-                          <Bar
-                            dataKey="count"
-                            radius={[0, 4, 4, 0]}
-                            fill="hsl(var(--chart-1))"
-                          >
-                            {undeliveredByAge.map((entry, index) => (
-                              <rect
-                                key={`cell-${index}`}
-                                fill={entry.minDays >= 7 ? "hsl(var(--destructive))" : entry.minDays >= 3 ? "hsl(var(--chart-1))" : "hsl(var(--chart-2))"}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ChartContainer>
-                    </CardContent>
-                  </Card>
-
-                  {/* Status Breakdown */}
-                  <Card className="bg-transparent shadow-none">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium"><div>Status Breakdown</div></CardTitle>
-                      <CardDescription className="text-xs">Current shipment status distribution</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      {/* Total count header */}
-                      <div className="text-center mb-6 pb-4 border-b">
-                        <p className="text-3xl font-bold"><AnimatedNumber value={undeliveredSummary.totalUndelivered} locale /></p>
-                        <p className="text-sm text-muted-foreground">Total Undelivered</p>
-                      </div>
-                      {/* Status bars */}
-                      <div className="space-y-4">
-                        {undeliveredByStatus.map((item) => {
-                          const color = item.status === 'Exception' ? 'bg-red-500' :
-                                       item.status === 'Delayed' ? 'bg-amber-500' :
-                                       item.status === 'In Transit' ? 'bg-blue-500' :
-                                       'bg-emerald-500'
-                          const textColor = item.status === 'Exception' ? 'text-red-600 dark:text-red-400' :
-                                           item.status === 'Delayed' ? 'text-amber-600 dark:text-amber-400' :
-                                           item.status === 'In Transit' ? 'text-blue-600 dark:text-blue-400' :
-                                           'text-emerald-600 dark:text-emerald-400'
-                          return (
-                            <div key={item.status} className="space-y-1.5">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className={cn("font-medium", textColor)}>{item.status}</span>
-                                <span className="text-muted-foreground tabular-nums">
-                                  {item.count.toLocaleString()} ({item.percent.toFixed(0)}%)
-                                </span>
-                              </div>
-                              <div className="h-3 w-full bg-muted rounded-full overflow-hidden">
-                                <div
-                                  className={cn("h-full rounded-full transition-all", color)}
-                                  style={{ width: `${Math.max(item.percent, 1)}%` }}
-                                />
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Undelivered by Carrier */}
-                <Card className="bg-transparent shadow-none">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium"><div>Undelivered by Carrier</div></CardTitle>
-                    <CardDescription className="text-xs">Shipment count and average days in transit per carrier</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ChartContainer
-                      config={{
-                        count: { label: "Shipments", color: "hsl(var(--chart-1))" },
-                        avgDaysInTransit: { label: "Avg Days", color: "hsl(var(--chart-2))" },
-                      }}
-                      className="h-[300px] w-full"
-                    >
-                      <ComposedChart data={undeliveredByCarrier} margin={{ left: 20, right: 20, top: 20, bottom: 60 }}>
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                          dataKey="carrier"
-                          angle={-45}
-                          textAnchor="end"
-                          height={60}
-                          tick={{ fontSize: 11 }}
-                          interval={0}
-                        />
-                        <YAxis yAxisId="left" orientation="left" allowDecimals={false} tickFormatter={(v) => v.toLocaleString()} />
-                        <YAxis yAxisId="right" orientation="right" allowDecimals={false} tickFormatter={(v) => `${v}d`} />
-                        <ChartTooltip
-                          content={
-                            <ChartTooltipContent
-                              indicator="dot"
-                              formatter={(value, name, item) => (
-                                <>
-                                  <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
-                                  <div className="flex flex-1 justify-between items-center leading-none">
-                                    <span className="text-muted-foreground">{name === 'count' ? 'Shipments' : 'Avg Days'}</span>
-                                    <span className="font-mono font-medium tabular-nums text-foreground ml-4">{name === 'count' ? Number(value).toLocaleString() : `${Number(value).toFixed(1)}d`}</span>
-                                  </div>
-                                </>
-                              )}
-                            />
-                          }
-                        />
-                        <Bar yAxisId="left" dataKey="count" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
-                        <Line yAxisId="right" type="monotone" dataKey="avgDaysInTransit" stroke="hsl(var(--chart-2))" strokeWidth={2} dot={{ fill: "hsl(var(--chart-2))" }} />
-                      </ComposedChart>
-                    </ChartContainer>
-                  </CardContent>
-                </Card>
-
-                {/* Shipments Detail Table */}
-                <Card className="bg-transparent shadow-none">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium"><div>Undelivered Shipments Detail</div></CardTitle>
-                    <CardDescription className="text-xs">
-                      Showing {Math.min(50, undeliveredShipments.length)} of {undeliveredShipments.length} undelivered shipments, sorted by days in transit
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="rounded-md border overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b bg-muted/50">
-                              <th className="text-left p-3 font-medium">Tracking ID</th>
-                              <th className="text-left p-3 font-medium">Order ID</th>
-                              <th className="text-left p-3 font-medium">Customer</th>
-                              <th className="text-left p-3 font-medium">Carrier</th>
-                              <th className="text-left p-3 font-medium">Destination</th>
-                              <th className="text-right p-3 font-medium">Days</th>
-                              <th className="text-left p-3 font-medium">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {undeliveredShipments.slice(0, 50).map((shipment, index) => (
-                              <tr key={shipment.trackingId} className={cn("border-b", index % 2 === 0 ? "bg-background" : "bg-muted/20")}>
-                                <td className="p-3 font-mono text-xs">{shipment.trackingId}</td>
-                                <td className="p-3 font-mono text-xs">{shipment.orderId}</td>
-                                <td className="p-3">{shipment.customerName}</td>
-                                <td className="p-3">{shipment.carrier}</td>
-                                <td className="p-3">{shipment.destination}</td>
-                                <td className={cn(
-                                  "p-3 text-right font-medium tabular-nums",
-                                  shipment.daysInTransit >= 7 ? "text-red-600 dark:text-red-400" :
-                                  shipment.daysInTransit >= 5 ? "text-amber-600 dark:text-amber-400" :
-                                  "text-foreground"
-                                )}>
-                                  {shipment.daysInTransit}
-                                </td>
-                                <td className="p-3">
-                                  <span className={cn(
-                                    "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium",
-                                    shipment.status === 'Exception' ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
-                                    shipment.status === 'Delayed' ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                                    "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                  )}>
-                                    {shipment.status}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                    {undeliveredShipments.length > 50 && (
-                      <p className="text-sm text-muted-foreground mt-3 text-center">
-                        Showing top 50 shipments by days in transit. Export to see all {undeliveredShipments.length} records.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
                   </div>
                 </div>
               </TabsContent>

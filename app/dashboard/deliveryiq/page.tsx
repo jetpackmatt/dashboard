@@ -495,7 +495,7 @@ export default function DeliveryIQPage() {
               data={shipments}
               isLoading={isLoading}
               error={error}
-              showClientColumn={canViewAllBrands}
+              showClientColumn={canViewAllBrands && !selectedClientId}
               activeFilter={quickFilter}
               onRefresh={fetchShipments}
             />
