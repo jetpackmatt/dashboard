@@ -187,8 +187,8 @@ const WATCH_REASON_PROMPT = `
 ## WATCH REASON CLASSIFICATION
 Based on the checkpoint pattern, classify the shipment into exactly one category:
 
-- **SLOW**: Package is progressing through different locations, just at a slow pace. Checkpoints show the package appearing at multiple distinct cities/facilities over time.
-- **STALLED**: Package was moving but has stopped at a specific location. Recent checkpoints are all at the same location but the package was previously seen at other locations.
+- **SLOW**: Package is ACTIVELY progressing through different locations, just at a slow pace. The MOST RECENT checkpoint must be within the last 5-7 days and show the package at a new location compared to earlier checkpoints. If the last checkpoint is older than 7 days, the package is NOT slow — it is STALLED or worse.
+- **STALLED**: Package was moving but has gone silent or stopped. Either: (a) the last checkpoint is 7+ days old with no new updates, or (b) recent checkpoints are all at the same location but the package was previously seen at other locations.
 - **CUSTOMS**: International package in customs processing. Checkpoint descriptions reference customs, clearance, import/export processing. No indication that shipper or recipient action is required.
 - **HELD**: Carrier has flagged a vague exception or hold with no clear action specified. Generic "delivery exception", "shipment on hold" without explanation of what's needed.
 - **NEEDS ACTION**: Tracking explicitly indicates that the shipper or recipient must take action. Examples: "available for pickup at post office" (recipient must collect), "additional documentation required" (shipper must provide customs docs), "address correction needed", "payment of duties required by recipient". The key distinction from HELD: there is a SPECIFIC action someone must take.
@@ -229,11 +229,18 @@ export async function evaluateMovement(
   }
 
   const timeline = formatCheckpointTimeline(checkpoints)
+  const today = new Date().toISOString().split('T')[0]
+  const latestCheckpoint = checkpoints[0]
+  const daysSinceLastScan = latestCheckpoint?.checkpoint_date
+    ? Math.floor((Date.now() - new Date(latestCheckpoint.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24))
+    : null
 
   const prompt = `You are a shipping logistics expert analyzing carrier tracking data. You have TWO tasks:
 1. Determine whether this shipment is showing GENUINE forward movement toward delivery, or is stuck/cycling.
 2. Classify the watch reason (why this shipment needs monitoring).
 
+## TODAY'S DATE: ${today}
+## DAYS SINCE LAST SCAN: ${daysSinceLastScan ?? 'unknown'}
 ## CARRIER: ${carrier}
 ## INTERNATIONAL: ${isInternational ? 'Yes' : 'No'}
 
@@ -327,8 +334,16 @@ export async function classifyWatchReason(
 
   const timeline = formatCheckpointTimeline(checkpoints)
 
+  const today = new Date().toISOString().split('T')[0]
+  const latestCheckpoint = checkpoints[0]
+  const daysSinceLastScan = latestCheckpoint?.checkpoint_date
+    ? Math.floor((Date.now() - new Date(latestCheckpoint.checkpoint_date).getTime()) / (1000 * 60 * 60 * 24))
+    : null
+
   const prompt = `You are a shipping logistics expert. Classify why this shipment needs monitoring based on its tracking history.
 
+## TODAY'S DATE: ${today}
+## DAYS SINCE LAST SCAN: ${daysSinceLastScan ?? 'unknown'}
 ## CARRIER: ${carrier}
 ## INTERNATIONAL: ${isInternational ? 'Yes' : 'No'}
 
@@ -336,6 +351,8 @@ export async function classifyWatchReason(
 date | description | location | status
 ${timeline}
 ${WATCH_REASON_PROMPT}
+
+CRITICAL: Consider how OLD the latest checkpoint is relative to today's date. A shipment that showed movement 15 days ago but has been completely silent since then is NOT "SLOW" — it is STALLED or STUCK. "SLOW" means the package is ACTIVELY progressing, with recent checkpoints (within the last few days) showing new locations.
 
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
