@@ -36,7 +36,7 @@ export interface MonitoredShipment {
   daysInTransit: number
   claimEligibilityStatus: 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | 'missed_window' | null
   careTicketStatus: string | null
-  watchReason: 'SLOW' | 'STALLED' | 'CUSTOMS' | 'PICKUP' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING' | null
+  watchReason: 'SLOW' | 'STALLED' | 'CUSTOMS' | 'PICKUP' | 'DELIVERY ISSUE' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING' | null
   aiStatusBadge: 'MOVING' | 'DELAYED' | 'WATCHLIST' | 'STALLED' | 'STUCK' | 'RETURNING' | 'LOST' | null
   aiRiskLevel: 'low' | 'medium' | 'high' | 'critical' | null
   aiReshipmentUrgency: number | null
@@ -266,7 +266,7 @@ export default function DeliveryIQPage() {
 
   return (
     <>
-      <SiteHeader sectionName="Delivery IQ">
+      <SiteHeader sectionName="Delivery IQ" badge={<span className="relative -top-1.5 text-[8px] font-semibold uppercase tracking-wide px-0.5 rounded-sm bg-orange-500/15 text-orange-500 dark:bg-orange-400/15 dark:text-orange-400">Beta</span>}>
         {(isLoading || isClientLoading) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
             <JetpackLoader size="md" />

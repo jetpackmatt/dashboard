@@ -148,7 +148,7 @@ RESHIPMENT URGENCY SCORING:
 }
 
 // Watch reason badges for On Watch shipments
-export type WatchReason = 'SLOW' | 'STALLED' | 'CUSTOMS' | 'PICKUP' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING'
+export type WatchReason = 'SLOW' | 'STALLED' | 'CUSTOMS' | 'PICKUP' | 'DELIVERY ISSUE' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING'
 
 // Movement evaluation types
 export interface MovementEvaluation {
@@ -191,11 +191,14 @@ Based on the checkpoint pattern, classify the shipment into exactly one category
 - **STALLED**: Package was moving but has gone silent or stopped. Either: (a) the last checkpoint is 7+ days old with no new updates, or (b) recent checkpoints are all at the same location but the package was previously seen at other locations.
 - **CUSTOMS**: International package in customs processing — whether routine or stuck/cycling. Any shipment where the primary issue is customs/clearance, including carriers cycling "Clearance Event" / "Shipment is on hold" at a customs facility. Applies to ALL carriers (DHL, FedEx, UPS, etc.), not just DHL.
 - **PICKUP**: Package is waiting for the recipient to collect it. Examples: "Awaiting collection by the consignee", "Available for Pickup", "Reminder to pick up your item", "Reminder to Schedule Redelivery". The package is safe and accounted for but NOT delivered — the recipient must go get it. If too much time passes, the carrier will return it to sender.
+- **DELIVERY ISSUE**: Carrier has attempted delivery but failed — one or more "Out for Delivery" or "Delivery Attempted" events followed by return to facility without successful delivery. The package is still in the carrier network and will likely be reattempted, but repeated failures risk return-to-sender. This takes PRIORITY over SLOW and STUCK — a shipment with recent "Out for Delivery" scans that failed to deliver is DELIVERY ISSUE, not STUCK or SLOW, regardless of how many times it cycled. Two delivery attempts in a row are common; the key signal is "went out, came back without delivering."
 - **NEEDS ACTION**: Shipper or recipient must take a specific action to resolve a delivery issue. Examples: "address correction needed", "incorrect/insufficient address", "restricted address", "additional documentation required", "payment of duties required", "Hold for Instructions Requested" (carrier is asking for delivery instructions). NOTE: Cirro/GOFO's "Hold for Instructions Requested. Contact GOFO..." is NOT boilerplate — it means the carrier needs instructions from the shipper. Look at the underlying exception (address issue, business closed, no access) to confirm NEEDS ACTION.
-- **STUCK**: Carrier is cycling/repeating the same 2-3 statuses at the same DOMESTIC location over multiple days or weeks. The package is clearly not progressing despite the carrier posting "updates". NOTE: If the cycling is at a customs facility for an international shipment, use CUSTOMS instead.
+- **STUCK**: Carrier is cycling/repeating the same 2-3 statuses at the same DOMESTIC location over multiple days or weeks WITHOUT any delivery attempts. The package is clearly not progressing despite the carrier posting "updates". NOTE: If the cycling is at a customs facility for an international shipment, use CUSTOMS instead. NOTE: If the cycling includes "Out for Delivery" attempts, use DELIVERY ISSUE instead.
 - **RETURNING**: Evidence the package is being returned to sender. Descriptions mention "return", "returned to sender", "RTS", "back to shipper", "return initiated", "in transit to origin".
 
 IMPORTANT DISTINCTIONS:
+- DELIVERY ISSUE vs STUCK: If the cycling includes "Out for Delivery" or "Delivery Attempted" events, it's DELIVERY ISSUE, not STUCK. STUCK is for packages sitting at a facility without any delivery attempts.
+- DELIVERY ISSUE vs SLOW: A shipment with recent movement that includes failed delivery attempts is DELIVERY ISSUE, not SLOW. SLOW is for packages progressing through the network but haven't reached the delivery stage yet.
 - CUSTOMS vs STUCK: If the repeated statuses involve customs/clearance keywords at an international facility, it's CUSTOMS, not STUCK. STUCK is for domestic cycling patterns only.
 - CUSTOMS vs NEEDS ACTION: If customs requires documents/payment from shipper or recipient, that's NEEDS ACTION, not CUSTOMS.
 - PICKUP vs NEEDS ACTION: PICKUP is specifically for "come get your package" situations. NEEDS ACTION is for issues that need resolution before delivery can be attempted (address fix, hold instructions, etc.).
@@ -279,7 +282,7 @@ ${WATCH_REASON_PROMPT}
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
   "isGenuineMovement": true/false,
-  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "NEEDS ACTION" | "STUCK" | "RETURNING",
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "DELIVERY ISSUE" | "NEEDS ACTION" | "STUCK" | "RETURNING",
   "confidence": 0-100,
   "reason": "brief explanation"
 }`
@@ -296,7 +299,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
       return { isGenuineMovement: false, watchReason: 'STALLED', confidence: 0, reason: 'Invalid AI response' }
     }
 
-    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'DELIVERY ISSUE', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(evaluation.watchReason)) {
       evaluation.watchReason = 'STALLED' // Safe default
     }
@@ -357,7 +360,7 @@ CRITICAL: Consider how OLD the latest checkpoint is relative to today's date. A 
 
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
-  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "NEEDS ACTION" | "STUCK" | "RETURNING",
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "DELIVERY ISSUE" | "NEEDS ACTION" | "STUCK" | "RETURNING",
   "reason": "brief explanation"
 }`
 
@@ -367,7 +370,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const parsed = JSON.parse(jsonText) as { watchReason: WatchReason; reason: string }
 
-    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'DELIVERY ISSUE', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(parsed.watchReason)) {
       parsed.watchReason = 'STALLED'
     }
@@ -387,6 +390,7 @@ export function getNextCheckInterval(watchReason: WatchReason): number {
   switch (watchReason) {
     case 'STUCK':
     case 'NEEDS ACTION':
+    case 'DELIVERY ISSUE':
       return 60 * 60 * 1000 // 1 hour
     case 'PICKUP':
     case 'STALLED':
