@@ -107,6 +107,7 @@ export async function GET(request: NextRequest) {
     nowEligible: 0,
     nowEligibleLostStatus: 0,  // Promoted due to carrier admitting lost
     nowDelivered: 0,
+    returnedToSender: 0,
     missedWindow: 0,
     stillAtRisk: 0,
     stillEligible: 0,
@@ -233,7 +234,7 @@ export async function GET(request: NextRequest) {
                 })
                 .eq('id', check.id)
 
-              results.returnedToSender = (results.returnedToSender || 0) + 1
+              results.returnedToSender++
               console.log(`[At-Risk Recheck] ${check.shipment_id} RETURNED TO SENDER (was eligible): "${trackingResult.tracking.latest_event}"`)
               await new Promise(r => setTimeout(r, API_DELAY_MS))
               continue
