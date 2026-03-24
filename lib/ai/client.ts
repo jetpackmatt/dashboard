@@ -148,7 +148,7 @@ RESHIPMENT URGENCY SCORING:
 }
 
 // Watch reason badges for On Watch shipments
-export type WatchReason = 'SLOW' | 'STALLED' | 'CUSTOMS' | 'HELD' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING'
+export type WatchReason = 'SLOW' | 'STALLED' | 'CUSTOMS' | 'PICKUP' | 'NEEDS ACTION' | 'STUCK' | 'NO SCANS' | 'RETURNING'
 
 // Movement evaluation types
 export interface MovementEvaluation {
@@ -189,17 +189,18 @@ Based on the checkpoint pattern, classify the shipment into exactly one category
 
 - **SLOW**: Package is ACTIVELY progressing through different locations, just at a slow pace. The MOST RECENT checkpoint must be within the last 5-7 days and show the package at a new location compared to earlier checkpoints. If the last checkpoint is older than 7 days, the package is NOT slow — it is STALLED or worse.
 - **STALLED**: Package was moving but has gone silent or stopped. Either: (a) the last checkpoint is 7+ days old with no new updates, or (b) recent checkpoints are all at the same location but the package was previously seen at other locations.
-- **CUSTOMS**: International package in customs processing. Checkpoint descriptions reference customs, clearance, import/export processing. No indication that shipper or recipient action is required.
-- **HELD**: Carrier has flagged a vague exception or hold with no clear action specified. Generic "delivery exception", "shipment on hold" without explanation of what's needed.
-- **NEEDS ACTION**: Tracking explicitly indicates that the shipper or recipient must take action. Examples: "available for pickup at post office" (recipient must collect), "additional documentation required" (shipper must provide customs docs), "address correction needed", "payment of duties required by recipient". The key distinction from HELD: there is a SPECIFIC action someone must take.
-- **STUCK**: Carrier is cycling/repeating the same 2-3 statuses at the same location over multiple days or weeks. The package is clearly not progressing despite the carrier posting "updates". Common pattern: DHL alternating "Clearance Event" / "Shipment is on hold" daily at the same facility.
-- **RETURNING**: Evidence the package is being returned to sender. Descriptions mention "return", "returned to sender", "RTS", "back to shipper".
+- **CUSTOMS**: International package in customs processing — whether routine or stuck/cycling. Any shipment where the primary issue is customs/clearance, including carriers cycling "Clearance Event" / "Shipment is on hold" at a customs facility. Applies to ALL carriers (DHL, FedEx, UPS, etc.), not just DHL.
+- **PICKUP**: Package is waiting for the recipient to collect it. Examples: "Awaiting collection by the consignee", "Available for Pickup", "Reminder to pick up your item", "Reminder to Schedule Redelivery". The package is safe and accounted for but NOT delivered — the recipient must go get it. If too much time passes, the carrier will return it to sender.
+- **NEEDS ACTION**: Shipper or recipient must take a specific action to resolve a delivery issue. Examples: "address correction needed", "incorrect/insufficient address", "restricted address", "additional documentation required", "payment of duties required", "Hold for Instructions Requested" (carrier is asking for delivery instructions). NOTE: Cirro/GOFO's "Hold for Instructions Requested. Contact GOFO..." is NOT boilerplate — it means the carrier needs instructions from the shipper. Look at the underlying exception (address issue, business closed, no access) to confirm NEEDS ACTION.
+- **STUCK**: Carrier is cycling/repeating the same 2-3 statuses at the same DOMESTIC location over multiple days or weeks. The package is clearly not progressing despite the carrier posting "updates". NOTE: If the cycling is at a customs facility for an international shipment, use CUSTOMS instead.
+- **RETURNING**: Evidence the package is being returned to sender. Descriptions mention "return", "returned to sender", "RTS", "back to shipper", "return initiated", "in transit to origin".
 
 IMPORTANT DISTINCTIONS:
-- CUSTOMS vs NEEDS ACTION: If customs requires documents/payment from shipper or recipient, that's NEEDS ACTION, not CUSTOMS. CUSTOMS is only for routine customs processing with no action required.
-- HELD vs NEEDS ACTION: If the tracking says WHAT needs to happen (pickup, docs, address fix), it's NEEDS ACTION. If it's a vague hold/exception with no explanation, it's HELD.
-- STALLED vs STUCK: STALLED means the package stopped recently at one location. STUCK means the carrier has been cycling the same statuses at the same location for an extended period (many repeated checkpoints).
-- SLOW vs STALLED: SLOW means the package IS still appearing at new locations. STALLED means it has STOPPED appearing at new locations.`
+- CUSTOMS vs STUCK: If the repeated statuses involve customs/clearance keywords at an international facility, it's CUSTOMS, not STUCK. STUCK is for domestic cycling patterns only.
+- CUSTOMS vs NEEDS ACTION: If customs requires documents/payment from shipper or recipient, that's NEEDS ACTION, not CUSTOMS.
+- PICKUP vs NEEDS ACTION: PICKUP is specifically for "come get your package" situations. NEEDS ACTION is for issues that need resolution before delivery can be attempted (address fix, hold instructions, etc.).
+- STALLED vs STUCK: STALLED means the package has gone silent (no updates). STUCK means the carrier IS posting updates but they're the same cycling pattern.
+- SLOW vs STALLED: SLOW means the package IS still appearing at new locations within the last 5-7 days. STALLED means it has STOPPED.`
 
 /**
  * Evaluate whether a shipment is showing genuine new movement or is stuck in a
@@ -278,7 +279,7 @@ ${WATCH_REASON_PROMPT}
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
   "isGenuineMovement": true/false,
-  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "HELD" | "NEEDS ACTION" | "STUCK" | "RETURNING",
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "NEEDS ACTION" | "STUCK" | "RETURNING",
   "confidence": 0-100,
   "reason": "brief explanation"
 }`
@@ -292,10 +293,10 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     // Validate
     if (typeof evaluation.isGenuineMovement !== 'boolean') {
       console.error('[AI] Invalid movement evaluation - missing isGenuineMovement')
-      return { isGenuineMovement: false, watchReason: 'HELD', confidence: 0, reason: 'Invalid AI response' }
+      return { isGenuineMovement: false, watchReason: 'STALLED', confidence: 0, reason: 'Invalid AI response' }
     }
 
-    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'HELD', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(evaluation.watchReason)) {
       evaluation.watchReason = 'HELD' // Safe default
     }
@@ -305,7 +306,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     return evaluation
   } catch (error) {
     console.error('[AI] Error evaluating movement:', error)
-    return { isGenuineMovement: false, watchReason: 'HELD', confidence: 0, reason: `AI evaluation failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+    return { isGenuineMovement: false, watchReason: 'STALLED', confidence: 0, reason: `AI evaluation failed: ${error instanceof Error ? error.message : 'Unknown'}` }
   }
 }
 
@@ -356,7 +357,7 @@ CRITICAL: Consider how OLD the latest checkpoint is relative to today's date. A 
 
 Respond ONLY with a JSON object (no markdown, no explanation):
 {
-  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "HELD" | "NEEDS ACTION" | "STUCK" | "RETURNING",
+  "watchReason": "SLOW" | "STALLED" | "CUSTOMS" | "PICKUP" | "NEEDS ACTION" | "STUCK" | "RETURNING",
   "reason": "brief explanation"
 }`
 
@@ -366,7 +367,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const parsed = JSON.parse(jsonText) as { watchReason: WatchReason; reason: string }
 
-    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'HELD', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
+    const validReasons: WatchReason[] = ['SLOW', 'STALLED', 'CUSTOMS', 'PICKUP', 'NEEDS ACTION', 'STUCK', 'NO SCANS', 'RETURNING']
     if (!validReasons.includes(parsed.watchReason)) {
       parsed.watchReason = 'HELD'
     }
@@ -374,7 +375,7 @@ Respond ONLY with a JSON object (no markdown, no explanation):
     return parsed
   } catch (error) {
     console.error('[AI] Error classifying watch reason:', error)
-    return { watchReason: 'HELD', reason: `Classification failed: ${error instanceof Error ? error.message : 'Unknown'}` }
+    return { watchReason: 'STALLED', reason: `Classification failed: ${error instanceof Error ? error.message : 'Unknown'}` }
   }
 }
 
@@ -385,9 +386,9 @@ Respond ONLY with a JSON object (no markdown, no explanation):
 export function getNextCheckInterval(watchReason: WatchReason): number {
   switch (watchReason) {
     case 'STUCK':
-    case 'HELD':
     case 'NEEDS ACTION':
       return 60 * 60 * 1000 // 1 hour
+    case 'PICKUP':
     case 'STALLED':
     case 'RETURNING':
       return 2 * 60 * 60 * 1000 // 2 hours

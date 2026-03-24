@@ -67,8 +67,8 @@ function getWatchReasonStyle(reason: string | null): { color: string; label: str
     case 'SLOW': return { color: 'bg-slate-100 text-slate-600 border-slate-200', label: 'Slow' }
     case 'STALLED': return { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'Stalled' }
     case 'CUSTOMS': return { color: 'bg-blue-100 text-blue-700 border-blue-200', label: 'Customs' }
-    case 'HELD': return { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'Held' }
-    case 'NEEDS ACTION': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'Needs Action' }
+    case 'PICKUP': return { color: 'bg-teal-100 text-teal-700 border-teal-200', label: 'Pickup' }
+    case 'NEEDS ACTION': return { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'Needs Action' }
     case 'STUCK': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'Stuck' }
     case 'NO SCANS': return { color: 'bg-red-100 text-red-700 border-red-200', label: 'No Scans' }
     case 'RETURNING': return { color: 'bg-purple-100 text-purple-700 border-purple-200', label: 'Returning' }
