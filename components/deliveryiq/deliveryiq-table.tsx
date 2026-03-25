@@ -17,6 +17,23 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { ClientBadge } from "@/components/transactions/client-badge"
 import { getTrackingUrl, getCarrierDisplayName } from "@/components/transactions/cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
@@ -202,6 +219,61 @@ export function DeliveryIQTable({
   // Tracking timeline drawer state
   const [selectedTracking, setSelectedTracking] = React.useState<{ number: string; carrier: string } | null>(null)
   const [timelineDrawerOpen, setTimelineDrawerOpen] = React.useState(false)
+
+  // Mark actions state
+  const [reshipDialogOpen, setReshipDialogOpen] = React.useState(false)
+  const [reshipTargetId, setReshipTargetId] = React.useState<string | null>(null)
+  const [reshipInput, setReshipInput] = React.useState("")
+  const [reshipSaving, setReshipSaving] = React.useState(false)
+  const [noteDialogOpen, setNoteDialogOpen] = React.useState(false)
+  const [noteTargetId, setNoteTargetId] = React.useState<string | null>(null)
+  const [noteInput, setNoteInput] = React.useState("")
+  const [noteSaving, setNoteSaving] = React.useState(false)
+
+  const handleReshipSave = React.useCallback(async () => {
+    if (!reshipTargetId || !reshipInput.trim()) return
+    setReshipSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${reshipTargetId}/reshipment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reshipmentId: reshipInput.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save')
+      }
+      toast.success('Marked as reshipped')
+      setReshipDialogOpen(false)
+      onRefresh()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save reshipment')
+    } finally {
+      setReshipSaving(false)
+    }
+  }, [reshipTargetId, reshipInput, onRefresh])
+
+  const handleNoteSave = React.useCallback(async () => {
+    if (!noteTargetId || !noteInput.trim()) return
+    setNoteSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${noteTargetId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: noteInput.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save')
+      }
+      toast.success('Note added')
+      setNoteDialogOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add note')
+    } finally {
+      setNoteSaving(false)
+    }
+  }, [noteTargetId, noteInput])
 
   // Reset page when data changes
   React.useEffect(() => {
@@ -577,6 +649,32 @@ export function DeliveryIQTable({
                         >
                           Track
                         </TrackingLink>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="px-2 py-0.5 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900/50 dark:hover:text-slate-300 transition-colors"
+                            >
+                              Mark
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem onClick={() => {
+                              setReshipTargetId(shipment.shipmentId)
+                              setReshipInput("")
+                              setReshipDialogOpen(true)
+                            }}>
+                              Mark as Reshipped
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              setNoteTargetId(shipment.shipmentId)
+                              setNoteInput("")
+                              setNoteDialogOpen(true)
+                            }}>
+                              Add a Note
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         {shipment.claimEligibilityStatus === 'eligible' && (
                           <button
                             onClick={(e) => {
@@ -663,6 +761,60 @@ export function DeliveryIQTable({
         open={timelineDrawerOpen}
         onOpenChange={setTimelineDrawerOpen}
       />
+      {/* Reship dialog */}
+      <Dialog open={reshipDialogOpen} onOpenChange={setReshipDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Mark as Reshipped</DialogTitle>
+            <DialogDescription>
+              Enter the new shipment ID for the reshipment of #{reshipTargetId}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="diq-reship-id">Reshipment Shipment ID</Label>
+            <Input
+              id="diq-reship-id"
+              value={reshipInput}
+              onChange={(e) => setReshipInput(e.target.value)}
+              placeholder="e.g. 330867617"
+              className="mt-1.5"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReshipDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleReshipSave} disabled={reshipSaving || !reshipInput.trim()}>
+              {reshipSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Note dialog */}
+      <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Add a Note</DialogTitle>
+            <DialogDescription>
+              Add a note to shipment #{noteTargetId}. Max 500 characters.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Textarea
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value.slice(0, 500))}
+              placeholder="Type your note here..."
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-xs text-muted-foreground mt-1">{noteInput.length}/500</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoteDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleNoteSave} disabled={noteSaving || !noteInput.trim()}>
+              {noteSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

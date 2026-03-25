@@ -46,6 +46,7 @@ const baseNavItems = [
     title: "Transactions",
     url: "/dashboard/transactions",
     icon: ListIcon,
+    defaultTab: "shipments",
     items: [
       { title: "Unfulfilled", value: "unfulfilled" },
       { title: "Shipments", value: "shipments" },

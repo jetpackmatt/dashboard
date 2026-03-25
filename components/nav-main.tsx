@@ -27,6 +27,7 @@ interface NavItem {
   icon?: LucideIcon
   isActive?: boolean
   items?: SubItem[]
+  defaultTab?: string
   badge?: string
 }
 
@@ -46,7 +47,7 @@ export function NavMain({
             item.items ? (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton asChild tooltip={item.title} isActive={item.isActive}>
-                  <Link href={`${item.url}?tab=${item.items[0].value}`} prefetch={false}>
+                  <Link href={`${item.url}?tab=${item.defaultTab || item.items[0].value}`} prefetch={false}>
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
                   </Link>
