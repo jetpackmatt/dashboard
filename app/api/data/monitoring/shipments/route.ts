@@ -127,6 +127,9 @@ export async function GET(request: NextRequest) {
         // All active (excludes archived and RTS)
         query = query.in('claim_eligibility_status', ['at_risk', 'eligible', 'claim_filed'])
         break
+      case 'everything':
+        // No filter — return all statuses (for KPI computation)
+        break
       case 'archived':
         // Archived = approved, denied, or missed_window
         query = query.in('claim_eligibility_status', ['approved', 'denied', 'missed_window'])
@@ -195,18 +198,36 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Get shipment data for ship dates
+    // Get shipment data for ship dates + order IDs (for customer name lookup)
     const shipmentIds = (checks as LostInTransitCheck[] || []).map((c: LostInTransitCheck) => c.shipment_id).filter(Boolean)
-    let shipmentMap: Map<string, { eventLabeled: string }> = new Map()
+    let shipmentMap: Map<string, { eventLabeled: string; shipbobOrderId: string | null }> = new Map()
     if (shipmentIds.length > 0) {
       const { data: shipments } = await supabase
         .from('shipments')
-        .select('shipment_id, event_labeled')
+        .select('shipment_id, event_labeled, shipbob_order_id')
         .in('shipment_id', shipmentIds)
 
       if (shipments) {
         for (const s of shipments) {
-          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled })
+          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled, shipbobOrderId: s.shipbob_order_id })
+        }
+      }
+    }
+
+    // Get customer names from orders table
+    const orderIds = [...new Set([...shipmentMap.values()].map(s => s.shipbobOrderId).filter(Boolean))] as string[]
+    let customerNameMap: Map<string, string> = new Map()
+    if (orderIds.length > 0) {
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('shipbob_order_id, customer_name')
+        .in('shipbob_order_id', orderIds)
+
+      if (orders) {
+        for (const o of orders) {
+          if (o.customer_name) {
+            customerNameMap.set(o.shipbob_order_id, o.customer_name)
+          }
         }
       }
     }
@@ -239,8 +260,10 @@ export async function GET(request: NextRequest) {
       carrier: check.carrier,
       clientId: check.client_id,
       clientName: clientMap.get(check.client_id || '') || 'Unknown',
+      customerName: customerNameMap.get(shipmentMap.get(check.shipment_id)?.shipbobOrderId || '') || null,
       shipDate: shipmentMap.get(check.shipment_id)?.eventLabeled || null,
       lastScanDate: check.last_scan_date,
+      lastScanDescription: check.last_scan_description,
       daysSilent: daysSince(check.last_scan_date), // Calculate from last_scan_date
       daysInTransit: check.days_in_transit,
       claimEligibilityStatus: check.claim_eligibility_status,

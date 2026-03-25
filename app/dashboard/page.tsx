@@ -1,5 +1,4 @@
 import { createClient } from "@/lib/supabase/server"
-import { SiteHeader } from "@/components/site-header"
 import { DashboardContent } from "@/components/dashboard-content"
 
 export default async function Page() {
@@ -12,13 +11,6 @@ export default async function Page() {
     || 'User'
 
   return (
-    <>
-      <SiteHeader sectionName={`Welcome Back, ${displayName}`} />
-      <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
-        <div className="@container/main flex flex-1 flex-col gap-2 w-full">
-          <DashboardContent />
-        </div>
-      </div>
-    </>
+    <DashboardContent displayName={displayName} />
   )
 }

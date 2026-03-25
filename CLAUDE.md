@@ -104,6 +104,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/sync-at-risk` | Daily 3:00 AM UTC | - | Proactive Lost in Transit detection (TrackingMore) |
 | `/api/cron/recheck-at-risk` | Every 5 hours | - | FREE recheck of at-risk shipments |
 | `/api/cron/advance-claims` | Every 5 min | - | Auto-advance claims: Under Review → Credit Requested |
+| `/api/cron/auto-file-claims` | Daily 4 AM EST | - | Auto-file LIT claims for clients with auto_file_claims=true |
 
 **Note:** `maxDuration = 300` (5 minutes) required for crons that process large datasets. Vercel Pro tier supports up to 300s. Without explicit `maxDuration`, functions may timeout prematurely.
 

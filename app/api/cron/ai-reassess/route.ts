@@ -202,6 +202,11 @@ export async function POST(request: NextRequest) {
         if (daysSinceLastScan && daysSinceLastScan >= eligibilityThreshold && newClaimStatus === 'at_risk') {
           newClaimStatus = 'eligible'
         }
+        // If AI detects the package is returning, move to returned_to_sender
+        // (only from at_risk or eligible — don't regress claim_filed/approved)
+        if (watchClassification.watchReason === 'RETURNING' && (newClaimStatus === 'at_risk' || newClaimStatus === 'eligible')) {
+          newClaimStatus = 'returned_to_sender'
+        }
 
         // Use watch reason for next check interval
         const nextCheckAt = new Date(now.getTime() + getNextCheckInterval(watchClassification.watchReason))

@@ -204,6 +204,7 @@ export async function GET(request: NextRequest) {
 
         if (daysSinceLastScan !== null && daysSinceLastScan > maxWindowDays) {
           // Filing window has expired - mark as missed_window
+          // Guard: only update if status hasn't been changed by another process (e.g. createCareTicket)
           const { error: updateError } = await supabase
             .from('lost_in_transit_checks')
             .update({
@@ -211,6 +212,7 @@ export async function GET(request: NextRequest) {
               last_recheck_at: new Date().toISOString(),
             })
             .eq('id', check.id)
+            .eq('claim_eligibility_status', check.claim_eligibility_status)
 
           if (!updateError) {
             results.missedWindow++
@@ -219,8 +221,25 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        // If already eligible, check for delivery and missed window using fresh tracking data
+        // If already eligible, check if a claim was filed since last check
         if (check.claim_eligibility_status === 'eligible') {
+          const hasClaim = await hasExistingLossClaim(check.shipment_id)
+          if (hasClaim) {
+            await supabase
+              .from('lost_in_transit_checks')
+              .update({
+                claim_eligibility_status: 'claim_filed',
+                last_recheck_at: new Date().toISOString(),
+              })
+              .eq('id', check.id)
+
+            console.log(`[At-Risk Recheck] ${check.shipment_id} has existing claim (was eligible) - marked as claim_filed`)
+            results.stillAtRisk++
+            await new Promise(r => setTimeout(r, API_DELAY_MS))
+            continue
+          }
+
+          // Check for delivery and missed window using fresh tracking data
           const trackingResult = await recheckTrackingWithStorage(check.shipment_id, check.tracking_number, check.carrier)
 
           if (trackingResult.success && trackingResult.tracking) {
@@ -237,6 +256,7 @@ export async function GET(request: NextRequest) {
                   watch_reason: 'RETURNING',
                 })
                 .eq('id', check.id)
+                .eq('claim_eligibility_status', 'eligible')
 
               results.returnedToSender++
               console.log(`[At-Risk Recheck] ${check.shipment_id} RETURNED TO SENDER (was eligible): "${trackingResult.tracking.latest_event}"`)
@@ -284,6 +304,7 @@ export async function GET(request: NextRequest) {
                   last_scan_description: trackingResult.tracking.latest_event || null,
                 })
                 .eq('id', check.id)
+                .eq('claim_eligibility_status', 'eligible')
 
               if (!updateError) {
                 results.missedWindow++
@@ -293,8 +314,9 @@ export async function GET(request: NextRequest) {
               continue
             }
 
-            // Check if eligible shipment now has a recent scan (< 8 days) — may be moving again
-            if (daysSince !== null && daysSince < 8) {
+            // Check if eligible shipment now has a recent scan within threshold — may be moving again
+            // Skip if carrier admitted loss (they should stay eligible regardless of scan recency)
+            if (daysSince !== null && daysSince < requiredDays && !isLostStatus(trackingResult.tracking.latest_event)) {
               const storedCheckpoints = await getCheckpoints(check.shipment_id)
               const cpData = storedCheckpoints.map(cp => ({
                 checkpoint_date: cp.checkpoint_date,
@@ -302,6 +324,11 @@ export async function GET(request: NextRequest) {
                 raw_location: cp.raw_location,
                 raw_status: cp.raw_status,
               }))
+
+              // Calculate new eligible_after based on fresh checkpoint
+              const newEligibleAfter = lastCheckpointDate
+                ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
+                : null
 
               if (storedCheckpoints.length >= 2) {
                 const movementEval = await evaluateMovement(check.carrier || 'Unknown', cpData, isInternational)
@@ -314,23 +341,44 @@ export async function GET(request: NextRequest) {
                   continue
                 }
 
-                // Not moving — save the watch reason badge
+                // Not genuine movement but scan is recent — demote to at_risk (clock reset)
                 await supabase
                   .from('lost_in_transit_checks')
                   .update({
+                    claim_eligibility_status: 'at_risk',
                     last_recheck_at: new Date().toISOString(),
                     last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
                     last_scan_description: trackingResult.tracking.latest_event || null,
+                    eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
                     watch_reason: movementEval.watchReason,
                     ai_next_check_at: new Date(Date.now() + getNextCheckInterval(movementEval.watchReason)).toISOString(),
                   })
                   .eq('id', check.id)
+                  .eq('claim_eligibility_status', 'eligible')
 
-                console.log(`[At-Risk Recheck] ${check.shipment_id} (eligible) watch_reason=${movementEval.watchReason}, confidence=${movementEval.confidence}%`)
-                results.stillEligible++
+                console.log(`[At-Risk Recheck] ${check.shipment_id} demoted eligible→at_risk (${daysSince} days < ${requiredDays} required), watch_reason=${movementEval.watchReason}`)
+                results.stillAtRisk++
                 await new Promise(r => setTimeout(r, API_DELAY_MS))
                 continue
               }
+
+              // Insufficient checkpoint data but scan is recent — demote to at_risk
+              await supabase
+                .from('lost_in_transit_checks')
+                .update({
+                  claim_eligibility_status: 'at_risk',
+                  last_recheck_at: new Date().toISOString(),
+                  last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
+                  last_scan_description: trackingResult.tracking.latest_event || null,
+                  eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+                })
+                .eq('id', check.id)
+                .eq('claim_eligibility_status', 'eligible')
+
+              console.log(`[At-Risk Recheck] ${check.shipment_id} demoted eligible→at_risk (${daysSince} days < ${requiredDays} required, insufficient checkpoints)`)
+              results.stillAtRisk++
+              await new Promise(r => setTimeout(r, API_DELAY_MS))
+              continue
             }
 
             // Update last_scan_date with fresh data (no movement eval done)
@@ -397,6 +445,7 @@ export async function GET(request: NextRequest) {
                   last_recheck_at: new Date().toISOString(),
                 })
                 .eq('id', check.id)
+                .eq('claim_eligibility_status', 'at_risk')
 
               if (!updateError) {
                 results.nowEligible++
@@ -466,6 +515,7 @@ export async function GET(request: NextRequest) {
               watch_reason: 'RETURNING',
             })
             .eq('id', check.id)
+            .eq('claim_eligibility_status', 'at_risk')
 
           if (!updateError) {
             results.returnedToSender++
@@ -505,6 +555,7 @@ export async function GET(request: NextRequest) {
                 last_scan_description: tracking.latest_event || null,
               })
               .eq('id', check.id)
+              .eq('claim_eligibility_status', 'at_risk')
 
             if (!updateError) {
               results.nowEligibleLostStatus++
@@ -529,6 +580,7 @@ export async function GET(request: NextRequest) {
               last_scan_description: tracking.latest_event || null,
             })
             .eq('id', check.id)
+            .eq('claim_eligibility_status', 'at_risk')
 
           if (!updateError) {
             results.missedWindow++
@@ -566,6 +618,7 @@ export async function GET(request: NextRequest) {
                 last_scan_description: tracking.latest_event || null,
               })
               .eq('id', check.id)
+              .eq('claim_eligibility_status', 'at_risk')
 
             if (!updateError) {
               results.nowEligible++

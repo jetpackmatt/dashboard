@@ -71,10 +71,12 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Effective role statuses - respect dev role in development mode
-  const effectiveIsAdmin = isDev ? devRole === 'admin' : isAdmin
-  const effectiveIsCareUser = isDev ? (devRole === 'care_admin' || devRole === 'care_team') : isCareUser
-  const effectiveIsCareAdmin = isDev ? devRole === 'care_admin' : isCareAdmin
+  // Effective role statuses - dev role simulator only works for actual admins
+  // (prevents brand users from seeing admin UI in dev mode)
+  const canSimulate = isDev && isAdmin
+  const effectiveIsAdmin = canSimulate ? devRole === 'admin' : isAdmin
+  const effectiveIsCareUser = canSimulate ? (devRole === 'care_admin' || devRole === 'care_team') : isCareUser
+  const effectiveIsCareAdmin = canSimulate ? devRole === 'care_admin' : isCareAdmin
 
   // Load from localStorage on mount
   React.useEffect(() => {

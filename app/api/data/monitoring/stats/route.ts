@@ -40,7 +40,8 @@ export async function GET(request: NextRequest) {
 
     // Run count queries in parallel
     const [
-      atRiskResult,
+      atRiskAllResult,
+      needsActionResult,
       eligibleResult,
       claimFiledResult,
       returnedToSenderResult,
@@ -53,11 +54,19 @@ export async function GET(request: NextRequest) {
       returningResult,
       lostResult,
     ] = await Promise.all([
-      // Claim lifecycle counts
+      // at_risk total (includes NEEDS ACTION — we subtract below)
       applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
         .eq('claim_eligibility_status', 'at_risk'))
+        .then((r: { count: number | null }) => r.count || 0),
+
+      // Needs Action = at_risk with watch_reason = 'NEEDS ACTION'
+      applyBaseFilters(supabase
+        .from('lost_in_transit_checks')
+        .select('id', { count: 'exact', head: true })
+        .eq('claim_eligibility_status', 'at_risk')
+        .eq('watch_reason', 'NEEDS ACTION'))
         .then((r: { count: number | null }) => r.count || 0),
 
       applyBaseFilters(supabase
@@ -132,8 +141,26 @@ export async function GET(request: NextRequest) {
         .then((r: { count: number | null }) => r.count || 0),
     ])
 
+    // Fetch active (non-delivered) orders count
+    // Powers the "Active Orders" KPI card — all shipments from creation until delivery
+    let totalActiveShipments = 0
+    try {
+      let activeQuery = supabase
+        .from('shipments')
+        .select('id', { count: 'exact', head: true })
+        .is('event_delivered', null)
+      if (clientId && clientId !== 'all') {
+        activeQuery = activeQuery.eq('client_id', clientId)
+      }
+      const { count } = await activeQuery
+      totalActiveShipments = count || 0
+    } catch (err) {
+      console.error('[Monitoring Stats] Active orders count error:', err)
+    }
+
     return NextResponse.json({
-      atRisk: atRiskResult,
+      atRisk: atRiskAllResult - needsActionResult,
+      needsAction: needsActionResult,
       eligible: eligibleResult,
       claimFiled: claimFiledResult,
       returnedToSender: returnedToSenderResult,
@@ -145,6 +172,7 @@ export async function GET(request: NextRequest) {
       stuck: stuckResult,
       returning: returningResult,
       lost: lostResult,
+      totalActiveShipments,
     })
   } catch (error) {
     console.error('[Monitoring Stats] Error:', error)

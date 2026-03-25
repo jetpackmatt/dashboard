@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/refresh-analytics",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-file-claims",
+      "schedule": "0 9 * * *"
     }
   ]
 }

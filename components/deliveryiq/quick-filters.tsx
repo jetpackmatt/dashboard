@@ -17,6 +17,7 @@ import { ChevronDownIcon, SparklesIcon } from "lucide-react"
 // Quick filter values
 export type QuickFilterValue =
   | 'at_risk'
+  | 'needs_action'
   | 'eligible'
   | 'claim_filed'
   | 'returned_to_sender'
@@ -33,6 +34,7 @@ export type QuickFilterValue =
 // Stats interface for counts
 interface DeliveryIQStats {
   atRisk: number
+  needsAction: number
   eligible: number
   claimFiled: number
   returnedToSender: number
@@ -50,16 +52,19 @@ interface QuickFiltersProps {
   value: QuickFilterValue
   onChange: (value: QuickFilterValue) => void
   stats: DeliveryIQStats
+  autoFileEnabled?: boolean
 }
 
 // Primary filter buttons (claim lifecycle)
-const PRIMARY_FILTERS: { value: QuickFilterValue; label: string; activeColor: string }[] = [
-  { value: 'at_risk', label: 'On Watch', activeColor: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200' },
-  { value: 'eligible', label: 'Time to File', activeColor: 'bg-red-50 text-red-800 ring-1 ring-red-200' },
-  { value: 'claim_filed', label: 'Claim Filed', activeColor: 'bg-blue-50 text-blue-800 ring-1 ring-blue-200' },
-  { value: 'returned_to_sender', label: 'Returned', activeColor: 'bg-purple-50 text-purple-800 ring-1 ring-purple-200' },
-  { value: 'all', label: 'All', activeColor: 'bg-background text-foreground shadow-sm' },
-  { value: 'archived', label: 'Archived', activeColor: 'bg-background text-foreground shadow-sm' },
+// Colors match statusData in deliveryiq/page.tsx — these double as the waffle chart legend
+const PRIMARY_FILTERS: { value: QuickFilterValue; label: string; color?: string }[] = [
+  { value: 'at_risk', label: 'On Watch', color: 'hsl(35, 92%, 50%)' },
+  { value: 'needs_action', label: 'Needs Action', color: 'hsl(24, 95%, 53%)' },
+  { value: 'eligible', label: 'Ready to File', color: 'hsl(0, 72%, 51%)' },
+  { value: 'claim_filed', label: 'Claim Filed', color: 'hsl(152, 55%, 45%)' },
+  { value: 'returned_to_sender', label: 'Returned', color: 'hsl(215, 65%, 55%)' },
+  { value: 'all', label: 'All' },
+  { value: 'archived', label: 'Archived' },
 ]
 
 // AI-driven filter options (in dropdown)
@@ -76,6 +81,7 @@ const AI_FILTERS: { value: QuickFilterValue; label: string; color: string }[] = 
 function getCount(filterValue: QuickFilterValue, stats: DeliveryIQStats): number {
   switch (filterValue) {
     case 'at_risk': return stats.atRisk
+    case 'needs_action': return stats.needsAction
     case 'eligible': return stats.eligible
     case 'claim_filed': return stats.claimFiled
     case 'returned_to_sender': return stats.returnedToSender
@@ -91,10 +97,14 @@ function getCount(filterValue: QuickFilterValue, stats: DeliveryIQStats): number
   }
 }
 
-export function QuickFilters({ value, onChange, stats }: QuickFiltersProps) {
+export function QuickFilters({ value, onChange, stats, autoFileEnabled }: QuickFiltersProps) {
+  const filters = autoFileEnabled
+    ? PRIMARY_FILTERS.filter(f => f.value !== 'eligible')
+    : PRIMARY_FILTERS
+
   return (
-    <div className="inline-flex items-center rounded-lg border border-border/60 bg-muted/40 p-0.5 flex-nowrap">
-      {PRIMARY_FILTERS.map((filter) => {
+    <div className="flex items-stretch -mb-px">
+      {filters.map((filter) => {
         const count = getCount(filter.value, stats)
         const isActive = value === filter.value
 
@@ -103,18 +113,24 @@ export function QuickFilters({ value, onChange, stats }: QuickFiltersProps) {
             key={filter.value}
             onClick={() => onChange(filter.value)}
             className={cn(
-              "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all whitespace-nowrap",
+              "inline-flex items-center gap-1.5 px-4 py-3 text-[13px] font-medium transition-colors whitespace-nowrap border-b-2",
               "focus:outline-none focus-visible:outline-none",
               isActive
-                ? filter.activeColor
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
             )}
           >
+            {filter.color && (
+              <span
+                className="w-[9px] h-[9px] rounded-[2px] shrink-0"
+                style={{ backgroundColor: filter.color }}
+              />
+            )}
             {filter.label}
             <span
               className={cn(
-                "inline-flex items-center justify-center min-w-[16px] h-[16px] px-0.5 rounded text-[10px] font-medium tabular-nums leading-none",
-                isActive ? "opacity-70" : "text-muted-foreground/60"
+                "tabular-nums text-[11px] leading-[13px]",
+                isActive ? "text-foreground/60" : "text-muted-foreground/50"
               )}
             >
               {count}

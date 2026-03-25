@@ -2,6 +2,7 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { ModeToggle } from "@/components/mode-toggle"
 import { ClientSelector } from "@/components/client-selector"
+import { BrandLabel } from "@/components/brand-label"
 
 interface SiteHeaderProps {
   sectionName?: string
@@ -22,6 +23,7 @@ export function SiteHeader({ sectionName = "Dashboard", badge, children }: SiteH
         {badge}
         {children}
         <div className="ml-auto flex items-center gap-2">
+          <BrandLabel />
           <ClientSelector />
           <ModeToggle />
         </div>

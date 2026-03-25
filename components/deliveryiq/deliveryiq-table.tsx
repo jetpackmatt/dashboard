@@ -34,6 +34,8 @@ interface DeliveryIQTableProps {
   showClientColumn: boolean
   activeFilter: QuickFilterValue
   onRefresh: () => void
+  onFileClaim: (shipment: MonitoredShipment) => void
+  filingClaimId: string | null // shipmentId currently being filed
 }
 
 // Format date for display
@@ -75,6 +77,44 @@ function getWatchReasonStyle(reason: string | null): { color: string; label: str
     case 'RETURNING': return { color: 'bg-purple-100 text-purple-700 border-purple-200', label: 'Returning' }
     default: return { color: 'bg-gray-100 text-gray-500 border-gray-200', label: '-' }
   }
+}
+
+// Determine the specific action needed from tracking description and AI assessment
+function getActionNeeded(shipment: MonitoredShipment): { color: string; label: string } {
+  const scanDesc = (shipment.lastScanDescription || '').toLowerCase()
+  const merchantAction = (shipment.aiAssessment?.merchantAction || '').toLowerCase()
+  const combined = `${scanDesc} ${merchantAction}`
+
+  // Address issues
+  if (/address.*(correct|invalid|incorrect|insufficient|wrong|update|incomplete)|incorrect.*address|bad.*address|undeliverable.*address/i.test(combined)) {
+    return { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'Fix Address' }
+  }
+  // Customs duties / payment
+  if (/dut(y|ies).*required|payment.*required|customs.*payment|pay.*dut/i.test(combined)) {
+    return { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'Pay Duties' }
+  }
+  // Documentation needed
+  if (/document.*(required|needed|missing)|additional.*doc|provide.*doc|customs.*doc/i.test(combined)) {
+    return { color: 'bg-blue-100 text-blue-700 border-blue-200', label: 'Provide Docs' }
+  }
+  // Reschedule delivery
+  if (/reschedule|redelivery|schedule.*delivery|delivery.*attempt|failed.*deliver|business.*closed|no.*access/i.test(combined)) {
+    return { color: 'bg-rose-100 text-rose-700 border-rose-200', label: 'Reschedule Delivery' }
+  }
+  // Hold for instructions / carrier needs input
+  if (/hold.*instruction|instruction.*requested|contact.*carrier|carrier.*instruction|awaiting.*instruction/i.test(combined)) {
+    return { color: 'bg-purple-100 text-purple-700 border-purple-200', label: 'Contact Carrier' }
+  }
+  // Contact customer
+  if (/contact.*customer|customer.*contact|recipient.*unavailable|refused/i.test(combined)) {
+    return { color: 'bg-teal-100 text-teal-700 border-teal-200', label: 'Contact Customer' }
+  }
+  // Restricted / access issue
+  if (/restricted|security|gated|no.*safe.*place/i.test(combined)) {
+    return { color: 'bg-slate-100 text-slate-600 border-slate-200', label: 'Access Issue' }
+  }
+  // Fallback — generic action needed
+  return { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'Review Required' }
 }
 
 // Claim status badge colors - supports both claim eligibility status and care ticket status
@@ -133,10 +173,14 @@ export function DeliveryIQTable({
   showClientColumn,
   activeFilter,
   onRefresh,
+  onFileClaim,
+  filingClaimId,
 }: DeliveryIQTableProps) {
   // Show status column on 'all', 'archived', and 'claim_filed' tabs
   // For claim_filed, shows the actual care ticket status (Under Review, Credit Requested, etc.)
   const showStatusColumn = activeFilter === 'all' || activeFilter === 'archived' || activeFilter === 'claim_filed'
+  // Needs Action tab swaps "Silent / Reason" for "Action Needed"
+  const isNeedsActionTab = activeFilter === 'needs_action'
 
   // Global default page size
   const { settings: userSettings } = useUserSettings()
@@ -170,9 +214,10 @@ export function DeliveryIQTable({
       let aVal: any = a[sortField as keyof MonitoredShipment]
       let bVal: any = b[sortField as keyof MonitoredShipment]
 
-      // Handle null values
-      if (aVal === null) aVal = sortDirection === 'asc' ? Infinity : -Infinity
-      if (bVal === null) bVal = sortDirection === 'asc' ? Infinity : -Infinity
+      // Handle null values — push nulls to end regardless of direction
+      if (aVal === null && bVal === null) return 0
+      if (aVal === null) return 1
+      if (bVal === null) return -1
 
       if (typeof aVal === 'string') {
         return sortDirection === 'asc'
@@ -235,7 +280,8 @@ export function DeliveryIQTable({
   const canNextPage = page < totalPages - 1
 
   // Total column count for colSpan (must be before early returns — hooks can't be conditional)
-  const totalColSpan = (showClientColumn ? 1 : 0) + 7 + (showStatusColumn ? 1 : 0)
+  // Columns: [client?] shipmentId tracking customer shipDate lastScan silent+reason carrier [status?] actions
+  const totalColSpan = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
 
   if (error) {
     return (
@@ -254,23 +300,30 @@ export function DeliveryIQTable({
   const headerCellClass = cn(headerCellBase, "px-2")
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       {/* Table */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-        <table className="w-full text-[13px] font-roboto" style={{ tableLayout: 'fixed' }}>
-          <colgroup>
-            {showClientColumn && <col style={{ width: '72px' }} />}
-            <col />{/* Shipment ID — flex */}
-            <col />{/* Tracking # — flex */}
-            <col />{/* Ship Date — flex */}
-            <col />{/* Last Scan — flex */}
-            <col style={{ width: '100px' }} />{/* Reason — badge */}
-            <col style={{ width: '72px' }} />{/* Silent — narrow */}
-            <col />{/* Carrier — flex */}
-            {showStatusColumn && <col />}
-            <col style={{ width: '104px' }} />{/* Actions — includes right edge padding */}
-          </colgroup>
-          <thead className="sticky top-0 bg-surface dark:bg-zinc-900 z-10">
+      <div>
+        <table className="w-full text-[13px] font-roboto" style={{ tableLayout: 'auto' }}>
+          {/* Equal-width column hints — all columns get the same proportion */}
+          {(() => {
+            const colCount = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
+            const pct = `${(100 / colCount).toFixed(1)}%`
+            return (
+              <colgroup>
+                {showClientColumn && <col style={{ width: pct }} />}
+                <col style={{ width: pct }} />{/* Shipment ID */}
+                <col style={{ width: pct }} />{/* Tracking # */}
+                <col style={{ width: pct }} />{/* Customer */}
+                <col style={{ width: pct }} />{/* Ship Date */}
+                <col style={{ width: pct }} />{/* Last Scan */}
+                <col style={{ width: pct }} />{/* Silent + Reason (shared) */}
+                <col style={{ width: pct }} />{/* Carrier */}
+                {showStatusColumn && <col style={{ width: pct }} />}{/* Status */}
+                <col style={{ width: pct }} />{/* Actions */}
+              </colgroup>
+            )
+          })()}
+          <thead className="sticky top-[71px] bg-zinc-100 dark:bg-zinc-800 z-10">
             <tr className="h-[45px]">
               {showClientColumn && (
                 <th className="pl-[26px] lg:pl-[34px] pr-1 align-middle"></th>
@@ -295,6 +348,15 @@ export function DeliveryIQTable({
               </th>
               <th
                 className={headerCellClass}
+                onClick={() => handleSort('customerName')}
+              >
+                <div className="flex items-center gap-1">
+                  Customer
+                  <SortIndicator field="customerName" />
+                </div>
+              </th>
+              <th
+                className={headerCellClass}
                 onClick={() => handleSort('shipDate')}
               >
                 <div className="flex items-center gap-1">
@@ -313,21 +375,24 @@ export function DeliveryIQTable({
               </th>
               <th
                 className={headerCellClass}
-                onClick={() => handleSort('watchReason')}
               >
-                <div className="flex items-center gap-1">
-                  Reason
-                  <SortIndicator field="watchReason" />
-                </div>
-              </th>
-              <th
-                className={headerCellClass}
-                onClick={() => handleSort('daysSilent')}
-              >
-                <div className="flex items-center gap-1">
-                  Silent
-                  <SortIndicator field="daysSilent" />
-                </div>
+                {isNeedsActionTab ? (
+                  <div className="flex items-center gap-1">
+                    Action Needed
+                  </div>
+                ) : (
+                  <div className="flex items-center">
+                    <span className="flex items-center gap-1 cursor-pointer" onClick={() => handleSort('daysSilent')}>
+                      Silent
+                      <SortIndicator field="daysSilent" />
+                    </span>
+                    <span className="text-zinc-300 dark:text-zinc-600 mx-[5px]">/</span>
+                    <span className="flex items-center gap-1 cursor-pointer" onClick={() => handleSort('watchReason')}>
+                      Reason
+                      <SortIndicator field="watchReason" />
+                    </span>
+                  </div>
+                )}
               </th>
               <th
                 className={headerCellClass}
@@ -349,7 +414,7 @@ export function DeliveryIQTable({
                   </div>
                 </th>
               )}
-              <th className={cn(headerCellBase, "pl-2 pr-6 lg:pr-8")}>
+              <th className={cn(headerCellBase, "pl-2 pr-[26px] lg:pr-[34px]")}>
                 Actions
               </th>
             </tr>
@@ -445,6 +510,11 @@ export function DeliveryIQTable({
                         )}
                       </div>
                     </td>
+                    <td className="px-2 align-middle overflow-hidden whitespace-nowrap text-ellipsis">
+                      <div className="truncate" style={{ maxWidth: 'clamp(60px, 8vw, 180px)' }} title={shipment.customerName || ''}>
+                        {shipment.customerName || <span className="text-muted-foreground">-</span>}
+                      </div>
+                    </td>
                     <td className="px-2 align-middle text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis">
                       {formatDate(shipment.shipDate)}
                     </td>
@@ -452,25 +522,38 @@ export function DeliveryIQTable({
                       {formatDate(shipment.lastScanDate)}
                     </td>
                     <td className="px-2 align-middle whitespace-nowrap overflow-hidden">
-                      {shipment.watchReason ? (() => {
-                        const style = getWatchReasonStyle(shipment.watchReason)
-                        return (
-                          <Badge variant="outline" className={cn("text-[11px]", style.color)}>
-                            {style.label}
+                      {isNeedsActionTab ? (
+                        <div className="inline-flex items-center gap-2">
+                          {(() => {
+                            const action = getActionNeeded(shipment)
+                            return (
+                              <Badge variant="outline" className={cn("text-[11px]", action.color)}>
+                                {action.label}
+                              </Badge>
+                            )
+                          })()}
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-[30px]">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[11px] font-mono",
+                              getDaysSilentColor(shipment.daysSilent)
+                            )}
+                          >
+                            {shipment.daysSilent ?? '-'}
                           </Badge>
-                        )
-                      })() : <span className="text-muted-foreground text-[11px]">-</span>}
-                    </td>
-                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[11px] font-mono",
-                          getDaysSilentColor(shipment.daysSilent)
-                        )}
-                      >
-                        {shipment.daysSilent ?? '-'}
-                      </Badge>
+                          {shipment.watchReason ? (() => {
+                            const style = getWatchReasonStyle(shipment.watchReason)
+                            return (
+                              <Badge variant="outline" className={cn("text-[11px]", style.color)}>
+                                {style.label}
+                              </Badge>
+                            )
+                          })() : null}
+                        </div>
+                      )}
                     </td>
                     <td className="px-2 align-middle whitespace-nowrap overflow-hidden text-ellipsis">
                       {getCarrierDisplayName(shipment.carrier || '')}
@@ -485,7 +568,7 @@ export function DeliveryIQTable({
                         </Badge>
                       </td>
                     )}
-                    <td className="px-2 pr-6 lg:pr-8 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-2 pr-[26px] lg:pr-[34px] align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <TrackingLink
                           trackingNumber={shipment.trackingNumber}
@@ -498,10 +581,17 @@ export function DeliveryIQTable({
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
+                              onFileClaim(shipment)
                             }}
-                            className="px-2 py-0.5 rounded text-[11px] font-medium text-orange-600 hover:bg-orange-100 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-900/50 dark:hover:text-orange-300 transition-colors"
+                            disabled={filingClaimId === shipment.shipmentId}
+                            className={cn(
+                              "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                              filingClaimId === shipment.shipmentId
+                                ? "text-muted-foreground cursor-wait"
+                                : "text-orange-600 hover:bg-orange-100 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-900/50 dark:hover:text-orange-300"
+                            )}
                           >
-                            Claim
+                            {filingClaimId === shipment.shipmentId ? 'Filing...' : 'Claim'}
                           </button>
                         )}
                       </div>
@@ -512,9 +602,9 @@ export function DeliveryIQTable({
             )}
           </tbody>
         </table>
-        {/* Pagination - sticky at bottom of scrollable area */}
+        {/* Pagination */}
         {!isLoading && sortedData.length > 0 && (
-          <div className="sticky bottom-0 bg-background py-3 px-6 lg:px-8 flex items-center justify-between border-t border-border/40">
+          <div className="bg-background py-3 px-6 lg:px-8 flex items-center justify-between border-t border-border/40">
             <div className="text-sm text-muted-foreground">
               {paginatedData.length.toLocaleString()} of {sortedData.length.toLocaleString()} shipments
             </div>
