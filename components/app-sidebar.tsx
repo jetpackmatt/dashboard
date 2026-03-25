@@ -233,7 +233,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     },
     {
       title: "Help",
-      url: "https://help.shipwithjetpack.com",
+      url: "https://help.jetpack3pl.com",
       icon: HelpCircleIcon,
       external: true,
     },
