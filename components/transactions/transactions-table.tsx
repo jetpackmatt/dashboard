@@ -175,7 +175,7 @@ const TableRowComponent = React.memo(function TableRowInner<T>({
           <td
             key={column.id}
             style={column.maxWidth ? { maxWidth: column.maxWidth } : undefined}
-            className={`${paddingClass} ${alignClass} ${dividerClass} ${shrinkClass} ${tintClass} align-middle overflow-hidden whitespace-nowrap ${isNonTruncatable ? '' : 'text-ellipsis'}`}
+            className={`${paddingClass} ${alignClass} ${dividerClass} ${shrinkClass} ${tintClass} align-middle whitespace-nowrap ${isNonTruncatable ? '' : 'overflow-hidden text-ellipsis'}`}
           >
             {cellRenderers[column.id]
               ? cellRenderers[column.id](row, column)
