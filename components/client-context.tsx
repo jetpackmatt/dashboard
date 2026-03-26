@@ -86,26 +86,17 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Fetch clients on mount
+  // Fetch clients on mount — unified endpoint handles all user types
   const fetchClients = React.useCallback(async () => {
     try {
       setIsLoading(true)
-      const response = await fetch('/api/admin/clients')
+      const response = await fetch('/api/auth/clients')
 
       if (response.status === 401) {
-        // Not authenticated
         setIsAdmin(false)
         setIsCareUser(false)
         setIsCareAdmin(false)
         setClients([])
-        return
-      }
-
-      if (response.status === 403) {
-        // Not admin or care user - regular brand user
-        setIsAdmin(false)
-        setIsCareUser(false)
-        setIsCareAdmin(false)
         return
       }
 
@@ -114,11 +105,18 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       }
 
       const data = await response.json()
-      setClients(data.clients || [])
-      // Set role flags from API response
+      const clientList = data.clients || []
+      setClients(clientList)
       setIsAdmin(data.isAdmin || false)
       setIsCareUser(data.isCareUser || false)
       setIsCareAdmin(data.userRole === 'care_admin')
+
+      // Brand users with a single client: auto-select it
+      if (!data.isAdmin && !data.isCareUser && clientList.length === 1) {
+        const brandClientId = clientList[0].id
+        setSelectedClientIdState(brandClientId)
+        localStorage.setItem(STORAGE_KEY, brandClientId)
+      }
     } catch (error) {
       console.error('Error fetching clients:', error)
       setIsAdmin(false)
