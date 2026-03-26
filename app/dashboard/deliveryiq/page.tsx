@@ -119,6 +119,7 @@ export default function DeliveryIQPage() {
     reshipNow: 0, considerReship: 0, customerAnxious: 0, stuck: 0, returning: 0, lost: 0,
   })
   const [isLoading, setIsLoading] = React.useState(true)
+  const [isStatsLoading, setIsStatsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [autoFileClaims, setAutoFileClaims] = React.useState(false)
   const [autoFileLoading, setAutoFileLoading] = React.useState(false)
@@ -263,6 +264,7 @@ export default function DeliveryIQPage() {
   }, [effectiveClientId, dateRange])
 
   const fetchStats = React.useCallback(async () => {
+    setIsStatsLoading(true)
     try {
       const params = new URLSearchParams()
       if (effectiveClientId) params.set('clientId', effectiveClientId)
@@ -273,6 +275,8 @@ export default function DeliveryIQPage() {
       setStats(await response.json())
     } catch (err) {
       console.error('Error fetching stats:', err)
+    } finally {
+      setIsStatsLoading(false)
     }
   }, [effectiveClientId, dateRange])
 
@@ -312,7 +316,7 @@ export default function DeliveryIQPage() {
   return (
     <>
       <SiteHeader sectionName="Delivery IQ" badge={<span className="text-[8px] font-semibold uppercase tracking-wide px-[4px] py-0.5 rounded-sm bg-blue-500/15 text-blue-600 dark:bg-blue-400/15 dark:text-blue-400">Beta</span>}>
-        {(isLoading || isClientLoading) && (
+        {(isLoading || isStatsLoading || isClientLoading) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
             <JetpackLoader size="md" />
             <span className="text-xs text-muted-foreground">Loading</span>
@@ -322,10 +326,18 @@ export default function DeliveryIQPage() {
       <div className="flex flex-1 flex-col overflow-hidden bg-background rounded-t-xl">
         <div className="flex flex-col h-[calc(100vh-64px)] overflow-y-auto font-roboto">
 
-          {/* Mission Control KPI Panels */}
+          {/* Mission Control KPI Panels — wait for both stats + shipments before showing */}
           <div className="flex-shrink-0 bg-muted/50 dark:bg-zinc-900">
             <div className="px-6 lg:px-8 pt-7 pb-7">
-              <MissionControlPanels stats={stats} shipments={shipments} />
+              {isLoading || isStatsLoading || isClientLoading ? (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+                  {[1,2,3,4].map(i => (
+                    <div key={i} className="rounded-xl border border-border/60 bg-background overflow-hidden h-[200px] animate-pulse" />
+                  ))}
+                </div>
+              ) : (
+                <MissionControlPanels stats={stats} shipments={shipments} />
+              )}
             </div>
           </div>
 

@@ -79,6 +79,10 @@
     {
       "path": "/api/cron/auto-file-claims",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/normalize-checkpoints",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

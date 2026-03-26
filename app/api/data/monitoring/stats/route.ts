@@ -23,6 +23,21 @@ export async function GET(request: NextRequest) {
   const endDate = searchParams.get('endDate')
 
   try {
+    // Fetch shipment IDs that have misfit credits (credit exists but not linked to care ticket).
+    // These are excluded from On Watch, Needs Action, Ready to File counts.
+    const { data: misfitCredits } = await supabase
+      .from('transactions')
+      .select('reference_id')
+      .eq('fee_type', 'Credit')
+      .is('care_ticket_id', null)
+      .eq('is_voided', false)
+      .is('dispute_status', null)
+      .eq('reference_type', 'Shipment')
+      .not('reference_id', 'is', null)
+      .limit(1000)
+
+    const misfitShipmentIds = [...new Set((misfitCredits || []).map((t: { reference_id: string }) => t.reference_id).filter(Boolean))]
+
     // Helper: apply shared filters (clientId, date range) to a query builder
     function applyBaseFilters(query: ReturnType<typeof supabase.from>) {
       let q = query
@@ -36,6 +51,14 @@ export async function GET(request: NextRequest) {
         q = q.lte('first_checked_at', `${endDate}T23:59:59Z`)
       }
       return q
+    }
+
+    // Helper: exclude shipments with misfit credits
+    function excludeMisfits(query: ReturnType<typeof supabase.from>) {
+      if (misfitShipmentIds.length > 0) {
+        return query.not('shipment_id', 'in', `(${misfitShipmentIds.join(',')})`)
+      }
+      return query
     }
 
     // Run count queries in parallel
@@ -55,24 +78,26 @@ export async function GET(request: NextRequest) {
       lostResult,
     ] = await Promise.all([
       // at_risk total (includes NEEDS ACTION — we subtract below)
-      applyBaseFilters(supabase
+      // Excludes shipments with misfit credits (handled in Misfits workflow)
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .eq('claim_eligibility_status', 'at_risk'))
+        .eq('claim_eligibility_status', 'at_risk')))
         .then((r: { count: number | null }) => r.count || 0),
 
       // Needs Action = at_risk with watch_reason = 'NEEDS ACTION'
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
         .eq('claim_eligibility_status', 'at_risk')
-        .eq('watch_reason', 'NEEDS ACTION'))
+        .eq('watch_reason', 'NEEDS ACTION')))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      // Excludes shipments with misfit credits
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .eq('claim_eligibility_status', 'eligible'))
+        .eq('claim_eligibility_status', 'eligible')))
         .then((r: { count: number | null }) => r.count || 0),
 
       applyBaseFilters(supabase
@@ -102,42 +127,42 @@ export async function GET(request: NextRequest) {
         .in('claim_eligibility_status', ['approved', 'denied', 'missed_window']))
         .then((r: { count: number | null }) => r.count || 0),
 
-      // AI-driven counts
-      applyBaseFilters(supabase
+      // AI-driven counts (exclude misfits — these are subsets of at_risk)
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .gte('ai_reshipment_urgency', 80))
+        .gte('ai_reshipment_urgency', 80)))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
         .gte('ai_reshipment_urgency', 60)
-        .lt('ai_reshipment_urgency', 80))
+        .lt('ai_reshipment_urgency', 80)))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .gte('ai_customer_anxiety', 70))
+        .gte('ai_customer_anxiety', 70)))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .in('ai_status_badge', ['STUCK', 'STALLED']))
+        .in('ai_status_badge', ['STUCK', 'STALLED'])))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .eq('ai_status_badge', 'RETURNING'))
+        .eq('ai_status_badge', 'RETURNING')))
         .then((r: { count: number | null }) => r.count || 0),
 
-      applyBaseFilters(supabase
+      excludeMisfits(applyBaseFilters(supabase
         .from('lost_in_transit_checks')
         .select('id', { count: 'exact', head: true })
-        .eq('ai_status_badge', 'LOST'))
+        .eq('ai_status_badge', 'LOST')))
         .then((r: { count: number | null }) => r.count || 0),
     ])
 
@@ -158,6 +183,68 @@ export async function GET(request: NextRequest) {
       console.error('[Monitoring Stats] Active orders count error:', err)
     }
 
+    // Lightweight aggregates for homepage panels (avoids fetching full shipment list)
+    // Fetch watch_reason + last_scan_date for at_risk records only
+    let watchBreakdown: { reason: string; count: number }[] = []
+    let daysSilentAvg = 0
+    let daysSilentHistogram: { day: string; count: number }[] = []
+
+    try {
+      let atRiskQuery = supabase
+        .from('lost_in_transit_checks')
+        .select('watch_reason, last_scan_date')
+        .eq('claim_eligibility_status', 'at_risk')
+      if (clientId && clientId !== 'all') {
+        atRiskQuery = atRiskQuery.eq('client_id', clientId)
+      }
+      if (startDate) atRiskQuery = atRiskQuery.gte('first_checked_at', `${startDate}T00:00:00Z`)
+      if (endDate) atRiskQuery = atRiskQuery.lte('first_checked_at', `${endDate}T23:59:59Z`)
+      // Exclude misfits from aggregate data too
+      if (misfitShipmentIds.length > 0) {
+        atRiskQuery = atRiskQuery.not('shipment_id', 'in', `(${misfitShipmentIds.join(',')})`)
+      }
+      atRiskQuery = atRiskQuery.order('id', { ascending: true }).limit(1000)
+
+      const { data: atRiskRows } = await atRiskQuery
+      if (atRiskRows && atRiskRows.length > 0) {
+        // Watch reason breakdown
+        const reasonCounts: Record<string, number> = {}
+        for (const row of atRiskRows) {
+          const reason = row.watch_reason || 'STALLED'
+          reasonCounts[reason] = (reasonCounts[reason] || 0) + 1
+        }
+        watchBreakdown = Object.entries(reasonCounts)
+          .map(([reason, count]) => ({ reason, count }))
+          .sort((a, b) => b.count - a.count)
+
+        // Days silent histogram (0-15+)
+        const now = new Date()
+        const maxDay = 15
+        const buckets: number[] = new Array(maxDay + 1).fill(0)
+        let totalDays = 0
+        let countWithDate = 0
+
+        for (const row of atRiskRows) {
+          if (row.last_scan_date) {
+            const scanDate = new Date(row.last_scan_date)
+            const daysSilent = Math.max(0, Math.floor((now.getTime() - scanDate.getTime()) / (1000 * 60 * 60 * 24)))
+            const bucket = Math.min(daysSilent, maxDay)
+            buckets[bucket]++
+            totalDays += daysSilent
+            countWithDate++
+          }
+        }
+
+        daysSilentAvg = countWithDate > 0 ? totalDays / countWithDate : 0
+        daysSilentHistogram = buckets.map((count, i) => ({
+          day: i < maxDay ? String(i) : `${maxDay}+`,
+          count,
+        }))
+      }
+    } catch (err) {
+      console.error('[Monitoring Stats] Aggregate fetch error:', err)
+    }
+
     return NextResponse.json({
       atRisk: atRiskAllResult - needsActionResult,
       needsAction: needsActionResult,
@@ -173,6 +260,10 @@ export async function GET(request: NextRequest) {
       returning: returningResult,
       lost: lostResult,
       totalActiveShipments,
+      // Lightweight aggregates for homepage panels
+      watchBreakdown,
+      daysSilentAvg,
+      daysSilentHistogram,
     })
   } catch (error) {
     console.error('[Monitoring Stats] Error:', error)

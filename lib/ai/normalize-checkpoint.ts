@@ -96,15 +96,24 @@ ${JSON.stringify(checkpointList, null, 2)}
 - critical: Urgent issue - exception, lost, return
 
 ## DISPLAY TITLE RULES
-- Keep it SHORT (2-5 words)
-- Remove carrier branding (no "USPS", "FedEx", etc.)
-- Remove redundant words
+- Keep it SHORT but SPECIFIC (2-6 words)
+- KEEP carrier branding — users need to know which carrier handled the scan (e.g., "Arrived at DHL Hub", "Departed USPS Facility", "FedEx Out for Delivery")
+- KEEP the city/location when it's embedded in the description (e.g., "Processed at Cincinnati Hub", "Departed Singapore")
+- Preserve delivery method details (e.g., "Delivered to Mailbox", "Delivered to Door/Yard", "Picked Up at Post Office")
+- Remove verbose filler text ("Your package has been...", "The item is currently...")
 - Use sentence case
+- The goal is NORMALIZED LANGUAGE across carriers while preserving WHO (carrier) and WHERE (city)
 - Examples:
-  - "Arrived at USPS Regional Destination Facility" → "At regional hub"
-  - "Departed FedEx location MEMPHIS, TN" → "Departed hub"
-  - "Out For Delivery Today" → "Out for delivery"
-  - "Delivered, In/At Mailbox" → "Delivered to mailbox"
+  - "Arrived at USPS Regional Destination Facility" → "Arrived at USPS Regional Facility"
+  - "Departed FedEx location MEMPHIS, TN" → "Departed FedEx Memphis"
+  - "Shipment has departed from a DHL facility CINCINNATI HUB,OH-UNITED STATES OF AMERICA" → "Departed DHL Cincinnati Hub"
+  - "Out For Delivery Today" → "Out for Delivery"
+  - "Delivered, In/At Mailbox" → "Delivered to Mailbox"
+  - "Processed at JOHANNESBURG-SOUTH AFRICA" → "Processed at Johannesburg"
+  - "Arrived at DHL Sort Facility  SINGAPORE-SINGAPORE" → "Arrived at DHL Singapore Hub"
+  - "Delivered, Individual Picked Up at Post Office" → "Picked Up at Post Office"
+  - "Delivered, Mail Room." → "Delivered to Mail Room"
+  - "Clearance processing complete at BANGKOK-THAILAND" → "Customs Cleared in Bangkok"
 
 ## RESPONSE FORMAT
 Respond ONLY with a JSON array (no markdown, no explanation):
@@ -225,8 +234,12 @@ export async function processUnnormalizedCheckpoints(
 /**
  * Rule-based fallback normalization (no API call)
  *
- * Use this when Gemini is unavailable or for cost savings.
- * Less accurate but works offline.
+ * Used inline at checkpoint storage time so every checkpoint has at least
+ * a basic normalized_type, display_title, and sentiment immediately.
+ * Gemini later upgrades these with carrier-aware, location-specific titles.
+ *
+ * This extracts a clean title from the raw description while preserving
+ * carrier names and delivery details where present.
  */
 export function normalizeCheckpointFallback(
   description: string,
@@ -235,122 +248,124 @@ export function normalizeCheckpointFallback(
   const desc = description.toLowerCase()
   const stat = (status || '').toLowerCase()
 
-  // DELIVERED
-  if (desc.includes('delivered') || stat === 'delivered') {
-    return {
-      normalized_type: 'DELIVERED',
-      display_title: 'Delivered',
-      sentiment: 'positive',
-    }
+  // Helper: extract a short title from verbose descriptions
+  // Strips "Your package...", "The item...", contact info, etc.
+  function extractTitle(raw: string, maxLen: number = 50): string {
+    // Remove contact info (GOFO, carrier support lines)
+    let clean = raw.replace(/\s*For Delivery Issues.*$/i, '')
+    // Remove "Your item/package..." verbose tails
+    clean = clean.replace(/,?\s*Your (item|package|shipment)\b.*$/i, '')
+    // Remove ", see Estimated..." tails
+    clean = clean.replace(/,?\s*see Estimated.*$/i, '')
+    // Remove ", Expected Delivery by..." tails
+    clean = clean.replace(/,?\s*Expected Delivery.*$/i, '')
+    clean = clean.trim()
+    if (clean.length > maxLen) clean = clean.slice(0, maxLen).replace(/\s+\S*$/, '')
+    return clean || raw.slice(0, maxLen)
+  }
+
+  // DELIVERED — preserve delivery method details
+  if (desc.startsWith('delivered') || stat === 'delivered') {
+    const title = extractTitle(description)
+    return { normalized_type: 'DELIVERED', display_title: title, sentiment: 'positive' }
   }
 
   // OUT FOR DELIVERY
-  if (desc.includes('out for delivery') || stat === 'outfordelivery') {
-    return {
-      normalized_type: 'OFD',
-      display_title: 'Out for delivery',
-      sentiment: 'positive',
-    }
+  if (desc.includes('out for delivery') || desc.includes('out with courier') || stat === 'outfordelivery') {
+    return { normalized_type: 'OFD', display_title: 'Out for Delivery', sentiment: 'positive' }
   }
 
   // DELIVERY ATTEMPT
-  if (desc.includes('delivery attempt') || desc.includes('notice left') || desc.includes('no access')) {
-    return {
-      normalized_type: 'ATTEMPT',
-      display_title: 'Delivery attempted',
-      sentiment: 'concerning',
-    }
+  if (desc.includes('delivery attempt') || desc.includes('delivery exception') || desc.includes('notice left') ||
+      desc.includes('no access') || desc.includes('business closed') || desc.includes('attempting') || desc.includes('redelivery')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'ATTEMPT', display_title: title, sentiment: 'concerning' }
+  }
+
+  // RETURN TO SENDER — check before generic exception
+  if (desc.includes('return to sender') || desc.includes('returned to shipper') || desc.includes('being returned') ||
+      desc.includes('unclaimed') || desc.includes('refused')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'RETURN', display_title: title, sentiment: 'critical' }
   }
 
   // EXCEPTION / LOST
   if (desc.includes('unable to locate') || desc.includes('lost') || desc.includes('cannot be found') ||
-      stat === 'exception' || stat === 'undelivered') {
-    return {
-      normalized_type: 'EXCEPTION',
-      display_title: 'Exception',
-      sentiment: 'critical',
-    }
-  }
-
-  // RETURN
-  if (desc.includes('return') || desc.includes('rts') || desc.includes('refused')) {
-    return {
-      normalized_type: 'RETURN',
-      display_title: 'Returning to sender',
-      sentiment: 'critical',
-    }
-  }
-
-  // CUSTOMS
-  if (desc.includes('customs') || desc.includes('import') || desc.includes('export')) {
-    return {
-      normalized_type: 'CUSTOMS',
-      display_title: 'In customs',
-      sentiment: 'neutral',
-    }
+      desc.includes('damaged') || desc.includes('missing') ||
+      (stat === 'exception' && !desc.includes('hold') && !desc.includes('on hold'))) {
+    const title = extractTitle(description)
+    return { normalized_type: 'EXCEPTION', display_title: title, sentiment: 'critical' }
   }
 
   // HOLD
-  if (desc.includes('held') || desc.includes('available for pickup') || desc.includes('will call')) {
-    return {
-      normalized_type: 'HOLD',
-      display_title: 'Held at facility',
-      sentiment: 'concerning',
+  if (desc.includes('on hold') || desc.includes('hold for') || desc.includes('held') ||
+      desc.includes('available for pickup') || desc.includes('awaiting collection') || desc.includes('will call')) {
+    let title = extractTitle(description)
+    if (desc.includes('hold for instructions') || desc.includes('awaiting instructions')) {
+      title = 'Held at Facility — Awaiting Instructions'
     }
+    return { normalized_type: 'HOLD', display_title: title, sentiment: 'concerning' }
+  }
+
+  // CUSTOMS — check clearance complete for positive sentiment
+  if (desc.includes('customs') || desc.includes('clearance') || desc.includes('import') || desc.includes('export')) {
+    const title = extractTitle(description)
+    const sentiment: CheckpointSentiment = desc.includes('complete') || desc.includes('cleared') ? 'positive' : 'neutral'
+    return { normalized_type: 'CUSTOMS', display_title: title, sentiment }
   }
 
   // LABEL CREATED
   if (desc.includes('label created') || desc.includes('shipping label') || desc.includes('electronic info') ||
-      stat === 'inforeceived') {
-    return {
-      normalized_type: 'LABEL',
-      display_title: 'Label created',
-      sentiment: 'neutral',
-    }
+      desc.includes('info received') || stat === 'inforeceived') {
+    return { normalized_type: 'LABEL', display_title: 'Shipping Label Created', sentiment: 'neutral' }
   }
 
   // PICKUP
-  if (desc.includes('picked up') || desc.includes('accepted') || desc.includes('origin scan')) {
-    return {
-      normalized_type: 'PICKUP',
-      display_title: 'Picked up',
-      sentiment: 'positive',
-    }
+  if (desc.includes('picked up') || desc.includes('shipment picked') || desc.includes('origin scan') ||
+      desc.includes('accepted at')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'PICKUP', display_title: title, sentiment: 'positive' }
   }
 
-  // LOCAL FACILITY
-  if (desc.includes('local') || desc.includes('post office') || desc.includes('destination')) {
-    return {
-      normalized_type: 'LOCAL',
-      display_title: 'At local facility',
-      sentiment: 'positive',
-    }
+  // LOCAL FACILITY — at destination / post office / delivery facility
+  if (desc.includes('delivery facility') || desc.includes('delivery station') ||
+      desc.includes('post office') || desc.includes('destination sort')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'LOCAL', display_title: title, sentiment: 'positive' }
   }
 
-  // HUB (arrived at facility)
-  if (desc.includes('arrived') || desc.includes('facility') || desc.includes('hub') ||
-      desc.includes('distribution')) {
-    return {
-      normalized_type: 'HUB',
-      display_title: 'At hub',
-      sentiment: 'neutral',
-    }
+  // HUB — sort facility, distribution center, regional facility
+  if (desc.includes('sort facility') || desc.includes('distribution') || desc.includes('regional') ||
+      (desc.includes('arrived') && (desc.includes('facility') || desc.includes('hub')))) {
+    const title = extractTitle(description)
+    return { normalized_type: 'HUB', display_title: title, sentiment: 'neutral' }
+  }
+
+  // DEPARTED
+  if (desc.includes('departed') || desc.includes('has departed')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'INTRANSIT', display_title: title, sentiment: 'neutral' }
+  }
+
+  // ARRIVED (generic)
+  if (desc.includes('arrived')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'HUB', display_title: title, sentiment: 'neutral' }
+  }
+
+  // PROCESSED
+  if (desc.includes('processed') || desc.includes('sorted')) {
+    const title = extractTitle(description)
+    return { normalized_type: 'HUB', display_title: title, sentiment: 'neutral' }
   }
 
   // IN TRANSIT (default for movement)
-  if (desc.includes('transit') || desc.includes('departed') || desc.includes('processed') ||
-      stat === 'transit') {
-    return {
-      normalized_type: 'INTRANSIT',
-      display_title: 'In transit',
-      sentiment: 'neutral',
-    }
+  if (desc.includes('transit') || desc.includes('in transit') || stat === 'transit') {
+    const title = extractTitle(description)
+    return { normalized_type: 'INTRANSIT', display_title: title, sentiment: 'neutral' }
   }
 
   // Default fallback
-  return {
-    normalized_type: 'INTRANSIT',
-    display_title: 'In transit',
-    sentiment: 'neutral',
-  }
+  const title = extractTitle(description)
+  return { normalized_type: 'INTRANSIT', display_title: title, sentiment: 'neutral' }
 }

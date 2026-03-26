@@ -217,6 +217,31 @@ function getTerminalState(checkpoint: LatestCheckpoint | null): {
   }
 
   // =========================================================================
+  // ACTIONABLE HOLDS (package needs intervention — empirical delivery rates)
+  // =========================================================================
+  // These are NOT lost packages — the carrier is waiting for instructions.
+  // However, empirical data shows most of these ultimately return to sender.
+  //
+  // "Held for instructions" (n=44): 4.5% delivered, 61% returned, 20% still held
+  // "Business closed" (n=8): 25% delivered, 50% returned
+  //
+  // We use the empirical delivery rate as a FLOOR (not a cap), so the
+  // statistical model's probability is used when it's higher.
+
+  if (rawDesc.includes('hold for instructions') || rawDesc.includes('held for instructions') ||
+      rawDesc.includes('held at facility') || rawDesc.includes('awaiting instructions')) {
+    // Empirical: ~5-7% of "held for instructions" shipments ultimately deliver
+    return { isTerminal: false, isPositive: false, reason: 'needs_action', probability: 0.07 }
+  }
+
+  // Business closed / recipient unavailable — better odds, some re-deliver
+  if ((rawDesc.includes('business closed') || rawDesc.includes('recipient not available') ||
+       rawDesc.includes('no one available')) && normalizedType !== 'RETURN') {
+    // Empirical: ~25% of "business closed" shipments ultimately deliver
+    return { isTerminal: false, isPositive: false, reason: 'needs_action', probability: 0.25 }
+  }
+
+  // =========================================================================
   // NON-TERMINAL RISK FACTORS (still in transit, but with modifiers)
   // =========================================================================
 
@@ -422,10 +447,16 @@ export async function calculateProbabilityForShipment(
   }
 
   // Apply terminal state override from tracking checkpoints
-  // This takes precedence over statistical calculations
   if (terminalCheck.isTerminal || terminalCheck.probability < 1) {
-    // Cap probability at the terminal state probability
-    eventualDeliveryProb = Math.min(eventualDeliveryProb, terminalCheck.probability)
+    if (terminalCheck.reason === 'needs_action') {
+      // FLOOR: Use empirical delivery rate as minimum probability.
+      // The statistical model may be lower (e.g. 1% from Bayesian decay)
+      // but real data shows at least X% of these shipments deliver.
+      eventualDeliveryProb = Math.max(eventualDeliveryProb, terminalCheck.probability)
+    } else {
+      // CAP: For negative terminal states (return, seized), cap probability
+      eventualDeliveryProb = Math.min(eventualDeliveryProb, terminalCheck.probability)
+    }
 
     // Add appropriate risk factor
     if (terminalCheck.reason) {

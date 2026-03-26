@@ -9,7 +9,6 @@ import {
   CheckCircle2Icon,
   CircleDotIcon,
   WarehouseIcon,
-  ClockIcon,
   ExternalLinkIcon,
   PackageCheckIcon,
   RotateCcwIcon,
@@ -38,8 +37,8 @@ interface TimelineEvent {
   title: string
   description: string
   location: string | null
-  source: 'shipbob' | 'carrier'
-  type: 'warehouse' | 'transit' | 'delivery' | 'exception' | 'info'
+  source: 'shipbob' | 'carrier' | 'claim'
+  type: 'warehouse' | 'transit' | 'delivery' | 'exception' | 'info' | 'claim'
   status?: string
   // AI-normalized fields (for carrier events)
   normalizedType?: string  // LABEL, PICKUP, HUB, LOCAL, OFD, DELIVERED, etc.
@@ -83,22 +82,88 @@ interface TrackingTimelineDrawerProps {
 // HELPER COMPONENTS
 // ============================================
 
-function TimelineIcon({ type, source }: { type: TimelineEvent['type']; source: TimelineEvent['source'] }) {
-  const iconClass = "h-4 w-4"
+// Color config — driven by normalizedType + sentiment (not the simplified `type` which
+// collapses everything into 5 buckets). Uses hex for rails (inline styles bypass Tailwind purge).
+interface EventColors {
+  dot: string; railColor: string; title: string
+  tint: string; highlight: boolean
+}
+function getEventColors(
+  type: TimelineEvent['type'],
+  source: TimelineEvent['source'],
+  sentiment?: TimelineEvent['sentiment'],
+  normalizedType?: string
+): EventColors {
+  const nt = normalizedType || ''
 
-  if (type === 'delivery') {
-    return <CheckCircle2Icon className={cn(iconClass, "text-green-600")} />
+  // === CRITICAL: Red — exceptions, returns, lost ===
+  if (sentiment === 'critical' || nt === 'RETURN' || nt === 'EXCEPTION') return {
+    dot: 'bg-red-500', railColor: '#fca5a5', title: 'text-red-700 dark:text-red-300',
+    tint: 'bg-red-50/70 dark:bg-red-950/25 border border-red-200/50 dark:border-red-800/30 rounded-lg',
+    highlight: true,
   }
-  if (type === 'exception') {
-    return <AlertTriangleIcon className={cn(iconClass, "text-amber-600")} />
+  // === CONCERNING: Rose — holds, failed attempts, undelivered ===
+  if (sentiment === 'concerning' || nt === 'HOLD' || nt === 'ATTEMPT') return {
+    dot: 'bg-rose-400', railColor: '#fda4af', title: 'text-rose-600 dark:text-rose-300',
+    tint: 'bg-rose-50/50 dark:bg-rose-950/15 border border-rose-200/40 dark:border-rose-800/25 rounded-lg',
+    highlight: true,
   }
-  if (source === 'shipbob') {
-    return <WarehouseIcon className={cn(iconClass, "text-blue-600")} />
+  // === DELIVERED: Green ===
+  if (type === 'delivery' || nt === 'DELIVERED') return {
+    dot: 'bg-emerald-500', railColor: '#6ee7b7', title: 'text-emerald-700 dark:text-emerald-300',
+    tint: 'bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-800/30 rounded-lg',
+    highlight: true,
   }
-  if (type === 'transit') {
-    return <TruckIcon className={cn(iconClass, "text-indigo-600")} />
+  // === OUT FOR DELIVERY: Teal ===
+  if (nt === 'OFD') return {
+    dot: 'bg-teal-500', railColor: '#5eead4', title: 'text-teal-700 dark:text-teal-300',
+    tint: '', highlight: false,
   }
-  return <CircleDotIcon className={cn(iconClass, "text-gray-400")} />
+  // === LOCAL FACILITY: Sky blue ===
+  if (nt === 'LOCAL') return {
+    dot: 'bg-sky-500', railColor: '#7dd3fc', title: 'text-foreground',
+    tint: '', highlight: false,
+  }
+  // === PICKUP: Blue ===
+  if (nt === 'PICKUP') return {
+    dot: 'bg-blue-500', railColor: '#93c5fd', title: 'text-foreground',
+    tint: '', highlight: false,
+  }
+  // === CUSTOMS: Purple ===
+  if (nt === 'CUSTOMS') return {
+    dot: 'bg-purple-500', railColor: '#d8b4fe', title: 'text-foreground',
+    tint: '', highlight: false,
+  }
+  // === WAREHOUSE: Blue ===
+  if (source === 'shipbob' || type === 'warehouse') return {
+    dot: 'bg-blue-500', railColor: '#93c5fd', title: 'text-foreground',
+    tint: '', highlight: false,
+  }
+  // === CLAIM: Zinc ===
+  if (type === 'claim') return {
+    dot: 'bg-zinc-500', railColor: '#a1a1aa', title: 'text-zinc-600 dark:text-zinc-300',
+    tint: '', highlight: false,
+  }
+  // === HUB / INTRANSIT: Indigo ===
+  if (nt === 'HUB' || nt === 'INTRANSIT' || type === 'transit') return {
+    dot: 'bg-indigo-400', railColor: '#a5b4fc', title: 'text-foreground/85',
+    tint: '', highlight: false,
+  }
+  // === DEFAULT ===
+  return {
+    dot: 'bg-zinc-400 dark:bg-zinc-500', railColor: '#d4d4d8', title: 'text-foreground/70',
+    tint: '', highlight: false,
+  }
+}
+
+function TimelineIcon({ type, source }: { type: TimelineEvent['type']; source: TimelineEvent['source'] }) {
+  const iconClass = "h-3.5 w-3.5"
+
+  if (type === 'delivery') return <CheckCircle2Icon className={cn(iconClass, "text-white")} />
+  if (type === 'exception') return <AlertTriangleIcon className={cn(iconClass, "text-white")} />
+  if (source === 'shipbob') return <WarehouseIcon className={cn(iconClass, "text-white")} />
+  if (type === 'transit') return <TruckIcon className={cn(iconClass, "text-white")} />
+  return <CircleDotIcon className={cn(iconClass, "text-white")} />
 }
 
 // Terminal status types for intelligent header
@@ -798,37 +863,31 @@ export function TrackingTimelineDrawer({
                 />
               )}
 
-              {/* Shipment Info Cards */}
-              <div className="grid grid-cols-3 gap-3">
+              {/* Shipment Info — structured data strip */}
+              <div className="flex items-center rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200/80 dark:border-zinc-700/60 divide-x divide-zinc-200/80 dark:divide-zinc-700/60">
                 {data.shipmentInfo.firstScanDate && (
-                  <div className="rounded-lg border bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 p-3">
-                    <p className="text-[10px] text-blue-600 dark:text-blue-400 uppercase tracking-wide font-medium">First Scan</p>
-                    <p className="text-sm font-semibold mt-1 text-blue-900 dark:text-blue-100">
-                      {format(new Date(data.shipmentInfo.firstScanDate), 'MMM d, yyyy')}
-                    </p>
+                  <div className="flex-1 px-4 py-2.5 text-center">
+                    <p className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">First Scan</p>
+                    <p className="text-sm font-bold text-foreground mt-0.5 tabular-nums">{format(new Date(data.shipmentInfo.firstScanDate), 'MMM d, yyyy')}</p>
                   </div>
                 )}
                 {data.lastCarrierScan.date && (
-                  <div className="rounded-lg border bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/20 dark:to-pink-950/20 p-3">
-                    <p className="text-[10px] text-purple-600 dark:text-purple-400 uppercase tracking-wide font-medium">Last Scan</p>
-                    <p className="text-sm font-semibold mt-1 text-purple-900 dark:text-purple-100">
-                      {format(new Date(data.lastCarrierScan.date), 'MMM d, yyyy')}
-                    </p>
+                  <div className="flex-1 px-4 py-2.5 text-center">
+                    <p className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Last Scan</p>
+                    <p className="text-sm font-bold text-foreground mt-0.5 tabular-nums">{format(new Date(data.lastCarrierScan.date), 'MMM d, yyyy')}</p>
                   </div>
                 )}
                 {data.shipmentInfo.destination && (
-                  <div className="rounded-lg border bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/20 p-3">
-                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide font-medium">Destination</p>
-                    <p className="text-sm font-semibold mt-1 text-emerald-900 dark:text-emerald-100 truncate" title={data.shipmentInfo.destination}>
-                      {data.shipmentInfo.destination}
-                    </p>
+                  <div className="flex-1 px-4 py-2.5 text-center">
+                    <p className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">Destination</p>
+                    <p className="text-sm font-bold text-foreground mt-0.5 truncate" title={data.shipmentInfo.destination}>{data.shipmentInfo.destination}</p>
                   </div>
                 )}
               </div>
 
               {/* Timeline */}
               <div>
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-4">
+                <h3 className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-3">
                   Timeline
                 </h3>
 
@@ -838,107 +897,69 @@ export function TrackingTimelineDrawer({
                   </p>
                 ) : (
                   <div className="relative">
-                    {/* Timeline line */}
-                    <div className="absolute left-3 top-2 bottom-2 w-px bg-border" />
+                    {data.timeline.map((event, index) => {
+                      const colors = getEventColors(event.type, event.source, event.sentiment, event.normalizedType)
+                      const isLast = index === data.timeline.length - 1
 
-                    <div className="space-y-0">
-                      {data.timeline.map((event, index) => (
-                        <div key={`${event.timestamp}-${index}`} className="relative pl-8 pb-8">
-                          {/* Icon dot */}
-                          <div className="absolute left-0 top-0.5 bg-background p-0.5 rounded-full">
+                      return (
+                        <div key={`${event.timestamp}-${index}`} className="relative flex">
+                          {/* Timeline column — dot + colored rail segment */}
+                          <div className="flex flex-col items-center flex-shrink-0 w-7">
                             <div className={cn(
-                              "rounded-full p-1",
-                              event.type === 'delivery' ? "bg-green-100 dark:bg-green-900/50" :
-                              event.type === 'exception' ? "bg-amber-100 dark:bg-amber-900/50" :
-                              event.source === 'shipbob' ? "bg-blue-100 dark:bg-blue-900/50" :
-                              "bg-gray-100 dark:bg-gray-800"
+                              "relative z-10 flex items-center justify-center rounded-full w-7 h-7 flex-shrink-0",
+                              colors.dot,
+                              colors.highlight ? "shadow-md ring-2 ring-offset-1 ring-offset-background" : "shadow-sm",
+                              colors.highlight && colors.dot.includes('red') && "ring-red-200 dark:ring-red-800",
+                              colors.highlight && colors.dot.includes('rose') && "ring-rose-200 dark:ring-rose-800",
+                              colors.highlight && colors.dot.includes('emerald') && "ring-emerald-200 dark:ring-emerald-800",
                             )}>
                               <TimelineIcon type={event.type} source={event.source} />
                             </div>
+                            {!isLast && (
+                              <div
+                                className="w-[3px] flex-1 min-h-[20px]"
+                                style={{ backgroundColor: colors.railColor }}
+                              />
+                            )}
                           </div>
 
-                          {/* Content */}
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium">{event.title}</p>
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-[10px] px-1.5 py-0 h-4",
-                                  event.source === 'shipbob'
-                                    ? "bg-blue-50 text-blue-700 border-blue-200"
-                                    : "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                )}
-                              >
-                                {event.source === 'shipbob' ? 'Warehouse' : 'Carrier'}
-                              </Badge>
-                              {/* Sentiment badge for carrier events with AI normalization */}
-                              {event.sentiment && (
-                                <Badge
-                                  variant="outline"
-                                  className={cn(
-                                    "text-[10px] px-1.5 py-0 h-4",
-                                    event.sentiment === 'positive' && "bg-green-50 text-green-700 border-green-200",
-                                    event.sentiment === 'neutral' && "bg-gray-50 text-gray-600 border-gray-200",
-                                    event.sentiment === 'concerning' && "bg-amber-50 text-amber-700 border-amber-200",
-                                    event.sentiment === 'critical' && "bg-red-50 text-red-700 border-red-200"
-                                  )}
-                                >
-                                  {event.sentiment}
-                                </Badge>
-                              )}
-                            </div>
-
-                            {/* Date & Location - styled as distinct metadata row */}
-                            <div className="flex items-center gap-2 mt-1.5">
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
-                                <ClockIcon className="h-3 w-3" />
-                                {format(new Date(event.timestamp), 'MMM d, yyyy · h:mm a')}
-                              </span>
-                              {event.location && (
-                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">
-                                  <MapPinIcon className="h-3 w-3" />
-                                  {event.location}
+                          {/* Event content — date / title / location stack */}
+                          <div className={cn(
+                            "flex-1 min-w-0 ml-3.5 pb-5",
+                            colors.highlight ? "pt-0.5" : "pt-0",
+                          )}>
+                            <div className={cn(
+                              colors.tint && "px-3.5 py-2.5 -ml-1",
+                              colors.tint,
+                            )}>
+                              {/* Date — above title, easy to scan chronologically */}
+                              <p className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400 tabular-nums">
+                                {format(new Date(event.timestamp), 'MMM d, yyyy')}
+                                <span className="text-zinc-400 dark:text-zinc-500 ml-1.5">
+                                  {format(new Date(event.timestamp), 'h:mm a')}
                                 </span>
+                              </p>
+
+                              {/* Title — the event */}
+                              <p className={cn(
+                                "text-[15px] font-bold leading-tight mt-1",
+                                colors.title,
+                              )}>
+                                {event.title}
+                              </p>
+
+                              {/* Location — below title, readable */}
+                              {event.location && (
+                                <p className="flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 mt-1">
+                                  <MapPinIcon className="h-3 w-3 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+                                  {event.location}
+                                </p>
                               )}
                             </div>
-
-                            {/* Raw description as subtext - only show if it adds meaningful context beyond the title */}
-                            {event.description && event.source === 'carrier' && event.normalizedType && (
-                              (() => {
-                                // Don't show if description is essentially the same as title
-                                const titleNorm = event.title.toLowerCase().replace(/[^a-z0-9]/g, '')
-                                const descNorm = event.description.toLowerCase().replace(/[^a-z0-9]/g, '')
-                                // Show if description is meaningfully longer (has extra context)
-                                const hasExtraContext = descNorm.length > titleNorm.length + 10
-                                // Or if it contains details the title doesn't
-                                const isSubstantiallyDifferent = !descNorm.startsWith(titleNorm) && !titleNorm.startsWith(descNorm)
-
-                                if (hasExtraContext || isSubstantiallyDifferent) {
-                                  return (
-                                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed italic">
-                                      {event.description}
-                                    </p>
-                                  )
-                                }
-                                return null
-                              })()
-                            )}
-                            {/* For non-normalized events, strip title from description to avoid repetition */}
-                            {event.description && !(event.source === 'carrier' && event.normalizedType) && (
-                              (() => {
-                                const cleanDesc = stripTitleFromDescription(event.title, event.description)
-                                return cleanDesc && cleanDesc !== event.title ? (
-                                  <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-                                    {cleanDesc}
-                                  </p>
-                                ) : null
-                              })()
-                            )}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

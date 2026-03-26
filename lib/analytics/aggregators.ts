@@ -170,6 +170,19 @@ export function getDateRangeFromPreset(preset: string): DateRange {
       to.setTime(eol.getTime())
       break
     }
+    case 'mtd': {
+      // Current month to date (1st of current month through today)
+      const year = now.getFullYear(), month = now.getMonth()
+      from = new Date(Date.UTC(year, month, 1))
+      // to stays as today
+      break
+    }
+    case 'ytd': {
+      // Current year to date (Jan 1 through today)
+      from = new Date(Date.UTC(now.getFullYear(), 0, 1))
+      // to stays as today
+      break
+    }
     case 'all': {
       // All complete months up to last month
       const year = now.getFullYear(), month = now.getMonth()

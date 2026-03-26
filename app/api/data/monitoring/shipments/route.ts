@@ -71,6 +71,28 @@ export async function GET(request: NextRequest) {
   const offset = parseInt(searchParams.get('offset') || '0')
 
   try {
+    // Fetch shipment IDs that have misfit credits (credit exists but not linked to a care ticket).
+    // These shipments are being handled in the Misfits workflow, so we hide them from
+    // Delivery IQ's active tabs (On Watch, Needs Action, Ready to File).
+    // They can still appear in Claim Filed once the credit is linked to a care ticket.
+    const shouldExcludeMisfits = ['at_risk', 'eligible', 'reship_now', 'consider_reship', 'customer_anxious', 'stuck', 'returning', 'lost'].includes(filter)
+    let misfitShipmentIds: string[] = []
+
+    if (shouldExcludeMisfits) {
+      const { data: misfitCredits } = await supabase
+        .from('transactions')
+        .select('reference_id')
+        .eq('fee_type', 'Credit')
+        .is('care_ticket_id', null)
+        .eq('is_voided', false)
+        .is('dispute_status', null)
+        .eq('reference_type', 'Shipment')
+        .not('reference_id', 'is', null)
+        .limit(1000)
+
+      misfitShipmentIds = [...new Set((misfitCredits || []).map((t: { reference_id: string }) => t.reference_id).filter(Boolean))]
+    }
+
     // Build query - daysSilent is calculated from last_scan_date on the client
     let query = supabase
       .from('lost_in_transit_checks')
@@ -155,6 +177,11 @@ export async function GET(request: NextRequest) {
         break
       default:
         query = query.eq('claim_eligibility_status', 'at_risk')
+    }
+
+    // Exclude shipments with misfit credits from active tabs
+    if (misfitShipmentIds.length > 0) {
+      query = query.not('shipment_id', 'in', `(${misfitShipmentIds.join(',')})`)
     }
 
     // Date filter on first_checked_at

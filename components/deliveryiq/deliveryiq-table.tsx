@@ -352,7 +352,7 @@ export function DeliveryIQTable({
   const canNextPage = page < totalPages - 1
 
   // Total column count for colSpan (must be before early returns — hooks can't be conditional)
-  // Columns: [client?] shipmentId tracking customer shipDate lastScan silent+reason carrier [status?] actions
+  // Columns: [client?] shipmentId tracking customer shipDate lastScan carrier silent+reason [status?] actions
   const totalColSpan = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
 
   if (error) {
@@ -376,7 +376,6 @@ export function DeliveryIQTable({
       {/* Table */}
       <div>
         <table className="w-full text-[13px] font-roboto" style={{ tableLayout: 'auto' }}>
-          {/* Equal-width column hints — all columns get the same proportion */}
           {(() => {
             const colCount = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
             const pct = `${(100 / colCount).toFixed(1)}%`
@@ -388,8 +387,8 @@ export function DeliveryIQTable({
                 <col style={{ width: pct }} />{/* Customer */}
                 <col style={{ width: pct }} />{/* Ship Date */}
                 <col style={{ width: pct }} />{/* Last Scan */}
-                <col style={{ width: pct }} />{/* Silent + Reason (shared) */}
                 <col style={{ width: pct }} />{/* Carrier */}
+                <col style={{ width: pct }} />{/* Silent + Reason */}
                 {showStatusColumn && <col style={{ width: pct }} />}{/* Status */}
                 <col style={{ width: pct }} />{/* Actions */}
               </colgroup>
@@ -447,6 +446,15 @@ export function DeliveryIQTable({
               </th>
               <th
                 className={headerCellClass}
+                onClick={() => handleSort('carrier')}
+              >
+                <div className="flex items-center gap-1">
+                  Carrier
+                  <SortIndicator field="carrier" />
+                </div>
+              </th>
+              <th
+                className={cn(headerCellBase, "pl-[18px] pr-2")}
               >
                 {isNeedsActionTab ? (
                   <div className="flex items-center gap-1">
@@ -465,15 +473,6 @@ export function DeliveryIQTable({
                     </span>
                   </div>
                 )}
-              </th>
-              <th
-                className={headerCellClass}
-                onClick={() => handleSort('carrier')}
-              >
-                <div className="flex items-center gap-1">
-                  Carrier
-                  <SortIndicator field="carrier" />
-                </div>
               </th>
               {showStatusColumn && (
                 <th
@@ -593,9 +592,12 @@ export function DeliveryIQTable({
                     <td className="px-2 align-middle text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis">
                       {formatDate(shipment.lastScanDate)}
                     </td>
-                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden">
+                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden text-ellipsis">
+                      {getCarrierDisplayName(shipment.carrier || '')}
+                    </td>
+                    <td className="px-2 align-middle whitespace-nowrap text-left">
                       {isNeedsActionTab ? (
-                        <div className="inline-flex items-center gap-2">
+                        <>
                           {(() => {
                             const action = getActionNeeded(shipment)
                             return (
@@ -604,13 +606,13 @@ export function DeliveryIQTable({
                               </Badge>
                             )
                           })()}
-                        </div>
+                        </>
                       ) : (
-                        <div className="inline-flex items-center gap-[30px]">
+                        <>
                           <Badge
                             variant="outline"
                             className={cn(
-                              "text-[11px] font-mono",
+                              "text-[11px] font-mono mr-3",
                               getDaysSilentColor(shipment.daysSilent)
                             )}
                           >
@@ -624,11 +626,8 @@ export function DeliveryIQTable({
                               </Badge>
                             )
                           })() : null}
-                        </div>
+                        </>
                       )}
-                    </td>
-                    <td className="px-2 align-middle whitespace-nowrap overflow-hidden text-ellipsis">
-                      {getCarrierDisplayName(shipment.carrier || '')}
                     </td>
                     {showStatusColumn && (
                       <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

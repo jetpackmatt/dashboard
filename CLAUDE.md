@@ -105,6 +105,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | `/api/cron/recheck-at-risk` | Every 5 hours | - | FREE recheck of at-risk shipments |
 | `/api/cron/advance-claims` | Every 5 min | - | Auto-advance claims: Under Review → Credit Requested |
 | `/api/cron/auto-file-claims` | Daily 4 AM EST | - | Auto-file LIT claims for clients with auto_file_claims=true |
+| `/api/cron/normalize-checkpoints` | Every 15 min | 120s | AI-normalize tracking checkpoints (Gemini, 200/run) |
 
 **Note:** `maxDuration = 300` (5 minutes) required for crons that process large datasets. Vercel Pro tier supports up to 300s. Without explicit `maxDuration`, functions may timeout prematurely.
 

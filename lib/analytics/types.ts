@@ -184,7 +184,7 @@ export interface ChartDataPoint {
 
 // Date Range Types
 
-export type DateRangePreset = '14d' | '30d' | '60d' | '90d' | '6mo' | '1yr' | 'all' | 'custom'
+export type DateRangePreset = '14d' | '30d' | '60d' | '90d' | '6mo' | '1yr' | 'mtd' | 'ytd' | 'all' | 'custom'
 
 // Granularity for time-series charts based on date range
 export type ChartGranularity = 'daily' | 'weekly' | 'monthly'
@@ -198,8 +198,11 @@ export function getGranularityForRange(preset: DateRangePreset): ChartGranularit
     case '60d':
     case '90d':
       return 'weekly'
+    case 'mtd':
+      return 'daily'
     case '6mo':
     case '1yr':
+    case 'ytd':
     case 'all':
     case 'custom':
     default:

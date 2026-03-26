@@ -143,10 +143,10 @@ export function ScoutInsightCard({
   // Loading state
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <div className="flex items-center justify-center gap-2 text-gray-400">
+      <div className="rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <JetpackLoader size="sm" />
-          <span className="text-sm">Analyzing...</span>
+          <span className="text-xs">Analyzing...</span>
         </div>
       </div>
     )
@@ -154,27 +154,25 @@ export function ScoutInsightCard({
 
   // Error states with specific handling
   if (error || !data) {
-    // Handle specific error codes
     if (errorCode === 'PICKUP_CANCELLED') {
       return (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-700">Pickup Cancelled</p>
-          <p className="text-xs text-amber-600 mt-1">This shipment never entered transit</p>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-4 py-2.5">
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Pickup Cancelled — shipment never entered transit</p>
         </div>
       )
     }
 
     if (errorCode === 'NOT_IN_TRANSIT') {
       return (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm text-gray-500">Awaiting carrier pickup</p>
+        <div className="rounded-lg border border-border bg-muted/50 px-4 py-2.5">
+          <p className="text-xs text-muted-foreground">Awaiting carrier pickup</p>
         </div>
       )
     }
 
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-400">{error || 'No analysis available'}</p>
+      <div className="rounded-lg border border-border bg-card px-4 py-2.5">
+        <p className="text-xs text-muted-foreground">{error || 'No analysis available'}</p>
       </div>
     )
   }
@@ -182,10 +180,8 @@ export function ScoutInsightCard({
   // Insufficient confidence
   if (data.confidence === 'low' || data.confidence === 'insufficient') {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <p className="text-sm text-gray-400">
-          Limited data ({data.sampleSize} samples)
-        </p>
+      <div className="rounded-lg border border-border bg-card px-4 py-2.5">
+        <p className="text-xs text-muted-foreground">Limited data ({data.sampleSize} samples)</p>
       </div>
     )
   }
@@ -315,124 +311,107 @@ export function ScoutInsightCard({
     )
   }
 
-  // Non-terminal states - show probability-focused view
+  // Non-terminal states - donut + action layout
+  const strokeColor = isCritical ? '#ef4444' : pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444'
+  const trackColor = isCritical ? '#fecaca' : pct >= 80 ? '#d1fae5' : pct >= 50 ? '#fef3c7' : '#fecaca'
+  const pctTextColor = isCritical ? 'text-red-600 dark:text-red-400' : pct >= 80 ? 'text-emerald-600 dark:text-emerald-400' : pct >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'
+
+  // Build human-readable reasons
+  const reasons: string[] = []
+  const days = Math.round(data.daysInTransit)
+  if (data.percentiles.p50 && daysOverdue > 0) {
+    reasons.push(`${days} days in transit — ${daysOverdue} days past the typical ${data.percentiles.p50}-day delivery`)
+  } else {
+    reasons.push(`${days} days in transit`)
+  }
+  const displayFactors = data.riskFactors.filter(f => !TERMINAL_STATUS_LABELS[f])
+  const hasPastP95 = displayFactors.some(f => f.includes('p95'))
+  for (const factor of displayFactors) {
+    if (factor.includes('p90') && hasPastP95) continue // skip p90 when p95 present
+    if (factor.includes('exception')) { reasons.push('Carrier reported a delivery exception'); continue }
+    if (factor.includes('attempt_failed') || factor.includes('attempt failed')) { reasons.push('A delivery attempt was made but failed'); continue }
+    if (factor.includes('p95')) { reasons.push('Longer than 95% of similar shipments'); continue }
+    if (factor.includes('p90')) { reasons.push('Longer than 90% of similar shipments'); continue }
+    if (factor.includes('needs_action')) { reasons.push('Package held at facility — carrier awaiting instructions'); continue }
+    if (factor.includes('stalled')) { reasons.push('No movement detected for an extended period'); continue }
+    if (factor.includes('no_scans') || factor.includes('no scans')) { reasons.push('No carrier scans recorded since pickup'); continue }
+    const label = factor.replace(/_/g, ' ').replace('detected', '').replace('delivery time', '').trim()
+    if (label) reasons.push(label.charAt(0).toUpperCase() + label.slice(1))
+  }
+
+  // Action headline
+  // Prefer AI action (arrives in phase 2), fall back to short risk-based label
+  const hasNeedsAction = data.riskFactors.includes('needs_action')
+  const action = hasNeedsAction ? 'Contact carrier for re-delivery'
+    : data.ai_summary?.merchantAction
+    || (data.riskLevel === 'critical' ? 'Consider reshipment'
+      : data.riskLevel === 'high' ? 'Monitor closely'
+      : 'Monitor shipment')
+
+  // SVG donut params
+  const size = 88
+  const strokeWidth = 7
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (pct / 100) * circumference
+
   return (
-    <div className={cn(
-      "rounded-lg border overflow-hidden",
-      isCritical ? "border-red-200 bg-white" : "border-gray-200 bg-white"
-    )}>
-      {/* Header with status indicator */}
-      <div className={cn(
-        "px-4 py-2 flex items-center justify-between",
-        isCritical ? "bg-red-50" : "bg-gray-50"
-      )}>
-        <span className={cn(
-          "text-xs font-medium uppercase tracking-wide",
-          isCritical ? "text-red-600" : "text-gray-500"
-        )}>
-          {isCritical ? 'On Watch' : 'Delivery Analysis'}
-        </span>
-        {data.sampleSize > 0 && (
-          <span className="text-[10px] text-gray-400">n={data.sampleSize.toLocaleString()}</span>
-        )}
-      </div>
-
-      <div className="p-4 space-y-4">
-        {/* Primary metrics */}
-        <div className="flex items-end justify-between">
-          <div>
-            <div className="flex items-baseline">
-              <span className={cn(
-                "text-5xl font-extralight tabular-nums tracking-tight",
-                isCritical ? "text-red-600" : pct >= 80 ? "text-emerald-600" : "text-amber-600"
-              )}>
-                {pct}
-              </span>
-              <span className={cn(
-                "text-xl ml-0.5",
-                isCritical ? "text-red-400" : pct >= 80 ? "text-emerald-400" : "text-amber-400"
-              )}>%</span>
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex gap-5 p-5">
+        {/* Donut + label */}
+        <div className="shrink-0 flex flex-col items-center pt-0.5">
+          <div className="relative" style={{ width: size, height: size }}>
+            <svg width={size} height={size} className="-rotate-90">
+              <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={trackColor} strokeWidth={strokeWidth} />
+              <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={strokeColor} strokeWidth={strokeWidth}
+                strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} className="transition-all duration-500" />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className={cn("text-lg font-bold tabular-nums leading-none", pctTextColor)}>{pct}%</span>
+              <span className="text-[7px] text-muted-foreground uppercase tracking-wider mt-1 leading-none">probability</span>
             </div>
-            <p className="text-[11px] text-gray-400 mt-1">delivery probability</p>
-          </div>
-
-          <div className="text-right pb-1">
-            <p className="text-2xl font-light tabular-nums text-gray-800">
-              {data.daysInTransit.toFixed(0)}
-              <span className="text-sm text-gray-400 ml-1">days</span>
-            </p>
-            {daysOverdue > 0 && (
-              <p className={cn(
-                "text-[11px] mt-0.5",
-                isCritical ? "text-red-500" : "text-amber-500"
-              )}>
-                +{daysOverdue} over expected
-              </p>
-            )}
           </div>
         </div>
 
-        {/* Simple progress indicator */}
-        <div className="space-y-1">
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                isCritical ? "bg-red-500" : pct >= 80 ? "bg-emerald-500" : "bg-amber-500"
-              )}
-              style={{ width: `${pct}%` }}
-            />
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {/* Action + days */}
+          <div className="flex items-baseline justify-between gap-2">
+            <p className={cn(
+              "text-base font-semibold leading-snug",
+              isCritical ? "text-red-700 dark:text-red-400" : "text-foreground"
+            )}>
+              {action}
+            </p>
+            <span className="text-xs tabular-nums text-foreground font-semibold shrink-0">{days} Days</span>
           </div>
-          {data.percentiles.p50 && (
-            <div className="flex justify-between text-[10px] text-gray-400">
-              <span>Expected: {data.percentiles.p50}d</span>
-              {data.percentiles.p90 && <span>P90: {data.percentiles.p90}d</span>}
-            </div>
+
+          {/* AI headline */}
+          {data.ai_summary?.headline && data.ai_summary.headline !== action && (
+            <p className="text-[11px] text-muted-foreground italic leading-snug">{data.ai_summary.headline}</p>
+          )}
+
+          {/* Reasons */}
+          {reasons.length > 0 && (
+            <ul className="mt-2 pt-2 border-t border-border space-y-0.5">
+              {reasons.map((reason, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                  <span className={cn(
+                    "mt-[5px] w-1 h-1 rounded-full shrink-0",
+                    isCritical ? "bg-red-400" : "bg-muted-foreground/40"
+                  )} />
+                  {reason}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-
-        {/* Risk factors for non-terminal states */}
-        {data.riskFactors.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">
-            {data.riskFactors.filter(f => !TERMINAL_STATUS_LABELS[f]).map((factor) => (
-              <span
-                key={factor}
-                className={cn(
-                  "px-2 py-0.5 text-[10px] rounded-full",
-                  isCritical ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-500"
-                )}
-              >
-                {factor.replace(/_/g, ' ').replace('detected', '').replace('delivery time', '').trim()}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* AI insight */}
-        {data.ai_summary?.headline && (
-          <div className={cn(
-            "rounded-md p-3 mt-2",
-            isCritical ? "bg-red-50" : "bg-gray-50"
-          )}>
-            <p className={cn(
-              "text-sm font-medium",
-              isCritical ? "text-red-700" : "text-gray-700"
-            )}>
-              {data.ai_summary.headline}
-            </p>
-            {data.ai_summary.merchantAction && (
-              <p className="text-xs text-gray-500 mt-1">
-                {data.ai_summary.merchantAction}
-              </p>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )
 }
 
-// Hook for fetching Scout data
+// Hook for fetching Scout data — two-phase: probability first (fast), then AI summary
 export function useScoutData(shipmentId: string | null, includeAI: boolean = false) {
   const [data, setData] = React.useState<ScoutProbabilityData | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
@@ -450,9 +429,8 @@ export function useScoutData(shipmentId: string | null, includeAI: boolean = fal
     setError(null)
     setErrorCode(null)
 
-    const url = `/api/data/shipments/${shipmentId}/probability${includeAI ? '?ai=true' : ''}`
-
-    fetch(url)
+    // Phase 1: Fetch probability without AI (fast — no LLM call)
+    fetch(`/api/data/shipments/${shipmentId}/probability`)
       .then(async (res) => {
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}))
@@ -463,9 +441,20 @@ export function useScoutData(shipmentId: string | null, includeAI: boolean = fal
         return res.json()
       })
       .then((result) => {
-        if (!cancelled) {
-          setData(result)
-          setIsLoading(false)
+        if (cancelled) return
+        setData(result)
+        setIsLoading(false)
+
+        // Phase 2: Fetch AI summary in background, merge when ready
+        if (includeAI) {
+          fetch(`/api/data/shipments/${shipmentId}/probability?ai=true`)
+            .then(res => res.ok ? res.json() : null)
+            .then(aiResult => {
+              if (!cancelled && aiResult?.ai_summary) {
+                setData(prev => prev ? { ...prev, ai_summary: aiResult.ai_summary } : prev)
+              }
+            })
+            .catch(() => {}) // AI summary is optional — fail silently
         }
       })
       .catch((err) => {

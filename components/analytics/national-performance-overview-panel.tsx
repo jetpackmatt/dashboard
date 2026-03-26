@@ -78,7 +78,10 @@ export function NationalPerformanceOverviewPanel({ stateData, country = 'US', re
   return (
     <div className="h-full overflow-hidden flex flex-col">
       <div className="flex-shrink-0 border-b border-border px-5 h-[68px] flex items-center">
-        <div className="text-sm font-semibold">{country === 'US' ? 'USA' : COUNTRY_CONFIGS[country]?.label} National Average</div>
+        <div className="flex items-center gap-2 w-full">
+          <div className="text-sm font-semibold">{country === 'US' ? 'USA' : COUNTRY_CONFIGS[country]?.label} National Average</div>
+          <Badge variant="secondary" className="tabular-nums text-xs font-medium ml-auto">{totalShipped.toLocaleString()} orders</Badge>
+        </div>
       </div>
       {/* Time Metrics — interconnected grid */}
       <div className="flex-shrink-0">

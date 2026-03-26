@@ -11,6 +11,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createHash } from 'crypto'
 import type { TrackingMoreCheckpoint, TrackingMoreTracking } from './client'
+import { normalizeCheckpointFallback } from '@/lib/ai/normalize-checkpoint'
 
 export interface StoredCheckpoint {
   id: string
@@ -128,6 +129,11 @@ export async function storeCheckpoints(
       location
     )
 
+    // Apply rule-based fallback normalization immediately so every checkpoint
+    // has at least a basic normalized_type, display_title, and sentiment.
+    // The Gemini batch cron will later upgrade these to AI-quality titles.
+    const fallback = normalizeCheckpointFallback(cp.tracking_detail, cp.checkpoint_delivery_status)
+
     return {
       shipment_id: shipmentId,
       tracking_number: tracking.tracking_number,
@@ -138,6 +144,9 @@ export async function storeCheckpoints(
       raw_location: location,
       raw_status: cp.checkpoint_delivery_status || null,
       raw_substatus: cp.checkpoint_delivery_substatus || null,
+      normalized_type: fallback.normalized_type,
+      display_title: fallback.display_title,
+      sentiment: fallback.sentiment,
       content_hash: hash,
       source: 'trackingmore',
       fetched_at: new Date().toISOString(),
@@ -223,8 +232,9 @@ export async function getCheckpointsByTracking(
 }
 
 /**
- * Get unnormalized checkpoints that need AI processing
- * Returns checkpoints where normalized_type is NULL
+ * Get checkpoints that need AI normalization
+ * Returns checkpoints where normalized_at is NULL (either fully unnormalized
+ * or only has rule-based fallback normalization that needs AI upgrade)
  *
  * @param limit - Maximum number to return (for batch processing)
  */
@@ -236,7 +246,7 @@ export async function getUnnormalizedCheckpoints(
   const { data, error } = await supabase
     .from('tracking_checkpoints')
     .select('*')
-    .is('normalized_type', null)
+    .is('normalized_at', null)
     .order('checkpoint_date', { ascending: false })
     .limit(limit)
 

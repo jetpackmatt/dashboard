@@ -27,9 +27,23 @@ export interface MissionControlStats {
   totalActiveShipments?: number
 }
 
+export interface WatchBreakdownItem {
+  reason: string
+  count: number
+}
+
+export interface DaysSilentData {
+  avg: number
+  histogram: { day: string; count: number }[]
+}
+
 interface MissionControlPanelsProps {
   stats: MissionControlStats
-  shipments: MissionControlShipment[]
+  shipments?: MissionControlShipment[]
+  /** Pre-computed watch reason breakdown (from stats API). Skips client-side computation when provided. */
+  precomputedWatchBreakdown?: WatchBreakdownItem[]
+  /** Pre-computed days-silent data (from stats API). Skips client-side computation when provided. */
+  precomputedDaysSilent?: DaysSilentData
   panelClassName?: string
 }
 
@@ -47,7 +61,7 @@ const WATCH_REASON_CONFIG: Record<string, { label: string; color: string; order:
 
 const tooltipStyle = { fontSize: 11, borderRadius: 8, padding: '6px 12px', border: '1px solid hsl(var(--border))' }
 
-export function MissionControlPanels({ stats, shipments, panelClassName }: MissionControlPanelsProps) {
+export function MissionControlPanels({ stats, shipments, precomputedWatchBreakdown, precomputedDaysSilent, panelClassName }: MissionControlPanelsProps) {
   const panelCls = panelClassName ?? "rounded-xl border border-border/60 bg-background overflow-hidden flex flex-col"
   // Panel 1: Status
   const statusData = React.useMemo(() => {
@@ -60,10 +74,26 @@ export function MissionControlPanels({ stats, shipments, panelClassName }: Missi
   }, [stats])
   const statusTotal = stats.eligible + stats.atRisk + stats.claimFiled + stats.returnedToSender
 
-  // Panel 2: Watch Breakdown
+  // Panel 2: Watch Breakdown — use pre-computed data if available, otherwise compute from shipments
   const watchBreakdown = React.useMemo(() => {
+    if (precomputedWatchBreakdown) {
+      const all = precomputedWatchBreakdown
+        .map(({ reason, count }) => ({
+          badge: reason.replace(/\s+/g, '_'),
+          count,
+          ...(WATCH_REASON_CONFIG[reason] || { label: reason, color: '#94a3b8', order: 99 }),
+        }))
+        .sort((a, b) => b.count - a.count)
+      if (all.length <= 6) return all
+      const top = all.slice(0, 5)
+      const otherCount = all.slice(5).reduce((s, b) => s + b.count, 0)
+      if (otherCount > 0) {
+        top.push({ badge: 'OTHER', count: otherCount, label: 'Other', color: '#94a3b8', order: 99 })
+      }
+      return top
+    }
     const counts: Record<string, number> = {}
-    shipments
+    ;(shipments || [])
       .filter(s => s.claimEligibilityStatus === 'at_risk')
       .forEach(s => {
         const reason = s.watchReason || 'STALLED'
@@ -83,29 +113,33 @@ export function MissionControlPanels({ stats, shipments, panelClassName }: Missi
       top.push({ badge: 'OTHER', count: otherCount, label: 'Other', color: '#94a3b8', order: 99 })
     }
     return top
-  }, [shipments])
+  }, [precomputedWatchBreakdown, shipments])
   const watchTotal = watchBreakdown.reduce((sum, b) => sum + b.count, 0)
 
-  // Panel 3: Days Silent
-  const onWatchShipments = React.useMemo(() =>
-    shipments.filter(s => s.claimEligibilityStatus === 'at_risk')
-  , [shipments])
+  // Panel 3: Days Silent — use pre-computed data if available, otherwise compute from shipments
   const avgDaysSilent = React.useMemo(() => {
-    if (onWatchShipments.length === 0) return 0
-    return onWatchShipments.reduce((sum, s) => sum + (s.daysSilent ?? 0), 0) / onWatchShipments.length
-  }, [onWatchShipments])
+    if (precomputedDaysSilent) return precomputedDaysSilent.avg
+    const onWatch = (shipments || []).filter(s => s.claimEligibilityStatus === 'at_risk')
+    if (onWatch.length === 0) return 0
+    return onWatch.reduce((sum, s) => sum + (s.daysSilent ?? 0), 0) / onWatch.length
+  }, [precomputedDaysSilent, shipments])
+
   const silenceHistogram = React.useMemo(() => {
+    if (precomputedDaysSilent) return precomputedDaysSilent.histogram
+    const onWatch = (shipments || []).filter(s => s.claimEligibilityStatus === 'at_risk')
     const maxDay = 15
     const buckets: { day: string; count: number }[] = []
     for (let i = 0; i <= maxDay; i++) {
       buckets.push({ day: i < maxDay ? String(i) : `${maxDay}+`, count: 0 })
     }
-    onWatchShipments.forEach(s => {
+    onWatch.forEach(s => {
       const d = Math.max(0, Math.min(s.daysSilent ?? 0, maxDay))
       if (buckets[d]) buckets[d].count++
     })
     return buckets
-  }, [onWatchShipments])
+  }, [precomputedDaysSilent, shipments])
+
+  const hasData = precomputedDaysSilent ? precomputedDaysSilent.histogram.some(b => b.count > 0) : (shipments || []).length > 0
 
   // Panel 4: Active Orders
   const totalActive = stats.totalActiveShipments ?? 0
@@ -249,7 +283,7 @@ export function MissionControlPanels({ stats, shipments, panelClassName }: Missi
           <div className="text-lg font-bold tabular-nums">{avgDaysSilent.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-0.5">days avg</span></div>
         </div>
         <div className="flex-1 flex flex-col justify-end px-2 pb-[8px] pt-1">
-          {shipments.length > 0 ? (
+          {hasData ? (
             <ResponsiveContainer width="100%" height={110}>
               <AreaChart data={silenceHistogram} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
                 <defs>

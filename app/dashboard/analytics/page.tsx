@@ -87,6 +87,12 @@ import type {
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
 import { getDateRangeFromPreset } from "@/lib/analytics/aggregators"
 
+// Parse date-only strings ("2026-03-01") as local time, not UTC.
+// new Date("2026-03-01") interprets as UTC midnight → shifts back a day in US timezones.
+// Appending T00:00:00 forces local-time interpretation.
+function parseLocalDate(dateStr: string): Date {
+  return new Date(dateStr.length === 10 ? dateStr + 'T00:00:00' : dateStr)
+}
 
 const ANALYTICS_TABS = [
   { value: "state-performance", label: "Performance" },
@@ -104,6 +110,8 @@ const DATE_RANGE_PRESETS = [
   { value: '90d', label: '90 Days' },
   { value: '6mo', label: '6 Months' },
   { value: '1yr', label: '1 Year' },
+  { value: 'mtd', label: 'MTD' },
+  { value: 'ytd', label: 'YTD' },
   { value: 'all', label: 'All Time' },
   { value: 'custom', label: 'Custom' },
 ]
@@ -148,6 +156,7 @@ function useChartDateRange(
     // Chart matches page AND no extra params — use pageFieldData (via null fallback), no fetch needed
     if (chartPreset === pageDateRange && chartCountry === pageCountry && !extraParamsKey) {
       setChartData(null)
+      setIsFetching(false)
       return
     }
 
@@ -157,6 +166,7 @@ function useChartDateRange(
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached[fieldName])
+      setIsFetching(false)
       return
     }
 
@@ -230,6 +240,7 @@ function useChartSectionRange(
   React.useEffect(() => {
     if (chartPreset === pageDateRange && chartCountry === pageCountry && !extraParamsKey) {
       setChartData(null)
+      setIsFetching(false)
       return
     }
     const tabKey = fetchTab || 'sp'
@@ -237,6 +248,7 @@ function useChartSectionRange(
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached)
+      setIsFetching(false)
       return
     }
     if (!clientId) return
@@ -476,7 +488,10 @@ export default function AnalyticsPage() {
       loadedTabsRef.current = new Set()
 
       const params = buildFetchParams(activeTab)
-      if (!params) return
+      if (!params) {
+        setIsLoadingData(false)
+        return
+      }
 
       try {
         const res = await fetch(`/api/data/analytics/tab-data?${params}`)
@@ -526,7 +541,10 @@ export default function AnalyticsPage() {
     async function fetchTabData() {
       setIsLoadingTabData(true)
       const params = buildFetchParams(activeTab)
-      if (!params) return
+      if (!params) {
+        setIsLoadingTabData(false)
+        return
+      }
 
       try {
         const res = await fetch(`/api/data/analytics/tab-data?${params}`)
@@ -633,7 +651,7 @@ export default function AnalyticsPage() {
 
     return {
       title: `${perfCountry === 'US' ? 'USA' : COUNTRY_CONFIGS[perfCountry]?.label} National Average`,
-      orderCount: null as number | null,
+      orderCount: totalShipped,
       otdPercentiles: nationalOtdPercentiles,
       fulfillTime: avgFulfillTime,
       middleMile: avgRegionalMile,
@@ -759,11 +777,11 @@ export default function AnalyticsPage() {
     chartDataCache.current.set(cacheKey, analyticsData)
   }, [analyticsData, dateRange, selectedCountry, settings.timezone, effectiveClientId])
   // === Order Volume tab hooks ===
-  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
-  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL')
+  const dailyVolumeChart = useChartDateRange(dailyOrderVolume, 'dailyVolume', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'order-volume')
+  const hourChart = useChartDateRange(orderVolumeByHour, 'volumeByHour', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'order-volume')
+  const dowChart = useChartDateRange(orderVolumeByDayOfWeek, 'volumeByDayOfWeek', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'order-volume')
+  const fcChart = useChartDateRange(orderVolumeByFC, 'volumeByFC', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'order-volume')
+  const storeChart = useChartDateRange(orderVolumeByStore, 'volumeByStore', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'order-volume')
 
   // === Cost + Speed tab hooks ===
   // Page data includes all destinations. The "Include International" checkbox filters via
@@ -812,27 +830,17 @@ export default function AnalyticsPage() {
   const fulfillTrendChart = useChartDateRange(analyticsData?.fulfillmentTrend || [], 'fulfillmentTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const fcFulfillChart = useChartDateRange(fcFulfillmentMetrics, 'fcFulfillmentMetrics', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
-  // Aggregate chart-level fetching state for loading overlay
-  const isAnyChartFetching = financialsSection.isFetching || costSpeedKpiSection.isFetching ||
-    costSpeedMapSection.isFetching || carrierSection.isFetching ||
-    dailyVolumeChart.isFetching || hourChart.isFetching || dowChart.isFetching ||
-    fcChart.isFetching || storeChart.isFetching || costTrendChart.isFetching ||
-    deliverySpeedChart.isFetching || zoneCostChart.isFetching || shipOptionChart.isFetching ||
-    billingTrendChart.isFetching || costDistChart.isFetching || feeBreakdownChart.isFetching ||
-    pickPackChart.isFetching || costPerOrderChart.isFetching || shippingByZoneChart.isFetching ||
-    additionalSvcChart.isFetching || carrierZoneChart.isFetching || zoneDeepDiveChart.isFetching ||
-    slaTrendChart.isFetching || fulfillTrendChart.isFetching || fcFulfillChart.isFetching
-
   // === Cost+Speed KPI section derived data ===
   const kpiSectionData = costSpeedKpiSection.data
-  const kpiSectionAvgCost = React.useMemo(() => {
-    const ct = kpiSectionData?.costTrend || []
-    if (ct.length === 0) return null
-    const totalCost = ct.reduce((sum: number, d: any) => sum + d.avgCostWithSurcharge * d.orderCount, 0)
-    const totalOrders = ct.reduce((sum: number, d: any) => sum + d.orderCount, 0)
-    return totalOrders > 0 ? totalCost / totalOrders : null
-  }, [kpiSectionData?.costTrend])
   const kpiSectionKpis = kpiSectionData?.kpis || kpiData
+  const kpiSectionAvgCost = React.useMemo(() => {
+    // Use period-level totals from kpis (shipping-only, includes all days)
+    // rather than reconstructing from costTrend (which filters out zero-cost days,
+    // inflating the per-order average)
+    const kpis = kpiSectionData?.kpis || kpiData
+    if (!kpis || kpis.orderCount === 0) return null
+    return kpis.totalCost / kpis.orderCount
+  }, [kpiSectionData?.kpis, kpiData])
   const kpiSectionMiddleMile = React.useMemo(() => {
     const country = selectedCountry === 'ALL' ? 'US' : selectedCountry
     const knownCodes = new Set(Object.keys(COUNTRY_CONFIGS[country]?.codeToName || {}))
@@ -965,7 +973,7 @@ export default function AnalyticsPage() {
 
   // Background pre-fetch all presets so chart selector changes are instant
   // Fast presets first, then slower ones — all in background
-  const PREFETCH_PRESETS = ['14d', '30d', '60d', '90d', '6mo', '1yr', 'all']
+  const PREFETCH_PRESETS = ['14d', '30d', '60d', '90d', '6mo', '1yr', 'mtd', 'ytd', 'all']
   React.useEffect(() => {
     if (!analyticsData || !effectiveClientId) return
 
@@ -1151,6 +1159,8 @@ export default function AnalyticsPage() {
       '90d': 'Last 90 Days',
       '6mo': 'Last 6 Months',
       '1yr': 'Last Year',
+      'mtd': 'Month to Date',
+      'ytd': 'Year to Date',
       'all': 'All Time',
     }
     return labels[dateRange] || 'Last 30 Days'
@@ -1223,18 +1233,9 @@ export default function AnalyticsPage() {
                 <p className="text-sm text-muted-foreground px-1">No shipment data for this brand in the selected date range.</p>
               )}
 
-              {/* Loading overlay - fixed to viewport so it's always visible regardless of scroll */}
-              {(isLoadingData || isLoadingTabData || isTabTransitioning || isAnyChartFetching) && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
-                  <div className="flex flex-col items-center gap-2 bg-background/90 backdrop-blur-sm rounded-xl px-6 py-4 shadow-lg border border-border/50 pointer-events-auto">
-                    <JetpackLoader size="md" />
-                    <span className="text-xs text-muted-foreground">Loading analytics</span>
-                  </div>
-                </div>
-              )}
-              {/* Tab content wrapper - dimmed during loading or tab transition */}
+              {/* Tab content wrapper */}
               <div className="relative">
-              <div className={(isLoadingData || isTabTransitioning || isAnyChartFetching) ? "opacity-30 pointer-events-none transition-opacity duration-300" : "transition-opacity duration-150"}>
+              <div className={isLoadingData ? "opacity-30 pointer-events-none transition-opacity duration-300" : "transition-opacity duration-150"}>
 
               {/* Tab 1: Financials */}
               <TabsContent value="financials" className="mt-0">
@@ -2001,7 +2002,7 @@ export default function AnalyticsPage() {
                           minTickGap={32}
                           tick={axisTick}
                           tickFormatter={(value) => {
-                            const date = new Date(value)
+                            const date = parseLocalDate(value)
                             return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                           }}
                         />
@@ -2018,7 +2019,7 @@ export default function AnalyticsPage() {
                           cursor={false}
                           content={
                             <ChartTooltipContent
-                              labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              labelFormatter={(value) => parseLocalDate(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                               formatter={(value, name, item) => (
                                 <>
                                   <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
@@ -2124,7 +2125,7 @@ export default function AnalyticsPage() {
                           minTickGap={32}
                           tick={axisTick}
                           tickFormatter={(value) => {
-                            const date = new Date(value)
+                            const date = parseLocalDate(value)
                             return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                           }}
                         />
@@ -2152,7 +2153,7 @@ export default function AnalyticsPage() {
                           cursor={false}
                           content={
                             <ChartTooltipContent
-                              labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              labelFormatter={(value) => parseLocalDate(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                               formatter={(value, name, item) => {
                                 const labels: Record<string, string> = { avgCarrierTransitDays: 'Last Mile', middleMileDays: 'Middle Mile', fulfillmentDays: 'Fulfillment', avgFulfillTimeHours: 'Fulfillment' }
                                 const unit = name === 'avgFulfillTimeHours' ? 'h' : 'd'
@@ -2464,7 +2465,7 @@ export default function AnalyticsPage() {
                             return Math.floor(dataLength / 8)
                           })()}
                           tickFormatter={(value) => {
-                            const date = new Date(value)
+                            const date = parseLocalDate(value)
                             const chartData = dailyVolumeChart.data as DailyOrderVolume[]
                             if (chartData.length > 90) {
                               return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
@@ -2477,7 +2478,7 @@ export default function AnalyticsPage() {
                           content={
                             <ChartTooltipContent
                               indicator="dot"
-                              labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              labelFormatter={(value) => parseLocalDate(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                             />
                           }
                         />
@@ -3248,7 +3249,7 @@ export default function AnalyticsPage() {
                           tickMargin={8}
                           minTickGap={32}
                           tickFormatter={(value) => {
-                            const date = new Date(value)
+                            const date = parseLocalDate(value)
                             return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
                           }}
                         />
@@ -3264,7 +3265,7 @@ export default function AnalyticsPage() {
                           content={
                             <ChartTooltipContent
                               indicator="dot"
-                              labelFormatter={(value) => new Date(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              labelFormatter={(value) => parseLocalDate(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                               formatter={(value, name, item) => (
                                 <>
                                   <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
@@ -3350,7 +3351,7 @@ export default function AnalyticsPage() {
                               return Math.floor(dataLength / 8)
                             })()}
                             tickFormatter={(value) => {
-                              const date = new Date(value)
+                              const date = parseLocalDate(value)
                               const dataLength = (fulfillTrendChart.data as FulfillmentTrendData[]).length
                               if (dataLength > 90) {
                                 return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
@@ -3368,7 +3369,7 @@ export default function AnalyticsPage() {
                             content={
                               <ChartTooltipContent
                                 indicator="dot"
-                                labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                labelFormatter={(value) => parseLocalDate(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                 formatter={(value, name, item) => (
                                   <>
                                     <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />

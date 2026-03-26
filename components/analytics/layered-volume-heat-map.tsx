@@ -130,9 +130,9 @@ export function LayeredVolumeHeatMap({ stateData, zipCodeData, onStateSelect, co
 
   const getZipDotSize = (orderCount: number): number => {
     if (maxZipOrders === minZipOrders) return 4
-    // Log scale so small cities aren't invisible
-    const logNorm = Math.log(1 + orderCount - minZipOrders) / Math.log(1 + maxZipOrders - minZipOrders)
-    return 2 + (logNorm * 4) // 2-6px
+    // Power scale (exponent 1.8) to exaggerate differences — high-volume cities are much larger
+    const norm = (orderCount - minZipOrders) / (maxZipOrders - minZipOrders)
+    return 2 + Math.pow(norm, 0.55) * 14 // 2-16px — wide range for clear visual hierarchy
   }
 
   const handleStateClick = (stateCode: string) => {

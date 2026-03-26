@@ -3,7 +3,7 @@
 import * as React from "react"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { SectionCards, type DailyTrends } from "@/components/section-cards"
-import { MissionControlPanels, type MissionControlStats, type MissionControlShipment } from "@/components/deliveryiq/mission-control-panels"
+import { MissionControlPanels, type MissionControlStats, type WatchBreakdownItem, type DaysSilentData } from "@/components/deliveryiq/mission-control-panels"
 import { SiteHeader } from "@/components/site-header"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { useClient } from "@/components/client-context"
@@ -62,11 +62,12 @@ export function DashboardContent({ displayName }: { displayName: string }) {
   const [dailyTrends, setDailyTrends] = React.useState<DailyTrends | null>(null)
   const [isKpiLoading, setIsKpiLoading] = React.useState(true)
 
-  // Delivery IQ data
+  // Delivery IQ data (stats only — no full shipment fetch needed for homepage)
   const [diqStats, setDiqStats] = React.useState<MissionControlStats>({
     atRisk: 0, eligible: 0, claimFiled: 0, returnedToSender: 0, totalActiveShipments: 0,
   })
-  const [diqShipments, setDiqShipments] = React.useState<MissionControlShipment[]>([])
+  const [diqWatchBreakdown, setDiqWatchBreakdown] = React.useState<WatchBreakdownItem[]>([])
+  const [diqDaysSilent, setDiqDaysSilent] = React.useState<DaysSilentData>({ avg: 0, histogram: [] })
   const [isDiqLoading, setIsDiqLoading] = React.useState(true)
 
   const effectiveClientId = selectedClientId || 'all'
@@ -97,7 +98,7 @@ export function DashboardContent({ displayName }: { displayName: string }) {
     return () => { cancelled = true }
   }, [effectiveClientId, datePreset, isClientLoading])
 
-  // Fetch Delivery IQ stats + shipments
+  // Fetch Delivery IQ stats (lightweight — no full shipment list needed)
   React.useEffect(() => {
     if (isClientLoading) return
     let cancelled = false
@@ -106,23 +107,14 @@ export function DashboardContent({ displayName }: { displayName: string }) {
     const statsParams = new URLSearchParams()
     if (effectiveClientId) statsParams.set('clientId', effectiveClientId)
 
-    const shipmentParams = new URLSearchParams()
-    if (effectiveClientId) shipmentParams.set('clientId', effectiveClientId)
-    shipmentParams.set('filter', 'all')
-
-    Promise.all([
-      fetch(`/api/data/monitoring/stats?${statsParams}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/data/monitoring/shipments?${shipmentParams}`).then(r => r.ok ? r.json() : null),
-    ])
-      .then(([stats, shipmentsData]) => {
-        if (cancelled) return
-        if (stats) setDiqStats(stats)
-        if (shipmentsData?.data) {
-          setDiqShipments(shipmentsData.data.map((s: any) => ({
-            claimEligibilityStatus: s.claimEligibilityStatus,
-            daysSilent: s.daysSilent ?? 0,
-            watchReason: s.watchReason,
-          })))
+    fetch(`/api/data/monitoring/stats?${statsParams}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(stats => {
+        if (cancelled || !stats) return
+        setDiqStats(stats)
+        if (stats.watchBreakdown) setDiqWatchBreakdown(stats.watchBreakdown)
+        if (stats.daysSilentHistogram) {
+          setDiqDaysSilent({ avg: stats.daysSilentAvg || 0, histogram: stats.daysSilentHistogram })
         }
       })
       .catch(err => console.error('[Dashboard] DIQ fetch error:', err))
@@ -145,38 +137,45 @@ export function DashboardContent({ displayName }: { displayName: string }) {
       </SiteHeader>
       <div className="flex flex-1 flex-col overflow-x-hidden bg-background rounded-t-xl">
         <div className="@container/main flex flex-1 flex-col gap-2 w-full">
-    {isAnyLoading ? (
-      <div className="flex flex-1 items-center justify-center py-20">
-        <JetpackLoader size="lg" />
-      </div>
-    ) : (
-      <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full">
-        {/* Big Picture */}
-        <div className="flex flex-col gap-[11px]">
-          <SectionHeader title="Big Picture" datePreset={datePreset} onDatePresetChange={setDatePreset} />
-          <SectionCards data={kpiData} isLoading={false} trends={dailyTrends} />
-        </div>
+        <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6 w-full">
+          {/* Big Picture — SectionCards shows its own skeleton when loading */}
+          <div className="flex flex-col gap-[11px]">
+            <SectionHeader title="Big Picture" datePreset={datePreset} onDatePresetChange={setDatePreset} />
+            <SectionCards data={kpiData} isLoading={isKpiLoading || isClientLoading} trends={dailyTrends} />
+          </div>
 
-        {/* Delivery IQ Flagged Shipments */}
-        <div className="flex flex-col gap-[11px]">
-          <SectionHeader title="Delivery IQ Flagged Shipments" datePreset={datePreset} onDatePresetChange={setDatePreset} />
-          <div className="px-2 md:px-4 lg:px-6">
-            <MissionControlPanels stats={diqStats} shipments={diqShipments} panelClassName="rounded-xl border border-border bg-card text-card-foreground shadow overflow-hidden flex flex-col" />
+          {/* Delivery IQ Flagged Shipments */}
+          <div className="flex flex-col gap-[11px]">
+            <SectionHeader title="Delivery IQ Flagged Shipments" datePreset={datePreset} onDatePresetChange={setDatePreset} />
+            <div className="px-2 md:px-4 lg:px-6">
+              {isDiqLoading || isClientLoading ? (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+                  {[1,2,3,4].map(i => (
+                    <div key={i} className="rounded-xl border border-border bg-card shadow overflow-hidden h-[200px] animate-pulse" />
+                  ))}
+                </div>
+              ) : (
+                <MissionControlPanels
+                  stats={diqStats}
+                  precomputedWatchBreakdown={diqWatchBreakdown}
+                  precomputedDaysSilent={diqDaysSilent}
+                  panelClassName="rounded-xl border border-border bg-card text-card-foreground shadow overflow-hidden flex flex-col"
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Order Volume */}
+          <div className="flex flex-col gap-[11px]">
+            <SectionHeader title="Order Volume" datePreset={datePreset} onDatePresetChange={setDatePreset} />
+            <div className="px-2 md:px-4 lg:px-6">
+              <ChartAreaInteractive
+                data={dailyVolume}
+                isLoading={isKpiLoading || isClientLoading}
+              />
+            </div>
           </div>
         </div>
-
-        {/* Order Volume */}
-        <div className="flex flex-col gap-[11px]">
-          <SectionHeader title="Order Volume" datePreset={datePreset} onDatePresetChange={setDatePreset} />
-          <div className="px-2 md:px-4 lg:px-6">
-            <ChartAreaInteractive
-              data={dailyVolume}
-              isLoading={false}
-            />
-          </div>
-        </div>
-      </div>
-    )}
         </div>
       </div>
     </>

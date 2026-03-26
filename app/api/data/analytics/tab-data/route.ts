@@ -490,10 +490,10 @@ export async function GET(request: NextRequest) {
     const byDate = s.by_date as any[]
 
     // Rolling average window size based on date range preset
-    const halfWindow = datePreset === '14d' ? 0
+    const halfWindow = (datePreset === '14d' || datePreset === 'mtd') ? 0
       : datePreset === '30d' ? 1
       : datePreset === '60d' ? 2
-      : 3 // 90d, 6mo, 1yr, all, custom
+      : 3 // 90d, 6mo, 1yr, ytd, all, custom
 
     // Cost trend with rolling average
     const rawCost = byDate
@@ -613,7 +613,10 @@ export async function GET(request: NextRequest) {
     // Daily order volume with growth % — uses purchase_date (not event_labeled)
     const byDateInRange = byDate.filter((r: any) => r.summary_date >= weekExtendedStart)
     const ov = orderVolumeResult.data || {}
-    const ovByDate: { purchase_day: string; order_count: number }[] = ov.by_date || []
+    // Trim dates before startDate — the RPC groups by local-timezone date, so a UTC March 1
+    // order can appear as Feb 28 in local time. Filter to the user's requested range.
+    const ovByDate: { purchase_day: string; order_count: number }[] = (ov.by_date || [])
+      .filter((r: any) => r.purchase_day >= startDate!)
     const dailyVolume = ovByDate.map((r: any, i: number) => ({
       date: r.purchase_day,
       orderCount: r.order_count,
@@ -1006,10 +1009,11 @@ export async function GET(request: NextRequest) {
     // ── Volume by FC (purchase_date-based) ──────────────────────────────────
     const ovTotal = ov.total || 0
     const ovByFC: { fc_name: string; order_count: number }[] = ov.by_fc || []
+    const fcTotal = ovByFC.reduce((sum: number, r: any) => sum + r.order_count, 0)
     const volumeByFC = ovByFC.map((r: any) => ({
       fcName: r.fc_name,
       orderCount: r.order_count,
-      percent: ovTotal > 0 ? (r.order_count / ovTotal) * 100 : 0,
+      percent: fcTotal > 0 ? (r.order_count / fcTotal) * 100 : 0,
     }))
 
     // ── Volume by Store (purchase_date-based) ────────────────────────────────
