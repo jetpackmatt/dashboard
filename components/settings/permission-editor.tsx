@@ -20,7 +20,7 @@ export function PermissionEditor({ permissions, onChange, disabled }: Permission
   const handleSectionToggle = (sectionKey: string, checked: boolean) => {
     const updated = { ...permissions }
     // Toggle top-level key
-    ;(updated as Record<string, boolean>)[sectionKey] = checked
+    ;(updated as unknown as Record<string, boolean>)[sectionKey] = checked
     // Toggle all children
     const section = PERMISSION_SECTIONS.find(s => s.key === sectionKey)
     if (section) {
@@ -42,7 +42,7 @@ export function PermissionEditor({ permissions, onChange, disabled }: Permission
       const anyChecked = section.children.some(c =>
         c.key === childKey ? checked : updated[c.key] !== false
       )
-      ;(updated as Record<string, boolean>)[sectionKey] = anyChecked
+      ;(updated as unknown as Record<string, boolean>)[sectionKey] = anyChecked
     }
     onChange(updated)
   }
@@ -50,7 +50,7 @@ export function PermissionEditor({ permissions, onChange, disabled }: Permission
   return (
     <div className="space-y-4">
       {PERMISSION_SECTIONS.map(section => {
-        const sectionChecked = (permissions as Record<string, boolean>)[section.key] !== false
+        const sectionChecked = (permissions as unknown as Record<string, boolean>)[section.key] !== false
         const childStates = section.children.map(c => permissions[c.key] !== false)
         const allChildrenChecked = childStates.every(Boolean)
         const someChildrenChecked = childStates.some(Boolean)

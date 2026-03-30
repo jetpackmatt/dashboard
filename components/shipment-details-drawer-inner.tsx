@@ -881,6 +881,15 @@ export default function ShipmentDetailsDrawerInner({
   const [editingNoteText, setEditingNoteText] = React.useState('')
   const [isDeletingNoteId, setIsDeletingNoteId] = React.useState<string | null>(null)
 
+  // Memoize filtered & sorted transactions (avoids re-sorting with Date parsing on every render)
+  const nonRefundTransactions = React.useMemo(
+    () => data?.transactions
+      .filter(tx => tx.transactionType !== "Refund")
+      .sort((a, b) => new Date(a.chargeDate).getTime() - new Date(b.chargeDate).getTime())
+      ?? [],
+    [data?.transactions]
+  )
+
   const handleCancelConfirm = async () => {
     if (!data) return
     setIsCancelling(true)
@@ -1955,10 +1964,10 @@ export default function ShipmentDetailsDrawerInner({
                         </div>
 
                         {/* Transaction Details Expandable (for reshipments, multiple charges) */}
-                        {data.transactions.filter(tx => tx.transactionType !== "Refund").length > 1 && (
+                        {nonRefundTransactions.length > 1 && (
                           <details className="group">
                             <summary className="px-4 py-2 cursor-pointer hover:bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
-                              <span>View {data.transactions.filter(tx => tx.transactionType !== "Refund").length} individual transactions</span>
+                              <span>View {nonRefundTransactions.length} individual transactions</span>
                               <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
                             </summary>
                             <div className="border-t border-border/30 bg-muted/10">
@@ -1967,10 +1976,7 @@ export default function ShipmentDetailsDrawerInner({
                                 <div className="col-span-5">Type</div>
                                 <div className="col-span-4 text-right">Amount</div>
                               </div>
-                              {data.transactions
-                                .filter(tx => tx.transactionType !== "Refund")
-                                .sort((a, b) => new Date(a.chargeDate).getTime() - new Date(b.chargeDate).getTime())
-                                .map((tx, idx) => (
+                              {nonRefundTransactions.map((tx, idx) => (
                                   <div key={tx.id} className="px-4 py-2 grid grid-cols-12 gap-2 text-xs hover:bg-muted/20">
                                     <div className="col-span-3 text-muted-foreground">
                                       {tx.chargeDate ? format(new Date(tx.chargeDate), 'MMM d, yyyy') : '-'}

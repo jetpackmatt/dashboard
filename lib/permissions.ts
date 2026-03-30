@@ -215,7 +215,7 @@ export function hasPermission(ctx: PermissionContext, key: string): boolean {
   // brand_team: check permissions object
   if (!ctx.permissions) return true // Defensive: null permissions = allow
 
-  const value = (ctx.permissions as Record<string, boolean>)[key]
+  const value = (ctx.permissions as unknown as Record<string, boolean>)[key]
   // Fail-open: unknown keys default to true (future-proof)
   return value !== false
 }

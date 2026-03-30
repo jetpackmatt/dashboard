@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
 
     // Get user details for each team member via auth admin API
     const members = await Promise.all(
-      teamRows.map(async (row) => {
+      teamRows.map(async (row: { user_id: string; role: string; permissions: Record<string, boolean> | null; created_at: string }) => {
         const { data: { user }, error: userError } = await admin.auth.admin.getUserById(row.user_id)
 
         if (userError || !user) {

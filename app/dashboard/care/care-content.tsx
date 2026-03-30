@@ -132,6 +132,20 @@ interface SortableHeaderProps {
   onClick?: () => void
 }
 
+// Format credit status timeline date (hoisted out of IIFE)
+function formatCreditStatusDate(events: Array<{ status: string; createdAt: string }> | undefined, status: string): string | null {
+  const statusEvent = events?.find(e => e.status === status)
+  if (!statusEvent) return null
+  const date = new Date(statusEvent.createdAt)
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  return status === 'Credit Approved'
+    ? `Approved on ${month}/${day}`
+    : status === 'Credit Denied'
+      ? `Denied on ${month}/${day}`
+      : `Requested on ${month}/${day}`
+}
+
 function SortableHeader({ columnId, children, className, onClick }: SortableHeaderProps) {
   const {
     attributes,
@@ -1714,21 +1728,7 @@ export default function CareContent() {
                                               </div>
                                               {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Denied') && (
                                                 <div className="text-[10px] text-muted-foreground mt-1 leading-tight">
-                                                  {(() => {
-                                                    // Find the event when the status was set
-                                                    const statusEvent = ticket.events?.find(e => e.status === ticket.status)
-                                                    if (statusEvent) {
-                                                      const date = new Date(statusEvent.createdAt)
-                                                      const month = date.getMonth() + 1
-                                                      const day = date.getDate()
-                                                      return ticket.status === 'Credit Approved'
-                                                        ? `Approved on ${month}/${day}`
-                                                        : ticket.status === 'Credit Denied'
-                                                          ? `Denied on ${month}/${day}`
-                                                          : `Requested on ${month}/${day}`
-                                                    }
-                                                    return null
-                                                  })()}
+                                                  {formatCreditStatusDate(ticket.events, ticket.status)}
                                                 </div>
                                               )}
                                             </div>

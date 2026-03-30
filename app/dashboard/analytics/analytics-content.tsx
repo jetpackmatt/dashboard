@@ -95,6 +95,14 @@ function parseLocalDate(dateStr: string): Date {
   return new Date(dateStr.length === 10 ? dateStr + 'T00:00:00' : dateStr)
 }
 
+// Shared x-axis interval calculation to avoid tick crowding
+function getXAxisInterval(dataLength: number): number {
+  if (dataLength <= 7) return 0
+  if (dataLength <= 30) return Math.floor(dataLength / 6)
+  if (dataLength <= 90) return Math.floor(dataLength / 5)
+  return Math.floor(dataLength / 8)
+}
+
 const ANALYTICS_TABS = [
   { value: "state-performance", label: "Performance" },
   { value: "cost-speed", label: "Shipping Cost + Speed" },
@@ -119,6 +127,25 @@ const DATE_RANGE_PRESETS = [
 
 // Per-chart date presets (no custom — custom requires a date picker which is page-level only)
 const CHART_DATE_PRESETS = DATE_RANGE_PRESETS.filter(p => p.value !== 'custom')
+
+// Column color tinting — pure function for HSL cell backgrounds
+const tintFn = (h: number, s: number, l: number, max: number) =>
+  (v: number) => v <= 0 ? 'transparent' : `hsla(${h}, ${s}%, ${l}%, ${(0.04 + (v / (max || 1)) * 0.13).toFixed(2)})`
+
+// Currency formatter (hoisted to avoid recreation)
+const fmtCurrency = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+// Cost distribution chart colors (hoisted to avoid recreation)
+const COST_DIST_COLORS = [
+  'hsl(203, 61%, 50%)',   // Jetpack blue
+  'hsl(203, 45%, 65%)',   // Lighter blue
+  'hsl(32, 85%, 55%)',    // Warm amber
+  'hsl(142, 50%, 45%)',   // Green
+  'hsl(346, 65%, 55%)',   // Rose
+  'hsl(262, 50%, 55%)',   // Purple
+  'hsl(203, 30%, 72%)',   // Muted blue
+  'hsl(18, 70%, 55%)',    // Coral
+]
 
 // Fully independent per-chart date range AND country hook.
 // Each chart owns its own preset and country. On initial load it matches the page
@@ -1431,18 +1458,7 @@ export default function AnalyticsContent() {
                     <CardContent className="pt-4">
                       {(() => {
                         const categories = costDistChart.data as BillingCategoryBreakdown[]
-                        const colors = [
-                          'hsl(203, 61%, 50%)',   // Jetpack blue
-                          'hsl(203, 45%, 65%)',   // Lighter blue
-                          'hsl(32, 85%, 55%)',    // Warm amber
-                          'hsl(142, 50%, 45%)',   // Green
-                          'hsl(346, 65%, 55%)',   // Rose
-                          'hsl(262, 50%, 55%)',   // Purple
-                          'hsl(203, 30%, 72%)',   // Muted blue
-                          'hsl(18, 70%, 55%)',    // Coral
-                        ]
                         const positiveCategories = categories.filter(c => c.amount > 0)
-                        const negativeCategories = categories.filter(c => c.amount < 0)
                         const positiveTotal = positiveCategories.reduce((s, c) => s + c.amount, 0)
 
                         return (
@@ -1466,7 +1482,7 @@ export default function AnalyticsContent() {
                                     className="h-full transition-all"
                                     style={{
                                       width: `${widthPct}%`,
-                                      backgroundColor: colors[originalIdx] || colors[idx % colors.length],
+                                      backgroundColor: COST_DIST_COLORS[originalIdx] || COST_DIST_COLORS[idx % COST_DIST_COLORS.length],
                                       opacity: 0.85,
                                     }}
                                   />
@@ -1482,7 +1498,7 @@ export default function AnalyticsContent() {
                                   <div key={cat.category} className="flex items-center gap-2.5">
                                     <span
                                       className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                                      style={{ backgroundColor: colors[idx % colors.length] }}
+                                      style={{ backgroundColor: COST_DIST_COLORS[idx % COST_DIST_COLORS.length] }}
                                     />
                                     <span className="text-xs flex-1 truncate">{cat.category}</span>
                                     <span className={`text-xs font-medium tabular-nums text-right ${isNegative ? 'text-green-600' : ''}`}>
@@ -1513,18 +1529,16 @@ export default function AnalyticsContent() {
                       <ChartSelectors chart={pickPackChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
                     </div>
                     <CardContent className="flex-1 flex flex-col">
-                      {(() => {
-                        const ppData = (pickPackChart.data as PickPackDistribution[]) || []
-                        return (
                       <ChartContainer
                         config={{
                           orderCount: { label: "Orders", color: "hsl(var(--chart-1))" },
                         }}
                         className="w-full flex-1 min-h-[280px]"
                       >
-                        <BarChart data={ppData} margin={{ top: 10, right: 0, left: 0, bottom: 17 }}>
+                        <BarChart data={(pickPackChart.data as PickPackDistribution[]) || []} margin={{ top: 10, right: 0, left: 0, bottom: 17 }}>
                           <XAxis type="category" dataKey="itemCount" tickLine={false} axisLine={false} fontSize={11} tick={(tickProps: any) => {
                             const { x, y, payload } = tickProps
+                            const ppData = (pickPackChart.data as PickPackDistribution[]) || []
                             const pp = ppData.find(d => d.itemCount === payload.value)
                             if (!pp) return <g />
                             return (
@@ -1540,15 +1554,13 @@ export default function AnalyticsContent() {
                             content={<ChartTooltipContent indicator="dot" />}
                           />
                           <Bar dataKey="orderCount" radius={[4, 4, 0, 0]} barSize={48}>
-                            {ppData.map((_, i) => (
-                              <Cell key={i} fill={`hsl(217, 72%, ${42 + i * (30 / Math.max(ppData.length - 1, 1))}%)`} />
+                            {((pickPackChart.data as PickPackDistribution[]) || []).map((_, i, arr) => (
+                              <Cell key={i} fill={`hsl(217, 72%, ${42 + i * (30 / Math.max(arr.length - 1, 1))}%)`} />
                             ))}
                             <LabelList dataKey="orderCount" position="top" fontSize={11} fontWeight={500} className="fill-muted-foreground" style={{ fontVariantNumeric: 'tabular-nums' }} formatter={(v: number) => v.toLocaleString()} />
                           </Bar>
                         </BarChart>
                       </ChartContainer>
-                        )
-                      })()}
                     </CardContent>
                   </Card>
 
@@ -1704,26 +1716,22 @@ export default function AnalyticsContent() {
                     {(() => {
                       const feeData = [...(feeBreakdownChart.data as MonthlyBillingTrend[])].reverse()
 
-                      // Column color tinting — matches stacked area chart colors
-                      const tint = (h: number, s: number, l: number, max: number) =>
-                        (v: number) => v <= 0 ? 'transparent' : `hsla(${h}, ${s}%, ${l}%, ${(0.04 + (v / (max || 1)) * 0.13).toFixed(2)})`
-
                       const t = {
-                        orders:      tint(224, 60, 55, Math.max(...feeData.map(m => m.orderCount), 1)),
-                        shipping:    tint(215, 65, 55, Math.max(...feeData.map(m => m.shipping), 1)),
-                        surcharges:  tint(200, 50, 45, Math.max(...feeData.map(m => m.surcharges), 1)),
-                        extraPicks:  tint(25, 85, 55, Math.max(...feeData.map(m => m.extraPicks), 1)),
-                        warehousing: tint(260, 55, 58, Math.max(...feeData.map(m => m.warehousing), 1)),
-                        multiHubIQ:  tint(45, 80, 50, Math.max(...feeData.map(m => m.multiHubIQ), 1)),
-                        b2b:         tint(340, 70, 55, Math.max(...feeData.map(m => m.b2b), 1)),
-                        vasKitting:  tint(280, 60, 55, Math.max(...feeData.map(m => m.vasKitting), 1)),
-                        receiving:   tint(160, 55, 42, Math.max(...feeData.map(m => m.receiving), 1)),
-                        returns:     tint(0, 65, 52, Math.max(...feeData.map(m => m.returns), 1)),
-                        dutyTax:     tint(195, 60, 40, Math.max(...feeData.map(m => m.dutyTax), 1)),
-                        other:       tint(90, 45, 45, Math.max(...feeData.map(m => m.other), 1)),
-                        credit:      tint(142, 55, 42, Math.max(...feeData.map(m => Math.abs(m.credit)), 1)),
-                        total:       tint(220, 15, 50, Math.max(...feeData.map(m => m.total), 1)),
-                        cpo:         tint(220, 15, 50, Math.max(...feeData.map(m => m.costPerOrder), 1)),
+                        orders:      tintFn(224, 60, 55, Math.max(...feeData.map(m => m.orderCount), 1)),
+                        shipping:    tintFn(215, 65, 55, Math.max(...feeData.map(m => m.shipping), 1)),
+                        surcharges:  tintFn(200, 50, 45, Math.max(...feeData.map(m => m.surcharges), 1)),
+                        extraPicks:  tintFn(25, 85, 55, Math.max(...feeData.map(m => m.extraPicks), 1)),
+                        warehousing: tintFn(260, 55, 58, Math.max(...feeData.map(m => m.warehousing), 1)),
+                        multiHubIQ:  tintFn(45, 80, 50, Math.max(...feeData.map(m => m.multiHubIQ), 1)),
+                        b2b:         tintFn(340, 70, 55, Math.max(...feeData.map(m => m.b2b), 1)),
+                        vasKitting:  tintFn(280, 60, 55, Math.max(...feeData.map(m => m.vasKitting), 1)),
+                        receiving:   tintFn(160, 55, 42, Math.max(...feeData.map(m => m.receiving), 1)),
+                        returns:     tintFn(0, 65, 52, Math.max(...feeData.map(m => m.returns), 1)),
+                        dutyTax:     tintFn(195, 60, 40, Math.max(...feeData.map(m => m.dutyTax), 1)),
+                        other:       tintFn(90, 45, 45, Math.max(...feeData.map(m => m.other), 1)),
+                        credit:      tintFn(142, 55, 42, Math.max(...feeData.map(m => Math.abs(m.credit)), 1)),
+                        total:       tintFn(220, 15, 50, Math.max(...feeData.map(m => m.total), 1)),
+                        cpo:         tintFn(220, 15, 50, Math.max(...feeData.map(m => m.costPerOrder), 1)),
                       }
 
                       // Totals for footer
@@ -1744,8 +1752,6 @@ export default function AnalyticsContent() {
                         total: feeData.reduce((s, m) => s + m.total, 0),
                       }
                       const totalCpo = totals.orders > 0 ? totals.total / totals.orders : 0
-
-                      const fmt = (v: number) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
                       return (
                     <div className="rounded-md border overflow-hidden">
@@ -1776,21 +1782,21 @@ export default function AnalyticsContent() {
                               <tr key={month.month} className={cn("border-b", idx % 2 === 0 ? "bg-background" : "bg-muted/20")}>
                                 <td className="px-2 py-1.5 font-medium whitespace-nowrap">{month.monthLabel}</td>
                                 <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.orders(month.orderCount) }}>{month.orderCount.toLocaleString()}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.shipping(month.shipping) }}>{fmt(month.shipping)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.surcharges(month.surcharges) }}>{fmt(month.surcharges)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.extraPicks(month.extraPicks) }}>{fmt(month.extraPicks)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.warehousing(month.warehousing) }}>{fmt(month.warehousing)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.multiHubIQ(month.multiHubIQ) }}>{fmt(month.multiHubIQ)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.b2b(month.b2b) }}>{fmt(month.b2b)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.vasKitting(month.vasKitting) }}>{fmt(month.vasKitting)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.receiving(month.receiving) }}>{fmt(month.receiving)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.returns(month.returns) }}>{fmt(month.returns)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.dutyTax(month.dutyTax) }}>{fmt(month.dutyTax)}</td>
-                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.other(month.other) }}>{fmt(month.other)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.shipping(month.shipping) }}>{fmtCurrency(month.shipping)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.surcharges(month.surcharges) }}>{fmtCurrency(month.surcharges)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.extraPicks(month.extraPicks) }}>{fmtCurrency(month.extraPicks)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.warehousing(month.warehousing) }}>{fmtCurrency(month.warehousing)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.multiHubIQ(month.multiHubIQ) }}>{fmtCurrency(month.multiHubIQ)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.b2b(month.b2b) }}>{fmtCurrency(month.b2b)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.vasKitting(month.vasKitting) }}>{fmtCurrency(month.vasKitting)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.receiving(month.receiving) }}>{fmtCurrency(month.receiving)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.returns(month.returns) }}>{fmtCurrency(month.returns)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.dutyTax(month.dutyTax) }}>{fmtCurrency(month.dutyTax)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums" style={{ backgroundColor: t.other(month.other) }}>{fmtCurrency(month.other)}</td>
                                 <td className="px-2 py-1.5 text-right tabular-nums text-green-600" style={{ backgroundColor: t.credit(Math.abs(month.credit)) }}>
-                                  {fmt(month.credit)}
+                                  {fmtCurrency(month.credit)}
                                 </td>
-                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ backgroundColor: t.total(month.total) }}>{fmt(month.total)}</td>
+                                <td className="px-2 py-1.5 text-right tabular-nums font-semibold" style={{ backgroundColor: t.total(month.total) }}>{fmtCurrency(month.total)}</td>
                                 <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" style={{ backgroundColor: t.cpo(month.costPerOrder) }}>${month.costPerOrder.toFixed(2)}</td>
                               </tr>
                             ))}
@@ -1799,19 +1805,19 @@ export default function AnalyticsContent() {
                             <tr className="bg-muted/60 font-semibold">
                               <td className="px-2 py-1.5">Total</td>
                               <td className="px-2 py-1.5 text-right tabular-nums">{totals.orders.toLocaleString()}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.shipping)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.surcharges)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.extraPicks)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.warehousing)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.multiHubIQ)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.b2b)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.vasKitting)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.receiving)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.returns)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.dutyTax)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.other)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-green-600">{fmt(totals.credit)}</td>
-                              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(totals.total)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.shipping)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.surcharges)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.extraPicks)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.warehousing)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.multiHubIQ)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.b2b)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.vasKitting)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.receiving)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.returns)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.dutyTax)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.other)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-green-600">{fmtCurrency(totals.credit)}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">{fmtCurrency(totals.total)}</td>
                               <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">${totalCpo.toFixed(2)}</td>
                             </tr>
                           </tfoot>
@@ -2457,14 +2463,7 @@ export default function AnalyticsContent() {
                           dataKey="date"
                           tickLine={false}
                           axisLine={false}
-                          interval={(() => {
-                            const chartData = dailyVolumeChart.data as DailyOrderVolume[]
-                            const dataLength = chartData.length
-                            if (dataLength <= 7) return 0
-                            if (dataLength <= 30) return Math.floor(dataLength / 6)
-                            if (dataLength <= 90) return Math.floor(dataLength / 5)
-                            return Math.floor(dataLength / 8)
-                          })()}
+                          interval={getXAxisInterval((dailyVolumeChart.data as DailyOrderVolume[]).length)}
                           tickFormatter={(value) => {
                             const date = parseLocalDate(value)
                             const chartData = dailyVolumeChart.data as DailyOrderVolume[]
@@ -3344,13 +3343,7 @@ export default function AnalyticsContent() {
                             dataKey="date"
                             tickLine={false}
                             axisLine={false}
-                            interval={(() => {
-                              const dataLength = (fulfillTrendChart.data as FulfillmentTrendData[]).length
-                              if (dataLength <= 7) return 0
-                              if (dataLength <= 30) return Math.floor(dataLength / 6)
-                              if (dataLength <= 90) return Math.floor(dataLength / 5)
-                              return Math.floor(dataLength / 8)
-                            })()}
+                            interval={getXAxisInterval((fulfillTrendChart.data as FulfillmentTrendData[]).length)}
                             tickFormatter={(value) => {
                               const date = parseLocalDate(value)
                               const dataLength = (fulfillTrendChart.data as FulfillmentTrendData[]).length
@@ -3554,29 +3547,22 @@ export default function AnalyticsContent() {
                           )}
                         </div>
                       </div>
-                      {(() => {
-                        const dataDays = analyticsData?.countryDataDays?.[perfCountry] ?? 999
-                        if (perfCountry !== 'US' && dataDays < 10) {
-                          const countryName = perfCountry === 'CA' ? 'Canada' : perfCountry === 'AU' ? 'Australia' : perfCountry
-                          return (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="text-sm font-medium text-muted-foreground mb-2">Not Enough Data Yet</div>
-                              <div className="text-xs text-muted-foreground max-w-sm">
-                                {countryName} has only {dataDays} {dataDays === 1 ? 'day' : 'days'} of shipping data in this period.
-                                At least 10 days of data is needed for meaningful performance metrics.
-                              </div>
-                            </div>
-                          )
-                        }
-                        return (
-                          <PerformanceMap
-                            key={perfCountry}
-                            config={COUNTRY_CONFIGS[perfCountry]}
-                            regionData={statePerformance}
-                            onRegionSelect={setSelectedState}
-                          />
-                        )
-                      })()}
+                      {perfCountry !== 'US' && (analyticsData?.countryDataDays?.[perfCountry] ?? 999) < 10 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                          <div className="text-sm font-medium text-muted-foreground mb-2">Not Enough Data Yet</div>
+                          <div className="text-xs text-muted-foreground max-w-sm">
+                            {perfCountry === 'CA' ? 'Canada' : perfCountry === 'AU' ? 'Australia' : perfCountry} has only {analyticsData?.countryDataDays?.[perfCountry] ?? 999} {(analyticsData?.countryDataDays?.[perfCountry] ?? 999) === 1 ? 'day' : 'days'} of shipping data in this period.
+                            At least 10 days of data is needed for meaningful performance metrics.
+                          </div>
+                        </div>
+                      ) : (
+                        <PerformanceMap
+                          key={perfCountry}
+                          config={COUNTRY_CONFIGS[perfCountry]}
+                          regionData={statePerformance}
+                          onRegionSelect={setSelectedState}
+                        />
+                      )}
                     </div>
 
                     {/* Details panel - 1 column, border-left divider */}

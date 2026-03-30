@@ -549,7 +549,7 @@ export function SettingsContent() {
       setInviteFullName('')
       setInviteClientId('')
       setInviteUserType('brand_user')
-      setInviteBrandRole('viewer')
+      setInviteBrandRole('brand_team')
       await fetchUsers()
 
       // Close dialog after a delay
