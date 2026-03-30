@@ -21,6 +21,7 @@ import {
   type TrackingResult,
 } from './client'
 import { storeCheckpoints } from './checkpoint-storage'
+import { calculateEligibleAfterDate } from '@/lib/claims/eligibility'
 
 // Thresholds for Lost in Transit eligibility (minimum days before filing)
 export const LOST_IN_TRANSIT_DOMESTIC_DAYS = 15
@@ -329,23 +330,22 @@ export function calculateEligibility(
     )
 
     // Use label date for estimated eligibility date, but status is at_risk (not eligible)
-    const eligibleAfterDate = new Date(labelDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
+    const eligibleAfterStr = calculateEligibleAfterDate(labelDate, requiredDays)
 
     return {
       ...baseResult,
       status: 'at_risk', // Never 'eligible' without checkpoint data
       daysSinceLastScan: daysSinceLabel,
       daysRemaining: Math.max(0, requiredDays - daysSinceLabel),
-      eligibleAfter: eligibleAfterDate,
+      eligibleAfter: new Date(eligibleAfterStr + 'T00:00:00Z'),
       lastScanDescription: tracking.latest_event || 'Awaiting carrier scan data',
       trackingMoreId: tracking.id,
     }
   }
 
-  // Calculate eligibility based on last checkpoint
-  const eligibleAfterDate = new Date(
-    lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000
-  )
+  // Calculate eligibility based on last checkpoint (calendar day addition — matches claim flow)
+  const eligibleAfterStr = calculateEligibleAfterDate(lastCheckpointDate, requiredDays)
+  const eligibleAfterDate = new Date(eligibleAfterStr + 'T00:00:00Z')
 
   // Get checkpoint details
   const checkpoints = [

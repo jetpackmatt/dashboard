@@ -56,6 +56,10 @@ export async function GET(request: NextRequest) {
     const access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
     isAdmin = access.isAdmin
+    // Delivery IQ is admin/care only at launch
+    if (!access.isAdmin && !access.isCareUser) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
   } catch (error) {
     return handleAccessError(error)
   }
@@ -90,7 +94,7 @@ export async function GET(request: NextRequest) {
         .not('reference_id', 'is', null)
         .limit(1000)
 
-      misfitShipmentIds = [...new Set((misfitCredits || []).map((t: { reference_id: string }) => t.reference_id).filter(Boolean))]
+      misfitShipmentIds = [...new Set((misfitCredits || []).map((t: { reference_id: string }) => t.reference_id).filter(Boolean))] as string[]
     }
 
     // Build query - daysSilent is calculated from last_scan_date on the client
@@ -227,16 +231,16 @@ export async function GET(request: NextRequest) {
 
     // Get shipment data for ship dates + order IDs (for customer name lookup)
     const shipmentIds = (checks as LostInTransitCheck[] || []).map((c: LostInTransitCheck) => c.shipment_id).filter(Boolean)
-    let shipmentMap: Map<string, { eventLabeled: string; shipbobOrderId: string | null }> = new Map()
+    let shipmentMap: Map<string, { eventLabeled: string; shipbobOrderId: string | null; reshipmentId: string | null }> = new Map()
     if (shipmentIds.length > 0) {
       const { data: shipments } = await supabase
         .from('shipments')
-        .select('shipment_id, event_labeled, shipbob_order_id')
+        .select('shipment_id, event_labeled, shipbob_order_id, reshipment_id')
         .in('shipment_id', shipmentIds)
 
       if (shipments) {
         for (const s of shipments) {
-          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled, shipbobOrderId: s.shipbob_order_id })
+          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled, shipbobOrderId: s.shipbob_order_id, reshipmentId: s.reshipment_id })
         }
       }
     }
@@ -310,6 +314,7 @@ export async function GET(request: NextRequest) {
       firstCarrierScanAt: check.first_carrier_scan_at,
       stuckAtFacility: check.stuck_at_facility,
       stuckDurationDays: check.stuck_duration_days,
+      reshipmentId: shipmentMap.get(check.shipment_id)?.reshipmentId || null,
     }))
 
     return NextResponse.json({

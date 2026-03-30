@@ -11,6 +11,8 @@ import {
 import { isDelivered, daysSinceLastCheckpoint, getLastCheckpointDate, type TrackingMoreTracking } from '@/lib/trackingmore/client'
 import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { evaluateMovement, classifyWatchReason, getNextCheckInterval, type WatchReason } from '@/lib/ai/client'
+import { calculateEligibleAfterDate } from '@/lib/claims/eligibility'
+import { detectReshipments } from '@/lib/claims/detect-reshipments'
 
 // Patterns that indicate the carrier has admitted the package is lost
 // These should trigger immediate promotion to "eligible" (Ready to File)
@@ -114,8 +116,12 @@ export async function GET(request: NextRequest) {
     missedWindow: 0,
     stillAtRisk: 0,
     stillEligible: 0,
+    reshipmentsDetected: 0,
     errors: [] as string[],
   }
+
+  // Track shipments classified as NO SCANS for post-loop reshipment detection
+  const noScanShipmentIds: string[] = []
 
   try {
     // Get all shipments currently marked as at_risk OR eligible (need to check both for missed windows)
@@ -325,9 +331,9 @@ export async function GET(request: NextRequest) {
                 raw_status: cp.raw_status,
               }))
 
-              // Calculate new eligible_after based on fresh checkpoint
+              // Calculate new eligible_after based on fresh checkpoint (calendar day addition)
               const newEligibleAfter = lastCheckpointDate
-                ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
+                ? calculateEligibleAfterDate(lastCheckpointDate, requiredDays)
                 : null
 
               if (storedCheckpoints.length >= 2) {
@@ -349,7 +355,7 @@ export async function GET(request: NextRequest) {
                     last_recheck_at: new Date().toISOString(),
                     last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
                     last_scan_description: trackingResult.tracking.latest_event || null,
-                    eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+                    eligible_after: newEligibleAfter || check.eligible_after,
                     watch_reason: movementEval.watchReason,
                     ai_next_check_at: new Date(Date.now() + getNextCheckInterval(movementEval.watchReason)).toISOString(),
                   })
@@ -370,7 +376,7 @@ export async function GET(request: NextRequest) {
                   last_recheck_at: new Date().toISOString(),
                   last_scan_date: lastCheckpointDate?.toISOString() || check.last_scan_date,
                   last_scan_description: trackingResult.tracking.latest_event || null,
-                  eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+                  eligible_after: newEligibleAfter || check.eligible_after,
                 })
                 .eq('id', check.id)
                 .eq('claim_eligibility_status', 'eligible')
@@ -463,6 +469,7 @@ export async function GET(request: NextRequest) {
               .eq('id', check.id)
 
             results.stillAtRisk++
+            noScanShipmentIds.push(check.shipment_id)
             console.log(`[At-Risk Recheck] ${check.shipment_id} watch_reason=NO SCANS (tracking unavailable)`)
           }
 
@@ -608,11 +615,15 @@ export async function GET(request: NextRequest) {
             console.log(`[At-Risk Recheck] ${check.shipment_id} has existing claim - marked as claim_filed`)
             results.stillAtRisk++ // Count as handled
           } else {
-            // Now eligible!
+            // Now eligible! Update eligible_after so claim flow cache check is consistent
+            const eligibleAfterNow = lastCheckpointDate
+              ? calculateEligibleAfterDate(lastCheckpointDate, requiredDays)
+              : new Date().toISOString().split('T')[0]
             const { error: updateError } = await supabase
               .from('lost_in_transit_checks')
               .update({
                 claim_eligibility_status: 'eligible',
+                eligible_after: eligibleAfterNow,
                 last_recheck_at: new Date().toISOString(),
                 last_scan_date: lastCheckpointDate?.toISOString() || null,
                 last_scan_description: tracking.latest_event || null,
@@ -652,7 +663,7 @@ export async function GET(request: NextRequest) {
 
           // Not genuine movement — update metadata with watch reason
           const newEligibleAfter = lastCheckpointDate
-            ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
+            ? calculateEligibleAfterDate(lastCheckpointDate, requiredDays)
             : null
 
           await supabase
@@ -661,7 +672,7 @@ export async function GET(request: NextRequest) {
               last_recheck_at: new Date().toISOString(),
               last_scan_date: lastCheckpointDate?.toISOString() || null,
               last_scan_description: tracking.latest_event || null,
-              eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+              eligible_after: newEligibleAfter || check.eligible_after,
               watch_reason: watchReason,
               ai_next_check_at: new Date(Date.now() + getNextCheckInterval(watchReason)).toISOString(),
             })
@@ -673,7 +684,7 @@ export async function GET(request: NextRequest) {
           // 8+ days silent but below eligibility threshold — classify and update
           const daysRemaining = daysSince !== null ? requiredDays - daysSince : null
           const newEligibleAfter = lastCheckpointDate
-            ? new Date(lastCheckpointDate.getTime() + requiredDays * 24 * 60 * 60 * 1000)
+            ? calculateEligibleAfterDate(lastCheckpointDate, requiredDays)
             : null
 
           // Classify watch reason using stored checkpoints
@@ -692,7 +703,7 @@ export async function GET(request: NextRequest) {
               last_recheck_at: new Date().toISOString(),
               last_scan_date: lastCheckpointDate?.toISOString() || null,
               last_scan_description: tracking.latest_event || null,
-              eligible_after: newEligibleAfter?.toISOString().split('T')[0] || check.eligible_after,
+              eligible_after: newEligibleAfter || check.eligible_after,
               watch_reason: classification.watchReason,
               ai_next_check_at: new Date(Date.now() + getNextCheckInterval(classification.watchReason)).toISOString(),
             })
@@ -708,6 +719,59 @@ export async function GET(request: NextRequest) {
         console.error(`[At-Risk Recheck] Error checking ${check.shipment_id}:`, e)
         results.errors.push(`${check.shipment_id}: ${errorMsg}`)
         await new Promise(r => setTimeout(r, API_DELAY_MS))
+      }
+    }
+
+    // ── Reshipment detection for ALL NO SCANS shipments without reshipment_id ──
+    // Query directly from DB rather than relying on the loop above,
+    // because most NO SCANS shipments are 'eligible' and take different code paths.
+    {
+      const { data: noScansForDetection } = await supabase
+        .from('lost_in_transit_checks')
+        .select('shipment_id')
+        .eq('watch_reason', 'NO SCANS')
+        .in('claim_eligibility_status', ['at_risk', 'eligible'])
+
+      // Filter to only those without reshipment_id already set
+      let detectIds: string[] = []
+      if (noScansForDetection && noScansForDetection.length > 0) {
+        const candidateIds = noScansForDetection.map(s => s.shipment_id)
+        const { data: withoutReship } = await supabase
+          .from('shipments')
+          .select('shipment_id')
+          .in('shipment_id', candidateIds)
+          .is('reshipment_id', null)
+        detectIds = (withoutReship || []).map(s => s.shipment_id)
+      }
+
+      if (detectIds.length > 0) {
+      try {
+        console.log(`[At-Risk Recheck] Running reshipment detection for ${detectIds.length} NO SCANS shipments...`)
+        const reshipmentMatches = await detectReshipments(detectIds)
+
+        for (const [originalId, match] of reshipmentMatches) {
+          // Update shipments.reshipment_id — don't overwrite if already set
+          const { error: updateError } = await supabase
+            .from('shipments')
+            .update({
+              reshipment_id: match.replacementShipmentId,
+              reshipment_date: new Date().toISOString(),
+            })
+            .eq('shipment_id', originalId)
+            .is('reshipment_id', null)
+
+          if (!updateError) {
+            results.reshipmentsDetected++
+            console.log(`[At-Risk Recheck] ${originalId} RESHIPMENT DETECTED (${match.matchType}) → replacement: ${match.replacementShipmentId}${match.timeDeltaMinutes !== undefined ? ` (${match.timeDeltaMinutes}min apart)` : ''}${match.timeDeltaDays !== undefined ? ` (${match.timeDeltaDays}d later)` : ''}`)
+          }
+        }
+
+        if (reshipmentMatches.size > 0) {
+          console.log(`[At-Risk Recheck] Reshipment detection: ${reshipmentMatches.size} matches found, ${results.reshipmentsDetected} updated`)
+        }
+      } catch (e) {
+        console.error('[At-Risk Recheck] Reshipment detection error:', e)
+      }
       }
     }
 
@@ -770,7 +834,7 @@ export async function GET(request: NextRequest) {
 
     const duration = Date.now() - startTime
     console.log(`[At-Risk Recheck] Completed in ${duration}ms`)
-    console.log(`[At-Risk Recheck] Summary: ${results.nowEligible} now eligible (${results.nowEligibleLostStatus} due to lost status), ${results.nowDelivered} delivered, ${results.missedWindow} missed window, ${results.stillAtRisk} still at risk, ${results.stillEligible} still eligible`)
+    console.log(`[At-Risk Recheck] Summary: ${results.nowEligible} now eligible (${results.nowEligibleLostStatus} due to lost status), ${results.nowDelivered} delivered, ${results.missedWindow} missed window, ${results.stillAtRisk} still at risk, ${results.stillEligible} still eligible, ${results.reshipmentsDetected} reshipments detected`)
 
     return NextResponse.json({
       success: true,

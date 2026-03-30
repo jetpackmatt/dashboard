@@ -38,7 +38,7 @@ export async function GET() {
     const admin = createAdminClient()
     const { data: userClientRows, error } = await admin
       .from('user_clients')
-      .select('client_id, role, clients(company_name, merchant_id, eshipper_id, gofo_id, short_code)')
+      .select('client_id, role, permissions, clients(company_name, merchant_id, eshipper_id, gofo_id, short_code)')
       .eq('user_id', user.id)
 
     if (error) {
@@ -62,6 +62,8 @@ export async function GET() {
       isAdmin: false,
       isCareUser: false,
       userRole: undefined,
+      brandRole: (userClientRows as any)?.[0]?.role || null,
+      permissions: (userClientRows as any)?.[0]?.permissions || null,
     })
   } catch (error) {
     console.error('Error fetching clients:', error)

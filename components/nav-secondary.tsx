@@ -48,7 +48,7 @@ export function NavSecondary({
                 </SidebarMenuButton>
               ) : (
                 <SidebarMenuButton asChild>
-                  <Link href={item.url} prefetch={false}>
+                  <Link href={item.url} prefetch={true}>
                     <item.icon />
                     <span>{item.title}</span>
                   </Link>

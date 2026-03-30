@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useClient } from "@/components/client-context"
 import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
+import { NAV_PERMISSION_MAP, TRANSACTION_TAB_PERMISSIONS, ANALYTICS_TAB_PERMISSIONS } from "@/lib/permissions"
 
 // Base nav items visible to all users
 const baseNavItems = [
@@ -103,7 +104,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
-  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin } = useClient()
+  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, isBrandUser, hasPermission } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [hasCommission, setHasCommission] = React.useState(false)
   const [mounted, setMounted] = React.useState(false)
@@ -185,6 +186,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   let allNavItems = [...baseNavItems]
 
   if (mounted) {
+    // Hide Delivery IQ from all brand users (admin/care only until launch)
+    if (!effectiveIsAdmin && !effectiveIsCareUser) {
+      allNavItems = allNavItems.filter(item => item.url !== '/dashboard/deliveryiq')
+    }
+
     // Add Misfits between Invoices and Jetpack Care (admin + care admin only)
     if (effectiveIsAdmin || effectiveIsCareAdmin) {
       const careIndex = allNavItems.findIndex(item => item.url === '/dashboard/care')
@@ -210,14 +216,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
   }
 
-  // Dynamically set isActive based on current pathname
-  const navMainWithActive = allNavItems.map((item) => ({
-    ...item,
-    isActive: item.url === '/dashboard'
-      ? pathname === '/dashboard'
-      : pathname === item.url || pathname.startsWith(item.url + '/'),
-  }))
-
   // Build navSecondary items with onClick handler for Submit a Claim
   const navSecondaryItems = [
     {
@@ -238,6 +236,55 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       external: true,
     },
   ]
+
+  // Filter nav items by brand user permissions
+  if (mounted && isBrandUser) {
+    allNavItems = allNavItems.filter(item => {
+      const permKey = NAV_PERMISSION_MAP[item.url]
+      if (permKey && !hasPermission(permKey)) return false
+      return true
+    })
+
+    // Filter sub-items (transaction tabs, analytics tabs)
+    allNavItems = allNavItems.map(item => {
+      if (!item.items) return item
+
+      const tabPerms = item.url === '/dashboard/transactions'
+        ? TRANSACTION_TAB_PERMISSIONS
+        : item.url === '/dashboard/analytics'
+          ? ANALYTICS_TAB_PERMISSIONS
+          : null
+
+      if (!tabPerms) return item
+
+      const filteredItems = item.items.filter(sub => {
+        const subPerm = tabPerms[sub.value]
+        return !subPerm || hasPermission(subPerm)
+      })
+
+      // If all sub-items filtered out, hide the section entirely
+      if (filteredItems.length === 0) return null
+
+      return { ...item, items: filteredItems }
+    }).filter(Boolean) as typeof allNavItems
+  }
+
+  // Filter secondary nav items by permissions
+  // Hide "Submit a Claim" if brand user lacks care.submit_claims
+  const filteredSecondaryItems = mounted && isBrandUser
+    ? navSecondaryItems.filter(item => {
+        if (item.title === 'Submit a Claim' && !hasPermission('care.submit_claims')) return false
+        return true
+      })
+    : navSecondaryItems
+
+  // Dynamically set isActive based on current pathname
+  const navMainWithActive = allNavItems.map((item) => ({
+    ...item,
+    isActive: item.url === '/dashboard'
+      ? pathname === '/dashboard'
+      : pathname === item.url || pathname.startsWith(item.url + '/'),
+  }))
 
   return (
     <>
@@ -265,7 +312,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarContent>
           <NavMain items={navMainWithActive} />
           {data.documents.length > 0 && <NavDocuments items={data.documents} />}
-          <NavSecondary items={navSecondaryItems} className="mt-auto" />
+          <NavSecondary items={filteredSecondaryItems} className="mt-auto" />
         </SidebarContent>
         <SidebarFooter>
           <NavUser user={userData} />

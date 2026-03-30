@@ -222,6 +222,24 @@ function calculateDeliveryRequiredEligibility(
 }
 
 /**
+ * Calculate the eligible_after date using calendar day addition.
+ *
+ * This is the canonical method — matches the claim submission flow
+ * (verify-lost-in-transit.ts). All Delivery IQ crons MUST use this
+ * instead of millisecond addition to avoid off-by-one errors.
+ *
+ * Returns a date-only string like "2026-03-25".
+ */
+export function calculateEligibleAfterDate(
+  lastScanDate: Date,
+  requiredDays: number
+): string {
+  const d = new Date(lastScanDate)
+  d.setDate(d.getDate() + requiredDays)
+  return d.toISOString().split('T')[0]
+}
+
+/**
  * Map UI claim type to database issue_type
  */
 export function claimTypeToIssueType(claimType: ClaimType): string {

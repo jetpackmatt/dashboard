@@ -227,6 +227,19 @@ export async function createCareTicket(
     }
   }
 
+  // Update shipment's reshipment_id if provided (LIT claims with known replacement)
+  if (shipmentId && reshipmentId) {
+    const { error: reshipErr } = await supabase
+      .from('shipments')
+      .update({ reshipment_id: reshipmentId })
+      .eq('shipment_id', shipmentId)
+      .is('reshipment_id', null)  // Don't overwrite existing
+
+    if (reshipErr) {
+      console.error('Error updating shipment reshipment_id:', reshipErr)
+    }
+  }
+
   // Slack alert: brand users submitting Address Change tickets
   if (isBrandSubmission && ticketType === 'Address Change') {
     const { data: clientRow } = await supabase

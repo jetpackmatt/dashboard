@@ -18,11 +18,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // TODO: Add proper admin role check from user metadata
-    // const isAdmin = user.user_metadata?.role === 'admin'
-    // if (!isAdmin) {
-    //   return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    // }
+    const isAdmin = user.user_metadata?.role === 'admin'
+    if (!isAdmin) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const body = await request.json()
     const { email, client_id, role, full_name } = body
@@ -51,13 +50,13 @@ export async function POST(request: Request) {
     }
 
     // Validate role
-    const validRoles = ['owner', 'editor', 'viewer']
-    const userRole = validRoles.includes(role) ? role : 'viewer'
+    const validRoles = ['brand_owner', 'brand_team']
+    const userRole = validRoles.includes(role) ? role : 'brand_team'
 
     const result = await inviteUser({
       email: email.trim().toLowerCase(),
       clientId: client_id,
-      role: userRole as 'owner' | 'editor' | 'viewer',
+      role: userRole as 'brand_owner' | 'brand_team',
       fullName: full_name?.trim(),
       invitedBy: user.id,
     })

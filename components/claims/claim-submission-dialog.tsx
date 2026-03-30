@@ -66,6 +66,7 @@ interface ShipmentSummary {
   status: string
   customer: string
   labelCreated: string
+  reshipmentId: string | null
 }
 
 interface ClaimSubmissionDialogProps {
@@ -274,7 +275,15 @@ export function ClaimSubmissionDialog({
         labelCreated: shipmentData.dates?.labeled
           ? new Date(shipmentData.dates.labeled).toLocaleDateString()
           : "—",
+        reshipmentId: shipmentData.reshipmentId || null,
       })
+
+      // Prepopulate reshipment ID if shipment already has one detected
+      if (shipmentData.reshipmentId) {
+        setFormData(prev => ({ ...prev, reshipmentId: shipmentData.reshipmentId }))
+        setResolvedReshipmentId(shipmentData.reshipmentId)
+        setReshipmentValid(true)
+      }
 
       if (eligibilityData) {
         setEligibility(eligibilityData)
@@ -342,7 +351,15 @@ export function ClaimSubmissionDialog({
         labelCreated: shipmentData.dates?.labeled
           ? new Date(shipmentData.dates.labeled).toLocaleDateString()
           : "—",
+        reshipmentId: shipmentData.reshipmentId || null,
       })
+
+      // Prepopulate reshipment ID if shipment already has one detected
+      if (shipmentData.reshipmentId) {
+        setFormData(prev => ({ ...prev, reshipmentId: shipmentData.reshipmentId }))
+        setResolvedReshipmentId(shipmentData.reshipmentId)
+        setReshipmentValid(true)
+      }
 
       if (eligibilityData) {
         setEligibility(eligibilityData)
@@ -512,10 +529,17 @@ export function ClaimSubmissionDialog({
   }
 
   // Debounce reshipment ID validation
+  // Triggers for: reshipping step ("I've already reshipped") OR LIT description step field
   React.useEffect(() => {
-    if (formData.reshipmentStatus !== "I've already reshipped") {
-      setReshipmentValid(false)
-      setReshipmentError(null)
+    const isReshippingStep = formData.reshipmentStatus === "I've already reshipped"
+    const isLitWithReshipment = formData.claimType === "lostInTransit" && formData.reshipmentId.trim().length > 0
+
+    if (!isReshippingStep && !isLitWithReshipment) {
+      // Only clear validation if field is empty (don't clear prepopulated valid state)
+      if (!formData.reshipmentId.trim()) {
+        setReshipmentValid(false)
+        setReshipmentError(null)
+      }
       return
     }
 
@@ -526,7 +550,7 @@ export function ClaimSubmissionDialog({
     }, 500)
 
     return () => clearTimeout(timeoutId)
-  }, [formData.reshipmentId, formData.reshipmentStatus])
+  }, [formData.reshipmentId, formData.reshipmentStatus, formData.claimType])
 
   // Navigate between steps
   const canProceed = (): boolean => {
@@ -1009,6 +1033,47 @@ export function ClaimSubmissionDialog({
                 className="placeholder:text-muted-foreground/40"
               />
             </div>
+            {formData.claimType === "lostInTransit" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="lit-reshipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Reshipment ID <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="lit-reshipmentId"
+                    placeholder="Shipment ID of the replacement shipment"
+                    value={formData.reshipmentId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, reshipmentId: e.target.value }))}
+                    className={cn(
+                      "h-9 placeholder:text-muted-foreground/40",
+                      reshipmentValid && formData.reshipmentId && "border-green-500 pr-10",
+                      reshipmentError && "border-destructive pr-10"
+                    )}
+                  />
+                  {isValidatingReshipment && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <JetpackLoader size="sm" />
+                    </div>
+                  )}
+                  {!isValidatingReshipment && reshipmentValid && formData.reshipmentId && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Check className="h-4 w-4 text-green-500" />
+                    </div>
+                  )}
+                  {!isValidatingReshipment && reshipmentError && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <AlertCircle className="h-4 w-4 text-destructive" />
+                    </div>
+                  )}
+                </div>
+                {reshipmentError && (
+                  <p className="text-xs text-destructive">{reshipmentError}</p>
+                )}
+                {shipmentSummary?.reshipmentId && formData.reshipmentId === shipmentSummary.reshipmentId && (
+                  <p className="text-xs text-muted-foreground">Auto-detected replacement shipment</p>
+                )}
+              </div>
+            )}
           </div>
         )
 

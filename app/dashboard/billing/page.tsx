@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useClient } from "@/components/client-context"
+import { PermissionGuard } from "@/components/permission-guard"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StripeProvider } from "@/components/stripe-provider"
 import { StripeCardSetup } from "@/components/stripe-card-setup"
@@ -225,7 +226,7 @@ export default function BillingPage() {
   }
 
   return (
-    <>
+    <PermissionGuard permission="billing">
       <SiteHeader sectionName="Billing">
         {(isLoading || isLoadingStripe) && (
           <div className="flex items-center gap-1.5 ml-[10px]">
@@ -516,6 +517,6 @@ export default function BillingPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </>
+    </PermissionGuard>
   )
 }

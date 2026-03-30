@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { type BrandRole, type BrandPermissions, hasPermission as checkPerm } from '@/lib/permissions'
 
 export interface ClientInfo {
   id: string
@@ -31,6 +32,11 @@ interface ClientContextType {
   effectiveIsCareUser: boolean // Takes dev role into account in dev mode
   effectiveIsCareAdmin: boolean // Takes dev role into account in dev mode
   refreshClients: () => Promise<void>
+  // Brand permissions
+  brandRole: BrandRole | null
+  permissions: BrandPermissions | null
+  isBrandUser: boolean // true for brand_owner or brand_team (not admin/care)
+  hasPermission: (key: string) => boolean
 }
 
 const ClientContext = React.createContext<ClientContextType | undefined>(
@@ -50,6 +56,8 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = React.useState(false)
   const [isCareUser, setIsCareUser] = React.useState(false)
   const [isCareAdmin, setIsCareAdmin] = React.useState(false)
+  const [brandRole, setBrandRole] = React.useState<BrandRole | null>(null)
+  const [permissions, setPermissions] = React.useState<BrandPermissions | null>(null)
 
   // Dev role simulator state (only used in development)
   const [devRole, setDevRoleState] = React.useState<DevRole>(() => {
@@ -78,6 +86,25 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
   const effectiveIsCareUser = canSimulate ? (devRole === 'care_admin' || devRole === 'care_team') : isCareUser
   const effectiveIsCareAdmin = canSimulate ? devRole === 'care_admin' : isCareAdmin
 
+  // Brand user detection - not admin and not care
+  const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser
+
+  // Permission checker using the shared hasPermission logic
+  const hasPermission = React.useCallback(
+    (key: string): boolean => {
+      return checkPerm(
+        {
+          isAdmin: effectiveIsAdmin,
+          isCareUser: effectiveIsCareUser,
+          brandRole,
+          permissions,
+        },
+        key
+      )
+    },
+    [effectiveIsAdmin, effectiveIsCareUser, brandRole, permissions]
+  )
+
   // Load from localStorage on mount
   React.useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -96,6 +123,8 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
         setIsAdmin(false)
         setIsCareUser(false)
         setIsCareAdmin(false)
+        setBrandRole(null)
+        setPermissions(null)
         setClients([])
         return
       }
@@ -110,6 +139,8 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       setIsAdmin(data.isAdmin || false)
       setIsCareUser(data.isCareUser || false)
       setIsCareAdmin(data.userRole === 'care_admin')
+      setBrandRole(data.brandRole || null)
+      setPermissions(data.permissions || null)
 
       // Brand users with a single client: auto-select it
       if (!data.isAdmin && !data.isCareUser && clientList.length === 1) {
@@ -122,6 +153,8 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       setIsAdmin(false)
       setIsCareUser(false)
       setIsCareAdmin(false)
+      setBrandRole(null)
+      setPermissions(null)
     } finally {
       setIsLoading(false)
     }
@@ -163,6 +196,10 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       effectiveIsCareUser,
       effectiveIsCareAdmin,
       refreshClients: fetchClients,
+      brandRole,
+      permissions,
+      isBrandUser,
+      hasPermission,
     }),
     [
       clients,
@@ -179,6 +216,10 @@ export function ClientProvider({ children }: { children: React.ReactNode }) {
       effectiveIsCareUser,
       effectiveIsCareAdmin,
       fetchClients,
+      brandRole,
+      permissions,
+      isBrandUser,
+      hasPermission,
     ]
   )
 

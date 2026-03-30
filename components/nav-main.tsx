@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { type LucideIcon } from "lucide-react"
+import { useNavigationProgress } from "@/components/navigation-progress"
 
 import {
   SidebarGroup,
@@ -38,33 +39,52 @@ export function NavMain({
 }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const { startNavigation, pendingPath } = useNavigationProgress()
+
+  // Determine active state: use pendingPath for instant feedback, fall back to pathname-based isActive
+  const getIsActive = (item: NavItem) => {
+    if (pendingPath) {
+      if (item.url === '/dashboard') return pendingPath === '/dashboard'
+      return pendingPath === item.url || pendingPath.startsWith(item.url + '/')
+    }
+    return item.isActive
+  }
 
   return (
     <SidebarGroup>
       <SidebarGroupContent>
         <SidebarMenu>
-          {items.map((item) =>
-            item.items ? (
+          {items.map((item) => {
+            const isActive = getIsActive(item)
+            return item.items ? (
               <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton asChild tooltip={item.title} isActive={item.isActive}>
-                  <Link href={`${item.url}?tab=${item.defaultTab || item.items[0].value}`} prefetch={false}>
+                <SidebarMenuButton asChild tooltip={item.title} isActive={isActive}>
+                  <Link
+                    href={`${item.url}?tab=${item.defaultTab || item.items[0].value}`}
+                    prefetch={true}
+                    onClick={() => startNavigation(item.url)}
+                  >
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
                   </Link>
                 </SidebarMenuButton>
                 <div
                   className="grid transition-[grid-template-rows] duration-200 ease-out"
-                  style={{ gridTemplateRows: item.isActive ? '1fr' : '0fr' }}
+                  style={{ gridTemplateRows: isActive ? '1fr' : '0fr' }}
                 >
                   <div className="overflow-hidden">
                     <SidebarMenuSub>
                       {item.items.map((subItem) => {
                         const currentTab = searchParams.get('tab')
-                        const isSubActive = item.isActive && (currentTab === subItem.value || (!currentTab && subItem === item.items![0]))
+                        const isSubActive = isActive && (currentTab === subItem.value || (!currentTab && subItem === item.items![0]))
                         return (
                           <SidebarMenuSubItem key={subItem.value}>
                             <SidebarMenuSubButton asChild isActive={isSubActive} size="sm">
-                              <Link href={`${item.url}?tab=${subItem.value}`} prefetch={false}>
+                              <Link
+                                href={`${item.url}?tab=${subItem.value}`}
+                                prefetch={true}
+                                onClick={() => startNavigation(item.url)}
+                              >
                                 <span>{subItem.title}</span>
                               </Link>
                             </SidebarMenuSubButton>
@@ -77,8 +97,12 @@ export function NavMain({
               </SidebarMenuItem>
             ) : (
               <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton asChild tooltip={item.title} isActive={item.isActive}>
-                  <Link href={item.url} prefetch={false}>
+                <SidebarMenuButton asChild tooltip={item.title} isActive={isActive}>
+                  <Link
+                    href={item.url}
+                    prefetch={true}
+                    onClick={() => startNavigation(item.url)}
+                  >
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
                     {item.badge && (
@@ -90,7 +114,7 @@ export function NavMain({
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )
-          )}
+          })}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

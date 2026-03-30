@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getTracking } from '@/lib/trackingmore/client'
+import { getTracking, getLastCheckpointDate } from '@/lib/trackingmore/client'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { generateAssessment, calculateNextCheckTime, type ShipmentDataForAssessment } from '@/lib/ai/client'
+import { calculateEligibleAfterDate } from '@/lib/claims/eligibility'
 
 // Types for shipment candidates
 interface ShipmentCandidate {
@@ -190,8 +191,11 @@ export async function POST(request: NextRequest) {
           if (trackingResult.success && trackingResult.tracking) {
             trackingMoreId = trackingResult.tracking.id || null
             const checkpoints = trackingResult.tracking.origin_info?.trackinfo || []
+            // Use getLastCheckpointDate() for consistent UTC timestamps
+            // (latest_checkpoint_time can be in local timezone without offset)
+            const lastCpDate = getLastCheckpointDate(trackingResult.tracking)
             checkpointData = {
-              last_scan_date: trackingResult.tracking.latest_checkpoint_time || undefined,
+              last_scan_date: lastCpDate?.toISOString() || trackingResult.tracking.latest_checkpoint_time || undefined,
               last_scan_description: trackingResult.tracking.latest_event || undefined,
               checkpoints
             }
@@ -236,14 +240,11 @@ export async function POST(request: NextRequest) {
           claimEligibilityStatus = 'eligible'
         }
 
-        // Calculate eligible_after date
-        const eligibleAfterDate = new Date()
-        if (checkpointData?.last_scan_date) {
-          const lastScan = new Date(checkpointData.last_scan_date)
-          eligibleAfterDate.setTime(lastScan.getTime() + eligibilityThreshold * 24 * 60 * 60 * 1000)
-        } else {
-          eligibleAfterDate.setTime(labelDate.getTime() + eligibilityThreshold * 24 * 60 * 60 * 1000)
-        }
+        // Calculate eligible_after date (calendar day addition — matches claim flow)
+        const eligibleAfterSource = checkpointData?.last_scan_date
+          ? new Date(checkpointData.last_scan_date)
+          : labelDate
+        const eligibleAfterStr = calculateEligibleAfterDate(eligibleAfterSource, eligibilityThreshold)
 
         // Generate AI assessment
         let aiAssessment = null
@@ -299,7 +300,7 @@ export async function POST(request: NextRequest) {
             client_id: shipment.client_id,
             is_international: isInternational,
             claim_eligibility_status: claimEligibilityStatus,
-            eligible_after: eligibleAfterDate.toISOString().split('T')[0],
+            eligible_after: eligibleAfterStr,
             // Use carrier scan date if available, otherwise fall back to label date.
             // Label date acts as "last known activity" when carrier has no scans —
             // the eligibility timer (15 days domestic, 20 days international) starts from this date.

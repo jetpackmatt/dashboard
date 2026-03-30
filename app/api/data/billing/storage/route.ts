@@ -1,4 +1,5 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Storage transactions have reference_type='FC' (Fulfillment Center)
@@ -11,6 +12,8 @@ export async function GET(request: NextRequest) {
   try {
     const access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
+    const denied = checkPermission(access, 'transactions.storage')
+    if (denied) return denied
   } catch (error) {
     return handleAccessError(error)
   }

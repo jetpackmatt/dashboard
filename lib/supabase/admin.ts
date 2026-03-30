@@ -103,6 +103,8 @@ export interface ClientAccessResult {
   userRole: UserRole
   allowedClientIds: string[]  // Empty for admin/care users means "all clients"
   requestedClientId: string | null  // null means "all" (admin/care users only)
+  brandRole: 'brand_owner' | 'brand_team' | null  // null for internal users
+  permissions: import('@/lib/permissions').BrandPermissions | null  // null for owners & internal
 }
 
 /**
@@ -145,6 +147,8 @@ export async function verifyClientAccess(
         userRole,
         allowedClientIds: [], // Empty means "all" for admin/care users
         requestedClientId: null,
+        brandRole: null,
+        permissions: null,
       }
     }
     // Admin/Care user requesting specific client
@@ -154,6 +158,8 @@ export async function verifyClientAccess(
       userRole,
       allowedClientIds: [requestedClientId],
       requestedClientId,
+      brandRole: null,
+      permissions: null,
     }
   }
 
@@ -161,7 +167,7 @@ export async function verifyClientAccess(
   const adminClient = createAdminClient()
   const { data: userClients, error: ucError } = await adminClient
     .from('user_clients')
-    .select('client_id')
+    .select('client_id, role, permissions')
     .eq('user_id', user.id)
 
   if (ucError) {
@@ -169,7 +175,8 @@ export async function verifyClientAccess(
     throw new Error('500: Failed to verify client access')
   }
 
-  const allowedClientIds = (userClients || []).map((uc: { client_id: string }) => uc.client_id)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allowedClientIds = (userClients || []).map((uc: any) => uc.client_id)
 
   // Regular user with no client assignments = no access to anything
   if (allowedClientIds.length === 0) {
@@ -181,16 +188,30 @@ export async function verifyClientAccess(
     throw new Error('403: Only administrators can view all clients')
   }
 
+  // Helper to extract brand role/permissions for a given client
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getClientPerms = (cId: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = (userClients || []).find((uc: any) => uc.client_id === cId)
+    return {
+      brandRole: (row?.role as 'brand_owner' | 'brand_team') || 'brand_owner',
+      permissions: row?.permissions || null,
+    }
+  }
+
   // Regular user with no clientId specified
   if (!requestedClientId) {
     // If user has exactly one client, use that
     if (allowedClientIds.length === 1) {
+      const perms = getClientPerms(allowedClientIds[0])
       return {
         isAdmin: false,
         isCareUser: false,
         userRole: undefined,
         allowedClientIds,
         requestedClientId: allowedClientIds[0],
+        brandRole: perms.brandRole,
+        permissions: perms.permissions,
       }
     }
     // Multiple clients but none specified - require explicit selection
@@ -202,12 +223,15 @@ export async function verifyClientAccess(
     throw new Error('403: Access denied to this client')
   }
 
+  const perms = getClientPerms(requestedClientId)
   return {
     isAdmin: false,
     isCareUser: false,
     userRole: undefined,
     allowedClientIds,
     requestedClientId,
+    brandRole: perms.brandRole,
+    permissions: perms.permissions,
   }
 }
 
@@ -520,7 +544,8 @@ export interface UserClient {
   id: string
   user_id: string
   client_id: string
-  role: 'owner' | 'editor' | 'viewer'
+  role: 'brand_owner' | 'brand_team'
+  permissions: import('@/lib/permissions').BrandPermissions | null
   created_at: string
   invited_by: string | null
 }
@@ -547,12 +572,13 @@ export interface UserWithClients {
 export async function inviteUser(data: {
   email: string
   clientId: string
-  role?: 'owner' | 'editor' | 'viewer'
+  role?: 'brand_owner' | 'brand_team'
+  permissions?: import('@/lib/permissions').BrandPermissions | null
   fullName?: string
   invitedBy: string
 }): Promise<{ user: { id: string; email: string }; userClient: UserClient }> {
   const supabase = createAdminClient()
-  const { email, clientId, role = 'viewer', fullName, invitedBy } = data
+  const { email, clientId, role = 'brand_team', permissions = null, fullName, invitedBy } = data
 
   // Check if user already exists
   const { data: existingUsers } = await supabase.auth.admin.listUsers()
@@ -602,6 +628,7 @@ export async function inviteUser(data: {
       user_id: userId,
       client_id: clientId,
       role,
+      permissions: role === 'brand_owner' ? null : permissions,
       invited_by: invitedBy,
     })
     .select()

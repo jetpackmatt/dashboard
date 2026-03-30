@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     // Verify the transaction exists
     const { data: tx, error: txError } = await supabase
       .from('transactions')
-      .select('id, transaction_id, client_id, reference_id, reference_type, care_ticket_id, fee_type, cost, charge_date, invoice_id_jp')
+      .select('id, transaction_id, client_id, reference_id, reference_type, care_ticket_id, fee_type, cost, billed_amount, charge_date, invoice_id_jp')
       .eq('transaction_id', transactionId)
       .single()
 
@@ -160,8 +160,9 @@ export async function POST(request: NextRequest) {
       }
 
       // Update the care ticket: set status to Credit Approved, credit amount, and add event
+      // IMPORTANT: Use billed_amount (marked up) not cost (raw ShipBob) — clients must never see raw costs
       if (tx.fee_type === 'Credit' && tx.cost) {
-        const creditAmount = Math.abs(parseFloat(tx.cost) || 0)
+        const creditAmount = Math.abs(parseFloat(tx.billed_amount) || parseFloat(tx.cost) || 0)
         const creditDateISO = tx.charge_date
           ? (tx.charge_date.includes('T') ? tx.charge_date : `${tx.charge_date}T00:00:00.000Z`)
           : new Date().toISOString()
@@ -262,7 +263,8 @@ export async function POST(request: NextRequest) {
       const { data: { user } } = await authSupabase.auth.getUser()
       const userName = user?.user_metadata?.full_name || user?.email || 'System'
 
-      const creditAmount = Math.abs(parseFloat(tx.cost) || 0)
+      // Use billed_amount (includes markup) when available, fall back to cost for unclassified credits
+      const creditAmount = Math.abs(parseFloat(tx.billed_amount) || parseFloat(tx.cost) || 0)
       const { shipmentId: newShipmentId, description, issueType } = body
       const validIssueTypes = ['Loss', 'Damage', 'Incorrect Items', 'Incorrect Quantity', 'Claim']
 

@@ -4,6 +4,7 @@ import {
   handleAccessError,
   isCareAdminRole,
 } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 import { createClient } from '@/lib/supabase/server'
 import { createCareTicket } from '@/lib/claims/create-care-ticket'
 import { NextRequest, NextResponse } from 'next/server'
@@ -55,14 +56,18 @@ export async function GET(request: NextRequest) {
   let clientId: string | null
   let isCareUser: boolean
   let isAdmin: boolean
+  let access
   try {
-    const access = await verifyClientAccess(searchParams.get('clientId'))
+    access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
     isCareUser = access.isCareUser
     isAdmin = access.isAdmin
   } catch (error) {
     return handleAccessError(error)
   }
+
+  const denied = checkPermission(access, 'care')
+  if (denied) return denied
 
   const supabase = createAdminClient()
   const limit = parseInt(searchParams.get('limit') || '50')

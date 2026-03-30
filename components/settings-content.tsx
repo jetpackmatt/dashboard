@@ -55,6 +55,8 @@ import { Switch } from '@/components/ui/switch'
 import { useClient, DevRole } from '@/components/client-context'
 import { useUserSettings } from '@/hooks/use-user-settings'
 import { AvatarCropper } from '@/components/avatar-cropper'
+import { PermissionEditor } from '@/components/settings/permission-editor'
+import { type BrandPermissions, type BrandRole, DEFAULT_PERMISSIONS } from '@/lib/permissions'
 
 interface UserWithClients {
   id: string
@@ -74,7 +76,7 @@ interface UserWithClients {
 const isDev = process.env.NODE_ENV === 'development'
 
 export function SettingsContent() {
-  const { clients, isLoading, isAdmin, devRole, setDevRole, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin } = useClient()
+  const { clients, isLoading, isAdmin, devRole, setDevRole, effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, brandRole, selectedClientId, isBrandUser } = useClient()
   const { settings, updateSetting, isLoaded: settingsLoaded } = useUserSettings()
 
   // Tab state with URL persistence - using Next.js hooks
@@ -124,10 +126,35 @@ export function SettingsContent() {
   // User type: 'admin', 'care_admin', 'care_team' are global roles (no brand assignment)
   // 'brand_user' requires brand assignment with sub-role (owner/editor/viewer)
   const [inviteUserType, setInviteUserType] = React.useState<'admin' | 'care_admin' | 'care_team' | 'brand_user'>('brand_user')
-  const [inviteBrandRole, setInviteBrandRole] = React.useState<'owner' | 'editor' | 'viewer'>('viewer')
+  const [inviteBrandRole, setInviteBrandRole] = React.useState<'brand_owner' | 'brand_team'>('brand_team')
   const [isInviting, setIsInviting] = React.useState(false)
   const [inviteError, setInviteError] = React.useState<string | null>(null)
   const [inviteSuccess, setInviteSuccess] = React.useState<string | null>(null)
+
+  // Brand team management state (for brand_owner users)
+  interface TeamMember {
+    id: string
+    email: string
+    fullName: string | null
+    role: BrandRole
+    permissions: BrandPermissions | null
+    status: 'active' | 'invited'
+    createdAt: string
+  }
+  const [teamMembers, setTeamMembers] = React.useState<TeamMember[]>([])
+  const [isLoadingTeam, setIsLoadingTeam] = React.useState(false)
+  const [brandInviteOpen, setBrandInviteOpen] = React.useState(false)
+  const [brandInviteEmail, setBrandInviteEmail] = React.useState('')
+  const [brandInviteName, setBrandInviteName] = React.useState('')
+  const [brandInviteRole, setBrandInviteRole] = React.useState<BrandRole>('brand_team')
+  const [brandInvitePermissions, setBrandInvitePermissions] = React.useState<BrandPermissions>({ ...DEFAULT_PERMISSIONS })
+  const [isBrandInviting, setIsBrandInviting] = React.useState(false)
+  const [brandInviteError, setBrandInviteError] = React.useState<string | null>(null)
+  const [brandInviteSuccess, setBrandInviteSuccess] = React.useState<string | null>(null)
+  const [editingMember, setEditingMember] = React.useState<TeamMember | null>(null)
+  const [editPermissions, setEditPermissions] = React.useState<BrandPermissions>({ ...DEFAULT_PERMISSIONS })
+  const [editRole, setEditRole] = React.useState<BrandRole>('brand_team')
+  const [isSavingMember, setIsSavingMember] = React.useState(false)
 
   // Sync state
   const [isSyncing, setIsSyncing] = React.useState(false)
@@ -339,6 +366,110 @@ export function SettingsContent() {
       fetchUsers()
     }
   }, [effectiveIsAdmin, effectiveIsCareAdmin, fetchUsers])
+
+  // ── Brand Team Management (for brand_owner users) ────────────────────────
+  const isBrandOwner = brandRole === 'brand_owner'
+
+  const fetchTeamMembers = React.useCallback(async () => {
+    if (!isBrandOwner || !selectedClientId) return
+    setIsLoadingTeam(true)
+    try {
+      const response = await fetch(`/api/data/brand_team?clientId=${selectedClientId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setTeamMembers(data.members || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch team:', error)
+    } finally {
+      setIsLoadingTeam(false)
+    }
+  }, [isBrandOwner, selectedClientId])
+
+  React.useEffect(() => {
+    if (isBrandOwner) fetchTeamMembers()
+  }, [isBrandOwner, fetchTeamMembers])
+
+  const handleBrandInvite = async () => {
+    if (!brandInviteEmail.trim()) {
+      setBrandInviteError('Email is required')
+      return
+    }
+    setIsBrandInviting(true)
+    setBrandInviteError(null)
+    setBrandInviteSuccess(null)
+    try {
+      const response = await fetch('/api/data/brand_team/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: brandInviteEmail.trim(),
+          full_name: brandInviteName.trim() || undefined,
+          client_id: selectedClientId,
+          role: brandInviteRole,
+          permissions: brandInviteRole === 'brand_team' ? brandInvitePermissions : undefined,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to invite')
+      setBrandInviteSuccess(`Invitation sent to ${brandInviteEmail}`)
+      setBrandInviteEmail('')
+      setBrandInviteName('')
+      setBrandInviteRole('brand_team')
+      setBrandInvitePermissions({ ...DEFAULT_PERMISSIONS })
+      fetchTeamMembers()
+    } catch (error) {
+      setBrandInviteError(error instanceof Error ? error.message : 'Failed to invite')
+    } finally {
+      setIsBrandInviting(false)
+    }
+  }
+
+  const handleEditMember = (member: TeamMember) => {
+    setEditingMember(member)
+    setEditRole(member.role)
+    setEditPermissions(member.permissions || { ...DEFAULT_PERMISSIONS })
+  }
+
+  const handleSaveMember = async () => {
+    if (!editingMember || !selectedClientId) return
+    setIsSavingMember(true)
+    try {
+      const response = await fetch(`/api/data/brand_team/${editingMember.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: selectedClientId,
+          role: editRole,
+          permissions: editRole === 'brand_team' ? editPermissions : null,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to update')
+      setEditingMember(null)
+      fetchTeamMembers()
+    } catch (error) {
+      console.error('Failed to update member:', error)
+    } finally {
+      setIsSavingMember(false)
+    }
+  }
+
+  const handleRemoveMember = async (memberId: string) => {
+    if (!selectedClientId) return
+    try {
+      const response = await fetch(`/api/data/brand_team/${memberId}?clientId=${selectedClientId}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to remove')
+      }
+      fetchTeamMembers()
+    } catch (error) {
+      console.error('Failed to remove member:', error)
+    }
+  }
 
   const handleSyncOrders = async () => {
     setIsSyncing(true)
@@ -816,12 +947,14 @@ export function SettingsContent() {
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Users className="h-5 w-5" />
-                    {effectiveIsAdmin ? 'All Users' : 'Team Members'}
+                    {effectiveIsAdmin ? 'All Users' : isBrandOwner ? 'Your Team' : 'Team Members'}
                   </CardTitle>
                   <CardDescription>
                     {effectiveIsAdmin
                       ? 'Manage all users across the platform'
-                      : 'Manage team members for your organization'}
+                      : isBrandOwner
+                        ? 'Manage your team members and their permissions'
+                        : 'View team members in your organization'}
                   </CardDescription>
                 </div>
                 {(effectiveIsAdmin || effectiveIsCareAdmin) && (
@@ -953,15 +1086,14 @@ export function SettingsContent() {
                               </Label>
                               <Select
                                 value={inviteBrandRole}
-                                onValueChange={(v: 'owner' | 'editor' | 'viewer') => setInviteBrandRole(v)}
+                                onValueChange={(v: 'brand_owner' | 'brand_team') => setInviteBrandRole(v)}
                               >
                                 <SelectTrigger className={cn("h-9", inviteBrandRole ? "text-foreground" : "text-muted-foreground/40")}>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="viewer">Viewer (read-only)</SelectItem>
-                                  <SelectItem value="editor">Editor (can edit)</SelectItem>
-                                  <SelectItem value="owner">Owner (full access)</SelectItem>
+                                  <SelectItem value="brand_owner">Owner (full access)</SelectItem>
+                                  <SelectItem value="brand_team">Team Member (custom access)</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
@@ -1062,15 +1194,230 @@ export function SettingsContent() {
                     ))}
                   </div>
                 )
+              ) : isBrandOwner ? (
+                /* ── Brand Owner Team Management ──────────────────────── */
+                <>
+                  {/* Invite Button for brand owners */}
+                  <div className="flex justify-end mb-4">
+                    <Dialog open={brandInviteOpen} onOpenChange={(open) => {
+                      setBrandInviteOpen(open)
+                      if (!open) { setBrandInviteError(null); setBrandInviteSuccess(null) }
+                    }}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <UserPlus className="h-4 w-4 mr-2" />
+                          Invite Team Member
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+                        <DialogHeader>
+                          <DialogTitle>Invite Team Member</DialogTitle>
+                          <DialogDescription>
+                            Add a new member to your team and configure their access.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-1.5">
+                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              Email Address <span className="text-red-500">*</span>
+                            </Label>
+                            <Input
+                              type="email"
+                              placeholder="user@example.com"
+                              value={brandInviteEmail}
+                              onChange={(e) => setBrandInviteEmail(e.target.value)}
+                              className="h-9 placeholder:text-muted-foreground/40"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              Full Name <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
+                            </Label>
+                            <Input
+                              placeholder="e.g., John Smith"
+                              value={brandInviteName}
+                              onChange={(e) => setBrandInviteName(e.target.value)}
+                              className="h-9 placeholder:text-muted-foreground/40"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              Role
+                            </Label>
+                            <Select
+                              value={brandInviteRole}
+                              onValueChange={(v: BrandRole) => setBrandInviteRole(v)}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="brand_owner">Owner (full access)</SelectItem>
+                                <SelectItem value="brand_team">Team Member (custom access)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {brandInviteRole === 'brand_team' && (
+                            <div className="space-y-1.5">
+                              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                                Permissions
+                              </Label>
+                              <div className="border rounded-lg p-4 max-h-[300px] overflow-y-auto">
+                                <PermissionEditor
+                                  permissions={brandInvitePermissions}
+                                  onChange={setBrandInvitePermissions}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {brandInviteError && (
+                            <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4" />
+                              {brandInviteError}
+                            </div>
+                          )}
+                          {brandInviteSuccess && (
+                            <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4" />
+                              {brandInviteSuccess}
+                            </div>
+                          )}
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setBrandInviteOpen(false)} disabled={isBrandInviting}>
+                            Cancel
+                          </Button>
+                          <Button onClick={handleBrandInvite} disabled={isBrandInviting || !!brandInviteSuccess}>
+                            {isBrandInviting ? (
+                              <><JetpackLoader size="sm" className="mr-2" />Sending...</>
+                            ) : (
+                              <><Mail className="h-4 w-4 mr-2" />Send Invitation</>
+                            )}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+
+                  {/* Team list */}
+                  {isLoadingTeam ? (
+                    <div className="flex items-center justify-center py-8">
+                      <JetpackLoader size="md" />
+                    </div>
+                  ) : teamMembers.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No team members yet. Invite someone to get started.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {teamMembers.map((member) => (
+                        <div
+                          key={member.id}
+                          className="flex items-center justify-between p-4 border rounded-lg"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+                              <User className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <div>
+                              <div className="font-medium text-sm">
+                                {member.fullName || member.email}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {member.email}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={member.role === 'brand_owner' ? 'default' : 'outline'}>
+                              {member.role === 'brand_owner' ? 'Owner' : 'Team'}
+                            </Badge>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {member.status === 'active' ? 'Active' : 'Invited'}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleEditMember(member)}
+                            >
+                              Edit
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Edit Member Dialog */}
+                  <Dialog open={!!editingMember} onOpenChange={(open) => { if (!open) setEditingMember(null) }}>
+                    <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Edit Team Member</DialogTitle>
+                        <DialogDescription>
+                          {editingMember?.fullName || editingMember?.email}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            Role
+                          </Label>
+                          <Select
+                            value={editRole}
+                            onValueChange={(v: BrandRole) => setEditRole(v)}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="brand_owner">Owner (full access)</SelectItem>
+                              <SelectItem value="brand_team">Team Member (custom access)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {editRole === 'brand_team' && (
+                          <div className="space-y-1.5">
+                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              Permissions
+                            </Label>
+                            <div className="border rounded-lg p-4 max-h-[300px] overflow-y-auto">
+                              <PermissionEditor
+                                permissions={editPermissions}
+                                onChange={setEditPermissions}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <DialogFooter className="flex justify-between">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => {
+                            if (editingMember && confirm('Remove this team member?')) {
+                              handleRemoveMember(editingMember.id)
+                              setEditingMember(null)
+                            }
+                          }}
+                        >
+                          Remove
+                        </Button>
+                        <div className="flex gap-2">
+                          <Button variant="outline" onClick={() => setEditingMember(null)} disabled={isSavingMember}>
+                            Cancel
+                          </Button>
+                          <Button onClick={handleSaveMember} disabled={isSavingMember}>
+                            {isSavingMember ? 'Saving...' : 'Save Changes'}
+                          </Button>
+                        </div>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </>
               ) : (
-                <div className="text-muted-foreground">
-                  <p className="mb-4">Team management coming soon:</p>
-                  <ul className="list-disc list-inside space-y-2">
-                    <li>Invite team members to your organization</li>
-                    <li>Set permissions for team members</li>
-                    <li>Control access to dashboard sections</li>
-                    <li>Remove team members</li>
-                  </ul>
+                <div className="text-center py-8 text-muted-foreground">
+                  Contact your account owner to manage team access.
                 </div>
               )}
             </CardContent>

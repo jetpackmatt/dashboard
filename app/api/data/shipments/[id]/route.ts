@@ -336,6 +336,14 @@ export async function GET(
       .limit(1)
       .maybeSingle()
 
+    // Reverse lookup: is this shipment a replacement for another?
+    const { data: originalShipment } = await supabase
+      .from('shipments')
+      .select('shipment_id')
+      .eq('reshipment_id', id)
+      .limit(1)
+      .maybeSingle()
+
     // Fetch shipment notes
     const { data: shipmentNotes } = await supabase
       .from('shipment_notes')
@@ -676,6 +684,7 @@ export async function GET(
       // Reshipment info
       reshipmentId: shipment.reshipment_id || null,
       reshipmentDate: shipment.reshipment_date || null,
+      originalShipmentId: originalShipment?.shipment_id || null,
 
       // User notes
       notes: (shipmentNotes || []).map((n: { id: string; user_id: string; user_name: string | null; user_avatar_url: string | null; user_email: string; note: string; created_at: string }) => ({

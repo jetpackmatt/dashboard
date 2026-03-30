@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getTracking } from '@/lib/trackingmore/client'
+import { getTracking, getLastCheckpointDate } from '@/lib/trackingmore/client'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { generateAssessment, calculateNextCheckTime, classifyWatchReason, getNextCheckInterval, type ShipmentDataForAssessment } from '@/lib/ai/client'
 import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
@@ -115,8 +115,11 @@ export async function POST(request: NextRequest) {
               check.carrier || undefined
             )
             if (trackingResult.success && trackingResult.tracking) {
+              // Use getLastCheckpointDate() for consistent UTC timestamps
+              // (latest_checkpoint_time can be in local timezone without offset)
+              const lastCpDate = getLastCheckpointDate(trackingResult.tracking)
               checkpointData = {
-                last_scan_date: trackingResult.tracking.latest_checkpoint_time || undefined,
+                last_scan_date: lastCpDate?.toISOString() || trackingResult.tracking.latest_checkpoint_time || undefined,
                 last_scan_description: trackingResult.tracking.latest_event || undefined,
                 checkpoints: trackingResult.tracking.origin_info?.trackinfo || []
               }

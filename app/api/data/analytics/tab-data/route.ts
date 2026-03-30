@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 import type { DateRangePreset } from '@/lib/analytics/types'
 import { getGranularityForRange } from '@/lib/analytics/types'
 import { US_STATES, CA_PROVINCES, AU_STATES } from '@/lib/destination-data'
@@ -79,12 +80,16 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const rawClientId = searchParams.get('clientId')
   let clientId: string | null
+  let access
   try {
-    const access = await verifyClientAccess(rawClientId)
+    access = await verifyClientAccess(rawClientId)
     clientId = access.requestedClientId
   } catch (error) {
     return handleAccessError(error)
   }
+
+  const denied = checkPermission(access, 'analytics')
+  if (denied) return denied
 
   // 'all' = aggregate across all clients (admin only — verifyClientAccess already enforced this)
   // verifyClientAccess returns null for 'all', so check the original param

@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   let clientId: string | null
+  let access
   try {
-    const access = await verifyClientAccess(searchParams.get('clientId'))
+    access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
   } catch (error) {
     return handleAccessError(error)
   }
+
+  const denied = checkPermission(access, 'analytics')
+  if (denied) return denied
 
   if (!clientId || clientId === 'all') {
     return NextResponse.json({ error: 'A specific client must be selected for analytics' }, { status: 400 })

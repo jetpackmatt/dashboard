@@ -1,4 +1,5 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 import { parseDestinationFilter } from '@/lib/destination-data'
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
@@ -49,6 +50,8 @@ export async function GET(request: NextRequest) {
   try {
     const access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
+    const denied = checkPermission(access, 'transactions.shipments')
+    if (denied) return denied
   } catch (error) {
     return handleAccessError(error)
   }

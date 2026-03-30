@@ -622,14 +622,15 @@ export function isReturned(tracking: TrackingMoreTracking): boolean {
 
 /**
  * Get the last checkpoint date as a Date object
+ *
+ * Prefers checkpoint arrays (origin_info/destination_info) over the
+ * top-level latest_checkpoint_time field because TrackingMore sometimes
+ * returns latest_checkpoint_time in a local timezone without offset,
+ * which gets misinterpreted as UTC. The checkpoint array's checkpoint_date
+ * consistently includes a timezone offset and is the canonical source.
  */
 export function getLastCheckpointDate(tracking: TrackingMoreTracking): Date | null {
-  // First check latest_checkpoint_time field
-  if (tracking.latest_checkpoint_time) {
-    return new Date(tracking.latest_checkpoint_time)
-  }
-
-  // Fallback to parsing checkpoints
+  // Prefer checkpoint arrays — they have consistent UTC timestamps
   const checkpoints: TrackingMoreCheckpoint[] = []
 
   if (tracking.origin_info?.trackinfo) {
@@ -639,16 +640,20 @@ export function getLastCheckpointDate(tracking: TrackingMoreTracking): Date | nu
     checkpoints.push(...tracking.destination_info.trackinfo)
   }
 
-  if (checkpoints.length === 0) {
-    return null
+  if (checkpoints.length > 0) {
+    // Sort by checkpoint_date descending
+    checkpoints.sort((a, b) =>
+      new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime()
+    )
+    return new Date(checkpoints[0].checkpoint_date)
   }
 
-  // Sort by checkpoint_date descending
-  checkpoints.sort((a, b) =>
-    new Date(b.checkpoint_date).getTime() - new Date(a.checkpoint_date).getTime()
-  )
+  // Fallback to latest_checkpoint_time when no checkpoint arrays exist
+  if (tracking.latest_checkpoint_time) {
+    return new Date(tracking.latest_checkpoint_time)
+  }
 
-  return new Date(checkpoints[0].checkpoint_date)
+  return null
 }
 
 /**

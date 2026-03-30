@@ -1,4 +1,5 @@
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Credit transactions have transaction_fee='Credit' or negative amounts
@@ -10,6 +11,8 @@ export async function GET(request: NextRequest) {
   try {
     const access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
+    const denied = checkPermission(access, 'transactions.credits')
+    if (denied) return denied
   } catch (error) {
     return handleAccessError(error)
   }

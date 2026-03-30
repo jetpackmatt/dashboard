@@ -18,11 +18,10 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // TODO: Add proper admin role check from user metadata
-    // const isAdmin = user.user_metadata?.role === 'admin'
-    // if (!isAdmin) {
-    //   return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    // }
+    const isAdmin = user.user_metadata?.role === 'admin'
+    if (!isAdmin) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const users = await getUsersWithClients()
 

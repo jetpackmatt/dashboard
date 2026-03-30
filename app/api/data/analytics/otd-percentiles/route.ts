@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const rawClientId = searchParams.get('clientId')
 
+  let access
   try {
-    await verifyClientAccess(rawClientId)
+    access = await verifyClientAccess(rawClientId)
   } catch (error) {
     return handleAccessError(error)
   }
+
+  const denied = checkPermission(access, 'analytics.performance')
+  if (denied) return denied
 
   const isAllClients = rawClientId === 'all'
   const rpcClientId = isAllClients ? null : rawClientId

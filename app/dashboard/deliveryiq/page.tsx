@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { useClient } from "@/components/client-context"
@@ -53,6 +54,7 @@ export interface MonitoredShipment {
   firstCarrierScanAt: string | null
   stuckAtFacility: string | null
   stuckDurationDays: number | null
+  reshipmentId: string | null
 }
 
 // Stats interface for filter counts
@@ -99,7 +101,15 @@ function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date
 }
 
 export default function DeliveryIQPage() {
+  const router = useRouter()
   const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, isLoading: isClientLoading } = useClient()
+
+  // Delivery IQ is admin/care only at launch — redirect brand users
+  React.useEffect(() => {
+    if (!isClientLoading && !effectiveIsAdmin && !effectiveIsCareUser) {
+      router.replace('/dashboard')
+    }
+  }, [isClientLoading, effectiveIsAdmin, effectiveIsCareUser, router])
 
   const [quickFilter, setQuickFilter] = React.useState<QuickFilterValue>('at_risk')
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')

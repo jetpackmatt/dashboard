@@ -353,7 +353,7 @@ export function DeliveryIQTable({
 
   // Total column count for colSpan (must be before early returns — hooks can't be conditional)
   // Columns: [client?] shipmentId tracking customer shipDate lastScan carrier silent+reason [status?] actions
-  const totalColSpan = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
+  const totalColSpan = (showClientColumn ? 1 : 0) + 9 + (showStatusColumn ? 1 : 0)
 
   if (error) {
     return (
@@ -377,7 +377,7 @@ export function DeliveryIQTable({
       <div>
         <table className="w-full text-[13px] font-roboto" style={{ tableLayout: 'auto' }}>
           {(() => {
-            const colCount = (showClientColumn ? 1 : 0) + 8 + (showStatusColumn ? 1 : 0)
+            const colCount = (showClientColumn ? 1 : 0) + 9 + (showStatusColumn ? 1 : 0)
             const pct = `${(100 / colCount).toFixed(1)}%`
             return (
               <colgroup>
@@ -389,6 +389,7 @@ export function DeliveryIQTable({
                 <col style={{ width: pct }} />{/* Last Scan */}
                 <col style={{ width: pct }} />{/* Carrier */}
                 <col style={{ width: pct }} />{/* Silent + Reason */}
+                <col style={{ width: pct }} />{/* Reshipped */}
                 {showStatusColumn && <col style={{ width: pct }} />}{/* Status */}
                 <col style={{ width: pct }} />{/* Actions */}
               </colgroup>
@@ -454,25 +455,29 @@ export function DeliveryIQTable({
                 </div>
               </th>
               <th
-                className={cn(headerCellBase, "pl-[18px] pr-2")}
+                className={cn(headerCellBase, "px-2")}
               >
                 {isNeedsActionTab ? (
                   <div className="flex items-center gap-1">
                     Action Needed
                   </div>
                 ) : (
-                  <div className="flex items-center">
-                    <span className="flex items-center gap-1 cursor-pointer" onClick={() => handleSort('daysSilent')}>
+                  <div className="flex items-center gap-[18px]">
+                    <span className="flex items-center justify-center gap-1 w-[38px] shrink-0 cursor-pointer" onClick={() => handleSort('daysSilent')}>
                       Silent
                       <SortIndicator field="daysSilent" />
                     </span>
-                    <span className="text-zinc-300 dark:text-zinc-600 mx-[5px]">/</span>
                     <span className="flex items-center gap-1 cursor-pointer" onClick={() => handleSort('watchReason')}>
                       Reason
                       <SortIndicator field="watchReason" />
                     </span>
                   </div>
                 )}
+              </th>
+              <th className={headerCellClass}>
+                <div className="flex items-center gap-1">
+                  Reshipped?
+                </div>
               </th>
               {showStatusColumn && (
                 <th
@@ -545,7 +550,7 @@ export function DeliveryIQTable({
                     </td>
                     <td className="px-2 align-middle overflow-hidden" onClick={(e) => e.stopPropagation()}>
                       <div className="group/cell flex items-center gap-1.5">
-                        <div className="truncate min-w-0 font-mono" title={shipment.trackingNumber}>
+                        <div className="truncate min-w-0 font-mono" style={{ maxWidth: 'clamp(80px, 10vw, 240px)' }} title={shipment.trackingNumber}>
                           <TrackingLink
                             trackingNumber={shipment.trackingNumber}
                             carrier={shipment.carrier}
@@ -597,7 +602,7 @@ export function DeliveryIQTable({
                     </td>
                     <td className="px-2 align-middle whitespace-nowrap text-left">
                       {isNeedsActionTab ? (
-                        <>
+                        <div className="flex items-center">
                           {(() => {
                             const action = getActionNeeded(shipment)
                             return (
@@ -606,13 +611,13 @@ export function DeliveryIQTable({
                               </Badge>
                             )
                           })()}
-                        </>
+                        </div>
                       ) : (
-                        <>
+                        <div className="flex items-center gap-[18px]">
                           <Badge
                             variant="outline"
                             className={cn(
-                              "text-[11px] font-mono mr-3",
+                              "text-[11px] font-mono w-[38px] justify-center shrink-0",
                               getDaysSilentColor(shipment.daysSilent)
                             )}
                           >
@@ -626,8 +631,20 @@ export function DeliveryIQTable({
                               </Badge>
                             )
                           })() : null}
-                        </>
+                        </div>
                       )}
+                    </td>
+                    <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {shipment.reshipmentId ? (
+                        <button
+                          onClick={() => handleShipmentIdClick(shipment.reshipmentId!)}
+                          title={`View reshipment ${shipment.reshipmentId}`}
+                        >
+                          <Badge variant="outline" className="text-[11px] border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-400 dark:hover:bg-amber-900/50 cursor-pointer transition-colors">
+                            Reshipped
+                          </Badge>
+                        </button>
+                      ) : null}
                     </td>
                     {showStatusColumn && (
                       <td className="px-2 align-middle whitespace-nowrap" onClick={(e) => e.stopPropagation()}>

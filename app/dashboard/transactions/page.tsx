@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site-header"
 import { Separator } from "@/components/ui/separator"
 import { DataTable } from "@/components/data-table"
 import { useClient } from "@/components/client-context"
+import { PermissionGuard } from "@/components/permission-guard"
 import { getStoredPageSize } from "@/hooks/use-table-preferences"
 import {
   Select,
@@ -284,7 +285,7 @@ export default function TransactionsPage() {
     (currentTab === "returns" && returnsLoading)
 
   return (
-    <>
+    <PermissionGuard permission="transactions">
       <SiteHeader sectionName="Transactions">
         <Separator
           orientation="vertical"
@@ -338,6 +339,6 @@ export default function TransactionsPage() {
           </div>
         </div>
       </div>
-    </>
+    </PermissionGuard>
   )
 }

@@ -201,7 +201,7 @@ export function MissionControlPanels({ stats, shipments, precomputedWatchBreakdo
         ) : (
           <div className="flex-1 flex flex-col justify-end px-7 pb-[24px] pt-4 gap-3">
             {(() => {
-              if (statusTotal === 0) return <div className="text-xs text-muted-foreground text-center">No data</div>
+              if (statusTotal === 0) return null
               const gridSize = Math.min(statusTotal, 100)
               const usePercent = statusTotal > 100
               const squares: string[] = []
@@ -262,7 +262,7 @@ export function MissionControlPanels({ stats, shipments, precomputedWatchBreakdo
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <div className="text-xs text-muted-foreground text-center py-8">No data</div>
+            <div className="py-8" />
           )}
         </div>
         <div className="px-5 pb-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px]">
@@ -324,7 +324,7 @@ export function MissionControlPanels({ stats, shipments, precomputedWatchBreakdo
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="text-xs text-muted-foreground text-center">No data</div>
+            <div />
           )}
         </div>
       </div>

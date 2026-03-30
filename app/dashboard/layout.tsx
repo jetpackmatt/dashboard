@@ -6,6 +6,7 @@ import { SidebarInset } from "@/components/ui/sidebar"
 import { ClientProvider } from "@/components/client-context"
 import { TrackingDrawerProvider } from "@/components/tracking-link"
 import { ExportProvider } from "@/components/export-context"
+import { NavigationProgressProvider, NavigationProgressGate } from "@/components/navigation-progress"
 
 export default async function DashboardLayout({
   children,
@@ -21,16 +22,20 @@ export default async function DashboardLayout({
 
   return (
     <ClientProvider>
-      <ResponsiveSidebarProvider>
-        <AppSidebar variant="inset" />
-        <SidebarInset>
-          <ExportProvider>
-            <TrackingDrawerProvider>
-              {children}
-            </TrackingDrawerProvider>
-          </ExportProvider>
-        </SidebarInset>
-      </ResponsiveSidebarProvider>
+      <NavigationProgressProvider>
+        <ResponsiveSidebarProvider>
+          <AppSidebar variant="inset" />
+          <SidebarInset>
+            <NavigationProgressGate>
+              <ExportProvider>
+                <TrackingDrawerProvider>
+                  {children}
+                </TrackingDrawerProvider>
+              </ExportProvider>
+            </NavigationProgressGate>
+          </SidebarInset>
+        </ResponsiveSidebarProvider>
+      </NavigationProgressProvider>
     </ClientProvider>
   )
 }

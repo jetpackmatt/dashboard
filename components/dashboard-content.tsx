@@ -53,7 +53,8 @@ function SectionHeader({ title, datePreset, onDatePresetChange }: { title: strin
 }
 
 export function DashboardContent({ displayName }: { displayName: string }) {
-  const { selectedClientId, isLoading: isClientLoading } = useClient()
+  const { selectedClientId, isLoading: isClientLoading, effectiveIsAdmin, effectiveIsCareUser } = useClient()
+  const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser
   const [datePreset, setDatePreset] = React.useState('90d')
 
   // KPI + Volume data
@@ -63,6 +64,8 @@ export function DashboardContent({ displayName }: { displayName: string }) {
   const [isKpiLoading, setIsKpiLoading] = React.useState(true)
 
   // Delivery IQ data (stats only — no full shipment fetch needed for homepage)
+  // Lock section order after first load to prevent layout shift
+  const diqOrderRef = React.useRef<'diq' | 'volume' | null>(null)
   const [diqStats, setDiqStats] = React.useState<MissionControlStats>({
     atRisk: 0, eligible: 0, claimFiled: 0, returnedToSender: 0, totalActiveShipments: 0,
   })
@@ -99,8 +102,12 @@ export function DashboardContent({ displayName }: { displayName: string }) {
   }, [effectiveClientId, datePreset, isClientLoading])
 
   // Fetch Delivery IQ stats (lightweight — no full shipment list needed)
+  // Skip DIQ fetch for brand users (Delivery IQ is admin/care only at launch)
   React.useEffect(() => {
-    if (isClientLoading) return
+    if (isClientLoading || isBrandUser) {
+      if (isBrandUser) setIsDiqLoading(false)
+      return
+    }
     let cancelled = false
     setIsDiqLoading(true)
 
@@ -112,6 +119,10 @@ export function DashboardContent({ displayName }: { displayName: string }) {
       .then(stats => {
         if (cancelled || !stats) return
         setDiqStats(stats)
+        // Lock section order on first load (persists across re-renders)
+        if (diqOrderRef.current === null) {
+          diqOrderRef.current = (stats.totalActiveShipments || 0) >= 10 ? 'diq' : 'volume'
+        }
         if (stats.watchBreakdown) setDiqWatchBreakdown(stats.watchBreakdown)
         if (stats.daysSilentHistogram) {
           setDiqDaysSilent({ avg: stats.daysSilentAvg || 0, histogram: stats.daysSilentHistogram })
@@ -121,7 +132,7 @@ export function DashboardContent({ displayName }: { displayName: string }) {
       .finally(() => { if (!cancelled) setIsDiqLoading(false) })
 
     return () => { cancelled = true }
-  }, [effectiveClientId, isClientLoading])
+  }, [effectiveClientId, isClientLoading, isBrandUser])
 
   const isAnyLoading = isKpiLoading || isDiqLoading || isClientLoading
 
@@ -144,37 +155,49 @@ export function DashboardContent({ displayName }: { displayName: string }) {
             <SectionCards data={kpiData} isLoading={isKpiLoading || isClientLoading} trends={dailyTrends} />
           </div>
 
-          {/* Delivery IQ Flagged Shipments */}
-          <div className="flex flex-col gap-[11px]">
-            <SectionHeader title="Delivery IQ Flagged Shipments" datePreset={datePreset} onDatePresetChange={setDatePreset} />
-            <div className="px-2 md:px-4 lg:px-6">
-              {isDiqLoading || isClientLoading ? (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-                  {[1,2,3,4].map(i => (
-                    <div key={i} className="rounded-xl border border-border bg-card shadow overflow-hidden h-[200px] animate-pulse" />
-                  ))}
-                </div>
-              ) : (
-                <MissionControlPanels
-                  stats={diqStats}
-                  precomputedWatchBreakdown={diqWatchBreakdown}
-                  precomputedDaysSilent={diqDaysSilent}
-                  panelClassName="rounded-xl border border-border bg-card text-card-foreground shadow overflow-hidden flex flex-col"
-                />
-              )}
-            </div>
-          </div>
+          {/* Delivery IQ Flagged Shipments & Order Volume — order swaps based on flagged count */}
+          {(() => {
+            // Use locked order from first load; default to volume-first while loading
+            const diqFirst = diqOrderRef.current === 'diq'
 
-          {/* Order Volume */}
-          <div className="flex flex-col gap-[11px]">
-            <SectionHeader title="Order Volume" datePreset={datePreset} onDatePresetChange={setDatePreset} />
-            <div className="px-2 md:px-4 lg:px-6">
-              <ChartAreaInteractive
-                data={dailyVolume}
-                isLoading={isKpiLoading || isClientLoading}
-              />
-            </div>
-          </div>
+            const diqSection = (
+              <div className="flex flex-col gap-[11px]">
+                <SectionHeader title="Delivery IQ Flagged Shipments" datePreset={datePreset} onDatePresetChange={setDatePreset} />
+                <div className="px-2 md:px-4 lg:px-6">
+                  {isDiqLoading || isClientLoading ? (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+                      {[1,2,3,4].map(i => (
+                        <div key={i} className="rounded-xl border border-border bg-card shadow overflow-hidden h-[200px] animate-pulse" />
+                      ))}
+                    </div>
+                  ) : (
+                    <MissionControlPanels
+                      stats={diqStats}
+                      precomputedWatchBreakdown={diqWatchBreakdown}
+                      precomputedDaysSilent={diqDaysSilent}
+                      panelClassName="rounded-xl border border-border bg-card text-card-foreground shadow overflow-hidden flex flex-col"
+                    />
+                  )}
+                </div>
+              </div>
+            )
+
+            const volumeSection = (
+              <div className="flex flex-col gap-[11px]">
+                <SectionHeader title="Order Volume" datePreset={datePreset} onDatePresetChange={setDatePreset} />
+                <div className="px-2 md:px-4 lg:px-6">
+                  <ChartAreaInteractive
+                    data={dailyVolume}
+                    isLoading={isKpiLoading || isClientLoading}
+                  />
+                </div>
+              </div>
+            )
+
+            // Hide DIQ section from brand users (admin/care only at launch)
+            if (isBrandUser) return volumeSection
+            return diqFirst ? <>{diqSection}{volumeSection}</> : <>{volumeSection}{diqSection}</>
+          })()}
         </div>
         </div>
       </div>

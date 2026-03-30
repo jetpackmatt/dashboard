@@ -14,12 +14,12 @@ import { ClaimType, getClaimTypeLabel } from "@/lib/claims/eligibility"
 import { useClient } from "@/components/client-context"
 
 export function SubmitClaimButton() {
-  const { selectedClientId } = useClient()
+  const { selectedClientId, hasPermission } = useClient()
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [selectedClaimType, setSelectedClaimType] = React.useState<ClaimType | undefined>()
 
-  // Don't render if no client is selected
-  if (!selectedClientId) {
+  // Don't render if no client is selected or user lacks claim submission permission
+  if (!selectedClientId || !hasPermission('care.submit_claims')) {
     return null
   }
 
