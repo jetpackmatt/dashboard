@@ -442,6 +442,10 @@ export default function AnalyticsContent() {
   const [includeInternational, setIncludeInternational] = React.useState(false)
   const [includeIntlZones, setIncludeIntlZones] = React.useState(false)
 
+  // Financials Period Summary toggles
+  const [includeCredits, setIncludeCredits] = React.useState(true)
+  const [d2cOnly, setD2cOnly] = React.useState(false)
+
   // SLA-specific filters
   const [selectedFulfillmentCenters, setSelectedFulfillmentCenters] = React.useState<string[]>([])
   const [selectedOrderTypes, setSelectedOrderTypes] = React.useState<string[]>([])
@@ -1112,6 +1116,47 @@ export default function AnalyticsContent() {
   const finBillingTrend: MonthlyBillingTrend[] = finData?.billingTrend || billingTrendData
   const finBillingSummary: BillingSummary = finData?.billingSummary || billingSummary
   const finBillingEfficiency: BillingEfficiencyMetrics = finData?.billingEfficiency || billingEfficiencyMetrics
+  const finBillingCategoryBreakdown: BillingCategoryBreakdown[] = finData?.billingCategoryBreakdown || billingCategoryBreakdown
+
+  // Adjusted KPIs based on Period Summary toggles (Credits / D2C Only)
+  const adjustedBillingSummary = React.useMemo(() => {
+    let totalCost = finBillingSummary.totalCost
+    let orderCount = finBillingSummary.orderCount
+
+    // Credits are already subtracted from totalCost by the API.
+    // When includeCredits is OFF (default), add credits back to show gross cost.
+    const creditAmount = finBillingEfficiency.totalCredits || 0
+    if (!includeCredits && creditAmount > 0) {
+      totalCost += creditAmount
+    }
+
+    // D2C Only: subtract B2B category costs
+    if (d2cOnly) {
+      const b2bCategory = finBillingCategoryBreakdown.find(c => c.category === 'B2B')
+      if (b2bCategory) {
+        totalCost -= b2bCategory.amount
+      }
+    }
+
+    const costPerOrder = orderCount > 0 ? totalCost / orderCount : 0
+    return { totalCost, orderCount, costPerOrder, periodChange: finBillingSummary.periodChange }
+  }, [finBillingSummary, finBillingEfficiency, finBillingCategoryBreakdown, includeCredits, d2cOnly])
+
+  const adjustedBillingEfficiency = React.useMemo(() => {
+    const totalCost = adjustedBillingSummary.totalCost
+    const orderCount = adjustedBillingSummary.orderCount
+    const totalItems = finBillingEfficiency.avgItemsPerOrder * orderCount
+    return {
+      ...finBillingEfficiency,
+      costPerItem: totalItems > 0 ? totalCost / totalItems : 0,
+      fulfillmentAsPercentOfRevenue: finBillingEfficiency.avgRevenuePerOrder > 0 && orderCount > 0
+        ? (totalCost / (finBillingEfficiency.avgRevenuePerOrder * orderCount)) * 100
+        : finBillingEfficiency.fulfillmentAsPercentOfRevenue,
+      surchargePercentOfCost: totalCost > 0
+        ? finBillingEfficiency.surchargePercentOfCost * (finBillingSummary.totalCost / totalCost)
+        : 0,
+    }
+  }, [adjustedBillingSummary, finBillingEfficiency, finBillingSummary])
 
   // Compute Y-axis domain for cost breakdown chart — zoom in so non-shipping fees are visible
   const billingChartYDomain = React.useMemo(() => {
@@ -1398,42 +1443,61 @@ export default function AnalyticsContent() {
                     {/* Summary Sidebar — 1 column, content area has border + gradient, fades to page bg below */}
                     <div className="lg:col-span-1 border-t lg:border-t-0 flex flex-col">
                       <div className="lg:border-l border-border bg-gradient-to-b from-zinc-100 via-zinc-50 to-zinc-50 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-900 flex flex-col h-[calc(100%-76px)]">
-                      <div className="border-b border-border px-5 h-[52px] flex items-center">
-                        <div className="text-sm font-semibold">Period Summary</div>
+                      <div className="border-b border-border px-5 h-[52px] flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold whitespace-nowrap">Period Summary</div>
+                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                          <span className="font-semibold">Include:</span>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <Checkbox
+                              checked={includeCredits}
+                              onCheckedChange={(v) => setIncludeCredits(v === true)}
+                              className="h-3.5 w-3.5"
+                            />
+                            <span>Credits</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <Checkbox
+                              checked={d2cOnly}
+                              onCheckedChange={(v) => setD2cOnly(v === true)}
+                              className="h-3.5 w-3.5"
+                            />
+                            <span className="whitespace-nowrap">D2C Only</span>
+                          </label>
+                        </div>
                       </div>
                       {/* Row 1: Total Cost — full width */}
                       <div className="flex flex-col items-center justify-center px-4 bg-sky-50/50 dark:bg-sky-950/20 border-b border-border flex-1">
                         <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Total Cost <KpiTooltip text={KPI_TOOLTIPS.totalCost} /></div>
                         <div className="text-3xl font-bold tabular-nums">
-                          <AnimatedNumber value={finBillingSummary.totalCost} prefix="$" decimals={2} locale />
+                          <AnimatedNumber value={adjustedBillingSummary.totalCost} prefix="$" decimals={2} locale />
                         </div>
                         <div className={cn(
                           "text-xs mt-1",
-                          finBillingSummary.periodChange.totalCost > 0 ? "text-red-500" : finBillingSummary.periodChange.totalCost < 0 ? "text-green-500" : "text-zinc-400 dark:text-zinc-500"
+                          adjustedBillingSummary.periodChange.totalCost > 0 ? "text-red-500" : adjustedBillingSummary.periodChange.totalCost < 0 ? "text-green-500" : "text-zinc-400 dark:text-zinc-500"
                         )}>
-                          {finBillingSummary.periodChange.totalCost > 0 ? "+" : ""}{finBillingSummary.periodChange.totalCost.toFixed(1)}% vs prev period
+                          {adjustedBillingSummary.periodChange.totalCost > 0 ? "+" : ""}{adjustedBillingSummary.periodChange.totalCost.toFixed(1)}% vs prev period
                         </div>
                       </div>
                       {/* Row 2: Orders | Cost per Order */}
                       <div className="grid grid-cols-2 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-3 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Orders <KpiTooltip text={KPI_TOOLTIPS.orders} /></div>
-                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.orderCount} locale /></div>
+                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={adjustedBillingSummary.orderCount} locale /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
-                            finBillingSummary.periodChange.orderCount > 0 ? "text-green-500" : finBillingSummary.periodChange.orderCount < 0 ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
+                            adjustedBillingSummary.periodChange.orderCount > 0 ? "text-green-500" : adjustedBillingSummary.periodChange.orderCount < 0 ? "text-red-500" : "text-zinc-400 dark:text-zinc-500"
                           )}>
-                            {finBillingSummary.periodChange.orderCount > 0 ? "+" : ""}{finBillingSummary.periodChange.orderCount.toFixed(1)}%
+                            {adjustedBillingSummary.periodChange.orderCount > 0 ? "+" : ""}{adjustedBillingSummary.periodChange.orderCount.toFixed(1)}%
                           </div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-3 bg-amber-50/40 dark:bg-amber-950/15">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Cost / Order <KpiTooltip text={KPI_TOOLTIPS.costPerOrder} /></div>
-                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.costPerOrder} prefix="$" decimals={2} /></div>
+                          <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={adjustedBillingSummary.costPerOrder} prefix="$" decimals={2} /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
-                            finBillingSummary.periodChange.costPerOrder > 0 ? "text-red-500" : finBillingSummary.periodChange.costPerOrder < 0 ? "text-green-500" : "text-zinc-400 dark:text-zinc-500"
+                            adjustedBillingSummary.periodChange.costPerOrder > 0 ? "text-red-500" : adjustedBillingSummary.periodChange.costPerOrder < 0 ? "text-green-500" : "text-zinc-400 dark:text-zinc-500"
                           )}>
-                            {finBillingSummary.periodChange.costPerOrder > 0 ? "+" : ""}{finBillingSummary.periodChange.costPerOrder.toFixed(1)}%
+                            {adjustedBillingSummary.periodChange.costPerOrder > 0 ? "+" : ""}{adjustedBillingSummary.periodChange.costPerOrder.toFixed(1)}%
                           </div>
                         </div>
                       </div>
@@ -1441,30 +1505,30 @@ export default function AnalyticsContent() {
                       <div className="grid grid-cols-3 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cost / Item <KpiTooltip text={KPI_TOOLTIPS.costPerItem} /></div>
-                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.costPerItem ?? 0} prefix="$" decimals={2} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.costPerItem} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Items / Order <KpiTooltip text={KPI_TOOLTIPS.itemsPerOrder} /></div>
-                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgItemsPerOrder ?? 0} decimals={1} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.avgItemsPerOrder} decimals={1} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Revenue <KpiTooltip text={KPI_TOOLTIPS.pctOfRevenue} /></div>
-                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.fulfillmentAsPercentOfRevenue ?? 0} decimals={1} suffix="%" /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.fulfillmentAsPercentOfRevenue} decimals={1} suffix="%" /></div>
                         </div>
                       </div>
                       {/* Row 4: Avg Rev/Order | Surcharge % | Credits */}
                       <div className="grid grid-cols-3 flex-1 border-b border-border">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
-                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgRevenuePerOrder ?? 0} prefix="$" decimals={2} /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.avgRevenuePerOrder} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Surcharges <KpiTooltip text={KPI_TOOLTIPS.surcharges} /></div>
-                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.surchargePercentOfCost ?? 0} decimals={1} suffix="%" /></div>
+                          <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.surchargePercentOfCost} decimals={1} suffix="%" /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 bg-green-50/50 dark:bg-green-950/15">
                           <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Credits <KpiTooltip text={KPI_TOOLTIPS.credits} /></div>
-                          <div className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400"><AnimatedNumber value={finBillingEfficiency?.totalCredits ?? 0} prefix="$" locale /></div>
+                          <div className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400"><AnimatedNumber value={adjustedBillingEfficiency.totalCredits} prefix="$" locale /></div>
                         </div>
                       </div>
                       </div>

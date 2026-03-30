@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ExternalLink, Package } from "lucide-react"
+import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ExternalLink, Loader2, Package } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Dialog,
@@ -780,12 +780,34 @@ export function ClaimSubmissionDialog({
 
             {/* Check if any claim types are eligible */}
             {(() => {
+              // Still loading shipment + eligibility data — show spinner
+              if (isLoading) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-10 gap-3">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">Checking claim eligibility...</p>
+                  </div>
+                )
+              }
+
+              // Eligibility failed to load — show error
+              if (!eligibility) {
+                return (
+                  <div className="rounded-lg border border-muted bg-muted/30 p-6 text-center">
+                    <AlertCircle className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+                    <p className="text-muted-foreground">
+                      {error || "Unable to check claim eligibility for this shipment."}
+                    </p>
+                  </div>
+                )
+              }
+
               const allClaimTypes: ClaimType[] = ["lostInTransit", "incorrectDelivery", "damage", "incorrectItems", "incorrectQuantity"]
               // Claim types that are blocked if a claim already exists (incorrectDelivery is NOT a claim)
               const isClaimType = (type: ClaimType) => type !== "incorrectDelivery"
               const hasAnyEligible = allClaimTypes.some(type => eligibility?.eligibility[type]?.eligible && !(existingClaim && isClaimType(type)))
 
-              if (!hasAnyEligible && eligibility) {
+              if (!hasAnyEligible) {
                 // No claim types eligible - show friendly message
                 return (
                   <div className="space-y-4">

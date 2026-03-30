@@ -602,7 +602,6 @@ export function ShipmentsTable({
         shipmentId={claimShipmentId || undefined}
         open={claimDialogOpen}
         onOpenChange={setClaimDialogOpen}
-        preselectedClaimType="lostInTransit"
       />
       {/* Ticket dialog - admin/care opens CreateTicketDialog with shipment pre-filled */}
       {isAdminOrCare && (
