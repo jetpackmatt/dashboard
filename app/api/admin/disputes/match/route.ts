@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { charge_transaction_id, charge_transaction_ids, credit_transaction_id } = body
+    const { charge_transaction_id, charge_transaction_ids, credit_transaction_id, unattribute_credit } = body
 
     // Support both single ID and array of IDs
     const chargeIds: string[] = charge_transaction_ids || (charge_transaction_id ? [charge_transaction_id] : [])
@@ -76,6 +76,28 @@ export async function POST(request: NextRequest) {
         { error: `Some charge transactions not found: ${missingIds.join(', ')}` },
         { status: 404 }
       )
+    }
+
+    // If unattribute_credit is set, move credit to Jetpack system client
+    // This removes it from the brand's account so it can offset a disputed parent charge
+    if (unattribute_credit) {
+      const { data: jetpackClient } = await adminClient
+        .from('clients')
+        .select('id')
+        .eq('company_name', 'Jetpack')
+        .single()
+
+      if (jetpackClient) {
+        const { error: moveError } = await adminClient
+          .from('transactions')
+          .update({ client_id: jetpackClient.id, merchant_id: null })
+          .eq('transaction_id', credit_transaction_id)
+
+        if (moveError) {
+          console.error('Error moving credit to Jetpack:', moveError)
+          return NextResponse.json({ error: 'Failed to move credit to Jetpack' }, { status: 500 })
+        }
+      }
     }
 
     // Calculate totals

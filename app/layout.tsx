@@ -5,7 +5,7 @@ import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Jetpack Dashboard',
+  title: 'Jetpack Pro',
   description: 'Manage your billing, invoices, reporting, analytics, and support cases.',
 }
 

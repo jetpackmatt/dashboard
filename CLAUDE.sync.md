@@ -24,11 +24,19 @@ See [CLAUDE.billing.md](CLAUDE.billing.md) for full explanation of invoice struc
 
 | Endpoint | Schedule | What It Does |
 |----------|----------|--------------|
-| `/api/cron/sync` | Every 1 min | Syncs orders/shipments using **child tokens** + `LastUpdateStartDate` (catches updates) |
-| `/api/cron/sync-timelines` | Every 1 min | Updates timeline events for undelivered shipments (1000/run, 14-day window) |
-| `/api/cron/sync-transactions` | Every 1 min | Syncs ALL transaction types using **parent token** (3-min lookback) |
-| `/api/cron/sync-reconcile` | Every hour | Orders/shipments (20-day lookback) + transactions (3-day lookback) + soft-delete detection |
-| `/api/cron/sync-invoices` | Mondays 5 AM EST (10:00 UTC) | Syncs ShipBob invoice metadata |
+| `/api/cron/sync` | Every 3 min | Syncs orders/shipments/returns/receiving using **child tokens** + `LastUpdateStartDate` |
+| `/api/cron/sync-timelines` | Every 3 min | Updates timeline events for undelivered shipments (tiered: 0-3d/15min, 3-14d/2hr) |
+| `/api/cron/sync-transactions` | Every 3 min | Syncs ALL transaction types using **parent token** (3-min lookback) |
+| `/api/cron/sync-reconcile` | Hourly | Orders/shipments (45d) + transactions (3d) + voided label detection + soft-delete |
+| `/api/cron/sync-backfill-items` | Hourly (:30) | Safety net: backfill missing order_items/shipment_items from last 7 days |
+| `/api/cron/sync-invoices` | Mondays 10 AM UTC | Syncs ShipBob invoice metadata + SFTP breakdown + DB fallback linking |
+| `/api/cron/sync-older-nightly` | Daily 3 AM UTC | Full refresh for shipments 14-180 days old (2 passes) |
+| `/api/cron/sync-products` | Daily 4 AM UTC | Products with variants (inventory_id → client mapping) |
+| `/api/cron/sync-sftp-costs` | Daily 10 AM UTC | SFTP shipping cost breakdown + preview markup calculation |
+| `/api/cron/refresh-analytics` | Every 5 min | Refresh pre-aggregated analytics summary tables |
+| `/api/cron/refresh-carrier-views` | Daily 5:30 AM UTC | Refresh carrier filter materialized views |
+
+**Cron Lock System:** Most cron jobs use `acquireCronLock()` / `releaseCronLock()` from `lib/cron-lock.ts` to prevent overlapping executions. Lock duration: 330s (5.5 min). Auto-expires on timeout.
 
 ---
 
@@ -47,7 +55,7 @@ See [CLAUDE.billing.md](CLAUDE.billing.md) for full explanation of invoice struc
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      EVERY 1 MINUTE (sync)                          │
+│                      EVERY 3 MINUTES (sync)                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │  For each client with child token:                                  │
 │                                                                     │
@@ -73,7 +81,7 @@ See [CLAUDE.billing.md](CLAUDE.billing.md) for full explanation of invoice struc
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                   EVERY 1 MINUTE (sync-transactions)                │
+│                   EVERY 3 MINUTES (sync-transactions)               │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Using parent token:                                                │
 │                                                                     │
@@ -421,9 +429,9 @@ export const maxDuration = 300  // 5 minutes
 |------|-------------|-----|
 | `sync` | 120 | Multiple clients + receiving orders |
 | `sync-transactions` | 300 | Tracking backfill processes ALL missing transactions |
-| `sync-reconcile` | 300 | 20-day lookback with soft-delete detection |
+| `sync-reconcile` | 300 | 45-day lookback with voided label detection + soft-delete |
 | `sync-backfill-items` | 300 | Backfill missing order_items/shipment_items |
-| `sync-older-nightly` | 300 | Full refresh of 14-45 day shipments |
+| `sync-older-nightly` | 300 | Full refresh of 14-180 day shipments (2 passes) |
 | `sync-sftp-costs` | 300 | SFTP fetch + 5000+ transaction updates |
 
 **Without maxDuration:** Functions timeout at Vercel's default (may be 60s or less), causing incomplete syncs.
@@ -519,13 +527,19 @@ Different tabs calculate "Age" differently:
 | File | Purpose |
 |------|---------|
 | `lib/shipbob/sync.ts` | Core sync logic (syncAll, syncClient, syncAllTransactions, syncReturns) |
-| `lib/shipbob/client.ts` | ShipBob API client wrapper |
-| `app/api/cron/sync/route.ts` | 1-minute cron: orders & shipments |
-| `app/api/cron/sync-timelines/route.ts` | 1-minute cron: timeline events (0-14 days, tiered) |
-| `app/api/cron/sync-older-nightly/route.ts` | Nightly cron: full refresh for older shipments (14-45 days) |
-| `app/api/cron/sync-transactions/route.ts` | 1-minute cron: billing transactions |
-| `app/api/cron/sync-reconcile/route.ts` | Hourly: soft-delete detection |
-| `app/api/cron/sync-invoices/route.ts` | Daily: ShipBob invoice sync |
+| `lib/shipbob/client.ts` | ShipBob API client wrapper (types for Orders/Billing/Products APIs) |
+| `lib/cron-lock.ts` | Distributed cron lock (prevents overlapping executions) |
+| `app/api/cron/sync/route.ts` | 3-min cron: orders, shipments, returns, receiving |
+| `app/api/cron/sync-timelines/route.ts` | 3-min cron: timeline events (tiered frequency) |
+| `app/api/cron/sync-transactions/route.ts` | 3-min cron: billing transactions + tracking backfill |
+| `app/api/cron/sync-reconcile/route.ts` | Hourly: 45d reconciliation + voided label detection + soft-delete |
+| `app/api/cron/sync-backfill-items/route.ts` | Hourly: safety net for missing order_items/shipment_items |
+| `app/api/cron/sync-invoices/route.ts` | Weekly: ShipBob invoice sync + SFTP + DB fallback |
+| `app/api/cron/sync-older-nightly/route.ts` | Nightly: full refresh for 14-180 day shipments |
+| `app/api/cron/sync-products/route.ts` | Daily: products with variants for inventory_id mapping |
+| `app/api/cron/sync-sftp-costs/route.ts` | Daily: SFTP cost breakdown + preview markups |
+| `app/api/cron/refresh-analytics/route.ts` | 5-min: refresh pre-aggregated analytics tables |
+| `app/api/cron/refresh-carrier-views/route.ts` | Daily: refresh carrier filter materialized views |
 
 ---
 

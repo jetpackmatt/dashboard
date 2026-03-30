@@ -1,19 +1,4 @@
-import dynamic from "next/dynamic"
-import { SiteHeader } from "@/components/site-header"
-import { JetpackLoader } from "@/components/jetpack-loader"
-
-const FinancialsContent = dynamic(() => import("./financials-content"), {
-  loading: () => (
-    <>
-      <SiteHeader sectionName="Financials">
-        <div className="flex items-center gap-1.5 ml-[10px]">
-          <JetpackLoader size="md" />
-        </div>
-      </SiteHeader>
-      <div className="flex flex-1 flex-col bg-background rounded-t-xl" />
-    </>
-  ),
-})
+import FinancialsContent from "./financials-content"
 
 export default function FinancialsPage() {
   return <FinancialsContent />

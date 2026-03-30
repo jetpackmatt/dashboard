@@ -1635,7 +1635,7 @@ export function generateSummary(lineItems: InvoiceLineItem[]): InvoiceData['summ
  */
 export async function generateExcelInvoice(data: InvoiceData, detailedData: DetailedBillingData): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'Jetpack Dashboard'
+  workbook.creator = 'Jetpack Pro'
   workbook.created = new Date()
 
   // Helper to style headers

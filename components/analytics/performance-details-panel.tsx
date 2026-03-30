@@ -73,7 +73,7 @@ export function PerformanceDetailsPanel({
         <div>
           {/* Row 1: Order-to-Delivery percentiles */}
           <div className="grid grid-cols-3 border-b border-border">
-            <div className="col-span-3 px-4 py-3 border-b border-border text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+            <div className="col-span-3 px-4 py-3 border-b border-border text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
               Order-to-Delivery <KpiTooltip text={KPI_TOOLTIPS.orderToDelivery} />
             </div>
             <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-gradient-to-b from-white/60 to-emerald-100/50 dark:from-emerald-950/5 dark:to-emerald-950/20">
@@ -100,7 +100,7 @@ export function PerformanceDetailsPanel({
               <div className="text-[9px] text-zinc-400 dark:text-zinc-500">calendar days</div>
             </div>
             <div className="flex flex-col items-center justify-center px-2 py-2 border-r border-border bg-gradient-to-b from-white/40 to-indigo-50/30 dark:from-indigo-950/5 dark:to-indigo-950/10">
-              <div className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-0.5">Average</div>
+              <div className="text-[9px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-0.5">Average</div>
               <div className="text-sm font-semibold tabular-nums"><AnimatedNumber value={otdPercentiles?.otd_mean ?? 0} decimals={1} /></div>
               <div className="text-[9px] text-zinc-400 dark:text-zinc-500">calendar days</div>
             </div>
@@ -112,21 +112,21 @@ export function PerformanceDetailsPanel({
           </div>
           {/* Row 2: Delivery stages breakdown */}
           <div className="grid grid-cols-3">
-            <div className="col-span-3 px-4 py-3 border-b border-border text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+            <div className="col-span-3 px-4 py-3 border-b border-border text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
               Delivery Stages
             </div>
             <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-gradient-to-b from-white/50 to-emerald-100/40 dark:from-emerald-950/5 dark:to-emerald-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
+              <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
               <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={fulfillTime} decimals={1} /></div>
               <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
             </div>
             <div className="flex flex-col items-center justify-center px-3 py-3.5 border-r border-border bg-gradient-to-b from-white/50 to-indigo-100/40 dark:from-indigo-950/5 dark:to-indigo-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
+              <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
               <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={middleMile} decimals={1} /></div>
               <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
             </div>
             <div className="flex flex-col items-center justify-center px-3 py-3.5 bg-gradient-to-b from-white/50 to-amber-100/40 dark:from-amber-950/5 dark:to-amber-950/15">
-              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
+              <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
               <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={lastMile} decimals={1} /></div>
               <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
             </div>
@@ -152,7 +152,7 @@ export function PerformanceDetailsPanel({
         {/* Bottom list (top 5 states or cities) */}
         <div className="border-t border-border">
           <div className="px-5 pt-5 pb-3">
-            <h4 className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+            <h4 className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
               {listTitle}
             </h4>
           </div>

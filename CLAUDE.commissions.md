@@ -293,15 +293,15 @@ Based on the original plan at `~/.claude/plans/purrfect-napping-waterfall.md`:
 | eShipper API sync | ❌ Not started | Using CSV upload instead |
 | GOFO integration | ❌ Not started | Future |
 | sales_partner role | ❌ Not started | Future |
-| Client size labels | ❌ Not started | Future |
+| Client size labels | ✅ Complete | `calculate-client-sizes` cron runs 1st of month |
 
 ---
 
 ## Planned Future Enhancements
 
-### Client Size Labels (Internal)
+### Client Size Labels ✅ Implemented
 
-Classification based on monthly shipment volume:
+Classification based on monthly shipment volume (calculated by `calculate-client-sizes` cron on 1st of month):
 
 | Label | Monthly Shipments |
 |-------|-------------------|
@@ -312,8 +312,6 @@ Classification based on monthly shipment volume:
 | Swordfish | 5,000 - 10,000 |
 | Shark | 10,000 - 50,000 |
 | Whale | > 50,000 |
-
-Would be stored in `clients.size_label` column (not yet added).
 
 ### eShipper API Integration
 

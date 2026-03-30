@@ -44,19 +44,37 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    // STEP 1: Sync orders/shipments (45-day lookback to catch cancelled/deleted)
+    // STEP 1: Reconcile voided/duplicate shipping transactions (BILLING-CRITICAL, runs first)
+    // When ShipBob voids and recreates a label, we get 2 transactions for the same shipment
+    // Only the latest (by charge_date) is actually billed - mark older ones as is_voided
+    // This is fast (seconds) and must run before heavy syncs that may exhaust the timeout
+    console.log('[Cron Reconcile] Step 1: Reconciling voided shipping transactions...')
+    const voidedResult = await reconcileVoidedShippingTransactions()
+    if (voidedResult.voided > 0) {
+      console.log(`[Cron Reconcile] Voided transactions: ${voidedResult.voided} marked (${voidedResult.duplicateGroups} duplicate groups)`)
+    }
+
+    // STEP 2: Reconcile tracking IDs between transactions and shipments
+    // Fixes placeholder tracking (SBAAA...) and reshipment tracking mismatches
+    console.log('[Cron Reconcile] Step 2: Reconciling tracking IDs...')
+    const trackingResult = await reconcileTrackingIds(500)
+    if (trackingResult.updated > 0) {
+      console.log(`[Cron Reconcile] Tracking IDs: ${trackingResult.updated} updated`)
+    }
+
+    // STEP 3: Sync orders/shipments (45-day lookback to catch cancelled/deleted)
     // Note: daysBack triggers reconciliation, minutesBack skips it
     // Uses StartDate filter to fetch orders created in the last 45 days
-    console.log('[Cron Reconcile] Step 1: Syncing orders/shipments...')
+    console.log('[Cron Reconcile] Step 3: Syncing orders/shipments...')
     const results = await syncAll({ daysBack: 45 })
 
     const ordersDuration = Date.now() - startTime
     console.log(`[Cron Reconcile] Orders/shipments completed in ${ordersDuration}ms`)
     console.log(`[Cron Reconcile] Total: ${results.totalOrders} orders, ${results.totalShipments} shipments`)
 
-    // STEP 2: Sync transactions (3-day lookback to catch any missed by real-time sync)
+    // STEP 4: Sync transactions (3-day lookback to catch any missed by real-time sync)
     // Uses parent token - separate from orders sync which uses child tokens
-    console.log('[Cron Reconcile] Step 2: Syncing transactions (3-day lookback)...')
+    console.log('[Cron Reconcile] Step 4: Syncing transactions (3-day lookback)...')
     const txStartTime = Date.now()
 
     const endDate = new Date()
@@ -69,37 +87,20 @@ export async function GET(request: NextRequest) {
     console.log(`[Cron Reconcile] Transactions completed in ${txDuration}ms`)
     console.log(`[Cron Reconcile] Transactions: ${txResult.transactionsFetched} fetched, ${txResult.transactionsUpserted} upserted`)
 
-    // STEP 3: Catch billable shipments missing timeline data (event_labeled)
+    // STEP 5: Catch billable shipments missing timeline data (event_labeled)
     // These are shipments that "aged out" of the 14-day timeline sync window but need timeline data for invoicing
-    console.log('[Cron Reconcile] Step 3: Syncing billing-aware timelines...')
+    console.log('[Cron Reconcile] Step 5: Syncing billing-aware timelines...')
     const billingTimelineResult = await syncBillingAwareTimelines(50)
     if (billingTimelineResult.updated > 0) {
       console.log(`[Cron Reconcile] Billing timelines: ${billingTimelineResult.updated} updated`)
     }
 
-    // STEP 4: Catch billable shipments missing shipment_items (products_sold)
+    // STEP 6: Catch billable shipments missing shipment_items (products_sold)
     // These are shipments where API returned empty products during initial sync
-    console.log('[Cron Reconcile] Step 4: Syncing missing shipment items...')
+    console.log('[Cron Reconcile] Step 6: Syncing missing shipment items...')
     const missingItemsResult = await syncMissingShipmentItems(50)
     if (missingItemsResult.itemsInserted > 0) {
       console.log(`[Cron Reconcile] Missing items: ${missingItemsResult.itemsInserted} items inserted`)
-    }
-
-    // STEP 5: Reconcile tracking IDs between transactions and shipments
-    // Fixes placeholder tracking (SBAAA...) and reshipment tracking mismatches
-    console.log('[Cron Reconcile] Step 5: Reconciling tracking IDs...')
-    const trackingResult = await reconcileTrackingIds(500)
-    if (trackingResult.updated > 0) {
-      console.log(`[Cron Reconcile] Tracking IDs: ${trackingResult.updated} updated`)
-    }
-
-    // STEP 6: Reconcile voided/duplicate shipping transactions
-    // When ShipBob voids and recreates a label, we get 2 transactions for the same shipment
-    // Only the latest (by charge_date) is actually billed - mark older ones as is_voided
-    console.log('[Cron Reconcile] Step 6: Reconciling voided shipping transactions...')
-    const voidedResult = await reconcileVoidedShippingTransactions()
-    if (voidedResult.voided > 0) {
-      console.log(`[Cron Reconcile] Voided transactions: ${voidedResult.voided} marked (${voidedResult.duplicateGroups} duplicate groups)`)
     }
 
     const duration = Date.now() - startTime

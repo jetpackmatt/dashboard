@@ -512,6 +512,7 @@ export default function AnalyticsContent() {
       setDataError(null)
       // Reset loaded tabs — new date range/client means all tab data is stale
       loadedTabsRef.current = new Set()
+      prefetchedRef.current = false
 
       const params = buildFetchParams(activeTab)
       if (!params) {
@@ -593,6 +594,37 @@ export default function AnalyticsContent() {
     fetchTabData()
     return () => { cancelled = true }
   }, [activeTab, analyticsData, effectiveClientId, buildFetchParams])
+
+  // Prefetch other tabs in the background after initial data loads
+  // This ensures maps and charts are ready when users switch tabs
+  const prefetchedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!analyticsData || !effectiveClientId || prefetchedRef.current) return
+    prefetchedRef.current = true
+
+    const allTabs = ['state-performance', 'cost-speed', 'order-volume', 'carriers-zones', 'financials']
+    const remaining = allTabs.filter(t => !loadedTabsRef.current.has(t))
+    if (remaining.length === 0) return
+
+    // Stagger fetches to avoid overwhelming the DB
+    let delay = 500
+    for (const tab of remaining) {
+      setTimeout(() => {
+        const params = buildFetchParams(tab)
+        if (!params) return
+        fetch(`/api/data/analytics/tab-data?${params}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) {
+              loadedTabsRef.current.add(tab)
+              setAnalyticsData((prev: any) => prev ? { ...prev, ...data } : data)
+            }
+          })
+          .catch(() => {})
+      }, delay)
+      delay += 1500
+    }
+  }, [analyticsData, effectiveClientId, buildFetchParams])
 
   // ── ALL DATA IS NOW PRE-AGGREGATED SERVER-SIDE ──
   // No client-side aggregation needed. Data comes from /api/data/analytics/tab-data
@@ -1371,7 +1403,7 @@ export default function AnalyticsContent() {
                       </div>
                       {/* Row 1: Total Cost — full width */}
                       <div className="flex flex-col items-center justify-center px-4 bg-sky-50/50 dark:bg-sky-950/20 border-b border-border flex-1">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Total Cost <KpiTooltip text={KPI_TOOLTIPS.totalCost} /></div>
+                        <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Total Cost <KpiTooltip text={KPI_TOOLTIPS.totalCost} /></div>
                         <div className="text-3xl font-bold tabular-nums">
                           <AnimatedNumber value={finBillingSummary.totalCost} prefix="$" decimals={2} locale />
                         </div>
@@ -1385,7 +1417,7 @@ export default function AnalyticsContent() {
                       {/* Row 2: Orders | Cost per Order */}
                       <div className="grid grid-cols-2 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-3 border-r border-border bg-emerald-50/50 dark:bg-emerald-950/20">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Orders <KpiTooltip text={KPI_TOOLTIPS.orders} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Orders <KpiTooltip text={KPI_TOOLTIPS.orders} /></div>
                           <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.orderCount} locale /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
@@ -1395,7 +1427,7 @@ export default function AnalyticsContent() {
                           </div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-3 bg-amber-50/40 dark:bg-amber-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Cost / Order <KpiTooltip text={KPI_TOOLTIPS.costPerOrder} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">Cost / Order <KpiTooltip text={KPI_TOOLTIPS.costPerOrder} /></div>
                           <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={finBillingSummary.costPerOrder} prefix="$" decimals={2} /></div>
                           <div className={cn(
                             "text-[10px] mt-0.5",
@@ -1408,30 +1440,30 @@ export default function AnalyticsContent() {
                       {/* Row 3: Cost/Item | Items/Order | % of Revenue */}
                       <div className="grid grid-cols-3 border-b border-border flex-1">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cost / Item <KpiTooltip text={KPI_TOOLTIPS.costPerItem} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Cost / Item <KpiTooltip text={KPI_TOOLTIPS.costPerItem} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.costPerItem ?? 0} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Items / Order <KpiTooltip text={KPI_TOOLTIPS.itemsPerOrder} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Items / Order <KpiTooltip text={KPI_TOOLTIPS.itemsPerOrder} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgItemsPerOrder ?? 0} decimals={1} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Revenue <KpiTooltip text={KPI_TOOLTIPS.pctOfRevenue} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">% of Revenue <KpiTooltip text={KPI_TOOLTIPS.pctOfRevenue} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.fulfillmentAsPercentOfRevenue ?? 0} decimals={1} suffix="%" /></div>
                         </div>
                       </div>
                       {/* Row 4: Avg Rev/Order | Surcharge % | Credits */}
                       <div className="grid grid-cols-3 flex-1 border-b border-border">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.avgRevenuePerOrder ?? 0} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Surcharges <KpiTooltip text={KPI_TOOLTIPS.surcharges} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Surcharges <KpiTooltip text={KPI_TOOLTIPS.surcharges} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={finBillingEfficiency?.surchargePercentOfCost ?? 0} decimals={1} suffix="%" /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 bg-green-50/50 dark:bg-green-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Credits <KpiTooltip text={KPI_TOOLTIPS.credits} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Credits <KpiTooltip text={KPI_TOOLTIPS.credits} /></div>
                           <div className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400"><AnimatedNumber value={finBillingEfficiency?.totalCredits ?? 0} prefix="$" locale /></div>
                         </div>
                       </div>
@@ -1856,34 +1888,34 @@ export default function AnalyticsContent() {
                   <div className="border-y border-border mt-4">
                     <div className="flex items-stretch">
                       <div className="flex flex-col items-center justify-center px-8 py-6 border-r border-border bg-gradient-to-b from-white/60 to-indigo-100/50 dark:from-indigo-950/5 dark:to-indigo-950/20 w-[35%]">
-                        <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Shipping Cost</div>
+                        <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Shipping Cost</div>
                         <div className="text-3xl font-bold tabular-nums">{kpiSectionAvgCost !== null ? <><AnimatedNumber value={kpiSectionAvgCost} prefix="$" decimals={2} /></> : '—'}</div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">per order</div>
                       </div>
                       <div className="grid grid-cols-2 flex-1">
                         <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-b border-border bg-gradient-to-b from-white/50 to-emerald-100/40 dark:from-emerald-950/5 dark:to-emerald-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Fulfillment <KpiTooltip text={KPI_TOOLTIPS.fulfillTime} /></div>
                           <div className="text-xl font-bold tabular-nums">
                             {kpiSectionKpis.avgFulfillTime > 0 ? <AnimatedNumber value={kpiSectionKpis.avgFulfillTime} decimals={1} /> : '—'}
                           </div>
                           <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">operating hours</div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-5 py-4 border-b border-border bg-gradient-to-b from-white/50 to-indigo-100/40 dark:from-indigo-950/5 dark:to-indigo-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Middle Mile <KpiTooltip text={KPI_TOOLTIPS.middleMile} /></div>
                           <div className="text-xl font-bold tabular-nums">
                             {kpiSectionMiddleMile > 0 ? <AnimatedNumber value={kpiSectionMiddleMile} decimals={1} /> : '—'}
                           </div>
                           <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-border bg-gradient-to-b from-white/50 to-amber-100/40 dark:from-amber-950/5 dark:to-amber-950/15">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Last Mile <KpiTooltip text={KPI_TOOLTIPS.lastMile} /></div>
                           <div className="text-xl font-bold tabular-nums">
                             {kpiSectionKpis.avgTransitTime > 0 ? <AnimatedNumber value={kpiSectionKpis.avgTransitTime} decimals={1} /> : '—'}
                           </div>
                           <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-5 py-4 bg-gradient-to-b from-white/40 to-zinc-100/50 dark:from-zinc-800/10 dark:to-zinc-800/20">
-                          <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Orders</div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Orders</div>
                           <div className="text-xl font-bold tabular-nums">
                             {kpiSectionKpis.orderCount > 0 ? <AnimatedNumber value={kpiSectionKpis.orderCount} decimals={0} /> : '—'}
                           </div>
@@ -2807,28 +2839,28 @@ export default function AnalyticsContent() {
                         return (
                           <>
                             <div className="flex flex-col items-center justify-center px-8 py-6 border-r border-border bg-gradient-to-b from-white/60 to-indigo-100/50 dark:from-indigo-950/5 dark:to-indigo-950/20 w-[35%]">
-                              <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Average Zone</div>
+                              <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Average Zone</div>
                               <div className="text-3xl font-bold tabular-nums">{avgZone > 0 ? <AnimatedNumber value={avgZone} decimals={1} /> : '—'}</div>
                               <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">weighted by volume</div>
                             </div>
                             <div className="grid grid-cols-2 flex-1">
                               <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-b border-border bg-gradient-to-b from-white/50 to-emerald-100/40 dark:from-emerald-950/5 dark:to-emerald-950/15">
-                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Shipments</div>
+                                <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Shipments</div>
                                 <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={totalOrders} locale /></div>
                                 <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">in period</div>
                               </div>
                               <div className="flex flex-col items-center justify-center px-5 py-4 border-b border-border bg-gradient-to-b from-white/50 to-indigo-100/40 dark:from-indigo-950/5 dark:to-indigo-950/15">
-                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Cost</div>
+                                <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Cost</div>
                                 <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={avgCost} prefix="$" decimals={2} /></div>
                                 <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">per shipment</div>
                               </div>
                               <div className="flex flex-col items-center justify-center px-5 py-4 border-r border-border bg-gradient-to-b from-white/50 to-amber-100/40 dark:from-amber-950/5 dark:to-amber-950/15">
-                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Last Mile</div>
+                                <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Last Mile</div>
                                 <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={avgTransit} decimals={1} /></div>
                                 <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">calendar days</div>
                               </div>
                               <div className="flex flex-col items-center justify-center px-5 py-4 bg-gradient-to-b from-white/40 to-zinc-100/50 dark:from-zinc-800/10 dark:to-zinc-800/20">
-                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Zones</div>
+                                <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Zones</div>
                                 <div className="text-xl font-bold tabular-nums"><AnimatedNumber value={zoneData.length} decimals={0} /></div>
                                 <div className="text-[9px] text-zinc-400 dark:text-zinc-500 mt-0.5">active</div>
                               </div>

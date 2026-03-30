@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  // Disable StrictMode in dev — it double-fires every useEffect, doubling all API fetches
+  // on a single-threaded dev server. This only affects dev; production is unaffected.
+  reactStrictMode: false,
+
   // Use Turbopack for faster dev builds and HMR
   turbopack: {
     // Exclude large directories from file watching to reduce CPU

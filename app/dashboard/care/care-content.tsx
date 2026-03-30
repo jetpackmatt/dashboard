@@ -1027,8 +1027,8 @@ export default function CareContent() {
                 </button>
               )}
 
-              {/* Bulk Actions - shown when tickets are selected */}
-              {selectedTicketIds.size > 0 && (
+              {/* Bulk Actions - admin/care only, shown when tickets are selected */}
+              {selectedTicketIds.size > 0 && !isBrandUser && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="h-[30px] gap-1.5 text-xs font-medium bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30">
@@ -1252,7 +1252,8 @@ export default function CareContent() {
                         {columnVisibility.client && canViewAllBrands && !selectedClientId && (
                           <th className="w-px whitespace-nowrap text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide pl-4 lg:pl-6 pr-3"></th>
                         )}
-                        {/* Checkbox column */}
+                        {/* Checkbox column - admin/care only (bulk actions) */}
+                        {!isBrandUser && (
                         <th className={cn(
                           "w-px whitespace-nowrap align-middle pl-3 pr-0",
                           !(columnVisibility.client && canViewAllBrands && !selectedClientId) && "pl-4 lg:pl-6"
@@ -1264,6 +1265,7 @@ export default function CareContent() {
                             className="h-3.5 w-3.5"
                           />
                         </th>
+                        )}
                         {/* Partner column - only visible for admins viewing all clients */}
                         {canViewAllBrands && !selectedClientId && (
                           <th className="w-px whitespace-nowrap px-1 text-left align-middle text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide"></th>
@@ -1483,6 +1485,7 @@ export default function CareContent() {
                               </td>
                             )}
                             {/* Checkbox */}
+                            {!isBrandUser && (
                             <td className={cn(
                               "w-px whitespace-nowrap align-middle pl-3 pr-0",
                               !(columnVisibility.client && canViewAllBrands && !selectedClientId) && "pl-4 lg:pl-6"
@@ -1495,6 +1498,7 @@ export default function CareContent() {
                                 className="h-3.5 w-3.5"
                               />
                             </td>
+                            )}
                             {/* Partner badge - only visible for admins viewing all clients */}
                             {canViewAllBrands && !selectedClientId && (
                               <td className="w-px whitespace-nowrap px-1 align-middle">
@@ -1730,16 +1734,15 @@ export default function CareContent() {
                                             </div>
                                           )}
 
-                                          {/* Action Buttons */}
+                                          {/* Action Buttons - admin/care only */}
+                                          {!isBrandUser && (
                                           <div className="flex flex-col w-full px-3 lg:px-4 py-4 gap-1.5 border-b-2 border-white dark:border-b-white/15 bg-white/25 dark:bg-black/20">
-                                            {!isBrandUser && (
-                                              <button
-                                                className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
-                                                onClick={(e) => { e.stopPropagation(); openStatusDialog(ticket, e) }}
-                                              >
-                                                Update Status
-                                              </button>
-                                            )}
+                                            <button
+                                              className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
+                                              onClick={(e) => { e.stopPropagation(); openStatusDialog(ticket, e) }}
+                                            >
+                                              Update Status
+                                            </button>
                                             <button
                                               className="w-full px-2.5 py-[6px] text-[11px] font-medium text-foreground bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10 rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left"
                                               onClick={(e) => { e.stopPropagation(); openEditDialog(ticket, e) }}
@@ -1749,16 +1752,17 @@ export default function CareContent() {
                                             <button
                                               className={cn(
                                                 "w-full px-2.5 py-[6px] text-[11px] font-medium rounded ring-1 ring-black/[0.12] dark:ring-white/10 transition-all text-left",
-                                                canDeleteTickets || isBrandUser
+                                                canDeleteTickets
                                                   ? "text-destructive bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/10"
                                                   : "text-muted-foreground/50 bg-white/30 dark:bg-white/5 cursor-not-allowed"
                                               )}
-                                              onClick={(e) => { e.stopPropagation(); if (canDeleteTickets || isBrandUser) openDeleteDialog(ticket, e) }}
-                                              disabled={!canDeleteTickets && !isBrandUser}
+                                              onClick={(e) => { e.stopPropagation(); if (canDeleteTickets) openDeleteDialog(ticket, e) }}
+                                              disabled={!canDeleteTickets}
                                             >
-                                              {isBrandUser ? 'Archive Ticket' : 'Delete Ticket'}
+                                              Delete Ticket
                                             </button>
                                           </div>
+                                          )}
 
                                           {/* Files Section - only in left column when carrier/tracking are shown in center */}
                                           {ticket.attachments && ticket.attachments.length > 0 && !!(ticket.carrier || ticket.trackingNumber) && (

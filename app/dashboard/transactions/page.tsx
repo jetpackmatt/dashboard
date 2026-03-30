@@ -263,11 +263,14 @@ export default function TransactionsPage() {
         }
 
         // Priority 2: Background-load other tabs for instant switching
-        // Don't await - let them load in parallel in the background
-        if (currentTab !== 'unfulfilled') fetchUnfulfilledData(unfulfilledPageSize)
-        if (currentTab !== 'shipments') fetchShipmentsData(shipmentsPageSize)
-        if (currentTab !== 'additional-services') fetchAdditionalServicesData(additionalServicesPageSize)
-        if (currentTab !== 'returns') fetchReturnsData(returnsPageSize)
+        // Stagger requests to avoid overwhelming the dev server (single-threaded Node)
+        const bgTabs: Array<() => void> = []
+        if (currentTab !== 'unfulfilled') bgTabs.push(() => fetchUnfulfilledData(unfulfilledPageSize))
+        if (currentTab !== 'shipments') bgTabs.push(() => fetchShipmentsData(shipmentsPageSize))
+        if (currentTab !== 'additional-services') bgTabs.push(() => fetchAdditionalServicesData(additionalServicesPageSize))
+        if (currentTab !== 'returns') bgTabs.push(() => fetchReturnsData(returnsPageSize))
+        // Stagger by 800ms so active tab + filters finish first
+        bgTabs.forEach((fn, i) => setTimeout(fn, 800 + i * 600))
       }
 
       loadData()

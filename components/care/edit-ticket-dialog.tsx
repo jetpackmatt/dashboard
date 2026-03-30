@@ -54,7 +54,7 @@ interface EditForm {
   inventoryId: string
 }
 
-const labelClass = "text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider"
+const labelClass = "text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider"
 
 export function EditTicketDialog({
   open,

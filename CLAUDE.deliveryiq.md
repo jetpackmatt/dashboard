@@ -9,10 +9,10 @@
 Delivery IQ proactively identifies shipments that may be Lost in Transit BEFORE customers file claims. It uses transit benchmarks and carrier checkpoint data to detect shipments that are taking longer than expected.
 
 **Key capabilities:**
-1. **Monitoring** - Track all in-transit shipments automatically
+1. **Monitoring** - Track all in-transit shipments automatically via benchmark-based entry
 2. **Detection** - Identify at-risk shipments before they become lost
-3. **Intelligence** - AI-powered probability scoring and insights (coming soon)
-4. **Claims** - Automated claim filing when shipments are likely lost
+3. **Intelligence** - AI-powered watch reason classification and checkpoint normalization (Gemini Flash)
+4. **Claims** - Manual and automated claim filing when shipments are eligible
 
 ---
 
@@ -145,7 +145,9 @@ Benchmarks are calculated daily from the last 90 days of delivered shipments.
 | `/api/cron/sync-at-risk` | Daily 3 AM UTC | Finds old undelivered shipments | $0.04/shipment |
 | `/api/cron/recheck-at-risk` | Hourly | Recheck existing tracked shipments | FREE |
 | `/api/cron/advance-claims` | Every 5 min | Advance claim workflow | FREE |
-| `/api/cron/ai-reassess` | Every 15 min | AI reassessment of at-risk shipments | Haiku tokens |
+| `/api/cron/ai-reassess` | Every 15 min | AI watch-reason reassessment (Gemini Flash) | Gemini tokens |
+| `/api/cron/normalize-checkpoints` | Every 15 min | AI-normalize tracking checkpoints (Gemini, 200/run) | Gemini tokens |
+| `/api/cron/auto-file-claims` | Daily 9 AM UTC | Auto-file LIT claims for clients with auto_file_claims=true | TrackingMore lookups |
 
 ---
 
@@ -492,9 +494,22 @@ AI (Gemini) normalizes raw carrier scan descriptions into standard types:
 
 ---
 
-## Current AI Assessment (Haiku-based)
+## AI Assessment (Gemini Flash)
 
-Shipments in monitoring can be assessed by AI to predict outcomes.
+Shipments in monitoring are assessed by AI to classify watch reasons and predict outcomes.
+
+### Watch Reason Types
+
+| Reason | Recheck Interval | Description |
+|--------|-----------------|-------------|
+| `SLOW` | 4 hours | Moving but slower than expected |
+| `STALLED` | 1 hour | No new scans for extended period |
+| `CUSTOMS` | 4 hours | Stuck in customs clearance |
+| `PICKUP` | 4 hours | Awaiting carrier pickup |
+| `DELIVERY ISSUE` | 1 hour | Failed delivery attempts |
+| `NEEDS ACTION` | 1 hour | Requires manual intervention |
+| `STUCK` | 1 hour | Stuck at facility for extended period |
+| `RETURNING` | 4 hours | Package being returned to sender |
 
 ### AI Fields (`lost_in_transit_checks`)
 
@@ -581,11 +596,10 @@ Shows combined timeline:
 2. **TrackingMore carrier checkpoints** (In Transit, Out for Delivery, Delivered)
 3. **Claim events** (Filed, Updated, Resolved)
 
-**Package Intelligence Panel** (coming soon):
-- Delivery probability percentage
-- AI-generated summary
-- Risk factors present
-- Expected delivery window
+**Scout Insight Card** (`scout-insight-card.tsx`):
+- AI-generated recommendation and confidence
+- Customer impact assessment
+- Action buttons (file claim, mark resolved, etc.)
 
 ---
 
@@ -724,9 +738,15 @@ See [CLAUDE.claims.md](CLAUDE.claims.md) for claim lifecycle details.
 - Label date as fallback `last_scan_date` when no carrier scan exists
 - Domain migration to `pro.jetpack3pl.com`
 
-**In Progress (Feb 2026):**
-- **Phase 0:** Checkpoint Storage Infrastructure - Store ALL TrackingMore checkpoints permanently in `tracking_checkpoints` table
-- **Phase 1:** Data Foundation - `delivery_outcomes`, `survival_curves`, `hazard_factors` tables
-- **Phase 2:** Survival Analysis Engine - Kaplan-Meier curves with service-preserving fallback
-- **Phase 3:** AI Integration - Gemini event formatting and summary generation
-- **Phase 4:** UI Integration - Scout insight card with probability + AI summary
+**Implemented (Feb-Mar 2026):**
+- **Checkpoint Storage:** `tracking_checkpoints` table stores ALL TrackingMore checkpoints permanently
+- **AI Normalization:** `normalize-checkpoints` cron normalizes raw carrier scans into 12 standard types (LABEL, PICKUP, INTRANSIT, HUB, LOCAL, OFD, DELIVERED, ATTEMPT, EXCEPTION, RETURN, CUSTOMS, HOLD)
+- **Watch Reason Classification:** `ai-reassess` cron evaluates checkpoint movement patterns
+- **Auto-File Claims:** `auto-file-claims` cron for clients with `auto_file_claims=true`
+- **Webhook Push Updates:** TrackingMore sends real-time status changes via webhook
+- **Scout Insight Card:** AI recommendation display in Delivery IQ table
+
+**Planned (not yet built):**
+- **Survival Analysis Engine:** Kaplan-Meier curves with Cox proportional hazards model
+- **Delivery Probability:** Real-time probability scoring per shipment
+- **Package Intelligence Panel:** Full probability + AI summary in tracking drawer

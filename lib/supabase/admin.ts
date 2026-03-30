@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { Resend } from 'resend'
 
 /**
  * Supabase Admin Client
@@ -566,6 +567,68 @@ export interface UserWithClients {
 }
 
 /**
+ * Send an invite/setup email via Resend with a direct token_hash link.
+ *
+ * Uses generateLink() to get a hashed_token, then embeds it directly in our
+ * /auth/callback URL. This bypasses Supabase's PKCE redirect (which fails
+ * because email-initiated flows have no code_verifier cookie in the browser).
+ * The callback uses verifyOtp({ token_hash, type }) instead.
+ */
+async function sendInviteEmail(
+  supabase: ReturnType<typeof createAdminClient>,
+  email: string,
+  fullName: string | undefined,
+  linkType: 'invite' | 'magiclink' = 'invite'
+) {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+  const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+    type: linkType,
+    email,
+    options: {
+      redirectTo: `${baseUrl}/auth/callback?next=/accept-invite`,
+    },
+  })
+
+  if (linkError || !linkData) {
+    console.error('Failed to generate invite link:', linkError)
+    throw new Error('Failed to generate invite link')
+  }
+
+  const inviteLink = `${baseUrl}/auth/callback?token_hash=${linkData.properties.hashed_token}&type=${linkType}&next=/accept-invite`
+  const displayName = fullName || ''
+
+  const resend = new Resend(process.env.RESEND_API_KEY)
+  const { error: emailError } = await resend.emails.send({
+    from: 'Jetpack <support@shipwithjetpack.com>',
+    to: [email],
+    subject: 'You\'ve been invited to Jetpack Pro',
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+        <h2 style="color: #111827; font-size: 24px; margin-bottom: 8px;">Welcome to Jetpack Pro</h2>
+        <p style="color: #6b7280; font-size: 16px; line-height: 1.5;">
+          ${displayName ? `Hi ${displayName}, you` : 'You'}'ve been invited to join Jetpack Pro. Click the button below to set up your account.
+        </p>
+        <div style="margin: 32px 0;">
+          <a href="${inviteLink}" style="display: inline-block; background-color: #4f46e5; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">
+            Accept Invitation
+          </a>
+        </div>
+        <p style="color: #9ca3af; font-size: 13px; line-height: 1.5;">
+          This link will expire in 24 hours. If you didn't expect this invitation, you can safely ignore this email.
+        </p>
+      </div>
+    `,
+    text: `You've been invited to Jetpack Pro. Accept your invitation: ${inviteLink}`,
+  })
+
+  if (emailError) {
+    console.error('Failed to send invite email:', emailError)
+    throw new Error('Failed to send invite email')
+  }
+}
+
+/**
  * Invite a user to a client
  * Creates the auth user and links them to the client
  */
@@ -592,13 +655,12 @@ export async function inviteUser(data: {
   if (existingUser) {
     userId = existingUser.id
   } else {
-    // Create new user with invite (sends email)
+    // Create user without password (they'll set it via accept-invite page)
     const { data: newUser, error: createError } =
-      await supabase.auth.admin.inviteUserByEmail(email, {
-        data: {
-          full_name: fullName || '',
-        },
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard`,
+      await supabase.auth.admin.createUser({
+        email,
+        email_confirm: false,
+        user_metadata: { full_name: fullName || '' },
       })
 
     if (createError) {
@@ -607,6 +669,9 @@ export async function inviteUser(data: {
     }
 
     userId = newUser.user.id
+
+    // Send invite email via Resend with direct token_hash link
+    await sendInviteEmail(supabase, email, fullName)
   }
 
   // Check if already linked to this client
@@ -689,22 +754,21 @@ export async function createCareUser(data: {
     }
   }
 
-  // Create new user with invite (sends email)
-  // Redirect admins to /dashboard, care users to /dashboard/care
-  const redirectPath = role === 'admin' ? '/dashboard' : '/dashboard/care'
+  // Create user without password (they'll set it via accept-invite page)
   const { data: newUser, error: createError } =
-    await supabase.auth.admin.inviteUserByEmail(email, {
-      data: {
-        full_name: fullName || '',
-        role,
-      },
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}${redirectPath}`,
+    await supabase.auth.admin.createUser({
+      email,
+      email_confirm: false,
+      user_metadata: { full_name: fullName || '', role },
     })
 
   if (createError) {
     console.error('Failed to create care user:', createError)
     throw new Error(createError.message || 'Failed to create care user')
   }
+
+  // Send invite email via Resend with direct token_hash link
+  await sendInviteEmail(supabase, email, fullName)
 
   return {
     user: { id: newUser.user.id, email },

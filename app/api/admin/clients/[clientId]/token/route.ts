@@ -49,7 +49,7 @@ export async function POST(
 
       const result = await shipbob.webhooks.registerAll(
         webhookUrl,
-        `Jetpack Dashboard - ${client?.company_name || clientId}`
+        `Jetpack Pro - ${client?.company_name || clientId}`
       )
 
       webhookResult = { created: result.created }

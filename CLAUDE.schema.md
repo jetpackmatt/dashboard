@@ -2,7 +2,7 @@
 
 **Read this when:** Working with database queries, migrations, or understanding table relationships.
 
-**Source:** Queried directly from Supabase (Dec 17, 2025)
+**Source:** Queried directly from Supabase (updated Mar 29, 2026)
 
 ---
 
@@ -31,6 +31,9 @@
 | `user_commission_clients` | `id` | Client-to-commission mapping |
 | `commission_snapshots` | `id` | Locked monthly commission records |
 | `eshipper_shipments` | `id` | eShipper shipment records (CSV import) |
+| `user_clients` | `id` | Brand user → client access mapping (role + permissions) |
+| `tracking_checkpoints` | `id` | Permanent TrackingMore checkpoint storage |
+| `cron_locks` | `job_name` | Distributed cron lock (prevents overlapping runs) |
 
 ---
 
@@ -214,6 +217,11 @@ The `surcharge` column contains the aggregated sum for backwards compatibility. 
 | Column | Type | Notes |
 |--------|------|-------|
 | `care_ticket_id` | uuid | FK to care_tickets(id), links credit transactions to care tickets. Set automatically during sync Fifth Pass or manually via Misfits page. |
+
+### Voided Label Detection
+| Column | Type | Notes |
+|--------|------|-------|
+| `is_voided` | boolean | TRUE = voided label, excluded from billing. Detected by reconcile cron |
 
 ### Dispute Fields
 | Column | Type | Notes |
@@ -399,18 +407,27 @@ clients
   ├── orders (client_id)
   │     └── shipments (order_id)
   │           ├── shipment_items (shipment_id)
-  │           └── shipment_cartons (shipment_id)
+  │           ├── shipment_cartons (shipment_id)
+  │           └── tracking_checkpoints (shipment_id)
   │     └── order_items (order_id)
   ├── transactions (client_id)
+  │     └── care_ticket_id → care_tickets (credit linking)
   ├── returns (client_id)
+  ├── care_tickets (client_id)
+  ├── lost_in_transit_checks (client_id)
   ├── invoices_jetpack (client_id)
   ├── markup_rules (client_id, nullable)
-  └── client_api_credentials (client_id)
+  ├── client_api_credentials (client_id)
+  └── user_clients (client_id) → auth.users (user_id)
 
 transactions
   ├── reference_id → shipments.shipment_id (when reference_type='Shipment')
   ├── reference_id → returns.shipbob_return_id (when reference_type='Return')
   └── invoice_id_sb → invoices_sb.shipbob_invoice_id
+
+auth.users
+  ├── user_clients (user_id) → brand access
+  └── user_commissions (user_id) → commission assignments
 ```
 
 ---
@@ -427,6 +444,8 @@ transactions
 | `invoices_jetpack` | `invoice_number` |
 | `client_api_credentials` | `client_id, provider` |
 | `care_tickets` | `ticket_number` |
+| `user_clients` | `user_id, client_id` |
+| `tracking_checkpoints` | `content_hash` |
 
 ---
 
@@ -637,3 +656,78 @@ Individual eShipper shipment records (imported via CSV).
 |--------|------|-------|
 | `eshipper_id` | text | eShipper company ID (matches eshipper_company_id) |
 | `gofo_id` | text | GOFO partner ID (future) |
+| `auto_file_claims` | boolean | Enable auto-file LIT claims (default false) |
+| `size_label` | text | Client size (goldfish/bass/salmon/dolphin/swordfish/shark/whale) |
+
+---
+
+## user_clients
+
+**Brand user → client access mapping with role and permissions.**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `user_id` | uuid | FK to auth.users |
+| `client_id` | uuid | FK to clients |
+| `role` | text | `brand_owner` or `brand_team` |
+| `permissions` | jsonb | NULL for brand_owner (= full access), JSONB for brand_team |
+| `created_at` | timestamptz | |
+
+**Role constraint:** `CHECK (role IN ('brand_owner', 'brand_team'))`
+
+**Permissions JSONB structure** (when role = `brand_team`):
+```json
+{
+  "home": true,
+  "home.cost_statistics": true,
+  "transactions": true,
+  "transactions.shipments": true,
+  "transactions.returns": false,
+  "analytics": true,
+  "analytics.performance": true,
+  "care": true,
+  "care.submit_claims": false,
+  "billing": true
+}
+```
+
+See `lib/permissions.ts` for the full `BrandPermissions` interface and `PERMISSION_SECTIONS` metadata.
+
+---
+
+## tracking_checkpoints
+
+**Permanent storage of TrackingMore carrier checkpoints. See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md).**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `shipment_id` | text | FK to shipments.shipment_id |
+| `tracking_number` | text | |
+| `carrier` | text | |
+| `carrier_code` | text | TrackingMore carrier code |
+| `checkpoint_date` | timestamptz | When carrier scanned |
+| `raw_description` | text | Original carrier text |
+| `raw_location` | text | |
+| `raw_status` | text | checkpoint_delivery_status |
+| `raw_substatus` | text | checkpoint_delivery_substatus |
+| `normalized_type` | text | AI-normalized: LABEL, PICKUP, INTRANSIT, HUB, LOCAL, OFD, DELIVERED, ATTEMPT, EXCEPTION, RETURN, CUSTOMS, HOLD |
+| `display_title` | text | AI-cleaned human-readable title |
+| `sentiment` | text | positive, neutral, concerning, critical |
+| `content_hash` | text | UNIQUE — SHA256(carrier + date + description + location) |
+| `source` | text | Default 'trackingmore' |
+| `normalized_at` | timestamptz | When AI normalization ran |
+
+---
+
+## cron_locks
+
+**Distributed locking for cron jobs to prevent overlapping executions.**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `job_name` | text | PK — cron job identifier |
+| `instance_id` | text | job_name + timestamp + random |
+| `locked_at` | timestamptz | When lock acquired |
+| `expires_at` | timestamptz | Auto-expire (default: locked_at + 330s) |

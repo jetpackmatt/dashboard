@@ -38,11 +38,11 @@ export function NationalVolumeOverviewPanel({ stateData, cityData }: NationalVol
       <div className="flex-shrink-0">
         <div className="grid grid-cols-2">
           <div className="text-center px-3 py-4 border-r border-border bg-sky-50/50 dark:bg-sky-950/20">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
+            <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Total Orders</div>
             <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={totalOrders} locale /></div>
           </div>
           <div className="text-center px-3 py-4 bg-emerald-50/40 dark:bg-emerald-950/15">
-            <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg Orders/Day</div>
+            <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg Orders/Day</div>
             <div className="text-2xl font-bold tabular-nums"><AnimatedNumber value={totalAvgPerDay} decimals={1} /></div>
           </div>
         </div>

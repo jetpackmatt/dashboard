@@ -134,7 +134,8 @@ export function DashboardContent({ displayName }: { displayName: string }) {
     return () => { cancelled = true }
   }, [effectiveClientId, isClientLoading, isBrandUser])
 
-  const isAnyLoading = isKpiLoading || isDiqLoading || isClientLoading
+  // Don't block the entire page on DIQ stats — the DIQ section has its own skeleton
+  const isAnyLoading = isKpiLoading || isClientLoading
 
   return (
     <>

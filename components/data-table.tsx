@@ -580,12 +580,13 @@ export function DataTable({
     [additionalServicesStatusFilter]
   )
 
-  // Use prefetched fee types when available, otherwise load dynamically
+  // Use prefetched fee types when available, otherwise load dynamically when tab is active
   React.useEffect(() => {
     if (prefetchedAdditionalServicesFeeTypes && prefetchedAdditionalServicesFeeTypes.length > 0) {
       setAdditionalServicesFeeTypes(prefetchedAdditionalServicesFeeTypes)
       return
     }
+    if (currentTab !== 'additional-services') return
     // Fallback: load fee types dynamically if not prefetched
     async function loadFeeTypes() {
       try {
@@ -599,10 +600,11 @@ export function DataTable({
       }
     }
     loadFeeTypes()
-  }, [clientId, prefetchedAdditionalServicesFeeTypes])
+  }, [clientId, prefetchedAdditionalServicesFeeTypes, currentTab])
 
-  // Load dynamic credit reasons for Credits tab
+  // Load dynamic credit reasons for Credits tab (only when tab is active)
   React.useEffect(() => {
+    if (currentTab !== 'credits') return
     async function loadCreditReasons() {
       try {
         const response = await fetch(buildApiUrl('/api/data/billing/credits/credit-reasons', { clientId }))
@@ -615,10 +617,11 @@ export function DataTable({
       }
     }
     loadCreditReasons()
-  }, [clientId])
+  }, [clientId, currentTab])
 
-  // Load dynamic filter options for Returns tab
+  // Load dynamic filter options for Returns tab (only when tab is active)
   React.useEffect(() => {
+    if (currentTab !== 'returns') return
     async function loadReturnsFilterOptions() {
       try {
         const response = await fetch(buildApiUrl('/api/data/billing/returns/filter-options', { clientId }))
@@ -632,10 +635,11 @@ export function DataTable({
       }
     }
     loadReturnsFilterOptions()
-  }, [clientId])
+  }, [clientId, currentTab])
 
-  // Load dynamic filter options for Receiving tab
+  // Load dynamic filter options for Receiving tab (only when tab is active)
   React.useEffect(() => {
+    if (currentTab !== 'receiving') return
     async function loadReceivingFilterOptions() {
       try {
         const response = await fetch(buildApiUrl('/api/data/billing/receiving/filter-options', { clientId }))
@@ -648,10 +652,11 @@ export function DataTable({
       }
     }
     loadReceivingFilterOptions()
-  }, [clientId])
+  }, [clientId, currentTab])
 
-  // Load dynamic filter options for Storage tab
+  // Load dynamic filter options for Storage tab (only when tab is active)
   React.useEffect(() => {
+    if (currentTab !== 'storage') return
     async function loadStorageFilterOptions() {
       try {
         const response = await fetch(buildApiUrl('/api/data/billing/storage/filter-options', { clientId }))
@@ -665,7 +670,7 @@ export function DataTable({
       }
     }
     loadStorageFilterOptions()
-  }, [clientId])
+  }, [clientId, currentTab])
 
   // Returns tab filter state
   const landedOnReturns = initialTab === 'returns'

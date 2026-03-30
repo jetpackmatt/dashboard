@@ -328,7 +328,7 @@ export function CreateTicketDialog({
             const showBrand = isAdmin && (!selectedClientId || selectedClientId === 'all')
             const shipmentIdField = (
               <div className="space-y-1.5">
-                <Label htmlFor="shipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                <Label htmlFor="shipmentId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                   Shipment ID <span className="text-red-500">*</span>
                 </Label>
                 <div className="relative">
@@ -366,7 +366,7 @@ export function CreateTicketDialog({
             return (
               <div className={cn("grid gap-4", isShipmentType || showBrand ? "grid-cols-2" : "grid-cols-1")}>
                 <div className="space-y-1.5">
-                  <Label htmlFor="ticketType" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  <Label htmlFor="ticketType" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                     Type <span className="text-red-500">*</span>
                   </Label>
                   <Select
@@ -390,7 +390,7 @@ export function CreateTicketDialog({
                 </div>
                 {isShipmentType ? shipmentIdField : showBrand ? (
                   <div className="space-y-1.5">
-                    <Label htmlFor="clientId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    <Label htmlFor="clientId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                       Brand <span className="text-red-500">*</span>
                     </Label>
                     <Select
@@ -483,7 +483,7 @@ export function CreateTicketDialog({
               {createForm.ticketType === 'Address Change' && (
                 <div className="space-y-2">
                   <div>
-                    <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">New Address <span className="text-red-500">*</span></span>
+                    <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">New Address <span className="text-red-500">*</span></span>
                   </div>
                   <div className="space-y-1.5">
                     <Input
@@ -550,7 +550,7 @@ export function CreateTicketDialog({
           {/* Description - hidden for Address Change (address fields replace it) */}
           {createForm.ticketType !== 'Address Change' && (
             <div className="space-y-1.5">
-              <Label htmlFor="description" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label htmlFor="description" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 Description <span className="text-red-500">*</span>
               </Label>
               <Textarea
@@ -567,7 +567,7 @@ export function CreateTicketDialog({
           {/* Internal Note - admin/care only */}
           {!isBrandUser && (
             <div className="space-y-1.5">
-              <Label htmlFor="initialNote" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label htmlFor="initialNote" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 Internal Note (optional)
               </Label>
               <Input
@@ -583,7 +583,7 @@ export function CreateTicketDialog({
           {/* File Attachments - hidden for Address Change */}
           {createForm.ticketType !== 'Address Change' && (
             <div className="space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 Attachments (optional)
               </Label>
               <FileUpload

@@ -724,7 +724,7 @@ export function ClaimSubmissionDialog({
         return (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="shipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label htmlFor="shipmentId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 Shipment ID <span className="text-red-500">*</span>
               </Label>
               <Input
@@ -1017,7 +1017,7 @@ export function ClaimSubmissionDialog({
         return (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="description" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label htmlFor="description" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 {isDescriptionRequired ? (
                   <>Description <span className="text-red-500">*</span></>
                 ) : (
@@ -1035,7 +1035,7 @@ export function ClaimSubmissionDialog({
             </div>
             {formData.claimType === "lostInTransit" && (
               <div className="space-y-1.5">
-                <Label htmlFor="lit-reshipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                <Label htmlFor="lit-reshipmentId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                   Reshipment ID <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                 </Label>
                 <div className="relative">
@@ -1102,7 +1102,7 @@ export function ClaimSubmissionDialog({
 
             {formData.reshipmentStatus === "I've already reshipped" && (
               <div className="space-y-1.5 pt-2">
-                <Label htmlFor="reshipmentId" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                <Label htmlFor="reshipmentId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                   Reshipment Reference <span className="text-red-500">*</span>
                 </Label>
                 <p className="text-[11px] text-muted-foreground">Enter a Jetpack Shipment ID or your store&apos;s order number</p>
@@ -1176,7 +1176,7 @@ export function ClaimSubmissionDialog({
           return (
             <div className="space-y-5">
               <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                   Screenshot Showing Carrier Confirmation
                   {carrierScreenshot.length > 0 ? (
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -1194,7 +1194,7 @@ export function ClaimSubmissionDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                   Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                 </Label>
                 <FileUpload
@@ -1221,7 +1221,7 @@ export function ClaimSubmissionDialog({
           return (
             <div className="space-y-5">
               <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                   Screenshot of Customer Complaint
                   {formData.attachments.customerComplaint.length > 0 ? (
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -1242,7 +1242,7 @@ export function ClaimSubmissionDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                   Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                 </Label>
                 <FileUpload
@@ -1263,7 +1263,7 @@ export function ClaimSubmissionDialog({
           <div className="space-y-5">
             {/* Field 1: Photo - REQUIRED for damage/pick error/short ship */}
             <div className="space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+              <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 {photoLabel}
                 {formData.attachments.photo.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -1285,7 +1285,7 @@ export function ClaimSubmissionDialog({
 
             {/* Field 2: Customer Complaint - REQUIRED for damage/pick error/short ship */}
             <div className="space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+              <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-2">
                 Screenshot of Customer Complaint
                 {formData.attachments.customerComplaint.length > 0 ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -1307,7 +1307,7 @@ export function ClaimSubmissionDialog({
 
             {/* Field 3: Other Docs - OPTIONAL */}
             <div className="space-y-1.5">
-              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+              <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                 Any Other Documentation <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
               </Label>
               <FileUpload

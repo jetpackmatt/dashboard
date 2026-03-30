@@ -12,6 +12,7 @@ import {
   CopyIcon,
   CheckIcon,
   MessageSquareIcon,
+  ArrowRightLeftIcon,
 } from "lucide-react"
 import { useDebouncedCallback } from "use-debounce"
 
@@ -38,6 +39,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Popover,
   PopoverContent,
@@ -119,6 +128,18 @@ interface TicketSuggestion {
   ticket: AvailableTicket
   confidence: 'exact' | 'probable'
   reason: string
+}
+
+interface DisputedCharge {
+  transaction_id: string
+  reference_id: string
+  reference_type: string
+  fee_type: string
+  cost: number
+  charge_date: string
+  dispute_status: string | null
+  dispute_reason: string | null
+  clients?: { company_name: string } | null
 }
 
 // Match credits to available care tickets client-side.
@@ -492,6 +513,143 @@ export default function MisfitsContent() {
     setIsDisputing(false)
   }
 
+  // Match to Disputed state
+  const [matchDialogOpen, setMatchDialogOpen] = React.useState(false)
+  const [disputedCharges, setDisputedCharges] = React.useState<DisputedCharge[]>([])
+  const [isLoadingDisputes, setIsLoadingDisputes] = React.useState(false)
+  const [isMatching, setIsMatching] = React.useState(false)
+  // Map: credit transactionId → selected charge transaction_id (or empty string for no match)
+  const [matchPairings, setMatchPairings] = React.useState<Record<string, string>>({})
+
+  async function openMatchDialog() {
+    if (selectedIds.size === 0) return
+    setMatchDialogOpen(true)
+    setIsLoadingDisputes(true)
+    try {
+      // Fetch both disputed and invalid charges in parallel
+      const [disputedRes, invalidRes] = await Promise.all([
+        fetch('/api/admin/disputes?status=disputed'),
+        fetch('/api/admin/disputes?status=invalid'),
+      ])
+
+      if (!disputedRes.ok) throw new Error('Failed to fetch disputes')
+
+      const disputedData = await disputedRes.json()
+      const invalidData = invalidRes.ok ? await invalidRes.json() : { disputes: [] }
+
+      // Merge and deduplicate, only positive-cost charges
+      const seenIds = new Set<string>()
+      const allCharges: DisputedCharge[] = []
+      for (const charge of [...(disputedData.disputes || []), ...(invalidData.disputes || [])]) {
+        if (charge.cost > 0 && !seenIds.has(charge.transaction_id)) {
+          seenIds.add(charge.transaction_id)
+          allCharges.push(charge)
+        }
+      }
+      setDisputedCharges(allCharges)
+
+      // Build initial pairings — priority: ref+amount > ref only > amount only
+      const selectedCredits = misfits.filter(tx => selectedIds.has(tx.transactionId) && tx.cost < 0)
+      const usedChargeIds = new Set<string>()
+      const pairings: Record<string, string> = {}
+
+      for (const credit of selectedCredits) {
+        const absCost = Math.abs(credit.cost)
+        const hasRef = credit.referenceId && credit.referenceId !== '0'
+
+        // Priority 1: Same reference_id + same amount (strongest)
+        if (hasRef) {
+          const refAmountMatch = allCharges.find(c =>
+            !usedChargeIds.has(c.transaction_id) &&
+            c.reference_id === credit.referenceId &&
+            Math.abs(c.cost - absCost) < 0.01
+          )
+          if (refAmountMatch) {
+            pairings[credit.transactionId] = refAmountMatch.transaction_id
+            usedChargeIds.add(refAmountMatch.transaction_id)
+            continue
+          }
+        }
+
+        // Priority 2: Same reference_id, different amount (shipment ID match)
+        if (hasRef) {
+          const refOnlyMatch = allCharges.find(c =>
+            !usedChargeIds.has(c.transaction_id) &&
+            c.reference_id === credit.referenceId
+          )
+          if (refOnlyMatch) {
+            pairings[credit.transactionId] = refOnlyMatch.transaction_id
+            usedChargeIds.add(refOnlyMatch.transaction_id)
+            continue
+          }
+        }
+
+        // Priority 3: Same amount only
+        const amountMatch = allCharges.find(c =>
+          !usedChargeIds.has(c.transaction_id) &&
+          Math.abs(c.cost - absCost) < 0.01
+        )
+        if (amountMatch) {
+          pairings[credit.transactionId] = amountMatch.transaction_id
+          usedChargeIds.add(amountMatch.transaction_id)
+          continue
+        }
+
+        // No match
+        pairings[credit.transactionId] = ''
+      }
+
+      setMatchPairings(pairings)
+    } catch {
+      toast.error('Failed to load disputed charges')
+      setMatchDialogOpen(false)
+    }
+    setIsLoadingDisputes(false)
+  }
+
+  function updateMatchPairing(creditTxId: string, chargeTxId: string) {
+    setMatchPairings(prev => ({ ...prev, [creditTxId]: chargeTxId === '__none__' ? '' : chargeTxId }))
+  }
+
+  async function handleMatchConfirm() {
+    const validPairs = Object.entries(matchPairings).filter(([, chargeId]) => chargeId)
+    if (validPairs.length === 0) return
+
+    setIsMatching(true)
+    let matched = 0
+    let failed = 0
+
+    for (const [creditTxId, chargeTxId] of validPairs) {
+      try {
+        const res = await fetch('/api/admin/disputes/match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            credit_transaction_id: creditTxId,
+            charge_transaction_ids: [chargeTxId],
+            unattribute_credit: true,
+          }),
+        })
+        if (res.ok) matched++
+        else failed++
+      } catch {
+        failed++
+      }
+    }
+
+    if (failed > 0) {
+      toast.error(`Matched ${matched}, ${failed} failed`)
+    } else {
+      toast.success(`Matched ${matched} credit(s) to disputed charges`)
+    }
+    setMatchDialogOpen(false)
+    setMatchPairings({})
+    fetchMisfits()
+    setIsMatching(false)
+  }
+
+  const matchableCount = Object.values(matchPairings).filter(v => v).length
+
   // Copy to clipboard
   function handleCopy(text: string) {
     copyToClipboard(text)
@@ -612,6 +770,17 @@ export default function MisfitsContent() {
                 >
                   <BanIcon className="mr-1 h-3 w-3" />
                   Dispute
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200 dark:bg-violet-900/30 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/50"
+                  onClick={openMatchDialog}
+                  disabled={isBulkLinking || !misfits.some(tx => selectedIds.has(tx.transactionId) && tx.cost < 0)}
+                >
+                  <ArrowRightLeftIcon className="mr-1 h-3 w-3" />
+                  Match to Disputed
                 </Button>
 
                 <button
@@ -1256,6 +1425,173 @@ export default function MisfitsContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Match to Disputed Dialog */}
+      <Dialog open={matchDialogOpen} onOpenChange={setMatchDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Match Credits to Disputed Charges</DialogTitle>
+            <DialogDescription>
+              Selected credits will be unattributed from their current brand and matched against disputed charges on the Jetpack parent account. Both transactions will be marked as &quot;credited.&quot;
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-3 py-2">
+            {isLoadingDisputes ? (
+              <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+                Loading disputed charges...
+              </div>
+            ) : (
+              misfits
+                .filter(tx => selectedIds.has(tx.transactionId) && tx.cost < 0)
+                .map(credit => {
+                  const pairedChargeId = matchPairings[credit.transactionId] || ''
+                  const pairedCharge = disputedCharges.find(c => c.transaction_id === pairedChargeId)
+                  const absCost = Math.abs(credit.cost)
+
+                  // Charges available for this credit: not used by another credit (or currently paired here)
+                  const usedByOthers = new Set(
+                    Object.entries(matchPairings)
+                      .filter(([k, v]) => v && k !== credit.transactionId)
+                      .map(([, v]) => v)
+                  )
+                  const availableCharges = disputedCharges.filter(c => !usedByOthers.has(c.transaction_id))
+
+                  return (
+                    <div
+                      key={credit.transactionId}
+                      className={cn(
+                        "rounded-lg border p-3 space-y-2 transition-colors",
+                        pairedChargeId
+                          ? "border-violet-300 bg-violet-50/50 dark:border-violet-800 dark:bg-violet-950/20"
+                          : "border-border"
+                      )}
+                    >
+                      {/* Credit info */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400 shrink-0">
+                            Credit
+                          </span>
+                          <span className="text-sm truncate">
+                            {credit.feeType}
+                            {credit.referenceId && credit.referenceId !== '0' && (
+                              <span className="text-muted-foreground"> · {credit.referenceId}</span>
+                            )}
+                          </span>
+                          {credit.clientName && (
+                            <span className="text-xs text-muted-foreground shrink-0">
+                              ({credit.clientName})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-xs text-muted-foreground">{formatDateFixed(credit.chargeDate)}</span>
+                          <span className="text-sm font-medium tabular-nums text-emerald-600 dark:text-emerald-500">
+                            {formatCurrency(credit.cost)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Match selector */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground shrink-0">Match to:</span>
+                        <Select
+                          value={pairedChargeId || undefined}
+                          onValueChange={(val) => updateMatchPairing(credit.transactionId, val)}
+                        >
+                          <SelectTrigger className="h-8 text-xs flex-1 bg-background">
+                            <SelectValue placeholder="Select a disputed charge..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__" className="text-xs text-muted-foreground">
+                              — Skip (no match) —
+                            </SelectItem>
+                            {availableCharges.map(charge => {
+                              const isAmountMatch = Math.abs(charge.cost - absCost) < 0.01
+                              const hasRef = credit.referenceId && credit.referenceId !== '0'
+                              const isRefMatch = hasRef && charge.reference_id === credit.referenceId
+                              return (
+                                <SelectItem key={charge.transaction_id} value={charge.transaction_id} className="text-xs">
+                                  <span className="flex items-center gap-2">
+                                    <span className="tabular-nums font-medium">{formatCurrency(charge.cost)}</span>
+                                    <span className="text-muted-foreground">{charge.fee_type}</span>
+                                    {charge.reference_id && (
+                                      <span className="text-muted-foreground">· {charge.reference_id}</span>
+                                    )}
+                                    <span className="text-muted-foreground">· {formatDateFixed(charge.charge_date)}</span>
+                                    {isRefMatch && isAmountMatch && (
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ ref + amount</span>
+                                    )}
+                                    {isRefMatch && !isAmountMatch && (
+                                      <span className="text-blue-600 dark:text-blue-400 font-medium">✓ ref match</span>
+                                    )}
+                                    {!isRefMatch && isAmountMatch && (
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">✓ amount</span>
+                                    )}
+                                  </span>
+                                </SelectItem>
+                              )
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Matched charge preview */}
+                      {pairedCharge && (() => {
+                        const isAmt = Math.abs(pairedCharge.cost - absCost) < 0.01
+                        const hasRef = credit.referenceId && credit.referenceId !== '0'
+                        const isRef = hasRef && pairedCharge.reference_id === credit.referenceId
+                        return (
+                          <div className="flex items-center gap-2 pl-[72px] text-xs text-muted-foreground">
+                            <span>→</span>
+                            <span className="font-medium text-foreground tabular-nums">{formatCurrency(pairedCharge.cost)}</span>
+                            <span>{pairedCharge.fee_type} · {pairedCharge.reference_id} · {formatDateFixed(pairedCharge.charge_date)}</span>
+                            {isRef && isAmt && (
+                              <span className="text-emerald-600 dark:text-emerald-400">ref + amount match</span>
+                            )}
+                            {isRef && !isAmt && (
+                              <span className="text-blue-600 dark:text-blue-400">
+                                ref match · net: {formatCurrency(pairedCharge.cost + credit.cost)}
+                              </span>
+                            )}
+                            {!isRef && isAmt && (
+                              <span className="text-emerald-600 dark:text-emerald-400">amount match</span>
+                            )}
+                            {!isRef && !isAmt && (
+                              <span className="text-amber-600 dark:text-amber-400">
+                                net: {formatCurrency(pairedCharge.cost + credit.cost)}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )
+                })
+            )}
+
+            {!isLoadingDisputes && disputedCharges.length === 0 && (
+              <div className="text-center py-8 text-sm text-muted-foreground">
+                No disputed charges found. Mark charges as disputed in Admin → Disputes first.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMatchDialogOpen(false)} disabled={isMatching}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleMatchConfirm}
+              disabled={isMatching || matchableCount === 0}
+              className="bg-violet-600 text-white hover:bg-violet-700"
+            >
+              {isMatching ? 'Matching...' : `Match ${matchableCount} Credit${matchableCount !== 1 ? 's' : ''}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

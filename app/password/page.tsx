@@ -39,7 +39,7 @@ export default function PasswordPage() {
       <div className="max-w-md w-full mx-4">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            Jetpack Dashboard
+            Jetpack Pro
           </h1>
           <p className="text-gray-600">
             This site is password protected

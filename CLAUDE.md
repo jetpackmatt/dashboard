@@ -62,10 +62,14 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 |-------|--------|
 | Framework | Next.js 15 + App Router |
 | Database | Supabase (PostgreSQL) |
-| UI | shadcn/ui + Tailwind |
+| UI | shadcn/ui + Tailwind + Framer Motion |
+| Tables | @tanstack/react-table |
 | Charts | Recharts |
 | Auth | Supabase Auth + cookies |
 | Payments | Stripe |
+| Tracking | TrackingMore API (V3 realtime + V4 CRUD) |
+| AI | Google Gemini Flash (checkpoint normalization, watch reasons) |
+| Email | Resend |
 | Hosting | Vercel |
 
 ---
@@ -81,31 +85,50 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | [CLAUDE.commissions.md](CLAUDE.commissions.md) | Sales partner commissions, eShipper data, formula calculations |
 | [CLAUDE.schema.md](CLAUDE.schema.md) | Database tables and columns |
 
-## Active Projects
-
-| File | Description |
-|------|-------------|
-| [docs/SYNC-FIX-PROJECT.md](docs/SYNC-FIX-PROJECT.md) | **ACTIVE** - Fixing sync issues (Dec 2025). Full analysis, root causes, fix plan. |
-
 ---
 
 ## Current Cron Jobs (vercel.json)
 
+### Data Sync (High Frequency)
+
 | Path | Schedule | maxDuration | Purpose |
 |------|----------|-------------|---------|
-| `/api/cron/sync` | Every 1 min | - | Orders & shipments (child tokens, LastUpdateStartDate) |
-| `/api/cron/sync-timelines` | Every 1 min | - | Timeline events (0-14d, per-client parallel, auto-scales) |
-| `/api/cron/sync-transactions` | Every 1 min | 300s | All billing transactions + tracking backfill (parent token) |
-| `/api/cron/sync-reconcile` | Every hour | 300s | Orders/shipments (45d) + transactions (3d) + soft-delete |
-| `/api/cron/sync-invoices` | Mondays 5 AM EST | - | ShipBob invoice sync |
-| `/api/cron/sync-older-nightly` | Daily 3:00 AM UTC | 300s | Full refresh for older shipments (14-45 days) |
-| `/api/cron/sync-products` | Daily 4:00 AM UTC | - | Products with variants (for inventory_id → client/SKU mapping) |
-| `/api/cron/sync-sftp-costs` | Daily 5 AM EST | 300s | SFTP shipping breakdown (base_cost, surcharge_details) |
-| `/api/cron/sync-at-risk` | Daily 3:00 AM UTC | - | Proactive Lost in Transit detection (TrackingMore) |
-| `/api/cron/recheck-at-risk` | Every 5 hours | - | FREE recheck of at-risk shipments |
-| `/api/cron/advance-claims` | Every 5 min | - | Auto-advance claims: Under Review → Credit Requested |
-| `/api/cron/auto-file-claims` | Daily 4 AM EST | - | Auto-file LIT claims for clients with auto_file_claims=true |
-| `/api/cron/normalize-checkpoints` | Every 15 min | 120s | AI-normalize tracking checkpoints (Gemini, 200/run) |
+| `/api/cron/sync` | Every 3 min | 120s | Orders, shipments, returns, receiving (child tokens) |
+| `/api/cron/sync-timelines` | Every 3 min | - | Timeline events (tiered: 0-3d/15min, 3-14d/2hr) |
+| `/api/cron/sync-transactions` | Every 3 min | 300s | All billing transactions + tracking backfill (parent token) |
+| `/api/cron/sync-reconcile` | Hourly | 300s | Orders/shipments (45d) + transactions (3d) + voided label detection + soft-delete |
+| `/api/cron/sync-backfill-items` | Hourly (:30) | 300s | Safety net: backfill missing order_items/shipment_items |
+
+### Data Sync (Daily/Weekly)
+
+| Path | Schedule | Purpose |
+|------|----------|---------|
+| `/api/cron/sync-invoices` | Mondays 10 AM UTC | ShipBob invoice sync + SFTP breakdown + preflight |
+| `/api/cron/sync-older-nightly` | Daily 3 AM UTC | Full refresh for shipments 14-180 days old |
+| `/api/cron/sync-products` | Daily 4 AM UTC | Products with variants (inventory_id → client mapping) |
+| `/api/cron/sync-sftp-costs` | Daily 10 AM UTC | SFTP shipping cost breakdown (base_cost, surcharge_details) |
+| `/api/cron/sync-at-risk` | Daily 3 AM UTC | New at-risk candidates (15+ days, TrackingMore $0.04/ea) |
+
+### Delivery IQ & Claims
+
+| Path | Schedule | Purpose |
+|------|----------|---------|
+| `/api/cron/monitoring-entry` | Hourly | Add shipments to Delivery IQ (benchmark-based entry) |
+| `/api/cron/recheck-at-risk` | Hourly | FREE recheck of existing at-risk shipments |
+| `/api/cron/ai-reassess` | Every 15 min | AI watch-reason reassessment (Gemini Flash) |
+| `/api/cron/advance-claims` | Every 5 min | Auto-advance: Under Review → Credit Requested (15min delay) |
+| `/api/cron/auto-file-claims` | Daily 9 AM UTC | Auto-file LIT claims for clients with auto_file_claims=true |
+| `/api/cron/normalize-checkpoints` | Every 15 min | AI-normalize tracking checkpoints (Gemini, 200/run) |
+| `/api/cron/calculate-benchmarks` | Daily 4 AM UTC | Transit time benchmarks from 90 days of delivered shipments |
+
+### Analytics & Admin
+
+| Path | Schedule | Purpose |
+|------|----------|---------|
+| `/api/cron/refresh-analytics` | Every 5 min | Refresh pre-aggregated analytics summary tables |
+| `/api/cron/refresh-carrier-views` | Daily 5:30 AM UTC | Refresh carrier filter materialized views |
+| `/api/cron/calculate-client-sizes` | 1st of month, 6 AM UTC | Client size labels (whale/shark/dolphin/bass/goldfish) |
+| `/api/cron/lock-commissions` | 1st of month, 11 AM UTC | Lock previous month's commissions into snapshots |
 
 **Note:** `maxDuration = 300` (5 minutes) required for crons that process large datasets. Vercel Pro tier supports up to 300s. Without explicit `maxDuration`, functions may timeout prematurely.
 
@@ -139,44 +162,56 @@ See [CLAUDE.schema.md](CLAUDE.schema.md) for full schema.
 
 ## Client IDs - ALWAYS VERIFY
 
-**CRITICAL: Never use hardcoded or memorized client_ids.** Client IDs can change or be misremembered. Always verify by querying the database.
-
-### How to Get Client IDs
+**CRITICAL: Never use hardcoded or memorized client_ids.** Always query the database:
 
 ```javascript
-// Query the clients table to get current client IDs
 const { data: clients } = await supabase
   .from('clients')
-  .select('id, name')
-  .order('name')
-
-// Or query transactions to see which client_ids have data
-const { data: txByClient } = await supabase
-  .from('transactions')
-  .select('client_id')
-  .in('invoice_id_sb', invoiceIds)
-  // Then group and count
+  .select('id, company_name')
+  .eq('is_active', true)
+  .order('company_name')
 ```
-
-### Current Clients (Dec 2025)
-
-| Name | client_id |
-|------|-----------|
-| Henson Shaving | `6b94c274-0446-4167-9d02-b998f8be59ad` |
-| Methyl-Life | `ca33dd0e-bd81-4ff7-88d1-18a3caf81d8e` |
-
-**Note:** This table may become stale. When in doubt, query the database directly.
 
 ---
 
-## Terminology
+## User Roles & Permissions
+
+### Internal Roles (stored in `user_metadata.role`)
+
+| Role | Access |
+|------|--------|
+| `admin` | Full platform access — all clients, all features, admin panel |
+| `care_admin` | All clients, full care management, no admin panel |
+| `care_team` | All clients, read-only care access |
+
+### Brand Roles (stored in `user_clients.role`)
+
+| Role | Access |
+|------|--------|
+| `brand_owner` | Full brand access, manages team. `permissions` column = NULL (implicit full access) |
+| `brand_team` | Custom permissions per JSONB. Default: all true, brand_owner unchecks as needed |
+
+**Permission structure:** Flat dot-notation keys in `user_clients.permissions` JSONB:
+- Top-level: `home`, `transactions`, `analytics`, `deliveryiq`, `invoices`, `care`, `billing`
+- Sub-keys: `transactions.shipments`, `care.submit_claims`, `invoices.download_files`, etc.
+- Missing key → defaults to `true` (fail-open for forward compatibility)
+
+**Permission checking:** `lib/permissions.ts` exports `hasPermission()` and `checkPermission()`.
+- Internal users → always true (bypass all brand checks)
+- `brand_owner` → always true
+- `brand_team` → check `permissions[key]`
+
+**Launch override (Mar 2026):** Delivery IQ hidden from ALL brand users regardless of permissions.
+
+### Terminology
 
 | Database | UI | Notes |
 |----------|------|-------|
 | `clients` | "Brands" | User-facing term is always "Brand" |
 | `client_id` | - | UUID foreign key |
-| User roles | `owner`, `editor`, `viewer` | NOT admin/editor/viewer |
-| Jetpack admin | `user_metadata.role === 'admin'` | Internal staff |
+| `admin` | "Admin" | Internal Jetpack staff |
+| `brand_owner` | "Owner" | Brand user with full access |
+| `brand_team` | "Team Member" | Brand user with custom permissions |
 
 ---
 
@@ -262,10 +297,11 @@ export async function GET(request: NextRequest) {
 
 #### What `verifyClientAccess()` Does:
 1. Checks user is authenticated (returns 401 if not)
-2. Checks if user is admin (admins can access everything)
-3. For non-admins: Checks `user_clients` table to verify access
+2. Checks if user is admin or care user (admins/care can access all clients)
+3. For brand users: Checks `user_clients` table to verify access
 4. Returns 403 if user doesn't have access to requested client
-5. For 'all' requests: Only allows admins
+5. For 'all' requests: Only allows admins/care users
+6. Returns `brandRole` and `permissions` for brand permission checking
 
 ---
 
@@ -405,35 +441,70 @@ function formatDateFixed(dateStr: string): string {
 
 ---
 
-## Data Quality Status (Dec 29, 2025)
+## Data Quality Status
 
-| Table | Field | % Populated | Status |
-|-------|-------|-------------|--------|
-| transactions | client_id | 100% (Shipment type) | ✅ Fixed upsert-null-overwrite bug |
-| transactions | tracking_id | 100% | ✅ All fee types now have tracking (backfilled from shipments table)
-| transactions | base_cost, surcharge | ~60K updated | ✅ SFTP backfill complete |
-| shipments | event_* fields | 100% | ✅ Timeline backfill complete (72,855 shipments) |
-| shipments | transit_time | 100% | ✅ Transit time backfill complete (69,506 shipments) |
-| clients | stripe_customer_id | Varies | ✅ Per-client CC setup via billing page |
-
-**Note:** Transaction `client_id` attribution happens via:
-1. Direct lookup (shipment_id → shipments table) during sync - **only sets if non-null**
-2. Database-join fix (post-sync pass queries unattributed transactions and joins to shipments table)
-
-**Important:** The upsert in `syncAllTransactions()` was fixed Dec 18, 2025 to NOT include `client_id`/`merchant_id` when null. This prevents the hourly reconcile cron from wiping existing attribution.
+All critical fields are fully populated as of Dec 2025. Attribution, tracking, timeline, and SFTP cost data are all at 100% coverage. The upsert-null-overwrite bug (Dec 18, 2025) is fixed — `client_id`/`merchant_id` are omitted from upsert when null.
 
 ---
 
 ## File Structure
 
 ```
-/app/dashboard/           # All dashboard pages
-/app/api/cron/            # Sync cron jobs
-/app/api/admin/           # Admin-only routes
-/lib/shipbob/             # ShipBob API client & sync logic
-/lib/supabase/            # Database clients
-/components/              # React components
-/scripts/                 # Manual sync & utility scripts
+/app/
+  /dashboard/               # All dashboard pages
+    /admin/                 #   Admin panel + admin delivery-iq config
+    /analytics/             #   Analytics (5 tabs: Performance, Cost & Speed, Order Volume, Carriers, Fulfillment)
+    /billing/               #   Client billing & payment setup
+    /care/                  #   Care tickets & claims
+    /deliveryiq/            #   Delivery IQ monitoring (admin/care only at launch)
+    /financials/            #   Commissions dashboard
+    /invoices/              #   Invoice listing & downloads
+    /misfits/               #   Unlinked credits & credit classification
+    /settings/              #   User settings, brand team management
+    /transactions/          #   7-tab billing transactions (Unfulfilled, Shipments, Additional, Returns, Receiving, Storage, Credits)
+  /api/
+    /cron/                  # 21 scheduled cron jobs (see vercel.json)
+    /data/                  # Client-facing data routes (all use verifyClientAccess)
+    /admin/                 # Admin-only routes (invoices, markup, users, sync, disputes)
+    /auth/                  # Auth routes (clients, profile, password, avatar)
+    /stripe/                # Stripe payment routes
+    /webhooks/              # TrackingMore webhook receiver
+  /about-delivery-iq/      # Public marketing page
+  /login/, /password/       # Auth pages
+/components/
+  /analytics/               # Charts, maps, KPI panels
+  /deliveryiq/              # Table, filters, mission control, timeline drawer
+  /transactions/            # Per-tab table components, cell renderers
+  /claims/                  # Claim submission dialog, file upload
+  /care/                    # Ticket create/edit/delete/status dialogs
+  /settings/                # Permission editor
+  /ui/                      # shadcn/ui base components
+/lib/
+  /supabase/                # DB clients (admin.ts, client.ts, server.ts)
+  /shipbob/                 # ShipBob API client + sync logic
+  /trackingmore/            # TrackingMore API + at-risk detection + checkpoint storage
+  /billing/                 # Markup engine, invoice generator, SFTP, PDF
+  /claims/                  # Eligibility, ticket creation, reshipment detection
+  /care/                    # Types + constants
+  /analytics/               # Types, aggregators, geo-config
+  /commissions/             # Calculator + types
+  /ai/                      # Gemini client, checkpoint normalization
+  permissions.ts            # Brand permission types, helpers, UI metadata
+  format.ts                 # Shared formatCurrency()
+  cron-lock.ts              # Distributed cron locking (prevents overlapping runs)
+  export.ts                 # CSV/XLSX export utilities
+  table-config.ts           # Responsive table column config
+  slack.ts                  # Slack webhook alerts
+/hooks/
+  use-copy-to-clipboard.ts  # Clipboard + toast utility
+  use-debounced-filters.ts  # Generic filter debounce (400ms)
+  use-responsive-table.ts   # Priority-based responsive column hiding
+  use-table-preferences.ts  # localStorage column visibility/order/page size
+  use-saved-views.ts        # Named filter presets per tab
+  use-watchlist.ts          # Client-side shipment watchlist
+  use-user-settings.ts      # Singleton user preference store
+/scripts/                   # Manual sync & backfill scripts
+/supabase/migrations/       # Database migrations
 ```
 
 ---
@@ -494,8 +565,9 @@ npm run dev
 ```
 
 ### Build Verification
-- Use `npm run build` (one-shot) to verify changes compile correctly
-- Don't rely on dev server HMR for verification of large changes
+- **NEVER run `npm run build` while the dev server is running** — it overwrites `.next` and corrupts the running server
+- Use the dev server's own TypeScript checking instead
+- If you must build, stop the dev server first
 
 ---
 
@@ -507,10 +579,16 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase public key | Yes |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase admin key | Yes |
 | `SHIPBOB_API_TOKEN` | Parent token for billing API | Yes |
-| `SFTP_HOST`, `SFTP_USER`, `SFTP_PASSWORD` | ShipBob SFTP for cost breakdown | Yes |
+| `SFTP_HOST`, `SFTP_USERNAME`, `SFTP_PASSWORD` | ShipBob SFTP for cost breakdown | Yes |
 | `STRIPE_SECRET_KEY` | Stripe API key for payments | Yes |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe public key | Yes |
-| `VERCEL_CRON_SECRET` | Auth for cron endpoints | Production |
+| `TRACKINGMORE_API_KEY` | TrackingMore API authentication | Yes |
+| `TRACKINGMORE_WEBHOOK_SECRET` | HMAC-SHA256 for webhook verification | Yes |
+| `GOOGLE_AI_API_KEY` | Gemini API key (checkpoint normalization, AI reassess) | Yes |
+| `SLACK_WEBHOOK_URL` | Slack alerts (care tickets, address changes) | Optional |
+| `RESEND_API_KEY` | Resend email service | Yes |
+| `SITE_PASSWORD` | Pre-launch site password gate | Optional |
+| `CRON_SECRET` | Auth for cron endpoints | Production |
 
 ---
 

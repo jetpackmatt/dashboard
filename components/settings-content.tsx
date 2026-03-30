@@ -56,6 +56,16 @@ import { useClient, DevRole } from '@/components/client-context'
 import { useUserSettings } from '@/hooks/use-user-settings'
 import { AvatarCropper } from '@/components/avatar-cropper'
 import { PermissionEditor } from '@/components/settings/permission-editor'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { type BrandPermissions, type BrandRole, DEFAULT_PERMISSIONS } from '@/lib/permissions'
 
 interface UserWithClients {
@@ -152,9 +162,11 @@ export function SettingsContent() {
   const [brandInviteError, setBrandInviteError] = React.useState<string | null>(null)
   const [brandInviteSuccess, setBrandInviteSuccess] = React.useState<string | null>(null)
   const [editingMember, setEditingMember] = React.useState<TeamMember | null>(null)
+  const [showRemoveConfirm, setShowRemoveConfirm] = React.useState(false)
   const [editPermissions, setEditPermissions] = React.useState<BrandPermissions>({ ...DEFAULT_PERMISSIONS })
   const [editRole, setEditRole] = React.useState<BrandRole>('brand_team')
   const [isSavingMember, setIsSavingMember] = React.useState(false)
+  const [resendingInviteId, setResendingInviteId] = React.useState<string | null>(null)
 
   // Sync state
   const [isSyncing, setIsSyncing] = React.useState(false)
@@ -471,6 +483,23 @@ export function SettingsContent() {
     }
   }
 
+  const handleResendInvite = async (member: TeamMember) => {
+    setResendingInviteId(member.id)
+    try {
+      const response = await fetch(`/api/data/brand_team/resend-invite?clientId=${selectedClientId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: member.id }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to resend')
+    } catch (error) {
+      console.error('Failed to resend invite:', error)
+    } finally {
+      setResendingInviteId(null)
+    }
+  }
+
   const handleSyncOrders = async () => {
     setIsSyncing(true)
     setSyncResult(null)
@@ -776,7 +805,7 @@ export function SettingsContent() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="profile_name" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    <Label htmlFor="profile_name" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                       Display Name
                     </Label>
                     <Input
@@ -788,7 +817,7 @@ export function SettingsContent() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="profile_email" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                    <Label htmlFor="profile_email" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                       Email Address
                     </Label>
                     <Input
@@ -845,7 +874,7 @@ export function SettingsContent() {
             <CardContent>
               <div className="space-y-4 max-w-md">
                 <div className="space-y-1.5">
-                  <Label htmlFor="current_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  <Label htmlFor="current_password" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                     Current Password <span className="text-red-500">*</span>
                   </Label>
                   <Input
@@ -858,7 +887,7 @@ export function SettingsContent() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="new_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  <Label htmlFor="new_password" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                     New Password <span className="text-red-500">*</span>
                   </Label>
                   <Input
@@ -871,7 +900,7 @@ export function SettingsContent() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="confirm_password" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  <Label htmlFor="confirm_password" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                     Confirm New Password <span className="text-red-500">*</span>
                   </Label>
                   <Input
@@ -975,7 +1004,7 @@ export function SettingsContent() {
                       <div className="space-y-4 py-4">
                         {/* Email */}
                         <div className="space-y-1.5">
-                          <Label htmlFor="invite_email" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                          <Label htmlFor="invite_email" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                             Email Address <span className="text-red-500">*</span>
                           </Label>
                           <Input
@@ -990,7 +1019,7 @@ export function SettingsContent() {
 
                         {/* Full Name */}
                         <div className="space-y-1.5">
-                          <Label htmlFor="invite_name" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                          <Label htmlFor="invite_name" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                             Full Name <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                           </Label>
                           <Input
@@ -1004,7 +1033,7 @@ export function SettingsContent() {
 
                         {/* User Type (Role) - moved before brand */}
                         <div className="space-y-1.5">
-                          <Label htmlFor="invite_user_type" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                          <Label htmlFor="invite_user_type" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                             User Type <span className="text-red-500">*</span>
                           </Label>
                           <Select
@@ -1059,7 +1088,7 @@ export function SettingsContent() {
                         {inviteUserType === 'brand_user' && (
                           <>
                             <div className="space-y-1.5">
-                              <Label htmlFor="invite_client" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              <Label htmlFor="invite_client" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                                 Assign to Brand <span className="text-red-500">*</span>
                               </Label>
                               <Select
@@ -1081,7 +1110,7 @@ export function SettingsContent() {
 
                             {/* Brand Role - only for brand users */}
                             <div className="space-y-1.5">
-                              <Label htmlFor="invite_brand_role" className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              <Label htmlFor="invite_brand_role" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                                 Brand Role
                               </Label>
                               <Select
@@ -1179,15 +1208,33 @@ export function SettingsContent() {
                               Admin
                             </Badge>
                           )}
+                          {user.user_metadata?.role === 'care_admin' && (
+                            <Badge className="bg-purple-600 hover:bg-purple-600 text-white border-purple-600">
+                              <UserCog className="h-3 w-3 mr-1" />
+                              Care Admin
+                            </Badge>
+                          )}
+                          {user.user_metadata?.role === 'care_team' && (
+                            <Badge className="bg-pink-600 hover:bg-pink-600 text-white border-pink-600">
+                              <HeartHandshake className="h-3 w-3 mr-1" />
+                              Care Team
+                            </Badge>
+                          )}
                           {user.clients.length > 0 ? (
                             user.clients.map((c) => (
-                              <Badge key={c.client_id} variant="outline">
-                                <Building2 className="h-3 w-3 mr-1" />
+                              <Badge key={c.client_id} variant="outline" className="gap-1">
+                                <Building2 className="h-3 w-3" />
                                 {c.client_name}
+                                {c.role === 'brand_owner' && (
+                                  <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 ml-0.5">Owner</span>
+                                )}
+                                {c.role === 'brand_team' && (
+                                  <span className="text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 ml-0.5">Team</span>
+                                )}
                               </Badge>
                             ))
                           ) : (
-                            <Badge variant="secondary">No brands</Badge>
+                            !user.user_metadata?.role && <Badge variant="secondary">No brands</Badge>
                           )}
                         </div>
                       </div>
@@ -1218,7 +1265,7 @@ export function SettingsContent() {
                         </DialogHeader>
                         <div className="space-y-4 py-4">
                           <div className="space-y-1.5">
-                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                               Email Address <span className="text-red-500">*</span>
                             </Label>
                             <Input
@@ -1230,7 +1277,7 @@ export function SettingsContent() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                               Full Name <span className="text-muted-foreground/60 font-normal normal-case tracking-normal">(optional)</span>
                             </Label>
                             <Input
@@ -1241,7 +1288,7 @@ export function SettingsContent() {
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                               Role
                             </Label>
                             <Select
@@ -1259,7 +1306,7 @@ export function SettingsContent() {
                           </div>
                           {brandInviteRole === 'brand_team' && (
                             <div className="space-y-1.5">
-                              <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                              <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                                 Permissions
                               </Label>
                               <div className="border rounded-lg p-4 max-h-[300px] overflow-y-auto">
@@ -1284,16 +1331,24 @@ export function SettingsContent() {
                           )}
                         </div>
                         <DialogFooter>
-                          <Button variant="outline" onClick={() => setBrandInviteOpen(false)} disabled={isBrandInviting}>
-                            Cancel
-                          </Button>
-                          <Button onClick={handleBrandInvite} disabled={isBrandInviting || !!brandInviteSuccess}>
-                            {isBrandInviting ? (
-                              <><JetpackLoader size="sm" className="mr-2" />Sending...</>
-                            ) : (
-                              <><Mail className="h-4 w-4 mr-2" />Send Invitation</>
-                            )}
-                          </Button>
+                          {brandInviteSuccess ? (
+                            <Button onClick={() => setBrandInviteOpen(false)}>
+                              Done
+                            </Button>
+                          ) : (
+                            <>
+                              <Button variant="outline" onClick={() => setBrandInviteOpen(false)} disabled={isBrandInviting}>
+                                Cancel
+                              </Button>
+                              <Button onClick={handleBrandInvite} disabled={isBrandInviting}>
+                                {isBrandInviting ? (
+                                  <><JetpackLoader size="sm" className="mr-2" />Sending...</>
+                                ) : (
+                                  <><Mail className="h-4 w-4 mr-2" />Send Invitation</>
+                                )}
+                              </Button>
+                            </>
+                          )}
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
@@ -1335,6 +1390,23 @@ export function SettingsContent() {
                             <Badge variant="secondary" className="text-[10px]">
                               {member.status === 'active' ? 'Active' : 'Invited'}
                             </Badge>
+                            {isBrandOwner && member.email !== profileEmail && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-indigo-600 hover:text-indigo-700"
+                                disabled={resendingInviteId === member.id}
+                                onClick={() => handleResendInvite(member)}
+                              >
+                                {resendingInviteId === member.id ? (
+                                  <><Mail className="h-3 w-3 mr-1 animate-pulse" />Sending...</>
+                                ) : member.status === 'invited' ? (
+                                  <><Mail className="h-3 w-3 mr-1" />Resend Invite</>
+                                ) : (
+                                  <><Mail className="h-3 w-3 mr-1" />Send Setup Link</>
+                                )}
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1360,7 +1432,7 @@ export function SettingsContent() {
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-1.5">
-                          <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                          <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                             Role
                           </Label>
                           <Select
@@ -1378,7 +1450,7 @@ export function SettingsContent() {
                         </div>
                         {editRole === 'brand_team' && (
                           <div className="space-y-1.5">
-                            <Label className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                            <Label className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
                               Permissions
                             </Label>
                             <div className="border rounded-lg p-4 max-h-[300px] overflow-y-auto">
@@ -1394,12 +1466,7 @@ export function SettingsContent() {
                         <Button
                           variant="destructive"
                           size="sm"
-                          onClick={() => {
-                            if (editingMember && confirm('Remove this team member?')) {
-                              handleRemoveMember(editingMember.id)
-                              setEditingMember(null)
-                            }
-                          }}
+                          onClick={() => setShowRemoveConfirm(true)}
                         >
                           Remove
                         </Button>
@@ -1414,6 +1481,32 @@ export function SettingsContent() {
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+
+                  {/* Remove Member Confirmation */}
+                  <AlertDialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove team member</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will remove <span className="font-medium text-foreground">{editingMember?.fullName || editingMember?.email}</span> from your team. They will lose access to Jetpack Pro immediately.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => {
+                            if (editingMember) {
+                              handleRemoveMember(editingMember.id)
+                              setEditingMember(null)
+                            }
+                          }}
+                        >
+                          Remove
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">

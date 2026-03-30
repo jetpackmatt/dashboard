@@ -218,25 +218,47 @@ const REASON_TO_ISSUE_TYPE = {
 
 ## At-Risk Shipment Tracking (Proactive Claims)
 
-Proactively identifies shipments that may be Lost in Transit BEFORE customers file claims.
+Proactively identifies shipments that may be Lost in Transit BEFORE customers file claims. See [CLAUDE.deliveryiq.md](CLAUDE.deliveryiq.md) for full system documentation.
 
 ### How It Works
 
-1. **Daily sync** (`/api/cron/sync-at-risk`): Finds shipments that are:
-   - NOT delivered
-   - 15+ days since label creation
-   - Creates TrackingMore tracking ($0.04 each)
-
-2. **Frequent recheck** (`/api/cron/recheck-at-risk`): Every 5 hours
-   - FREE GET requests to TrackingMore
-   - Updates eligibility status based on days since last checkpoint
+1. **Monitoring entry** (`/api/cron/monitoring-entry`): Hourly — adds shipments exceeding benchmark thresholds
+2. **Daily sync** (`/api/cron/sync-at-risk`): Finds old undelivered shipments (15+ days), creates TrackingMore tracking ($0.04/ea)
+3. **Hourly recheck** (`/api/cron/recheck-at-risk`): FREE recheck of all tracked shipments
+4. **AI reassess** (`/api/cron/ai-reassess`): Every 15 min — Gemini-based watch reason classification
+5. **Auto-file** (`/api/cron/auto-file-claims`): Daily — auto-files LIT claims for clients with `auto_file_claims=true`
 
 ### Status Values (`lost_in_transit_checks.claim_eligibility_status`)
 
 | Status | Meaning | UI Badge |
 |--------|---------|----------|
-| `at_risk` | Meets criteria but < 15/20 days since last scan | Amber "At Risk" |
-| `eligible` | ≥ 15/20 days since last scan, can file claim | Red "File a Claim" (clickable) |
+| `at_risk` | Exceeds benchmark threshold but < 15/21 days since last scan | Amber "At Risk" |
+| `eligible` | ≥ 15/21 days since last scan, can file claim | Red "Ready to File" |
+| `claim_filed` | Claim submitted | Gray "Claim Filed" |
+| `returned_to_sender` | Carrier indicates RTS | Purple "Returned" |
+| `missed_window` | Exceeded max claim window (60d domestic / 90d intl) | Strikethrough |
+
+---
+
+## Misfits: Unlinked Credits
+
+The Misfits page (`/dashboard/misfits`) shows credit transactions that aren't linked to care tickets and vice versa.
+
+### Credit Classification
+
+Admin can classify unlinked credits via `/api/data/misfits/classify-credit`:
+- Assigns `issue_type` to unlinked credit transactions
+- Creates or links care tickets automatically
+
+### Connect Flow
+
+Admin can manually link a credit to an existing care ticket via `/api/data/misfits/connect`:
+- Links `transactions.care_ticket_id` to the care ticket
+- Updates care ticket `credit_amount` and advances status to "Credit Approved"
+
+### Search
+
+`/api/data/misfits/search-tickets` — search care tickets by ticket number, shipment ID, or tracking number for linking.
 
 ---
 
@@ -244,11 +266,15 @@ Proactively identifies shipments that may be Lost in Transit BEFORE customers fi
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/data/care-tickets` | GET | List care tickets with filters |
-| `/api/data/care-tickets` | POST | Create new care ticket/claim |
+| `/api/data/care-tickets/[id]` | GET, PATCH | Single care ticket details/update |
+| `/api/data/care-tickets/bulk` | POST | Bulk archive/delete/resolve tickets |
 | `/api/data/shipments/[id]/claim-eligibility` | GET | Check eligibility for all claim types |
 | `/api/data/shipments/[id]/verify-lost-in-transit` | POST | Verify via TrackingMore before submitting |
 | `/api/upload/claim-attachment` | POST | Upload file to Supabase Storage |
+| `/api/data/misfits` | GET | Unlinked credits and care tickets |
+| `/api/data/misfits/classify-credit` | POST | Auto-classify a credit |
+| `/api/data/misfits/connect` | POST | Link credit to care ticket |
+| `/api/data/misfits/search-tickets` | GET | Search care tickets for linking |
 
 ---
 
