@@ -196,6 +196,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Failed to remove team member' }, { status: 500 })
     }
 
+    // If user has no remaining client associations, delete the Auth user entirely
+    const { count: remainingClients } = await admin
+      .from('user_clients')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+
+    if (remainingClients === 0) {
+      const { error: authDeleteError } = await admin.auth.admin.deleteUser(userId)
+      if (authDeleteError) {
+        console.error('Error deleting auth user (user_clients already removed):', authDeleteError)
+        // Don't fail the request — the user_clients row is already gone
+      }
+    }
+
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error removing team member:', error)
