@@ -20,11 +20,8 @@ import {
   RotateCcwIcon,
   TagIcon,
   TruckIcon,
-  ExternalLinkIcon,
-  ShieldAlertIcon,
   StickyNoteIcon,
   XCircleIcon,
-  XIcon,
 } from "lucide-react"
 import { format, differenceInHours } from "date-fns"
 import { toast } from "sonner"

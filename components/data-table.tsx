@@ -4,18 +4,8 @@ import * as React from "react"
 import { useSearchParams, usePathname } from "next/navigation"
 import { VisibilityState } from "@tanstack/react-table"
 import {
-  AlertCircleIcon,
-  CalendarIcon,
-  CheckCircle2Icon,
-  CheckCircleIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ChevronUpIcon,
-  ChevronsLeftIcon,
-  ChevronsRightIcon,
-  ClipboardIcon,
-  ClockIcon,
   ColumnsIcon,
   DownloadIcon,
   EyeIcon,
@@ -24,27 +14,19 @@ import {
   SlidersHorizontalIcon,
   StickyNoteIcon,
   LoaderIcon,
-  MoreVerticalIcon,
-  PackageIcon,
   SearchIcon,
-  TruckIcon,
   XIcon,
 } from "lucide-react"
 import { DateRange } from "react-day-picker"
 import { toast } from "sonner"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Calendar } from "@/components/ui/calendar"
 import { InlineDateRangePicker } from "@/components/ui/inline-date-range-picker"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -85,8 +67,6 @@ import {
 import {
   Tabs,
   TabsContent,
-  TabsList,
-  TabsTrigger,
 } from "@/components/ui/tabs"
 import { UnfulfilledTable } from "@/components/transactions/unfulfilled-table"
 import { ShipmentsTable } from "@/components/transactions/shipments-table"
@@ -106,15 +86,8 @@ import {
 } from "@/lib/table-config"
 
 // Table preferences are now managed via useTablePreferences hook (localStorage)
-import { getCarrierDisplayName, getUniqueDisplayCarriers, getRawCarriersForDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
+import { getUniqueDisplayCarriers, getRawCarriersForDisplayName, getFeeTypeDisplayName } from "@/components/transactions/cell-renderers"
 import { ExportFormat, ExportScope } from "@/lib/export"
-
-// Normalize channel names for display (e.g., "Walmartv2" -> "Walmart", "Shopifyv3" -> "Shopify")
-function normalizeChannelName(name: string): string {
-  if (!name) return name
-  // Remove version suffix (v1, v2, v3, etc.)
-  return name.replace(/v\d+$/i, '')
-}
 
 // Date range preset types and constants
 type DateRangePreset = 'today' | '1d' | '2d' | '3d' | '4d' | '7d' | '30d' | '60d' | 'mtd' | 'ytd' | 'all' | 'custom'

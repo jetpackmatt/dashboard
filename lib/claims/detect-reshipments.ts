@@ -1,5 +1,19 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 
+interface ShipmentRow {
+  shipment_id: string
+  shipbob_order_id: string | null
+  client_id: string | null
+  event_labeled: string | null
+  event_delivered: string | null
+}
+
+interface OrderRow {
+  shipbob_order_id: string
+  customer_name: string | null
+  zip_code: string | null
+}
+
 export interface ReshipmentMatch {
   originalShipmentId: string
   replacementShipmentId: string
@@ -28,10 +42,11 @@ export async function detectReshipments(
   const matches = new Map<string, ReshipmentMatch>()
 
   // ── Query 1: shipment data for the input shipments ──
-  const { data: inputShipments } = await supabase
+  const { data: rawInputShipments } = await supabase
     .from('shipments')
     .select('shipment_id, shipbob_order_id, client_id, event_labeled, event_delivered')
     .in('shipment_id', shipmentIds)
+  const inputShipments = rawInputShipments as ShipmentRow[] | null
 
   if (!inputShipments || inputShipments.length === 0) return matches
 
@@ -45,16 +60,18 @@ export async function detectReshipments(
 
   // ── Type 1: Rapid Replacement (same order, <60 min apart, original not delivered) ──
   if (orderIds.length > 0) {
-    const { data: siblingShipments } = await supabase
+    const { data: rawSiblingShipments } = await supabase
       .from('shipments')
       .select('shipment_id, shipbob_order_id, event_labeled, event_delivered')
       .in('shipbob_order_id', orderIds)
       .not('shipment_id', 'in', `(${undeliveredIds.join(',')})`)
+    const siblingShipments = rawSiblingShipments as ShipmentRow[] | null
 
     if (siblingShipments && siblingShipments.length > 0) {
       // Group siblings by order
       const siblingsByOrder = new Map<string, typeof siblingShipments>()
       for (const sib of siblingShipments) {
+        if (!sib.shipbob_order_id) continue
         const list = siblingsByOrder.get(sib.shipbob_order_id) || []
         list.push(sib)
         siblingsByOrder.set(sib.shipbob_order_id, list)
@@ -101,14 +118,15 @@ export async function detectReshipments(
   if (unmatchedOrderIds.length === 0) return matches
 
   // Get order data for customer+zip matching
-  const { data: orders } = await supabase
+  const { data: rawOrders } = await supabase
     .from('orders')
     .select('shipbob_order_id, customer_name, zip_code')
     .in('shipbob_order_id', unmatchedOrderIds)
+  const orders = rawOrders as OrderRow[] | null
 
   if (!orders || orders.length === 0) return matches
 
-  const orderMap = new Map(orders.map(o => [o.shipbob_order_id, o]))
+  const orderMap = new Map(orders.map((o: OrderRow) => [o.shipbob_order_id, o]))
 
   // Get SKU sets for the unmatched shipments (for partial overlap matching)
   const { data: inputItems } = await supabase
@@ -167,11 +185,12 @@ export async function detectReshipments(
   if (candidateOrderIds.length === 0) return matches
 
   // Get shipments for candidate orders
-  const { data: candidateShipments } = await supabase
+  const { data: rawCandidateShipments } = await supabase
     .from('shipments')
     .select('shipment_id, shipbob_order_id, client_id, event_labeled')
     .in('shipbob_order_id', candidateOrderIds)
     .limit(500)
+  const candidateShipments = rawCandidateShipments as ShipmentRow[] | null
 
   if (!candidateShipments || candidateShipments.length === 0) return matches
 

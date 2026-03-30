@@ -46,9 +46,7 @@ import {
   ChartLegend,
   ChartLegendContent,
 } from "@/components/ui/chart"
-import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useClient } from "@/components/client-context"
 import { PermissionGuard } from "@/components/permission-guard"

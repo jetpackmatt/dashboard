@@ -7,7 +7,6 @@ import {
   type BrandPermissions,
   type PermissionKey,
   PERMISSION_SECTIONS,
-  DEFAULT_PERMISSIONS,
 } from '@/lib/permissions'
 
 interface PermissionEditorProps {

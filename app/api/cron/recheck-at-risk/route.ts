@@ -735,13 +735,13 @@ export async function GET(request: NextRequest) {
       // Filter to only those without reshipment_id already set
       let detectIds: string[] = []
       if (noScansForDetection && noScansForDetection.length > 0) {
-        const candidateIds = noScansForDetection.map(s => s.shipment_id)
+        const candidateIds = noScansForDetection.map((s: { shipment_id: string }) => s.shipment_id)
         const { data: withoutReship } = await supabase
           .from('shipments')
           .select('shipment_id')
           .in('shipment_id', candidateIds)
           .is('reshipment_id', null)
-        detectIds = (withoutReship || []).map(s => s.shipment_id)
+        detectIds = (withoutReship || []).map((s: { shipment_id: string }) => s.shipment_id)
       }
 
       if (detectIds.length > 0) {

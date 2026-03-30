@@ -28,9 +28,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { useClient } from "@/components/client-context"
 import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"

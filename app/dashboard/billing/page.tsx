@@ -11,7 +11,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CircleDotIcon,
-  LoaderIcon,
 } from "lucide-react"
 
 import { SiteHeader } from "@/components/site-header"
@@ -28,7 +27,6 @@ import {
 } from "@/components/ui/dialog"
 import { useClient } from "@/components/client-context"
 import { PermissionGuard } from "@/components/permission-guard"
-import { Skeleton } from "@/components/ui/skeleton"
 import { StripeProvider } from "@/components/stripe-provider"
 import { StripeCardSetup } from "@/components/stripe-card-setup"
 import { BillingEmailManager } from "@/components/billing/billing-email-manager"

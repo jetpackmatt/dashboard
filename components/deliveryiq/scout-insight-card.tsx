@@ -7,7 +7,6 @@ import {
   RotateCcwIcon,
   AlertTriangleIcon,
   XCircleIcon,
-  MapPinIcon,
 } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { cn } from "@/lib/utils"

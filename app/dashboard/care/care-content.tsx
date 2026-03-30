@@ -16,7 +16,6 @@ import {
   Trash2Icon,
   SearchIcon,
   XIcon,
-  DownloadIcon,
   CopyIcon,
   CheckCircle2Icon,
   SlidersHorizontalIcon,
@@ -106,13 +105,12 @@ import { SavedViewsBar } from "@/components/saved-views-bar"
 
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClaimSubmissionDialog } from "@/components/claims/claim-submission-dialog"
-import { FileUpload } from "@/components/claims/file-upload"
 import { DeleteTicketDialog } from "@/components/care/delete-ticket-dialog"
 import { StatusUpdateDialog } from "@/components/care/status-update-dialog"
 import { EditTicketDialog } from "@/components/care/edit-ticket-dialog"
 import { CreateTicketDialog } from "@/components/care/create-ticket-dialog"
-import type { Ticket, TicketEvent, InternalNote, FileAttachment, Partner, DateRangePreset } from "@/lib/care/types"
-import { CARRIER_OPTIONS, DATE_RANGE_PRESETS, STATUS_OPTIONS, ISSUE_TYPE_OPTIONS, ALL_STATUSES, DEFAULT_STATUSES } from "@/lib/care/constants"
+import type { Ticket, InternalNote, DateRangePreset } from "@/lib/care/types"
+import { DATE_RANGE_PRESETS, STATUS_OPTIONS, ISSUE_TYPE_OPTIONS, ALL_STATUSES, DEFAULT_STATUSES } from "@/lib/care/constants"
 import {
   getDateRangeFromPreset,
   getStatusColors,
