@@ -15,6 +15,7 @@ import {
   XIcon,
 } from "lucide-react"
 
+import { formatCurrency } from "@/lib/format"
 import { SiteHeader } from "@/components/site-header"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
@@ -358,9 +359,6 @@ export default function InvoicesContent() {
     setCurrentPage(0)
   }, [selectedClientId])
 
-  const formatCurrency = (amount: number) => {
-    return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
 
   async function handleDownloadFile(invoiceNumber: string, fileType: 'pdf' | 'xlsx') {
     try {

@@ -15,6 +15,8 @@ import {
 } from "lucide-react"
 import { useDebouncedCallback } from "use-debounce"
 
+import { formatCurrency } from "@/lib/format"
+import { copyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { SiteHeader } from "@/components/site-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -199,11 +201,6 @@ function formatDateFixed(dateStr: string): string {
   return `${months[parseInt(month) - 1]} ${parseInt(day)}, ${year}`
 }
 
-function formatCurrency(amount: number): string {
-  const abs = Math.abs(amount)
-  const formatted = `$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  return amount < 0 ? `-${formatted}` : formatted
-}
 
 export default function MisfitsContent() {
   const { effectiveIsAdmin, effectiveIsCareAdmin, clients } = useClient()
@@ -497,7 +494,7 @@ export default function MisfitsContent() {
 
   // Copy to clipboard
   function handleCopy(text: string) {
-    navigator.clipboard.writeText(text)
+    copyToClipboard(text)
     setCopiedId(text)
     setTimeout(() => setCopiedId(null), 2000)
   }

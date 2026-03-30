@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { formatCurrency } from '@/lib/format'
 import {
   Plus,
   Pencil,
@@ -3358,12 +3359,6 @@ function DisputesContent() {
     }
   }
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(value)
-  }
 
   if (isLoading) return null
 

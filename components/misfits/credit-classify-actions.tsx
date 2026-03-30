@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { formatCurrency } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -23,9 +24,6 @@ interface CreditClassifyActionsProps {
   onClassified: () => void
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount)
-}
 
 export function CreditClassifyActions({
   transactionId,

@@ -13,6 +13,8 @@ import {
   CircleDotIcon,
 } from "lucide-react"
 
+import { formatCurrency } from "@/lib/format"
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { SiteHeader } from "@/components/site-header"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
@@ -51,17 +53,11 @@ interface BillingData {
 
 // Copy button component
 function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = React.useState(false)
-
-  const copy = () => {
-    navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const { copied, copy } = useCopyToClipboard()
 
   return (
     <button
-      onClick={copy}
+      onClick={() => copy(value)}
       className="ml-2 p-1 rounded hover:bg-muted transition-colors"
       title="Copy to clipboard"
     >
@@ -219,9 +215,6 @@ export default function BillingPage() {
     setStripeClientSecret(null)
   }
 
-  const formatCurrency = (amount: number) => {
-    return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
 
   return (
     <PermissionGuard permission="billing">

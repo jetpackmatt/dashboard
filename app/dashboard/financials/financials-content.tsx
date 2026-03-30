@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { formatCurrency } from "@/lib/format"
 import { SiteHeader } from "@/components/site-header"
 import { useClient } from "@/components/client-context"
 import { Eye, Users, TrendingUp, Activity, RefreshCw } from "lucide-react"
@@ -397,13 +398,6 @@ export default function FinancialsContent() {
     }
   }
 
-  // Format currency
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    }).format(amount)
 
   // Format number with commas
   const formatNumber = (num: number) =>

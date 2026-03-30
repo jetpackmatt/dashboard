@@ -23,6 +23,8 @@ import {
 import { DateRange } from "react-day-picker"
 import { useDebouncedCallback } from "use-debounce"
 
+import { formatCurrency } from "@/lib/format"
+import { copyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { SiteHeader } from "@/components/site-header"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import { Badge } from "@/components/ui/badge"
@@ -589,9 +591,6 @@ export default function CareContent() {
     fetchTickets()
   }, [fetchTickets])
 
-  const formatCurrency = (amount: number) => {
-    return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
 
   const formatDate = (dateString: string | null): React.ReactNode => {
     if (!dateString) return <span className="text-muted-foreground">-</span>
@@ -1565,8 +1564,7 @@ export default function CareContent() {
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation()
-                                            navigator.clipboard.writeText(refId)
-                                            toast.success("Reference ID copied")
+                                            copyToClipboard(refId, "Reference ID copied")
                                           }}
                                           className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                                           title="Copy Reference ID"
@@ -1809,8 +1807,7 @@ export default function CareContent() {
                                                       <button
                                                         onClick={(e) => {
                                                           e.stopPropagation()
-                                                          navigator.clipboard.writeText(ticket.ticketNumber.toString())
-                                                          toast.success("Ticket # copied")
+                                                          copyToClipboard(ticket.ticketNumber.toString(), "Ticket # copied")
                                                         }}
                                                         className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                                                         title="Copy Ticket #"
@@ -1840,8 +1837,7 @@ export default function CareContent() {
                                                           <button
                                                             onClick={(e) => {
                                                               e.stopPropagation()
-                                                              navigator.clipboard.writeText(ticket.trackingNumber || '')
-                                                              toast.success("Tracking # copied")
+                                                              copyToClipboard(ticket.trackingNumber || '', "Tracking # copied")
                                                             }}
                                                             className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                                                             title="Copy Tracking #"
@@ -1946,8 +1942,7 @@ export default function CareContent() {
                                                         <button
                                                           onClick={(e) => {
                                                             e.stopPropagation()
-                                                            navigator.clipboard.writeText(ticket.reshipmentId || '')
-                                                            toast.success("Reshipment ID copied")
+                                                            copyToClipboard(ticket.reshipmentId || '', "Reshipment ID copied")
                                                           }}
                                                           className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                                                           title="Copy Reshipment ID"

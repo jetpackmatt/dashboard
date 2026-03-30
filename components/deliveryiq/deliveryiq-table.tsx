@@ -13,6 +13,7 @@ import {
   ExternalLinkIcon,
 } from "lucide-react"
 import { toast } from "sonner"
+import { copyToClipboard } from "@/hooks/use-copy-to-clipboard"
 
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -537,8 +538,7 @@ export function DeliveryIQTable({
                             onClick={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
-                              navigator.clipboard.writeText(shipment.shipmentId)
-                              toast.success("Shipment ID copied")
+                              copyToClipboard(shipment.shipmentId, "Shipment ID copied")
                             }}
                             className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                             title="Copy Shipment ID"
@@ -564,8 +564,7 @@ export function DeliveryIQTable({
                             onClick={(e) => {
                               e.preventDefault()
                               e.stopPropagation()
-                              navigator.clipboard.writeText(shipment.trackingNumber)
-                              toast.success("Tracking # copied")
+                              copyToClipboard(shipment.trackingNumber, "Tracking # copied")
                             }}
                             className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
                             title="Copy Tracking #"
