@@ -1672,14 +1672,12 @@ export function DataTable({
                       selected={shipmentsDestinationFilter}
                       onSelectionChange={setShipmentsDestinationFilter}
                     />
-                    {shipmentsTags.length > 0 && (
-                      <MultiSelectFilter
-                        options={shipmentsTags.map(t => ({ value: t, label: t }))}
-                        selected={shipmentsTagsFilter}
-                        onSelectionChange={setShipmentsTagsFilter}
-                        placeholder="Tags"
-                      />
-                    )}
+                    <MultiSelectFilter
+                      options={shipmentsTags.map(t => ({ value: t, label: t }))}
+                      selected={shipmentsTagsFilter}
+                      onSelectionChange={setShipmentsTagsFilter}
+                      placeholder="Tags"
+                    />
                   </>
                 )}
 
