@@ -47,6 +47,7 @@ import {
   ChartLegendContent,
 } from "@/components/ui/chart"
 import { Checkbox } from "@/components/ui/checkbox"
+import { MultiSelectFilter, type FilterOption } from "@/components/ui/multi-select-filter"
 import { cn } from "@/lib/utils"
 import { useClient } from "@/components/client-context"
 import { PermissionGuard } from "@/components/permission-guard"
@@ -125,6 +126,20 @@ const DATE_RANGE_PRESETS = [
 
 // Per-chart date presets (no custom — custom requires a date picker which is page-level only)
 const CHART_DATE_PRESETS = DATE_RANGE_PRESETS.filter(p => p.value !== 'custom')
+
+// Unified analytics filters — shared state across Cost & Speed and Financials tabs
+// Cost & Speed shows order-type + geography filters; Financials adds Include Credits
+const COST_SPEED_FILTER_OPTIONS: FilterOption[] = [
+  { value: 'dtc', label: 'D2C' },
+  { value: 'b2b', label: 'B2B' },
+  { value: 'fba', label: 'FBA' },
+  { value: 'international', label: 'International' },
+]
+const FINANCIALS_FILTER_OPTIONS: FilterOption[] = [
+  ...COST_SPEED_FILTER_OPTIONS,
+  { value: 'credits', label: 'Include Credits' },
+]
+const ALL_ANALYTICS_FILTERS = FINANCIALS_FILTER_OPTIONS.map(o => o.value)
 
 // Column color tinting — pure function for HSL cell backgrounds
 const tintFn = (h: number, s: number, l: number, max: number) =>
@@ -438,13 +453,14 @@ export default function AnalyticsContent() {
   // Delay exclusion toggle — default: exclude delayed orders from averages
   const [includeDelayedOrders, setIncludeDelayedOrders] = React.useState(false)
 
-  // Include International toggle for Cost & Speed — default: domestic only
-  const [includeInternational, setIncludeInternational] = React.useState(false)
-  const [includeIntlZones, setIncludeIntlZones] = React.useState(false)
+  // Unified analytics filters — shared across Cost & Speed and Financials tabs
+  // All options pre-checked by default (include everything)
+  const [analyticsFilters, setAnalyticsFilters] = React.useState<string[]>(ALL_ANALYTICS_FILTERS)
+  const filterD2cOnly = !analyticsFilters.includes('b2b') && !analyticsFilters.includes('fba')
+  const filterDomesticOnly = !analyticsFilters.includes('international')
+  const filterIncludeCredits = analyticsFilters.includes('credits')
 
-  // Financials Period Summary toggles
-  const [includeCredits, setIncludeCredits] = React.useState(true)
-  const [d2cOnly, setD2cOnly] = React.useState(false)
+  const [includeIntlZones, setIncludeIntlZones] = React.useState(false)
 
   // SLA-specific filters
   const [selectedFulfillmentCenters, setSelectedFulfillmentCenters] = React.useState<string[]>([])
@@ -470,7 +486,7 @@ export default function AnalyticsContent() {
     if (!effectiveClientId || !currentDateRange) return null
     const startDate = currentDateRange.from.toISOString().split('T')[0]
     const endDate = currentDateRange.to.toISOString().split('T')[0]
-    return new URLSearchParams({
+    const params = new URLSearchParams({
       clientId: effectiveClientId,
       startDate,
       endDate,
@@ -479,7 +495,12 @@ export default function AnalyticsContent() {
       timezone: settings.timezone,
       tab,
     })
-  }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone])
+    if (tab === 'cost-speed') {
+      if (filterDomesticOnly && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
+      if (filterD2cOnly) params.set('d2cOnly', 'true')
+    }
+    return params
+  }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone, filterD2cOnly, filterDomesticOnly])
 
   // OTD percentiles — pre-loaded for all states in one query via tab-data route
   // Both clean and with-delayed variants fetched so the toggle switches instantly
@@ -499,6 +520,53 @@ export default function AnalyticsContent() {
   const otdMap = includeDelayedOrders ? otdMapDelayed : otdMapClean
   const nationalOtdPercentiles = otdMap.get('_NATIONAL_') || null
   const stateOtdPercentiles = selectedState ? (otdMap.get(selectedState) || nationalOtdPercentiles) : null
+
+  // Prefetch tracking ref — declared early so invalidation effect below can reference it
+  const prefetchedRef = React.useRef(false)
+
+  // Client-side cache for cost-speed filter variants — enables instant filter switching
+  const csFilterCacheRef = React.useRef(new Map<string, any>())
+  const buildCsFilterCacheKey = React.useCallback((d2c: boolean, domestic: boolean) => {
+    if (!effectiveClientId || !currentDateRange) return null
+    const s = currentDateRange.from.toISOString().split('T')[0]
+    const e = currentDateRange.to.toISOString().split('T')[0]
+    return `${effectiveClientId}:${s}:${e}:${selectedCountry}:${settings.timezone}:${d2c}:${domestic}`
+  }, [effectiveClientId, currentDateRange, selectedCountry, settings.timezone])
+
+  // Whether cost-speed filters are active (different from defaults = all included)
+  const hasActiveCostSpeedFilters = filterD2cOnly || filterDomesticOnly
+  // When filters are active, cost-speed reads from the filtered response stored in _csFiltered;
+  // otherwise falls back to the standard analyticsData. This prevents contaminating other tabs.
+  const csAnalyticsData = hasActiveCostSpeedFilters && analyticsData?._csFiltered
+    ? analyticsData._csFiltered
+    : analyticsData
+
+  // Invalidate cost-speed data when server-affecting filters change (D2C-only, domestic-only)
+  const costSpeedFilterKey = `${filterD2cOnly}:${filterDomesticOnly}`
+  const prevCostSpeedFilterRef = React.useRef(costSpeedFilterKey)
+  React.useEffect(() => {
+    if (prevCostSpeedFilterRef.current === costSpeedFilterKey) return
+    prevCostSpeedFilterRef.current = costSpeedFilterKey
+
+    // Check client-side cache for instant switching (preloaded in background)
+    const cacheKey = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+    const cached = cacheKey ? csFilterCacheRef.current.get(cacheKey) : null
+    if (cached) {
+      // Instant update — skip loading animation entirely
+      loadedTabsRef.current.add('cost-speed')
+      if (hasActiveCostSpeedFilters) {
+        setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: cached } : prev)
+      } else {
+        setAnalyticsData((prev: any) => prev ? { ...prev, ...cached, _csFiltered: null } : prev)
+      }
+      return
+    }
+
+    // Cache miss — trigger re-fetch
+    loadedTabsRef.current.delete('cost-speed')
+    prefetchedRef.current = false
+    setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: null } : prev)
+  }, [costSpeedFilterKey, buildCsFilterCacheKey, hasActiveCostSpeedFilters, filterD2cOnly, filterDomesticOnly])
 
   // Fetch pre-aggregated data from server when client, date range, or country changes
   React.useEffect(() => {
@@ -542,7 +610,18 @@ export default function AnalyticsContent() {
         if (cancelled) return
 
         loadedTabsRef.current.add(activeTab)
-        setAnalyticsData(data)
+        // When loading cost-speed with active filters, also store in _csFiltered
+        // so filtered data survives prefetch merges that overwrite core fields
+        if (activeTab === 'cost-speed' && hasActiveCostSpeedFilters) {
+          setAnalyticsData({ ...data, _csFiltered: data })
+        } else {
+          setAnalyticsData(data)
+        }
+        // Cache cost-speed response for instant filter switching
+        if (activeTab === 'cost-speed') {
+          const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+          if (ck) csFilterCacheRef.current.set(ck, data)
+        }
       } catch (err) {
         if (!cancelled) {
           setDataError('Network error loading analytics data')
@@ -554,6 +633,10 @@ export default function AnalyticsContent() {
         }
       }
     }
+
+    // Clear filter cache when context changes (new client/date/country)
+    csFilterCacheRef.current.clear()
+    csPreloadedRef.current = false
 
     fetchData()
     return () => { cancelled = true }
@@ -586,8 +669,22 @@ export default function AnalyticsContent() {
         if (cancelled) return
 
         loadedTabsRef.current.add(activeTab)
-        // Merge tab-specific fields into existing data (don't overwrite core fields with undefined)
-        setAnalyticsData((prev: any) => prev ? { ...prev, ...data } : data)
+        // When cost-speed has active filters, store filtered response separately
+        // to avoid overwriting unfiltered data that other tabs use (kpis, statePerformance, etc.)
+        if (activeTab === 'cost-speed' && hasActiveCostSpeedFilters) {
+          setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: data } : data)
+        } else {
+          setAnalyticsData((prev: any) => {
+            const merged = prev ? { ...prev, ...data } : data
+            if (activeTab === 'cost-speed') merged._csFiltered = null
+            return merged
+          })
+        }
+        // Cache cost-speed response for instant filter switching
+        if (activeTab === 'cost-speed') {
+          const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+          if (ck) csFilterCacheRef.current.set(ck, data)
+        }
       } catch {
         // Silently fail — user can retry by switching tabs again
       } finally {
@@ -601,7 +698,6 @@ export default function AnalyticsContent() {
 
   // Prefetch other tabs in the background after initial data loads
   // This ensures maps and charts are ready when users switch tabs
-  const prefetchedRef = React.useRef(false)
   React.useEffect(() => {
     if (!analyticsData || !effectiveClientId || prefetchedRef.current) return
     prefetchedRef.current = true
@@ -621,7 +717,16 @@ export default function AnalyticsContent() {
           .then(data => {
             if (data) {
               loadedTabsRef.current.add(tab)
-              setAnalyticsData((prev: any) => prev ? { ...prev, ...data } : data)
+              if (tab === 'cost-speed' && hasActiveCostSpeedFilters) {
+                setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: data } : prev)
+              } else {
+                setAnalyticsData((prev: any) => prev ? { ...prev, ...data } : prev)
+              }
+              // Cache cost-speed response for instant filter switching
+              if (tab === 'cost-speed') {
+                const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+                if (ck) csFilterCacheRef.current.set(ck, data)
+              }
             }
           })
           .catch(() => {})
@@ -629,6 +734,53 @@ export default function AnalyticsContent() {
       delay += 1500
     }
   }, [analyticsData, effectiveClientId, buildFetchParams])
+
+  // Preload cost-speed filter variants in background for instant switching
+  // After cost-speed tab loads, fetch the 3 remaining d2c/domestic combos
+  const csPreloadedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (!analyticsData || !effectiveClientId || !loadedTabsRef.current.has('cost-speed')) return
+    if (csPreloadedRef.current) return
+    csPreloadedRef.current = true
+
+    const variants: [boolean, boolean][] = [
+      [false, false], // all orders, all countries
+      [true, false],  // d2c only, all countries
+      [false, true],  // all orders, domestic only
+      [true, true],   // d2c only, domestic only
+    ]
+
+    let delay = 2000 // start 2s after cost-speed loads
+    for (const [d2c, domestic] of variants) {
+      const ck = buildCsFilterCacheKey(d2c, domestic)
+      if (!ck || csFilterCacheRef.current.has(ck)) continue // already cached
+
+      setTimeout(() => {
+        if (!effectiveClientId || !currentDateRange) return
+        const startDate = currentDateRange.from.toISOString().split('T')[0]
+        const endDate = currentDateRange.to.toISOString().split('T')[0]
+        const params = new URLSearchParams({
+          clientId: effectiveClientId,
+          startDate,
+          endDate,
+          datePreset: dateRange,
+          country: selectedCountry,
+          timezone: settings.timezone,
+          tab: 'cost-speed',
+        })
+        if (domestic && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
+        if (d2c) params.set('d2cOnly', 'true')
+
+        fetch(`/api/data/analytics/tab-data?${params}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data && ck) csFilterCacheRef.current.set(ck, data)
+          })
+          .catch(() => {})
+      }, delay)
+      delay += 1500
+    }
+  }, [analyticsData, effectiveClientId, buildCsFilterCacheKey, currentDateRange, dateRange, selectedCountry, settings.timezone])
 
   // ── ALL DATA IS NOW PRE-AGGREGATED SERVER-SIDE ──
   // No client-side aggregation needed. Data comes from /api/data/analytics/tab-data
@@ -737,8 +889,8 @@ export default function AnalyticsContent() {
   // Shared axis tick style — Geist Sans, tabular nums, muted
   const axisTick = { fontSize: 11, fontFamily: 'var(--font-roboto), system-ui, sans-serif', fill: 'hsl(240 5% 55%)' }
 
-  // === cost-speed tab ===
-  const costTrendData: CostTrendData[] = analyticsData?.costTrend || []
+  // === cost-speed tab (reads from csAnalyticsData when filters are active) ===
+  const costTrendData: CostTrendData[] = csAnalyticsData?.costTrend || []
 
   const maWindowSize = React.useMemo(() => {
     const totalDays = Math.round(
@@ -778,9 +930,9 @@ export default function AnalyticsContent() {
     return { domain: [domainMin, domainMax] as [number, number], ticks }
   }, [costTrendData])
 
-  const stateCostSpeedData: StateCostSpeedData[] = analyticsData?.stateCostSpeed || []
+  const stateCostSpeedData: StateCostSpeedData[] = csAnalyticsData?.stateCostSpeed || []
   const zoneCostData: ZoneCostData[] = React.useMemo(() => {
-    const raw: ZoneCostData[] = (analyticsData?.zoneCost || []).filter((z: ZoneCostData) => z.avgTransitTime > 0)
+    const raw: ZoneCostData[] = (csAnalyticsData?.zoneCost || []).filter((z: ZoneCostData) => z.avgTransitTime > 0)
     // Bucket non-standard zones into "Intl" (International), sort numerically
     const standardZones = raw.filter(z => Number(z.zone) >= 1 && Number(z.zone) <= 10)
     const intlZones = raw.filter(z => Number(z.zone) < 1 || Number(z.zone) > 10 || isNaN(Number(z.zone)))
@@ -800,9 +952,9 @@ export default function AnalyticsContent() {
       if (b.zone === 'Intl') return -1
       return Number(a.zone) - Number(b.zone)
     })
-  }, [analyticsData?.zoneCost])
+  }, [csAnalyticsData?.zoneCost])
   const deliverySpeedTrendData: DeliverySpeedTrendData[] = React.useMemo(() => {
-    const raw = analyticsData?.deliverySpeedTrend || []
+    const raw = csAnalyticsData?.deliverySpeedTrend || []
     if (!includeDelayedOrders) return raw
     return raw.map((d: any) => {
       const otd = d.avgOrderToDeliveryDaysWithDelayed ?? d.avgOrderToDeliveryDays
@@ -818,9 +970,9 @@ export default function AnalyticsContent() {
         middleMileDays: middleMile,
       }
     })
-  }, [analyticsData?.deliverySpeedTrend, includeDelayedOrders])
-  const transitTimeDistributionData: TransitTimeDistributionData[] = analyticsData?.transitDistribution || []
-  const shipOptionPerformanceData: ShipOptionPerformanceData[] = analyticsData?.shipOptionPerformance || []
+  }, [csAnalyticsData?.deliverySpeedTrend, includeDelayedOrders])
+  const transitTimeDistributionData: TransitTimeDistributionData[] = csAnalyticsData?.transitDistribution || []
+  const shipOptionPerformanceData: ShipOptionPerformanceData[] = csAnalyticsData?.shipOptionPerformance || []
 
   // === order-volume tab ===
   const orderVolumeByHour: OrderVolumeByHour[] = analyticsData?.volumeByHour || []
@@ -849,10 +1001,10 @@ export default function AnalyticsContent() {
   // Page data includes all destinations. The "Include International" checkbox filters via
   // page-level re-fetch (buildFetchParams includes domesticOnly when needed).
   // All hooks use page data directly — no independent per-hook fetching.
-  const costSpeedKpiSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const costSpeedMapSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const costSpeedKpiSection = useChartSectionRange(csAnalyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  // Map section now follows header selectors (costSpeedKpiSection) — no independent overrides
   const costTrendChart = useChartDateRange(costTrendData, 'costTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
-  const deliverySpeedChart = useChartDateRange(analyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
+  const deliverySpeedChart = useChartDateRange(csAnalyticsData?.deliverySpeedTrend || [], 'deliverySpeedTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const zoneCostChart = useChartDateRange(analyticsData?.zoneCost || [], 'zoneCost', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
   const shipOptionChart = useChartDateRange(shipOptionPerformanceData, 'shipOptionPerformance', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
 
@@ -917,9 +1069,8 @@ export default function AnalyticsContent() {
     return totalWeighted / totalDelivered
   }, [kpiSectionData?.statePerformance, statePerformance, selectedCountry])
 
-  // === Cost+Speed map section derived data ===
-  const mapSectionData = costSpeedMapSection.data
-  const mapStateCostSpeedData = mapSectionData?.stateCostSpeed || []
+  // === Cost+Speed map section — follows header selectors ===
+  const mapStateCostSpeedData = kpiSectionData?.stateCostSpeed || stateCostSpeedData
 
   // === Chart-specific derived data (transforms hook data so per-chart selectors work) ===
   const chartCostTrendWithMA = React.useMemo(() => {
@@ -1124,14 +1275,14 @@ export default function AnalyticsContent() {
     let orderCount = finBillingSummary.orderCount
 
     // Credits are already subtracted from totalCost by the API.
-    // When includeCredits is OFF (default), add credits back to show gross cost.
+    // When Include Credits is unchecked, add credits back to show gross cost.
     const creditAmount = finBillingEfficiency.totalCredits || 0
-    if (!includeCredits && creditAmount > 0) {
+    if (!filterIncludeCredits && creditAmount > 0) {
       totalCost += creditAmount
     }
 
-    // D2C Only: subtract B2B category costs
-    if (d2cOnly) {
+    // D2C Only: subtract B2B category costs when B2B + FBA are unchecked
+    if (filterD2cOnly) {
       const b2bCategory = finBillingCategoryBreakdown.find(c => c.category === 'B2B')
       if (b2bCategory) {
         totalCost -= b2bCategory.amount
@@ -1140,7 +1291,7 @@ export default function AnalyticsContent() {
 
     const costPerOrder = orderCount > 0 ? totalCost / orderCount : 0
     return { totalCost, orderCount, costPerOrder, periodChange: finBillingSummary.periodChange }
-  }, [finBillingSummary, finBillingEfficiency, finBillingCategoryBreakdown, includeCredits, d2cOnly])
+  }, [finBillingSummary, finBillingEfficiency, finBillingCategoryBreakdown, filterIncludeCredits, filterD2cOnly])
 
   const adjustedBillingEfficiency = React.useMemo(() => {
     const totalCost = adjustedBillingSummary.totalCost
@@ -1445,25 +1596,13 @@ export default function AnalyticsContent() {
                       <div className="lg:border-l border-border bg-gradient-to-b from-zinc-100 via-zinc-50 to-zinc-50 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-900 flex flex-col h-[calc(100%-76px)]">
                       <div className="border-b border-border px-5 h-[52px] flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold whitespace-nowrap">Period Summary</div>
-                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                          <span className="font-semibold">Include:</span>
-                          <label className="flex items-center gap-1.5 cursor-pointer">
-                            <Checkbox
-                              checked={includeCredits}
-                              onCheckedChange={(v) => setIncludeCredits(v === true)}
-                              className="h-3.5 w-3.5"
-                            />
-                            <span>Credits</span>
-                          </label>
-                          <label className="flex items-center gap-1.5 cursor-pointer">
-                            <Checkbox
-                              checked={d2cOnly}
-                              onCheckedChange={(v) => setD2cOnly(v === true)}
-                              className="h-3.5 w-3.5"
-                            />
-                            <span className="whitespace-nowrap">D2C Only</span>
-                          </label>
-                        </div>
+                        <MultiSelectFilter
+                          options={FINANCIALS_FILTER_OPTIONS}
+                          selected={analyticsFilters}
+                          onSelectionChange={setAnalyticsFilters}
+                          placeholder="Filters"
+                          showCount={false}
+                        />
                       </div>
                       {/* Row 1: Total Cost — full width */}
                       <div className="flex flex-col items-center justify-center px-4 bg-sky-50/50 dark:bg-sky-950/20 border-b border-border flex-1">
@@ -1519,7 +1658,7 @@ export default function AnalyticsContent() {
                       {/* Row 4: Avg Rev/Order | Surcharge % | Credits */}
                       <div className="grid grid-cols-3 flex-1 border-b border-border">
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border bg-indigo-50/40 dark:bg-indigo-950/15">
-                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
+                          <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-1">Avg. Rev / Order <KpiTooltip text={KPI_TOOLTIPS.revPerOrder} /></div>
                           <div className="text-lg font-bold tabular-nums"><AnimatedNumber value={adjustedBillingEfficiency.avgRevenuePerOrder} prefix="$" decimals={2} /></div>
                         </div>
                         <div className="flex flex-col items-center justify-center px-2 border-r border-border">
@@ -1937,14 +2076,13 @@ export default function AnalyticsContent() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <ChartSelectors chart={costSpeedKpiSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
-                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                        <Checkbox
-                          checked={includeInternational}
-                          onCheckedChange={(checked) => setIncludeInternational(checked === true)}
-                          className="h-3.5 w-3.5"
-                        />
-                        <span className="text-[11px] text-muted-foreground whitespace-nowrap">Include International</span>
-                      </label>
+                      <MultiSelectFilter
+                        options={COST_SPEED_FILTER_OPTIONS}
+                        selected={analyticsFilters}
+                        onSelectionChange={setAnalyticsFilters}
+                        placeholder="Filters"
+                        showCount={false}
+                      />
                     </div>
                   </div>
 
@@ -1952,7 +2090,7 @@ export default function AnalyticsContent() {
                   <div className="border-y border-border mt-4">
                     <div className="flex items-stretch">
                       <div className="flex flex-col items-center justify-center px-8 py-6 border-r border-border bg-gradient-to-b from-white/60 to-indigo-100/50 dark:from-indigo-950/5 dark:to-indigo-950/20 w-[35%]">
-                        <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Shipping Cost</div>
+                        <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Avg. Shipping Cost <KpiTooltip text={KPI_TOOLTIPS.avgShippingCost} /></div>
                         <div className="text-3xl font-bold tabular-nums">{kpiSectionAvgCost !== null ? <><AnimatedNumber value={kpiSectionAvgCost} prefix="$" decimals={2} /></> : '—'}</div>
                         <div className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">per order</div>
                       </div>
@@ -1991,7 +2129,7 @@ export default function AnalyticsContent() {
 
                   {/* Geography: Cost + Carrier Transit by State */}
                   {(() => {
-                    const mapCountry = costSpeedMapSection.country
+                    const mapCountry = costSpeedKpiSection.country
                     const allData = mapStateCostSpeedData as StateCostSpeedData[]
                     const usConfig = COUNTRY_CONFIGS['US']
                     const caConfig = COUNTRY_CONFIGS['CA']
@@ -2009,7 +2147,7 @@ export default function AnalyticsContent() {
                             </div>
                             <div className="text-xs text-muted-foreground mt-0.5">Geographic distribution of shipping costs and carrier transit times</div>
                           </div>
-                          <ChartSelectors chart={costSpeedMapSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
+                          <div className="shrink-0" />
                         </div>
                         <div className="px-5 lg:px-8 pt-5 pb-5">
                           <div className="grid gap-6 md:grid-cols-2">

@@ -38,7 +38,8 @@ const STATUS_COLORS: Record<string, string> = {
   'Credit Requested': 'bg-blue-500',
   'Credit Approved': 'bg-emerald-500',
   'Resolved': 'bg-zinc-400',
-  'Credit Denied': 'bg-red-500',
+  'Credit Not Approved': 'bg-red-500',
+  'Closed': 'bg-slate-500',
 }
 
 export function TicketSearchCommand({ onSelect, clientId, creditAmount }: TicketSearchCommandProps) {

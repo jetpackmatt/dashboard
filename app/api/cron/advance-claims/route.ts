@@ -12,7 +12,7 @@ import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/tem
  *
  * Part 2: Syncs care ticket status to lost_in_transit_checks
  * - When care ticket is "Resolved" → claim_eligibility_status = 'approved'
- * - When care ticket is "Credit Denied" → claim_eligibility_status = 'denied'
+ * - When care ticket is "Credit Not Approved" → claim_eligibility_status = 'denied'
  * - This ensures archived filter shows resolved claims
  *
  * Runs every 5 minutes (* /5 * * * *)
@@ -169,13 +169,13 @@ export async function GET(request: NextRequest) {
     let synced = 0
     let syncErrors = 0
 
-    // Find care tickets that are Resolved or Credit Denied but their lost_in_transit_checks
+    // Find care tickets that are Resolved or Credit Not Approved but their lost_in_transit_checks
     // record still has claim_eligibility_status = 'claim_filed'
     const { data: ticketsToSync, error: syncFetchError } = await supabase
       .from('care_tickets')
       .select('id, ticket_number, shipment_id, status')
       .eq('ticket_type', 'Claim')
-      .in('status', ['Resolved', 'Credit Denied'])
+      .in('status', ['Resolved', 'Credit Not Approved', 'Closed'])
 
     if (syncFetchError) {
       console.error('[Cron AdvanceClaims] Error fetching tickets to sync:', syncFetchError.message)
@@ -186,7 +186,9 @@ export async function GET(request: NextRequest) {
         if (!ticket.shipment_id) continue
 
         // Determine the new status
-        const newStatus = ticket.status === 'Resolved' ? 'approved' : 'denied'
+        const newStatus = ticket.status === 'Resolved' ? 'approved'
+          : (ticket.status === 'Credit Not Approved' || ticket.status === 'Closed') ? 'denied'
+          : 'denied'
 
         // Update the lost_in_transit_checks record if it hasn't already been synced
         // Include at_risk/eligible in case claim was filed but status wasn't updated
@@ -258,7 +260,7 @@ export async function GET(request: NextRequest) {
           carrier: claim.carrier!,
           client_id: claim.client_id,
           claim_eligibility_status: claim.status === 'Resolved' ? 'approved'
-            : claim.status === 'Credit Denied' ? 'denied'
+            : (claim.status === 'Credit Not Approved' || claim.status === 'Closed') ? 'denied'
             : 'claim_filed',
           checked_at: claim.created_at,
           first_checked_at: claim.created_at,

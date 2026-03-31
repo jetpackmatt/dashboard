@@ -39,7 +39,7 @@ export const FILING_WINDOW_INTERNATIONAL_MAX_DAYS = 50
  * - 'eligible': Eligible for claim, awaiting user action ("File a Claim")
  * - 'claim_filed': Claim submitted via Jetpack Care ("Credit Requested")
  * - 'approved': ShipBob approved the credit ("Credit Approved")
- * - 'denied': ShipBob denied the credit ("Credit Denied")
+ * - 'denied': ShipBob denied the credit ("Credit Not Approved")
  * - 'missed_window': Filing window expired (>45 days domestic, >50 days international)
  */
 export type ClaimEligibilityStatus = 'at_risk' | 'eligible' | 'claim_filed' | 'approved' | 'denied' | 'missed_window' | null

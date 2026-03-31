@@ -141,9 +141,11 @@ function formatCreditStatusDate(events: Array<{ status: string; createdAt: strin
   const day = date.getDate()
   return status === 'Credit Approved'
     ? `Approved on ${month}/${day}`
-    : status === 'Credit Denied'
-      ? `Denied on ${month}/${day}`
-      : `Requested on ${month}/${day}`
+    : status === 'Credit Not Approved'
+      ? `Not Approved on ${month}/${day}`
+      : status === 'Closed'
+        ? `Closed on ${month}/${day}`
+        : `Requested on ${month}/${day}`
 }
 
 function SortableHeader({ columnId, children, className, onClick }: SortableHeaderProps) {
@@ -1702,31 +1704,31 @@ export default function CareContent() {
                                       {/* Left Column: Credit/Buttons/Files */}
                                       <div className="flex-shrink-0 w-[180px] border-r-2 border-white dark:border-r-white/15 flex flex-col">
                                           {/* Credit Card - contextual based on state */}
-                                          {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Denied') && (
+                                          {(ticket.compensationRequest || ticket.creditAmount > 0 || ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Not Approved') && (
                                             <div className="pl-4 lg:pl-6 pr-[calc(1rem+5px)] py-[calc(1rem+2px)] border-b-2 border-white dark:border-b-white/15">
                                               <div className={cn(
                                                 "text-[9px] font-medium uppercase tracking-wider mb-0.5 whitespace-nowrap",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-600 dark:text-emerald-400"
-                                                  : ticket.status === 'Credit Denied'
+                                                  : ticket.status === 'Credit Not Approved'
                                                     ? "text-red-600 dark:text-red-400"
                                                     : ticket.status === 'Credit Requested'
                                                       ? "text-orange-700 dark:text-orange-300"
                                                       : "text-muted-foreground"
                                               )}>
-                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Denied' ? 'Credit Denied' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
+                                                {ticket.status === 'Credit Approved' ? 'Credit Approved' : ticket.status === 'Credit Not Approved' ? 'Credit Not Approved' : ticket.status === 'Credit Requested' ? 'Credit Requested' : 'Credit'}
                                               </div>
                                               <div className={cn(
                                                 "text-lg font-semibold",
                                                 ticket.status === 'Resolved' || ticket.status === 'Credit Approved'
                                                   ? "text-emerald-700 dark:text-emerald-300"
-                                                  : ticket.status === 'Credit Denied'
+                                                  : ticket.status === 'Credit Not Approved'
                                                     ? "text-red-700 dark:text-red-300 line-through"
                                                     : "text-foreground"
                                               )}>
                                                 {ticket.creditAmount > 0 ? formatCurrency(ticket.creditAmount) : 'TBD'}
                                               </div>
-                                              {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Denied') && (
+                                              {(ticket.status === 'Credit Requested' || ticket.status === 'Credit Approved' || ticket.status === 'Credit Not Approved') && (
                                                 <div className="text-[10px] text-muted-foreground mt-1 leading-tight">
                                                   {formatCreditStatusDate(ticket.events, ticket.status)}
                                                 </div>

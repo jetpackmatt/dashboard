@@ -848,8 +848,8 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
           : `Ticket #${ticketNumber} - Credit applied`
       } else if (ticketStatus === 'Credit Requested') {
         tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
-      } else if (ticketStatus === 'Credit Denied') {
-        tooltipText = `Ticket #${ticketNumber} - Claim denied`
+      } else if (ticketStatus === 'Credit Not Approved') {
+        tooltipText = `Ticket #${ticketNumber} - Credit not approved`
       } else {
         tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
       }
@@ -1391,8 +1391,8 @@ export function createShipmentCellRenderers(options?: {
             : `Ticket #${ticketNumber} - Credit applied`
         } else if (ticketStatus === 'Credit Requested') {
           tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
-        } else if (ticketStatus === 'Credit Denied') {
-          tooltipText = `Ticket #${ticketNumber} - Claim denied`
+        } else if (ticketStatus === 'Credit Not Approved') {
+          tooltipText = `Ticket #${ticketNumber} - Credit not approved`
         } else {
           tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
         }

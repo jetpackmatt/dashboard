@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
         xlsx_path,
         shipment_count,
         transaction_count,
+        line_items_json,
         client:clients(id, company_name, short_code)
       `)
       .in('status', ['approved', 'sent'])
@@ -82,8 +83,35 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch invoices' }, { status: 500 })
     }
 
+    // Compute category breakdowns from line_items_json, then strip the raw JSON
+    const enriched = (invoices || []).map((inv: Record<string, unknown>) => {
+      const items = Array.isArray(inv.line_items_json) ? inv.line_items_json : []
+      let catShipping = 0, catAdditional = 0, catReturns = 0, catReceiving = 0, catStorage = 0, catCredits = 0
+      for (const item of items) {
+        const amt = Number(item.billedAmount) || Number(item.baseAmount) || 0
+        switch (item.lineCategory) {
+          case 'Shipping': catShipping += amt; break
+          case 'Pick Fees': case 'B2B Fees': case 'Additional Services': catAdditional += amt; break
+          case 'Returns': catReturns += amt; break
+          case 'Receiving': catReceiving += amt; break
+          case 'Storage': catStorage += amt; break
+          case 'Credits': catCredits += amt; break
+        }
+      }
+      const { line_items_json: _, ...rest } = inv
+      return {
+        ...rest,
+        cat_shipping: Math.round(catShipping * 100) / 100,
+        cat_additional: Math.round(catAdditional * 100) / 100,
+        cat_returns: Math.round(catReturns * 100) / 100,
+        cat_receiving: Math.round(catReceiving * 100) / 100,
+        cat_storage: Math.round(catStorage * 100) / 100,
+        cat_credits: Math.round(catCredits * 100) / 100,
+      }
+    })
+
     return NextResponse.json({
-      invoices: invoices || [],
+      invoices: enriched,
       isAdmin,
     })
   } catch (error) {

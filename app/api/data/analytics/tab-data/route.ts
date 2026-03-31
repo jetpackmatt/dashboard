@@ -108,6 +108,7 @@ export async function GET(request: NextRequest) {
   const timezone = searchParams.get('timezone') || 'America/New_York'
   const tab = searchParams.get('tab') || 'all'
   const domesticOnly = searchParams.get('domesticOnly') === 'true'
+  const d2cOnly = searchParams.get('d2cOnly') === 'true'
 
   // Tab-based lazy loading: skip expensive raw-table queries unless the active tab needs them
   const needsTransit = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
@@ -129,7 +130,7 @@ export async function GET(request: NextRequest) {
   const endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
 
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `v24:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}`
+  const cacheKey = `v25:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
@@ -191,6 +192,7 @@ export async function GET(request: NextRequest) {
         p_country: country,
         p_trend_start: trendStartDate,
         p_domestic_only: domesticOnly,
+        p_d2c_only: d2cOnly,
       })),
 
       // Transit distribution — raw shipments scan (~545ms), only for carriers/cost-speed tabs
@@ -717,10 +719,8 @@ export async function GET(request: NextRequest) {
       .map(([period, p]) => {
         const inv = invoiceByGranularity.get(period)
         // For invoiced periods: use invoice total (includes tax); otherwise sum categories
-        const total = inv ? inv.invoiceTotal : p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-        // If invoice total differs from category sum, put delta in dutyTax (it's tax)
         const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-        const taxRemainder = inv ? Math.round((inv.invoiceTotal - categorySum) * 100) / 100 : 0
+        const total = inv ? inv.invoiceTotal : categorySum
         return {
           month: period,
           monthLabel: formatMonthLabel(period, granularity),
@@ -733,7 +733,7 @@ export async function GET(request: NextRequest) {
           vasKitting: p.vasKitting,
           receiving: p.receiving,
           returns: p.returns,
-          dutyTax: p.dutyTax + taxRemainder,
+          dutyTax: p.dutyTax,
           other: p.other,
           credit: p.credit,
           total,
@@ -796,16 +796,15 @@ export async function GET(request: NextRequest) {
         .filter(([period]) => isCompleteWeek(period))
         .map(([period, p]) => {
           const inv = invoiceByWeek.get(period)
-          const total = inv ? inv.invoiceTotal : p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
           const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-          const taxRemainder = inv ? Math.round((inv.invoiceTotal - categorySum) * 100) / 100 : 0
+          const total = inv ? inv.invoiceTotal : categorySum
           return {
             month: period,
             monthLabel: formatMonthLabel(period, 'weekly'),
             shipping: p.shipping, surcharges: p.surcharges, extraPicks: p.extraPicks,
             warehousing: p.warehousing, multiHubIQ: p.multiHubIQ, b2b: p.b2b,
             vasKitting: p.vasKitting, receiving: p.receiving, returns: p.returns,
-            dutyTax: p.dutyTax + taxRemainder, other: p.other, credit: p.credit,
+            dutyTax: p.dutyTax, other: p.other, credit: p.credit,
             total, orderCount: p.shipments,
             costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
           }

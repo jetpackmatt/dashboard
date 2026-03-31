@@ -145,6 +145,12 @@ interface Invoice {
   xlsx_path: string | null
   shipment_count?: number | null
   transaction_count?: number | null
+  cat_shipping?: number
+  cat_additional?: number
+  cat_returns?: number
+  cat_receiving?: number
+  cat_storage?: number
+  cat_credits?: number
   client?: Client
 }
 
@@ -270,6 +276,12 @@ export default function InvoicesContent() {
     profit: true,
     shipments: true,
     transactions: false,
+    catShipping: false,
+    catAdditional: false,
+    catReturns: false,
+    catReceiving: false,
+    catStorage: false,
+    catCredits: false,
     amount: true,
     status: true,
     download: true,
@@ -283,6 +295,12 @@ export default function InvoicesContent() {
     profit: true,
     shipments: true,
     transactions: false,
+    catShipping: false,
+    catAdditional: false,
+    catReturns: false,
+    catReceiving: false,
+    catStorage: false,
+    catCredits: false,
     amount: true,
     status: true,
     download: true,
@@ -292,7 +310,7 @@ export default function InvoicesContent() {
   const invoicesPrefs = useTablePreferences('invoices', userSettings.defaultPageSize)
 
   // Define which columns are draggable (exclude client/download - they stay fixed)
-  const draggableColumnIds = ['invoiceDate', 'invoiceNumber', 'billingPeriod', 'shipments', 'cost', 'profit', 'transactions', 'amount', 'status']
+  const draggableColumnIds = ['invoiceDate', 'invoiceNumber', 'billingPeriod', 'shipments', 'cost', 'profit', 'transactions', 'catShipping', 'catAdditional', 'catReturns', 'catReceiving', 'catStorage', 'catCredits', 'amount', 'status']
   const draggableColumns = INVOICES_TABLE_CONFIG.columns.filter(c => draggableColumnIds.includes(c.id))
 
   // Apply user's drag order to draggable columns
@@ -473,7 +491,7 @@ export default function InvoicesContent() {
     if (showClientColumn) keys.push('client')
     keys.push('invoiceDate', 'invoiceNumber', 'billingPeriod', 'shipments')
     if (showCostBreakdown) keys.push('cost', 'profit')
-    keys.push('transactions', 'amount', 'status')
+    keys.push('transactions', 'catShipping', 'catAdditional', 'catReturns', 'catReceiving', 'catStorage', 'catCredits', 'amount', 'status')
     if (hasPermission('invoices.download_files')) keys.push('download')
     return keys
   }, [showClientColumn, showCostBreakdown, hasPermission])
@@ -685,6 +703,54 @@ export default function InvoicesContent() {
                       Transactions
                     </DropdownMenuCheckboxItem>
                     <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catShipping}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catShipping: value })
+                      }
+                    >
+                      Shipping
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catAdditional}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catAdditional: value })
+                      }
+                    >
+                      Additional
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catReturns}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catReturns: value })
+                      }
+                    >
+                      Returns
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catReceiving}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catReceiving: value })
+                      }
+                    >
+                      Receiving
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catStorage}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catStorage: value })
+                      }
+                    >
+                      Storage
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={columnVisibility.catCredits}
+                      onCheckedChange={(value) =>
+                        setColumnVisibility({ ...columnVisibility, catCredits: value })
+                      }
+                    >
+                      Credits
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
                       checked={columnVisibility.amount}
                       onCheckedChange={(value) =>
                         setColumnVisibility({ ...columnVisibility, amount: value })
@@ -890,6 +956,20 @@ export default function InvoicesContent() {
                                       ? invoice.transaction_count.toLocaleString()
                                       : <span className="text-muted-foreground">-</span>
                                     }
+                                  </td>
+                                )
+                              }
+
+                              if (col.id === 'catShipping' || col.id === 'catAdditional' || col.id === 'catReturns' || col.id === 'catReceiving' || col.id === 'catStorage' || col.id === 'catCredits') {
+                                const catMap: Record<string, keyof Invoice> = {
+                                  catShipping: 'cat_shipping', catAdditional: 'cat_additional',
+                                  catReturns: 'cat_returns', catReceiving: 'cat_receiving',
+                                  catStorage: 'cat_storage', catCredits: 'cat_credits',
+                                }
+                                const val = invoice[catMap[col.id]] as number | undefined
+                                return (
+                                  <td key={col.id} className={`${cellPadding} text-left align-middle tabular-nums whitespace-nowrap text-muted-foreground`}>
+                                    {val != null && val !== 0 ? formatCurrency(val) : <span className="text-muted-foreground/50">—</span>}
                                   </td>
                                 )
                               }

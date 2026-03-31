@@ -181,6 +181,52 @@ export async function POST(
       }
     }
 
+    // Step 3b: Close "Credit Not Approved" tickets on invoice approval
+    // These are negative-resolution tickets that should be closed when the invoice cycle completes
+    let careTicketsClosed = 0
+    {
+      const { data: ticketsToClose } = await adminClient
+        .from('care_tickets')
+        .select('id, ticket_number, events')
+        .eq('status', 'Credit Not Approved')
+        .eq('ticket_type', 'Claim')
+        .eq('client_id', invoice.client_id)
+
+      if (ticketsToClose && ticketsToClose.length > 0) {
+        console.log(`  Closing ${ticketsToClose.length} "Credit Not Approved" care_tickets...`)
+
+        for (const ticket of ticketsToClose) {
+          const events = (ticket.events as Array<{ status: string; note: string; createdAt: string; createdBy: string; jetpackInvoiceNumber?: string }>) || []
+
+          const closedEvent = {
+            note: `Ticket closed with invoice ${invoice.invoice_number}.`,
+            status: 'Closed',
+            createdAt: new Date().toISOString(),
+            createdBy: user.email || 'Admin',
+            jetpackInvoiceNumber: invoice.invoice_number,
+          }
+
+          const { error: closeError } = await adminClient
+            .from('care_tickets')
+            .update({
+              status: 'Closed',
+              events: [closedEvent, ...events],
+              resolved_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', ticket.id)
+
+          if (closeError) {
+            console.warn(`  Failed to close care_ticket #${ticket.ticket_number}:`, closeError.message)
+          } else {
+            careTicketsClosed++
+          }
+        }
+
+        console.log(`  Closed ${careTicketsClosed} care_tickets`)
+      }
+    }
+
     // Step 4: Update invoice to approved
     const { data: updatedInvoice, error: updateError } = await adminClient
       .from('invoices_jetpack')
@@ -347,6 +393,7 @@ export async function POST(
       transactionsMarked: markResult.updated,
       shipbobInvoicesMarked: shipbobInvoiceIds.length,
       careTicketsResolved: careTicketsUpdated,
+      careTicketsClosed,
       autoCharge: chargeResult,
       email: emailResult, // NEW
     })

@@ -928,8 +928,9 @@ function buildTimeline(shipment: any, careTicket?: any): Array<{
       'Under Review': { displayName: 'Claim Under Review', icon: 'search' },
       'Credit Requested': { displayName: 'Credit Requested', icon: 'clock' },
       'Credit Approved': { displayName: 'Credit Approved', icon: 'check-circle' },
-      'Credit Denied': { displayName: 'Credit Denied', icon: 'x-circle' },
+      'Credit Not Approved': { displayName: 'Credit Not Approved', icon: 'x-circle' },
       'Resolved': { displayName: 'Claim Resolved', icon: 'check-circle-2' },
+      'Closed': { displayName: 'Ticket Closed', icon: 'x-circle' },
     }
 
     for (const claimEvent of careTicket.events as ClaimTicketEvent[]) {

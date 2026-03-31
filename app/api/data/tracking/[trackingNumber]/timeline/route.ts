@@ -31,7 +31,7 @@ interface TrackingTimelineResponse {
   carrier: string
   carrierDisplayName: string
   currentStatus: string
-  claimStatus: string | null  // Care ticket status if claim was filed (Under Review, Credit Requested, Credit Approved, Credit Denied, Resolved)
+  claimStatus: string | null  // Care ticket status if claim was filed (Under Review, Credit Requested, Credit Approved, Credit Not Approved, Resolved, Closed)
   estimatedDelivery: string | null
   timeline: TimelineEvent[]
   lastCarrierScan: {
@@ -650,7 +650,7 @@ export async function GET(
         if (event.status === 'Under Review') title = 'Claim Submitted'
         else if (event.status === 'Credit Requested') title = 'Credit Requested'
         else if (event.status === 'Credit Approved') title = 'Credit Approved'
-        else if (event.status === 'Credit Denied') title = 'Credit Denied'
+        else if (event.status === 'Credit Not Approved') title = 'Credit Not Approved'
         else if (event.status === 'Resolved') title = 'Claim Resolved'
 
         claimTimeline.push({

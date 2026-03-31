@@ -40,4 +40,5 @@ export const KPI_TOOLTIPS = {
   revPerOrder: "Average gross revenue per order, calculated from your store's order totals. Only orders with available order values are used in this calculation, as not all sales channels provide them.",
   surcharges: "Carrier surcharges (fuel, residential, oversize, peak, etc.) as a percentage of total fulfillment cost. These are fees added on top of base shipping rates.",
   credits: "Total credits and refunds paid during the selected period for operational errors, adjustments, and claim payouts.",
+  avgShippingCost: "Average shipping cost per order includes shipping, surcharges, packaging, processing, and first pick.",
 } as const

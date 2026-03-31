@@ -54,8 +54,9 @@ export const STATUS_OPTIONS: FilterOption[] = [
   { value: 'In Process', label: 'In Process' },
   { value: 'Credit Requested', label: 'Credit Requested' },
   { value: 'Credit Approved', label: 'Credit Approved' },
-  { value: 'Credit Denied', label: 'Credit Denied' },
+  { value: 'Credit Not Approved', label: 'Credit Not Approved' },
   { value: 'Resolved', label: 'Resolved' },
+  { value: 'Closed', label: 'Closed' },
 ]
 
 // Ticket type filter options - non-claim types first, then claim issues
@@ -81,9 +82,10 @@ export const ALL_STATUSES = [
   'In Process',
   'Credit Requested',
   'Credit Approved',
-  'Credit Denied',
+  'Credit Not Approved',
   'Resolved',
+  'Closed',
 ]
 
 // Default statuses to show when no filter is active (excludes Resolved)
-export const DEFAULT_STATUSES = ALL_STATUSES.filter((s) => s !== 'Resolved')
+export const DEFAULT_STATUSES = ALL_STATUSES.filter((s) => s !== 'Resolved' && s !== 'Closed')

@@ -104,8 +104,9 @@ export function StatusUpdateDialog({
                 <SelectItem value="In Process">In Process</SelectItem>
                 <SelectItem value="Credit Requested">Credit Requested</SelectItem>
                 <SelectItem value="Credit Approved">Credit Approved</SelectItem>
-                <SelectItem value="Credit Denied">Credit Denied</SelectItem>
+                <SelectItem value="Credit Not Approved">Credit Not Approved</SelectItem>
                 <SelectItem value="Resolved">Resolved</SelectItem>
+                <SelectItem value="Closed">Closed</SelectItem>
               </SelectContent>
             </Select>
           </div>

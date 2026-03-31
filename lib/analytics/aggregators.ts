@@ -154,20 +154,17 @@ export function getDateRangeFromPreset(preset: string): DateRange {
       from = getDaysAgo(90)
       break
     case '6mo': {
-      // Last 6 complete months (exclude current partial month)
-      // Use Date.UTC so toISOString().split('T')[0] returns the intended date
+      // Last 6 months through today (includes current partial month)
       const year = now.getFullYear(), month = now.getMonth()
-      const eol = new Date(Date.UTC(year, month, 0)) // last day of prev month in UTC
-      from = new Date(Date.UTC(eol.getUTCFullYear(), eol.getUTCMonth() - 5, 1))
-      to.setTime(eol.getTime())
+      from = new Date(Date.UTC(year, month - 6, 1))
+      // to stays as today
       break
     }
     case '1yr': {
-      // Last 12 complete months (exclude current partial month)
+      // Last 12 months through today (includes current partial month)
       const year = now.getFullYear(), month = now.getMonth()
-      const eol = new Date(Date.UTC(year, month, 0))
-      from = new Date(Date.UTC(eol.getUTCFullYear(), eol.getUTCMonth() - 11, 1))
-      to.setTime(eol.getTime())
+      from = new Date(Date.UTC(year, month - 12, 1))
+      // to stays as today
       break
     }
     case 'mtd': {

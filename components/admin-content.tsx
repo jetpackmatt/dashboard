@@ -212,6 +212,7 @@ export function AdminContent() {
     { value: 'warehouses', label: 'Warehouses' },
     { value: 'care-team', label: 'Care Team' },
     { value: 'commissions', label: 'Commissions' },
+    { value: 'channels', label: 'Channels' },
     { value: 'delivery-iq', label: 'Delivery IQ' },
   ] as const
   type AdminTab = typeof ADMIN_SECTIONS[number]['value']
@@ -311,6 +312,11 @@ export function AdminContent() {
         {/* Commissions Tab */}
         <TabsContent value="commissions" className="space-y-6">
           <CommissionsContent clients={clients} />
+        </TabsContent>
+
+        {/* Channel Order Type Mappings Tab */}
+        <TabsContent value="channels" className="space-y-6">
+          <ChannelMappingsContent clients={clients} />
         </TabsContent>
       </Tabs>
     </div>
@@ -7057,4 +7063,304 @@ function CommissionsContent({ clients }: { clients: Client[] }) {
       </Dialog>
     </div>
   )
+}
+
+// ════════════════════════════════════════════════════════════════
+// Channel Order Type Mappings Tab
+// ════════════════════════════════════════════════════════════════
+
+interface ChannelSummary {
+  client_id: string
+  company_name: string
+  channel_name: string
+  shipbob_order_type: string
+  order_count: number
+}
+
+interface ChannelMapping {
+  id: string
+  client_id: string
+  channel_name: string
+  order_type: string
+}
+
+interface ChannelRow {
+  client_id: string
+  company_name: string
+  channel_name: string
+  shipbob_breakdown: Record<string, number>
+  total_orders: number
+  override: string | null
+  dirty: string | null
+}
+
+function ChannelMappingsContent({ clients }: { clients: Client[] }) {
+  const [rows, setRows] = React.useState<ChannelRow[]>([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [isSaving, setIsSaving] = React.useState(false)
+  const [filterClient, setFilterClient] = React.useState<string>('all')
+
+  const loadData = React.useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const res = await fetch('/api/admin/channel-mappings')
+      if (!res.ok) throw new Error('Failed to load')
+      const { channels, mappings } = await res.json() as {
+        channels: ChannelSummary[]
+        mappings: ChannelMapping[]
+      }
+
+      const mappingLookup = new Map<string, string>()
+      for (const m of mappings) {
+        mappingLookup.set(`${m.client_id}:${m.channel_name}`, m.order_type)
+      }
+
+      const grouped = new Map<string, ChannelRow>()
+      for (const ch of channels) {
+        const key = `${ch.client_id}:${ch.channel_name}`
+        let row = grouped.get(key)
+        if (!row) {
+          const override = mappingLookup.get(key) || null
+          row = {
+            client_id: ch.client_id,
+            company_name: ch.company_name,
+            channel_name: ch.channel_name,
+            shipbob_breakdown: {},
+            total_orders: 0,
+            override,
+            dirty: override,
+          }
+          grouped.set(key, row)
+        }
+        row.shipbob_breakdown[ch.shipbob_order_type] = (row.shipbob_breakdown[ch.shipbob_order_type] || 0) + ch.order_count
+        row.total_orders += ch.order_count
+      }
+
+      setRows(Array.from(grouped.values()).sort((a, b) => {
+        const cmp = a.company_name.localeCompare(b.company_name)
+        if (cmp !== 0) return cmp
+        return b.total_orders - a.total_orders
+      }))
+    } catch (err) {
+      toast.error('Failed to load channel data')
+      console.error(err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => { loadData() }, [loadData])
+
+  const handleOverrideChange = (clientId: string, channelName: string, newType: string) => {
+    setRows(prev => prev.map(r => {
+      if (r.client_id === clientId && r.channel_name === channelName) {
+        return { ...r, dirty: newType === 'auto' ? null : newType }
+      }
+      return r
+    }))
+  }
+
+  const hasChanges = rows.some(r => r.dirty !== r.override)
+
+  const handleSave = async () => {
+    const changed = rows.filter(r => r.dirty !== r.override)
+    if (changed.length === 0) return
+
+    setIsSaving(true)
+    try {
+      const res = await fetch('/api/admin/channel-mappings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mappings: changed.map(r => ({
+            client_id: r.client_id,
+            channel_name: r.channel_name,
+            order_type: r.dirty,
+          })),
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save')
+      }
+
+      const result = await res.json()
+      toast.success(result.message || 'Mappings saved')
+
+      setRows(prev => prev.map(r => {
+        const wasChanged = changed.find(c => c.client_id === r.client_id && c.channel_name === r.channel_name)
+        if (wasChanged) return { ...r, override: r.dirty }
+        return r
+      }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save mappings')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const filteredRows = filterClient === 'all'
+    ? rows
+    : rows.filter(r => r.client_id === filterClient)
+
+  const clientGroups = React.useMemo(() => {
+    const groups = new Map<string, { company_name: string; rows: ChannelRow[] }>()
+    for (const r of filteredRows) {
+      let group = groups.get(r.client_id)
+      if (!group) {
+        group = { company_name: r.company_name, rows: [] }
+        groups.set(r.client_id, group)
+      }
+      group.rows.push(r)
+    }
+    return Array.from(groups.entries())
+  }, [filteredRows])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <JetpackLoader size="lg" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Channel → Order Type Mappings</CardTitle>
+              <CardDescription className="text-xs mt-1">
+                Override ShipBob&apos;s order type classification per channel. Changes trigger a full analytics refresh for affected brands.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={filterClient} onValueChange={setFilterClient}>
+                <SelectTrigger className="h-8 w-[180px] text-xs">
+                  <SelectValue placeholder="Filter by brand" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Brands</SelectItem>
+                  {clients.filter(c => rows.some(r => r.client_id === c.id)).map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.company_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={!hasChanges || isSaving}
+                className="h-8"
+              >
+                {isSaving ? (
+                  <><RefreshCw className="h-3.5 w-3.5 animate-spin mr-1.5" /> Saving...</>
+                ) : (
+                  <><Save className="h-3.5 w-3.5 mr-1.5" /> Save Changes</>
+                )}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {clientGroups.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No channels found</p>
+          ) : (
+            <div className="space-y-6">
+              {clientGroups.map(([clientId, group]) => (
+                <div key={clientId}>
+                  <h3 className="text-sm font-semibold mb-2">{group.company_name}</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="text-[10px] uppercase tracking-wide text-zinc-500 h-8">Channel</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-wide text-zinc-500 h-8 text-right">Orders (6mo)</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-wide text-zinc-500 h-8">ShipBob Default</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-wide text-zinc-500 h-8">Override</TableHead>
+                        <TableHead className="text-[10px] uppercase tracking-wide text-zinc-500 h-8">Effective Type</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.rows.map(row => {
+                        const effectiveType = row.dirty || channelDominantType(row.shipbob_breakdown)
+                        const isDirty = row.dirty !== row.override
+                        return (
+                          <TableRow key={row.channel_name} className={cn(isDirty && 'bg-amber-50 dark:bg-amber-950/20')}>
+                            <TableCell className="font-mono text-xs py-2">{row.channel_name}</TableCell>
+                            <TableCell className="text-xs text-right py-2 tabular-nums">
+                              {row.total_orders.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <div className="flex gap-1.5 flex-wrap">
+                                {Object.entries(row.shipbob_breakdown).map(([type, count]) => (
+                                  <Badge
+                                    key={type}
+                                    variant="outline"
+                                    className={cn(
+                                      'text-[10px] font-normal',
+                                      type === 'DTC' && 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-400',
+                                      type === 'B2B' && 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400',
+                                      type === 'FBA' && 'border-purple-300 text-purple-700 dark:border-purple-700 dark:text-purple-400',
+                                    )}
+                                  >
+                                    {type}: {count.toLocaleString()}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <Select
+                                value={row.dirty || 'auto'}
+                                onValueChange={(v) => handleOverrideChange(row.client_id, row.channel_name, v)}
+                              >
+                                <SelectTrigger className="h-7 w-[100px] text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="auto">Auto</SelectItem>
+                                  <SelectItem value="DTC">DTC</SelectItem>
+                                  <SelectItem value="B2B">B2B</SelectItem>
+                                  <SelectItem value="FBA">FBA</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="py-2">
+                              <Badge
+                                className={cn(
+                                  'text-[10px]',
+                                  effectiveType === 'DTC' && 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
+                                  effectiveType === 'B2B' && 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+                                  effectiveType === 'FBA' && 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+                                )}
+                              >
+                                {effectiveType}
+                              </Badge>
+                              {isDirty && <span className="ml-1.5 text-[10px] text-amber-600">unsaved</span>}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function channelDominantType(breakdown: Record<string, number>): string {
+  let max = 0
+  let result = 'DTC'
+  for (const [type, count] of Object.entries(breakdown)) {
+    if (count > max) {
+      max = count
+      result = type
+    }
+  }
+  return result
 }

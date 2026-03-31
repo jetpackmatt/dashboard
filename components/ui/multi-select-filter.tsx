@@ -22,6 +22,7 @@ interface MultiSelectFilterProps {
   onSelectionChange: (selected: string[]) => void
   placeholder: string
   className?: string
+  showCount?: boolean
 }
 
 export function MultiSelectFilter({
@@ -30,6 +31,7 @@ export function MultiSelectFilter({
   onSelectionChange,
   placeholder,
   className,
+  showCount = true,
 }: MultiSelectFilterProps) {
   const [open, setOpen] = React.useState(false)
 
@@ -62,7 +64,7 @@ export function MultiSelectFilter({
           )}
         >
           <span>{placeholder}</span>
-          {selected.length > 0 && (
+          {showCount && selected.length > 0 && (
             <span className="ml-1.5 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 text-xs font-medium rounded-full bg-primary/15 text-primary">
               {selected.length}
             </span>

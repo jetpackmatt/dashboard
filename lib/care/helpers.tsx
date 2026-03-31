@@ -77,12 +77,14 @@ export function getStatusColors(status: string) {
       return `bg-emerald-500/15 text-emerald-700 font-medium dark:bg-emerald-500/20 dark:text-emerald-300`
     case "Credit Requested":
       return `bg-amber-500/15 text-amber-700 font-medium dark:bg-amber-500/20 dark:text-amber-300`
-    case "Credit Denied":
+    case "Credit Not Approved":
       return `bg-red-500/15 text-red-700 font-medium dark:bg-red-500/20 dark:text-red-300`
     case "Under Review":
       return `bg-blue-500/10 text-blue-700 font-medium dark:bg-blue-500/15 dark:text-blue-300`
     case "Input Required":
       return `bg-red-500/15 text-red-700 font-medium dark:bg-red-500/20 dark:text-red-300`
+    case "Closed":
+      return `bg-slate-500/15 text-slate-600 font-medium dark:bg-slate-500/20 dark:text-slate-400`
     case "Ticket Created":
       return `bg-slate-500/10 text-slate-600 font-medium dark:bg-slate-500/15 dark:text-slate-400`
     default:
@@ -103,12 +105,14 @@ export function getExpandedRowTint(status: string) {
       return "bg-emerald-100/55 dark:bg-emerald-950/40"
     case "Credit Requested":
       return "bg-orange-100/55 dark:bg-orange-950/40"
-    case "Credit Denied":
+    case "Credit Not Approved":
       return "bg-red-100/55 dark:bg-red-950/40"
     case "Under Review":
       return "bg-blue-100/55 dark:bg-blue-950/40"
     case "Input Required":
       return "bg-red-100/55 dark:bg-red-950/40"
+    case "Closed":
+      return "bg-slate-100/55 dark:bg-slate-800/50"
     case "Ticket Created":
       return "bg-slate-100/55 dark:bg-slate-800/50"
     default:
@@ -131,8 +135,10 @@ export function getExpandedPanelTint(status: string) {
       return "bg-emerald-100/40 dark:bg-emerald-950/30"
     case "Credit Requested":
       return "bg-orange-100/40 dark:bg-orange-950/30"
-    case "Credit Denied":
+    case "Credit Not Approved":
       return "bg-red-100/40 dark:bg-red-950/30"
+    case "Closed":
+      return "bg-slate-100/40 dark:bg-slate-800/30"
     case "Under Review":
       return "bg-blue-100/40 dark:bg-blue-950/30"
     case "Input Required":
@@ -190,7 +196,7 @@ export function getTicketTypeLabel(ticketType: string, issueType?: string) {
 export function getStatusTextColor(status: string) {
   switch (status) {
     case "Input Required":
-    case "Credit Denied":
+    case "Credit Not Approved":
       return "text-red-600 dark:text-red-400"
     default:
       return "text-foreground"
@@ -209,12 +215,14 @@ export function getStatusDotColor(status: string) {
       return "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30"
     case "Credit Requested":
       return "bg-orange-400 border-orange-400 shadow-sm shadow-orange-400/30"
-    case "Credit Denied":
+    case "Credit Not Approved":
       return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
     case "Under Review":
       return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
     case "Input Required":
       return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
+    case "Closed":
+      return "bg-slate-500 border-slate-500 shadow-sm shadow-slate-500/30"
     case "Ticket Created":
       return "bg-slate-400 border-slate-400 shadow-sm shadow-slate-400/30"
     default:

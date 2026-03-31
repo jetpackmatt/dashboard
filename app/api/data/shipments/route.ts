@@ -338,7 +338,7 @@ export async function GET(request: NextRequest) {
         const lower = s.toLowerCase()
         if (lower === 'credit requested') return 'Credit Requested'
         if (lower === 'credit approved') return 'Credit Approved'
-        if (lower === 'credit denied') return 'Credit Denied'
+        if (lower === 'credit denied' || lower === 'credit not approved') return 'Credit Not Approved'
         if (lower === 'claim resolved') return 'Resolved'
         return s
       })

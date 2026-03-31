@@ -360,8 +360,8 @@ export async function PATCH(
               ? `A credit of ${creditStr} has been approved and will appear on your next invoice.`
               : 'A credit has been approved and will appear on your next invoice.'
             break
-          case 'Credit Denied':
-            defaultNote = 'The credit request was denied. Reach out on Slack for more details.'
+          case 'Credit Not Approved':
+            defaultNote = 'The credit request was not approved. Reach out on Slack for more details.'
             break
           case 'Input Required':
             defaultNote = 'We need more information to proceed. Please reach out via Slack or email.'
@@ -377,6 +377,9 @@ export async function PATCH(
             break
           case 'In Process':
             defaultNote = 'This ticket is being actively worked on.'
+            break
+          case 'Closed':
+            defaultNote = 'This ticket has been closed.'
             break
           default:
             defaultNote = `Status changed to ${newStatus}`

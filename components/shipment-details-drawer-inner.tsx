@@ -357,7 +357,8 @@ function getEventStatusBadge(event: string, source?: 'shipment' | 'claim'): { la
     if (eventLower.includes('under review')) return { label: 'Under Review', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' }
     if (eventLower.includes('credit requested')) return { label: 'Credit Requested', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' }
     if (eventLower.includes('credit approved')) return { label: 'Credit Approved', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' }
-    if (eventLower.includes('credit denied')) return { label: 'Credit Denied', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }
+    if (eventLower.includes('credit denied') || eventLower.includes('credit not approved')) return { label: 'Credit Not Approved', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }
+    if (eventLower.includes('closed')) return { label: 'Closed', color: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400' }
     if (eventLower.includes('resolved')) return { label: 'Resolved', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' }
     // Default claim badge
     return { label: 'Claim', color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' }
@@ -1318,7 +1319,7 @@ export default function ShipmentDetailsDrawerInner({
                   <div className={`rounded-lg p-4 ${
                     data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
                       ? 'bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-200/50 dark:border-emerald-800/30'
-                      : data.claimTicket.status === 'Credit Denied'
+                      : data.claimTicket.status === 'Credit Not Approved' || data.claimTicket.status === 'Closed'
                         ? 'bg-red-500/10 dark:bg-red-500/5 border border-red-200/50 dark:border-red-800/30'
                         : 'bg-amber-500/10 dark:bg-amber-500/5 border border-amber-200/50 dark:border-amber-800/30'
                   }`}>
@@ -1329,7 +1330,7 @@ export default function ShipmentDetailsDrawerInner({
                         <p className={`text-sm font-semibold ${
                           data.claimTicket.status === 'Credit Approved' || data.claimTicket.status === 'Resolved'
                             ? 'text-emerald-700 dark:text-emerald-400'
-                            : data.claimTicket.status === 'Credit Denied'
+                            : data.claimTicket.status === 'Credit Not Approved' || data.claimTicket.status === 'Closed'
                               ? 'text-red-700 dark:text-red-400'
                               : 'text-amber-700 dark:text-amber-400'
                         }`}>
@@ -1403,7 +1404,7 @@ export default function ShipmentDetailsDrawerInner({
                               {data.claimTicket.events.slice(0, 4).map((event, idx) => {
                                 const dotColor = event.status === 'Resolved' || event.status === 'Credit Approved'
                                   ? 'bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/30'
-                                  : event.status === 'Credit Denied'
+                                  : event.status === 'Credit Not Approved' || event.status === 'Closed'
                                     ? 'bg-red-500 border-red-500 shadow-sm shadow-red-500/30'
                                     : event.status === 'Credit Requested'
                                       ? 'bg-amber-400 border-amber-400 shadow-sm shadow-amber-400/30'
