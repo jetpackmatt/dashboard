@@ -123,6 +123,7 @@ import {
   getStatusTextColor,
   getStatusDotColor,
   getFileIcon,
+  displayStatus,
 } from "@/lib/care/helpers"
 // SortableHeader component for drag-to-reorder columns
 interface SortableHeaderProps {
@@ -2134,7 +2135,7 @@ export default function CareContent() {
                                                                 "text-sm font-semibold",
                                                                 getStatusTextColor(event.status)
                                                               )}>
-                                                                {event.status}
+                                                                {displayStatus(event.status)}
                                                               </span>
                                                               <div className="flex items-center gap-1.5">
                                                                 {/* Edit/Delete icons - visible on hover for admin/care roles, not for "Ticket Created" */}
@@ -2474,7 +2475,7 @@ export default function CareContent() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Event</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove the &ldquo;{deletingEvent?.status}&rdquo; event from this ticket&apos;s timeline? This cannot be undone.
+              Are you sure you want to remove the &ldquo;{deletingEvent?.status ? displayStatus(deletingEvent.status) : ''}&rdquo; event from this ticket&apos;s timeline? This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

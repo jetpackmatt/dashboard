@@ -197,10 +197,20 @@ export function getStatusTextColor(status: string) {
   switch (status) {
     case "Input Required":
     case "Credit Not Approved":
+    case "Credit Denied": // legacy
       return "text-red-600 dark:text-red-400"
     default:
       return "text-foreground"
   }
+}
+
+/**
+ * Maps legacy status names to current display names.
+ * Use this when rendering event.status from JSONB to handle old data.
+ */
+export function displayStatus(status: string): string {
+  if (status === 'Credit Denied') return 'Credit Not Approved'
+  return status
 }
 
 /**
@@ -216,6 +226,7 @@ export function getStatusDotColor(status: string) {
     case "Credit Requested":
       return "bg-orange-400 border-orange-400 shadow-sm shadow-orange-400/30"
     case "Credit Not Approved":
+    case "Credit Denied": // legacy
       return "bg-red-500 border-red-500 shadow-sm shadow-red-500/30"
     case "Under Review":
       return "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
