@@ -214,7 +214,7 @@ export const CREDITS_TABLE_CONFIG: TableConfig = {
     { id: 'creditInvoiceNumber', header: 'Invoice',          width: 14, priority: 2 },
     { id: 'status',              header: 'Status',           width: 12, priority: 3 },
     { id: 'referenceId',         header: 'Reference ID',     width: 12, priority: 4 },
-    { id: 'sbTicketReference',   header: 'ShipBob Ticket',   width: 12, priority: 5 },
+    { id: 'careTicket',           header: 'Care Ticket',       width: 12, priority: 5 },
     { id: 'creditAmount',        header: 'Credit',           width: 8, priority: 6 },
     { id: 'creditReason',        header: 'Credit Reason',    width: 23, priority: 7 },
   ],

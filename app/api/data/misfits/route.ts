@@ -215,9 +215,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch misfits' }, { status: 500 })
     }
 
+    // Collect shipment IDs from credit misfits that are missing a ticket,
+    // then check if any of those shipments already have a "Credit Approved" ticket.
+    // This flags potential duplicate credits for the same shipment.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const creditShipmentIds = (data || [])
+      .filter((tx: any) => tx.fee_type === 'Credit' && !tx.care_ticket_id && tx.reference_id && tx.reference_type === 'Shipment')
+      .map((tx: any) => tx.reference_id as string)
+    const uniqueShipmentIds = [...new Set(creditShipmentIds)]
+
+    const duplicateShipmentIds = new Set<string>()
+    if (uniqueShipmentIds.length > 0) {
+      // Check for existing tickets with Credit Approved/Resolved on these shipments
+      const { data: existingTickets } = await supabase
+        .from('care_tickets')
+        .select('shipment_id')
+        .in('shipment_id', uniqueShipmentIds)
+        .in('status', ['Credit Approved', 'Credit Not Approved', 'Resolved'])
+        .is('deleted_at', null)
+
+      if (existingTickets) {
+        for (const t of existingTickets) {
+          if (t.shipment_id) duplicateShipmentIds.add(t.shipment_id)
+        }
+      }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mapped = (data || []).map((tx: any) => {
       const isCreditType = tx.fee_type === 'Credit'
+      const isMissingTicket = isCreditType && !tx.care_ticket_id
       return {
         id: tx.id,
         transactionId: tx.transaction_id,
@@ -241,7 +268,8 @@ export async function GET(request: NextRequest) {
         sbTicketRef: tx.additional_details?.TicketReference || null,
         // Computed misfit reason flags
         missingBrand: !tx.client_id,
-        missingTicket: isCreditType && !tx.care_ticket_id,
+        missingTicket: isMissingTicket,
+        duplicateTicket: isMissingTicket && !!tx.reference_id && duplicateShipmentIds.has(tx.reference_id),
         missingShipment: isCreditType && (!tx.reference_id || tx.reference_type === 'Default'),
         pendingMarkup: isCreditType && tx.markup_is_preview === true && tx.billed_amount === null,
         creditShippingPortion: tx.credit_shipping_portion != null ? parseFloat(tx.credit_shipping_portion) : null,

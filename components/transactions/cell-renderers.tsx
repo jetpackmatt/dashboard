@@ -545,6 +545,7 @@ export interface Shipment {
   claimLastScanDescription?: string | null
   claimLastScanDate?: string | null
   // Claim ticket info (from care_tickets - overrides eligibility status in UI)
+  claimTicketId?: string | null
   claimTicketNumber?: number | null
   claimTicketStatus?: string | null
   claimCreditAmount?: number | null
@@ -552,6 +553,50 @@ export interface Shipment {
   reshipmentId?: string | null
   // Note count (from shipment_notes table)
   noteCount?: number
+}
+
+// ============================================
+// CLAIM BADGE STATUS STYLING
+// Badge colors + label based on care ticket status
+// ============================================
+
+function getClaimBadgeColors(status: string): string {
+  switch (status) {
+    case 'Credit Approved':
+    case 'Resolved':
+      return 'bg-emerald-100/50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/30'
+    case 'Credit Requested':
+      return 'bg-orange-100/50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800/30'
+    case 'Credit Not Approved':
+      return 'bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30'
+    case 'Under Review':
+      return 'bg-blue-100/50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800/30'
+    case 'Closed':
+      return 'bg-zinc-100/50 text-zinc-600 border-zinc-200 dark:bg-zinc-800/30 dark:text-zinc-400 dark:border-zinc-700/30'
+    default:
+      return 'bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30'
+  }
+}
+
+function buildClaimTooltip(status: string, ticketNumber?: number | null, creditAmount?: number | null): string {
+  const prefix = ticketNumber ? `Ticket #${ticketNumber}` : 'Claim'
+  switch (status) {
+    case 'Credit Approved':
+    case 'Resolved':
+      return creditAmount
+        ? `${prefix} — $${creditAmount.toFixed(2)} credited`
+        : `${prefix} — Credit applied`
+    case 'Credit Requested':
+      return `${prefix} — Awaiting approval`
+    case 'Credit Not Approved':
+      return `${prefix} — Credit not approved`
+    case 'Under Review':
+      return `${prefix} — Under review`
+    case 'Closed':
+      return `${prefix} — Closed`
+    default:
+      return `${prefix} — ${status}`
+  }
 }
 
 // ============================================
@@ -834,25 +879,12 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
       return <VoidedBadge />
     }
 
-    // Priority 1: Show "Claim" status if a claim has been filed
-    // This takes precedence over eligibility status since the claim is in progress
+    // Priority 1: Show claim status badge if a claim has been filed
+    // Color hints the ticket's current status; label always says "Claim"
     if (row.claimTicketStatus) {
-      const ticketStatus = row.claimTicketStatus
       const ticketNumber = row.claimTicketNumber
-
-      // Build tooltip text based on status
-      let tooltipText = `Ticket #${ticketNumber}`
-      if (ticketStatus === 'Credit Approved' || ticketStatus === 'Resolved') {
-        tooltipText = row.claimCreditAmount
-          ? `Ticket #${ticketNumber} - $${row.claimCreditAmount.toFixed(2)} credited`
-          : `Ticket #${ticketNumber} - Credit applied`
-      } else if (ticketStatus === 'Credit Requested') {
-        tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
-      } else if (ticketStatus === 'Credit Not Approved') {
-        tooltipText = `Ticket #${ticketNumber} - Credit not approved`
-      } else {
-        tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
-      }
+      const badgeColors = getClaimBadgeColors(row.claimTicketStatus)
+      const tooltipText = buildClaimTooltip(row.claimTicketStatus, ticketNumber, row.claimCreditAmount)
 
       return (
         <TooltipProvider>
@@ -860,7 +892,7 @@ export const shipmentCellRenderers: Record<string, CellRenderer<Shipment>> = {
             <TooltipTrigger asChild>
               <Badge
                 variant="outline"
-                className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+                className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${badgeColors}`}
               >
                 <FileTextIcon className="h-3.5 w-3.5" />
                 Claim
@@ -1293,6 +1325,7 @@ function ShipmentNoteHover({ shipmentId, noteCount }: { shipmentId: string; note
 export function createShipmentCellRenderers(options?: {
   onFileClaimClick?: (shipmentId: string) => void
   onTicketClick?: (shipmentId: string) => void
+  onClaimTicketClick?: (ticketId: string, ticketNumber?: number) => void
   onMarkReshipClick?: (shipmentId: string) => void
   onAddNoteClick?: (shipmentId: string) => void
   onWatchlistToggle?: (shipmentId: string) => void
@@ -1377,25 +1410,12 @@ export function createShipmentCellRenderers(options?: {
         return <VoidedBadge />
       }
 
-      // Priority 1: Show "Claim" status if a claim has been filed
-      // This takes precedence over eligibility status since the claim is in progress
+      // Priority 1: Show claim status badge if a claim has been filed
+      // Color hints the ticket's current status; clickable to open ticket panel
       if (row.claimTicketStatus) {
-        const ticketStatus = row.claimTicketStatus
-        const ticketNumber = row.claimTicketNumber
-
-        // Build tooltip text based on status
-        let tooltipText = `Ticket #${ticketNumber}`
-        if (ticketStatus === 'Credit Approved' || ticketStatus === 'Resolved') {
-          tooltipText = row.claimCreditAmount
-            ? `Ticket #${ticketNumber} - $${row.claimCreditAmount.toFixed(2)} credited`
-            : `Ticket #${ticketNumber} - Credit applied`
-        } else if (ticketStatus === 'Credit Requested') {
-          tooltipText = `Ticket #${ticketNumber} - Awaiting approval`
-        } else if (ticketStatus === 'Credit Not Approved') {
-          tooltipText = `Ticket #${ticketNumber} - Credit not approved`
-        } else {
-          tooltipText = `Ticket #${ticketNumber} - ${ticketStatus}`
-        }
+        const badgeColors = getClaimBadgeColors(row.claimTicketStatus)
+        const tooltipText = buildClaimTooltip(row.claimTicketStatus, row.claimTicketNumber, row.claimCreditAmount)
+        const canClick = !!row.claimTicketId && !!options?.onClaimTicketClick
 
         return (
           <TooltipProvider>
@@ -1403,7 +1423,11 @@ export function createShipmentCellRenderers(options?: {
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className="gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap bg-red-100/50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800/30"
+                  className={`gap-1 px-1.5 text-[11px] [&_svg]:size-3 whitespace-nowrap ${badgeColors} ${canClick ? 'cursor-pointer hover:opacity-80' : ''}`}
+                  onClick={canClick ? (e) => {
+                    e.stopPropagation()
+                    options!.onClaimTicketClick!(row.claimTicketId!, row.claimTicketNumber ?? undefined)
+                  } : undefined}
                 >
                   <FileTextIcon className="h-3.5 w-3.5" />
                   Claim
@@ -2275,6 +2299,10 @@ export interface Credit {
   referenceType: string
   transactionDate: string
   sbTicketReference: string
+  careTicketId: string | null
+  careTicketNumber: number | null
+  careTicketStatus: string | null
+  careTicketIssueType: string | null
   creditInvoiceNumber: string
   invoiceDate: string
   creditReason: string
@@ -2305,27 +2333,9 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
       </div>
     )
   },
-  sbTicketReference: (row) => {
-    const handleCopy = (e: React.MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      navigator.clipboard.writeText(row.sbTicketReference)
-      toast.success("Ticket # copied")
-    }
-    return (
-      <div className="group/cell flex items-center gap-1.5">
-        <span>{row.sbTicketReference || '-'}</span>
-        {row.sbTicketReference && (
-          <button
-            onClick={handleCopy}
-            className="p-0.5 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 opacity-0 group-hover/cell:opacity-100"
-            title="Copy Ticket #"
-          >
-            <CopyIcon className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-    )
+  careTicket: () => {
+    // Static renderer — overridden by createCreditsCellRenderers with sheet callback
+    return <span className="text-muted-foreground">-</span>
   },
   creditReason: (row) => (
     <div className="truncate">{row.creditReason || '-'}</div>
@@ -2353,11 +2363,44 @@ export const creditsCellRenderers: Record<string, CellRenderer<Credit>> = {
   ),
 }
 
+function getCareTicketStatusChipColor(status: string | null): string {
+  switch (status) {
+    case 'Resolved': return 'bg-emerald-500'
+    case 'Credit Approved': return 'bg-emerald-400'
+    case 'Credit Requested': return 'bg-orange-400'
+    case 'Credit Not Approved': return 'bg-red-500'
+    case 'Closed': return 'bg-slate-500'
+    case 'Under Review': return 'bg-blue-500'
+    default: return 'bg-zinc-400'
+  }
+}
+
 export function createCreditsCellRenderers(
-  onShipmentClick?: (shipmentId: string) => void
+  onShipmentClick?: (shipmentId: string) => void,
+  onTicketClick?: (ticketId: string, ticketNumber?: number) => void
 ): Record<string, CellRenderer<Credit>> {
   return {
     ...creditsCellRenderers,
+    careTicket: (row) => {
+      if (!row.careTicketNumber || !row.careTicketId) {
+        return <span className="text-muted-foreground">-</span>
+      }
+
+      return (
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onTicketClick?.(row.careTicketId!, row.careTicketNumber!)
+          }}
+          className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+          title={`${row.careTicketStatus || 'Open'}${row.careTicketIssueType ? ` · ${row.careTicketIssueType}` : ''}`}
+        >
+          <span className={`inline-block w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${getCareTicketStatusChipColor(row.careTicketStatus)}`} />
+          <span className="font-mono text-[12px]">#{row.careTicketNumber}</span>
+        </button>
+      )
+    },
     referenceId: (row) => {
       const isShipment = row.referenceType === 'Shipment' && !!row.referenceId
       const handleCopy = (e: React.MouseEvent) => {

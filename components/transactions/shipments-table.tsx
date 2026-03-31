@@ -13,6 +13,7 @@ import { CreateTicketDialog } from "@/components/care/create-ticket-dialog"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { useWatchlist } from "@/hooks/use-watchlist"
+import { useCareTicketSheet } from "@/components/care/ticket-sheet"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 import { useExport } from "@/components/export-context"
@@ -145,6 +146,9 @@ export function ShipmentsTable({
   const [noteInput, setNoteInput] = React.useState("")
   const [noteSaving, setNoteSaving] = React.useState(false)
 
+  // Care ticket slide-up panel
+  const { openTicket, prefetchTickets } = useCareTicketSheet()
+
   // Watchlist hook — filter to current client
   const { isWatched, toggleWatch } = useWatchlist(clientId)
 
@@ -190,13 +194,14 @@ export function ShipmentsTable({
     () => createShipmentCellRenderers({
       onFileClaimClick: handleFileClaimClick,
       onTicketClick: handleTicketClick,
+      onClaimTicketClick: openTicket,
       onMarkReshipClick: handleMarkReshipClick,
       onAddNoteClick: handleAddNoteClick,
       onWatchlistToggle: handleWatchlistToggle,
       isWatched,
       isAdminOrCare,
     }),
-    [handleFileClaimClick, handleTicketClick, handleMarkReshipClick, handleAddNoteClick, handleWatchlistToggle, isWatched, isAdminOrCare]
+    [handleFileClaimClick, handleTicketClick, openTicket, handleMarkReshipClick, handleAddNoteClick, handleWatchlistToggle, isWatched, isAdminOrCare]
   )
 
   // Pagination state - use initialPageSize from props for persistence
@@ -386,6 +391,12 @@ export function ShipmentsTable({
       setData(filteredData)
       setTotalCount(result.totalCount || 0)
 
+      // Prefetch care ticket data for shipments with filed claims (instant slide-up)
+      const ticketIds = filteredData
+        .map((r: Shipment) => r.claimTicketId)
+        .filter((id): id is string => !!id)
+      if (ticketIds.length > 0) prefetchTickets(ticketIds)
+
       // Report noted shipment count to parent
       if (onNotedCountChange && result.notedShipmentCount !== undefined) {
         onNotedCountChange(result.notedShipmentCount)
@@ -398,7 +409,17 @@ export function ShipmentsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes, onChannelsChange, onCarriersChange, onFcsChange, onDestinationsChange])
+  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes, onChannelsChange, onCarriersChange, onFcsChange, onDestinationsChange, prefetchTickets])
+
+  // Prefetch care tickets from initial data on mount
+  React.useEffect(() => {
+    if (initialData && initialData.length > 0) {
+      const ticketIds = initialData
+        .map(r => r.claimTicketId)
+        .filter((id): id is string => !!id)
+      if (ticketIds.length > 0) prefetchTickets(ticketIds)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load and on filter/page change
   React.useEffect(() => {

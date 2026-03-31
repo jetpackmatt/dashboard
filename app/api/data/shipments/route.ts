@@ -943,7 +943,7 @@ export async function GET(request: NextRequest) {
     let refundedTrackingIds: Set<string> = new Set()
     let voidedTrackingIds: Set<string> = new Set()
     let claimEligibilityMap: Record<string, { status: string | null; daysRemaining: number | null; eligibleAfter: string | null; substatusCategory: string | null; lastScanDescription: string | null; lastScanDate: string | null }> = {}
-    let claimTicketMap: Record<string, { ticketNumber: number; status: string; creditAmount: number | null }> = {}
+    let claimTicketMap: Record<string, { id: string; ticketNumber: number; status: string; creditAmount: number | null }> = {}
     let productsSoldMap: Record<string, string> = {}
     let billingExportMap: Record<string, { baseCharge: number | null; surchargeAmount: number | null; transactionType: string }> = {}
     let insuranceMap: Record<string, number> = {}
@@ -983,7 +983,7 @@ export async function GET(request: NextRequest) {
         // Query 4: Get claim ticket status from care_tickets (for filed claims)
         supabase
           .from('care_tickets')
-          .select('shipment_id, ticket_number, status, credit_amount')
+          .select('id, shipment_id, ticket_number, status, credit_amount')
           .in('shipment_id', shipmentIds)
           .eq('ticket_type', 'Claim'),
         // Query 5: Insurance transactions (export only - keyed by reference_id/shipment_id)
@@ -1073,6 +1073,7 @@ export async function GET(request: NextRequest) {
         for (const ticket of claimTicketsResult.data) {
           if (ticket.shipment_id) {
             claimTicketMap[ticket.shipment_id] = {
+              id: ticket.id,
               ticketNumber: ticket.ticket_number,
               status: ticket.status,
               creditAmount: ticket.credit_amount,
@@ -1216,6 +1217,7 @@ export async function GET(request: NextRequest) {
         claimLastScanDescription: claimEligibilityMap[row.shipment_id]?.lastScanDescription || null,
         claimLastScanDate: claimEligibilityMap[row.shipment_id]?.lastScanDate || null,
         // Claim ticket info (for filed claims - overrides eligibility status in UI)
+        claimTicketId: claimTicketMap[row.shipment_id]?.id || null,
         claimTicketNumber: claimTicketMap[row.shipment_id]?.ticketNumber || null,
         claimTicketStatus: claimTicketMap[row.shipment_id]?.status || null,
         claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,

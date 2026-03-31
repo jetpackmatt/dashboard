@@ -6,6 +6,7 @@ import { SidebarInset } from "@/components/ui/sidebar"
 import { ClientProvider } from "@/components/client-context"
 import { TrackingDrawerProvider } from "@/components/tracking-link"
 import { ExportProvider } from "@/components/export-context"
+import { CareTicketSheetProvider } from "@/components/care/ticket-sheet"
 import { NavigationProgressProvider, NavigationProgressGate } from "@/components/navigation-progress"
 
 export default async function DashboardLayout({
@@ -28,9 +29,11 @@ export default async function DashboardLayout({
           <SidebarInset>
             <NavigationProgressGate>
               <ExportProvider>
-                <TrackingDrawerProvider>
-                  {children}
-                </TrackingDrawerProvider>
+                <CareTicketSheetProvider>
+                  <TrackingDrawerProvider>
+                    {children}
+                  </TrackingDrawerProvider>
+                </CareTicketSheetProvider>
               </ExportProvider>
             </NavigationProgressGate>
           </SidebarInset>

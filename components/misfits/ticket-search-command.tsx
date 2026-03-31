@@ -130,7 +130,7 @@ export function TicketSearchCommand({ onSelect, clientId, creditAmount }: Ticket
                     </span>
                     <div className="flex items-center gap-1 shrink-0">
                       <span
-                        className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_COLORS[ticket.status] || 'bg-zinc-400'}`}
+                        className={`inline-block w-[7px] h-[7px] rounded-[2px] ${STATUS_COLORS[ticket.status] || 'bg-zinc-400'}`}
                       />
                       <span className="text-[10px] text-muted-foreground">
                         {ticket.status}

@@ -9,6 +9,7 @@ import { Credit, createCreditsCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
+import { useCareTicketSheet } from "@/components/care/ticket-sheet"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 import { useExport } from "@/components/export-context"
 import { CREDITS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
@@ -56,9 +57,11 @@ export function CreditsTable({
     setDrawerOpen(true)
   }, [])
 
+  const { openTicket, prefetchTickets } = useCareTicketSheet()
+
   const cellRenderers = React.useMemo(
-    () => createCreditsCellRenderers(handleShipmentClick),
-    [handleShipmentClick]
+    () => createCreditsCellRenderers(handleShipmentClick, openTicket),
+    [handleShipmentClick, openTicket]
   )
 
   // Convert "all" to undefined for API
@@ -127,8 +130,13 @@ export function CreditsTable({
       }
 
       const result = await response.json()
-      setData(result.data || [])
+      const rows: Credit[] = result.data || []
+      setData(rows)
       setTotalCount(result.totalCount || 0)
+
+      // Prefetch care ticket data so the slide-up panel opens instantly
+      const ticketIds = rows.map(r => r.careTicketId).filter((id): id is string => !!id)
+      if (ticketIds.length > 0) prefetchTickets(ticketIds)
     } catch (err) {
       console.error('Error fetching credits:', err)
       setData([])
@@ -137,7 +145,7 @@ export function CreditsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, dateRange, effectiveReasonFilter, searchQuery])
+  }, [clientId, dateRange, effectiveReasonFilter, searchQuery, prefetchTickets])
 
   // Initial load
   React.useEffect(() => {
@@ -173,9 +181,15 @@ export function CreditsTable({
     setIsPageLoading(true)
     fetch(`/api/data/billing/credits?${params.toString()}`)
       .then(r => r.json())
-      .then(result => { setData(result.data || []); setTotalCount(result.totalCount || 0) })
+      .then(result => {
+        const rows: Credit[] = result.data || []
+        setData(rows)
+        setTotalCount(result.totalCount || 0)
+        const ticketIds = rows.map(r => r.careTicketId).filter((id): id is string => !!id)
+        if (ticketIds.length > 0) prefetchTickets(ticketIds)
+      })
       .finally(() => setIsPageLoading(false))
-  }, [clientId, dateRange, effectiveReasonFilter, searchQuery, pageSize])
+  }, [clientId, dateRange, effectiveReasonFilter, searchQuery, pageSize, prefetchTickets])
 
   // Export handler
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {

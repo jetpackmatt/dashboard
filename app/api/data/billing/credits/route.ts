@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
   try {
     let query = supabase
       .from('transactions')
-      .select('*', { count: 'exact' })
+      .select('*, care_tickets(id, ticket_number, status, issue_type)', { count: 'exact' })
       .eq('fee_type', 'Credit')
 
     if (clientId) {
@@ -98,6 +98,8 @@ export async function GET(request: NextRequest) {
         creditAmount = Math.abs(amount) // Display as positive
       }
 
+      const careTicket = row.care_tickets as { id: string; ticket_number: number; status: string; issue_type: string | null } | null
+
       return {
         id: row.id,
         clientId: row.client_id,
@@ -105,6 +107,10 @@ export async function GET(request: NextRequest) {
         referenceType: String(row.reference_type || ''),
         transactionDate: row.charge_date,
         sbTicketReference: String(details.TicketReference || ''),
+        careTicketId: careTicket?.id || null,
+        careTicketNumber: careTicket?.ticket_number || null,
+        careTicketStatus: careTicket?.status || null,
+        careTicketIssueType: careTicket?.issue_type || null,
         creditInvoiceNumber: row.invoice_id_jp?.toString() || '',
         invoiceDate: row.invoice_date_jp,
         creditReason: String(details.Comment || details.CreditReason || ''),
@@ -125,9 +131,10 @@ export async function GET(request: NextRequest) {
 
     // Apply search filter post-mapping
     if (search) {
-      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; creditInvoiceNumber: string; creditAmount: number | null }) =>
+      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; careTicketNumber: number | null; creditInvoiceNumber: string; creditAmount: number | null }) =>
         item.referenceId.toLowerCase().includes(search) ||
         item.sbTicketReference.toLowerCase().includes(search) ||
+        (item.careTicketNumber !== null && item.careTicketNumber.toString().includes(search)) ||
         item.creditInvoiceNumber.toLowerCase().includes(search) ||
         (item.creditAmount !== null && item.creditAmount.toString().includes(search))
       )
