@@ -231,16 +231,16 @@ export async function GET(request: NextRequest) {
 
     // Get shipment data for ship dates + order IDs (for customer name lookup)
     const shipmentIds = (checks as LostInTransitCheck[] || []).map((c: LostInTransitCheck) => c.shipment_id).filter(Boolean)
-    let shipmentMap: Map<string, { eventLabeled: string; shipbobOrderId: string | null; reshipmentId: string | null }> = new Map()
+    let shipmentMap: Map<string, { eventLabeled: string; shipbobOrderId: string | null; reshipmentId: string | null; tags: string[] }> = new Map()
     if (shipmentIds.length > 0) {
       const { data: shipments } = await supabase
         .from('shipments')
-        .select('shipment_id, event_labeled, shipbob_order_id, reshipment_id')
+        .select('shipment_id, event_labeled, shipbob_order_id, reshipment_id, tags')
         .in('shipment_id', shipmentIds)
 
       if (shipments) {
         for (const s of shipments) {
-          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled, shipbobOrderId: s.shipbob_order_id, reshipmentId: s.reshipment_id })
+          shipmentMap.set(s.shipment_id, { eventLabeled: s.event_labeled, shipbobOrderId: s.shipbob_order_id, reshipmentId: s.reshipment_id, tags: s.tags || [] })
         }
       }
     }
@@ -315,6 +315,7 @@ export async function GET(request: NextRequest) {
       stuckAtFacility: check.stuck_at_facility,
       stuckDurationDays: check.stuck_duration_days,
       reshipmentId: shipmentMap.get(check.shipment_id)?.reshipmentId || null,
+      tags: shipmentMap.get(check.shipment_id)?.tags || [],
     }))
 
     return NextResponse.json({

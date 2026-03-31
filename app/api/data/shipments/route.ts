@@ -102,6 +102,9 @@ export async function GET(request: NextRequest) {
   // Age filter - comma-separated age ranges like "0-1,1-2,7+"
   const ageFilter = searchParams.get('age')?.split(',').filter(Boolean) || []
 
+  // Tags filter - comma-separated tag names
+  const tagsFilter = searchParams.get('tags')?.split(',').filter(Boolean) || []
+
   // Sort params - defaults to event_labeled descending
   const allowedSortFields = ['recipient_name', 'carrier', 'event_labeled', 'transit_time_days']
   const rawSortField = searchParams.get('sortField') || 'event_labeled'
@@ -178,6 +181,7 @@ export async function GET(request: NextRequest) {
         length,
         width,
         height,
+        tags,
         orders!inner(
           id,
           shipbob_order_id,
@@ -226,6 +230,7 @@ export async function GET(request: NextRequest) {
         length,
         width,
         height,
+        tags,
         orders(
           id,
           shipbob_order_id,
@@ -509,6 +514,11 @@ export async function GET(request: NextRequest) {
       query = query.in('fc_name', fcFilter)
     }
 
+    // Apply tags filter (shipments with ANY of the selected tags)
+    if (tagsFilter.length > 0) {
+      query = query.overlaps('tags', tagsFilter)
+    }
+
     // Apply watchlist filter (brand-only, filters to specific shipment IDs)
     if (watchlistFilter.length > 0) {
       query = query.in('shipment_id', watchlistFilter)
@@ -640,7 +650,7 @@ export async function GET(request: NextRequest) {
       // Skip RPC when hasNoteFilter or watchlistFilter is active since RPC doesn't support shipment ID filtering
       const rpcStartTime = Date.now()
       const statusFilterLower = statusFilter.map(s => s.toLowerCase())
-      const skipRpc = hasNoteFilter || watchlistFilter.length > 0 || fcFilter.length > 0
+      const skipRpc = hasNoteFilter || watchlistFilter.length > 0 || fcFilter.length > 0 || tagsFilter.length > 0
 
       const { data: rpcData, error: rpcError } = skipRpc ? { data: null, error: { message: 'skipped for shipment ID filter' } as any } : await supabase.rpc('get_shipments_by_age', {
         p_client_id: clientId || null,
@@ -724,6 +734,7 @@ export async function GET(request: NextRequest) {
           if (channelFilter.length > 0) batchQuery = batchQuery.in('application_name', channelFilter)
           if (carrierFilter.length > 0) batchQuery = batchQuery.in('carrier', carrierFilter)
           if (fcFilter.length > 0) batchQuery = batchQuery.in('fc_name', fcFilter)
+          if (tagsFilter.length > 0) batchQuery = batchQuery.overlaps('tags', tagsFilter)
           if (watchlistFilter.length > 0) batchQuery = batchQuery.in('shipment_id', watchlistFilter)
           if (noteShipmentIds) batchQuery = batchQuery.in('shipment_id', noteShipmentIds)
 
@@ -742,6 +753,7 @@ export async function GET(request: NextRequest) {
         }
         if (carrierFilter.length > 0) countQuery = countQuery.in('carrier', carrierFilter)
         if (fcFilter.length > 0) countQuery = countQuery.in('fc_name', fcFilter)
+        if (tagsFilter.length > 0) countQuery = countQuery.overlaps('tags', tagsFilter)
         if (watchlistFilter.length > 0) countQuery = countQuery.in('shipment_id', watchlistFilter)
         if (noteShipmentIds) countQuery = countQuery.in('shipment_id', noteShipmentIds)
 
@@ -875,6 +887,7 @@ export async function GET(request: NextRequest) {
       if (channelFilter.length > 0) fallbackQuery = fallbackQuery.in('application_name', channelFilter)
       if (carrierFilter.length > 0) fallbackQuery = fallbackQuery.in('carrier', carrierFilter)
       if (fcFilter.length > 0) fallbackQuery = fallbackQuery.in('fc_name', fcFilter)
+      if (tagsFilter.length > 0) fallbackQuery = fallbackQuery.overlaps('tags', tagsFilter)
       if (watchlistFilter.length > 0) fallbackQuery = fallbackQuery.in('shipment_id', watchlistFilter)
       if (noteShipmentIds) fallbackQuery = fallbackQuery.in('shipment_id', noteShipmentIds)
 
@@ -1222,6 +1235,7 @@ export async function GET(request: NextRequest) {
         claimTicketStatus: claimTicketMap[row.shipment_id]?.status || null,
         claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,
         reshipmentId: row.reshipment_id || null,
+        tags: row.tags || [],
         noteCount: noteCountMap[row.shipment_id] || 0,
         // Export-only fields (invoice format)
         ...(isExport ? {

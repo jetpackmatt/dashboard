@@ -42,6 +42,7 @@ import { TrackingTimelineDrawer } from "./tracking-timeline-drawer"
 import { TrackingLink } from "@/components/tracking-link"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
+import { TagPickerDialog } from "@/components/tags/tag-picker-dialog"
 import type { MonitoredShipment } from "@/app/dashboard/deliveryiq/page"
 import type { QuickFilterValue } from "./quick-filters"
 
@@ -231,6 +232,9 @@ export function DeliveryIQTable({
   const [noteTargetId, setNoteTargetId] = React.useState<string | null>(null)
   const [noteInput, setNoteInput] = React.useState("")
   const [noteSaving, setNoteSaving] = React.useState(false)
+  const [tagPickerOpen, setTagPickerOpen] = React.useState(false)
+  const [tagTargetId, setTagTargetId] = React.useState<string | null>(null)
+  const [tagTargetTags, setTagTargetTags] = React.useState<string[]>([])
 
   const handleReshipSave = React.useCallback(async () => {
     if (!reshipTargetId || !reshipInput.trim()) return
@@ -276,6 +280,10 @@ export function DeliveryIQTable({
       setNoteSaving(false)
     }
   }, [noteTargetId, noteInput])
+
+  const handleTagsSaved = React.useCallback((_shipmentId: string, tags: string[]) => {
+    setTagTargetTags(tags)
+  }, [])
 
   // Reset page when data changes
   React.useEffect(() => {
@@ -689,6 +697,13 @@ export function DeliveryIQTable({
                             }}>
                               Add a Note
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              setTagTargetId(shipment.shipmentId)
+                              setTagTargetTags(shipment.tags || [])
+                              setTagPickerOpen(true)
+                            }}>
+                              Add Tag
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                         {shipment.claimEligibilityStatus === 'eligible' && (
@@ -831,6 +846,13 @@ export function DeliveryIQTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <TagPickerDialog
+        open={tagPickerOpen}
+        onOpenChange={setTagPickerOpen}
+        shipmentId={tagTargetId}
+        currentTags={tagTargetTags}
+        onTagsSaved={handleTagsSaved}
+      />
     </div>
   )
 }

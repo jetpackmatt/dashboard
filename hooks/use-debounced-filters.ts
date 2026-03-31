@@ -50,6 +50,7 @@ export interface ShipmentsFilters {
   carrierFilter: string[]
   destinationFilter: string[]
   fcFilter: string[]
+  tagsFilter: string[]
   dateRange: DateRange | undefined
 }
 

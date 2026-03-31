@@ -14,6 +14,7 @@ import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { useWatchlist } from "@/hooks/use-watchlist"
 import { useCareTicketSheet } from "@/components/care/ticket-sheet"
+import { TagPickerDialog } from "@/components/tags/tag-picker-dialog"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
 import { useExport } from "@/components/export-context"
@@ -46,6 +47,7 @@ interface ShipmentsTableProps {
   carrierFilter?: string[]
   destinationFilter?: string[]
   fcFilter?: string[]
+  tagsFilter?: string[]
   dateRange?: DateRange
   // Search query for real-time search
   searchQuery?: string
@@ -87,6 +89,7 @@ export function ShipmentsTable({
   carrierFilter = [],
   destinationFilter = [],
   fcFilter = [],
+  tagsFilter = [],
   dateRange,
   searchQuery = "",
   onChannelsChange,
@@ -146,6 +149,11 @@ export function ShipmentsTable({
   const [noteInput, setNoteInput] = React.useState("")
   const [noteSaving, setNoteSaving] = React.useState(false)
 
+  // Tag picker dialog state
+  const [tagPickerOpen, setTagPickerOpen] = React.useState(false)
+  const [tagTargetId, setTagTargetId] = React.useState<string | null>(null)
+  const [tagTargetTags, setTagTargetTags] = React.useState<string[]>([])
+
   // Care ticket slide-up panel
   const { openTicket, prefetchTickets } = useCareTicketSheet()
 
@@ -189,6 +197,21 @@ export function ShipmentsTable({
     setNoteDialogOpen(true)
   }, [])
 
+  // Handle "Add Tag" click
+  const handleAddTagClick = React.useCallback((shipmentId: string, currentTags: string[]) => {
+    setTagTargetId(shipmentId)
+    setTagTargetTags(currentTags)
+    setTagPickerOpen(true)
+  }, [])
+
+  // Handle tags saved — update local data
+  const handleTagsSaved = React.useCallback((shipmentId: string, tags: string[]) => {
+    setData(prev => prev.map(r =>
+      r.shipmentId === shipmentId ? { ...r, tags } : r
+    ))
+    setTagTargetTags(tags)
+  }, [])
+
   // Create cell renderers with role-based action handlers
   const cellRenderers = React.useMemo(
     () => createShipmentCellRenderers({
@@ -197,11 +220,12 @@ export function ShipmentsTable({
       onClaimTicketClick: openTicket,
       onMarkReshipClick: handleMarkReshipClick,
       onAddNoteClick: handleAddNoteClick,
+      onAddTagClick: handleAddTagClick,
       onWatchlistToggle: handleWatchlistToggle,
       isWatched,
       isAdminOrCare,
     }),
-    [handleFileClaimClick, handleTicketClick, openTicket, handleMarkReshipClick, handleAddNoteClick, handleWatchlistToggle, isWatched, isAdminOrCare]
+    [handleFileClaimClick, handleTicketClick, openTicket, handleMarkReshipClick, handleAddNoteClick, handleAddTagClick, handleWatchlistToggle, isWatched, isAdminOrCare]
   )
 
   // Pagination state - use initialPageSize from props for persistence
@@ -304,6 +328,11 @@ export function ShipmentsTable({
         params.set('destination', destinationFilter.join(','))
       }
 
+      // Add tags filter (server-side - array overlap query)
+      if (tagsFilter.length > 0) {
+        params.set('tags', tagsFilter.join(','))
+      }
+
       // Add age filter (server-side - API handles fetching all records and filtering)
       if (ageFilter.length > 0) {
         params.set('age', ageFilter.join(','))
@@ -394,7 +423,7 @@ export function ShipmentsTable({
       // Prefetch care ticket data for shipments with filed claims (instant slide-up)
       const ticketIds = filteredData
         .map((r: Shipment) => r.claimTicketId)
-        .filter((id): id is string => !!id)
+        .filter((id: string | null | undefined): id is string => !!id)
       if (ticketIds.length > 0) prefetchTickets(ticketIds)
 
       // Report noted shipment count to parent
@@ -409,14 +438,14 @@ export function ShipmentsTable({
       setIsLoading(false)
       setIsPageLoading(false)
     }
-  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes, onChannelsChange, onCarriersChange, onFcsChange, onDestinationsChange, prefetchTickets])
+  }, [clientId, data.length, hasInitialData, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, tagsFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes, onChannelsChange, onCarriersChange, onFcsChange, onDestinationsChange, prefetchTickets])
 
   // Prefetch care tickets from initial data on mount
   React.useEffect(() => {
     if (initialData && initialData.length > 0) {
       const ticketIds = initialData
         .map(r => r.claimTicketId)
-        .filter((id): id is string => !!id)
+        .filter((id: string | null | undefined): id is string => !!id)
       if (ticketIds.length > 0) prefetchTickets(ticketIds)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -429,7 +458,7 @@ export function ShipmentsTable({
       return
     }
     fetchData(pageIndex, pageSize)
-  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clientId, pageIndex, pageSize, statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, tagsFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save reshipment (defined after fetchData so we can refresh)
   const handleReshipSave = React.useCallback(async () => {
@@ -491,7 +520,7 @@ export function ShipmentsTable({
   // Reset page when filter or sort changes
   React.useEffect(() => {
     setPageIndex(0)
-  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes])
+  }, [statusFilter, ageFilter, typeFilter, channelFilter, carrierFilter, destinationFilter, fcFilter, tagsFilter, dateRange, searchQuery, sortField, sortDirection, watchlistIds, hasNotes])
 
   // Handle page changes
   const handlePageChange = React.useCallback((newPageIndex: number, newPageSize: number) => {
@@ -532,6 +561,7 @@ export function ShipmentsTable({
           channel: channelFilter.length > 0 ? channelFilter : undefined,
           carrier: carrierFilter.length > 0 ? carrierFilter : undefined,
           fc: fcFilter.length > 0 ? fcFilter : undefined,
+          tags: tagsFilter.length > 0 ? tagsFilter : undefined,
           age: ageFilter.length > 0 ? ageFilter : undefined,
           search: searchQuery || undefined,
           format: exportFormat,
@@ -549,7 +579,7 @@ export function ShipmentsTable({
       filename: 'shipments',
       ...toExportMapping(SHIPMENTS_INVOICE_COLUMNS),
     })
-  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, fcFilter, ageFilter, searchQuery, totalCount, startStreamingExport])
+  }, [data, clientId, dateRange, statusFilter, typeFilter, channelFilter, carrierFilter, fcFilter, tagsFilter, ageFilter, searchQuery, totalCount, startStreamingExport])
 
   // Register export trigger with parent
   React.useEffect(() => {
@@ -623,6 +653,14 @@ export function ShipmentsTable({
         shipmentId={claimShipmentId || undefined}
         open={claimDialogOpen}
         onOpenChange={setClaimDialogOpen}
+      />
+      {/* Tag picker dialog */}
+      <TagPickerDialog
+        open={tagPickerOpen}
+        onOpenChange={setTagPickerOpen}
+        shipmentId={tagTargetId}
+        currentTags={tagTargetTags}
+        onTagsSaved={handleTagsSaved}
       />
       {/* Ticket dialog - admin/care opens CreateTicketDialog with shipment pre-filled */}
       {isAdminOrCare && (

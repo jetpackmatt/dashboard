@@ -471,6 +471,8 @@ export function DataTable({
   const [shipmentsCarrierFilter, setShipmentsCarrierFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('carrier') : [])
   const [shipmentsDestinationFilter, setShipmentsDestinationFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('dest') : [])
   const [shipmentsFcFilter, setShipmentsFcFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('fc') : [])
+  const [shipmentsTagsFilter, setShipmentsTagsFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('tags') : [])
+  const [shipmentsTags, setShipmentsTags] = React.useState<string[]>([])
   // Initialize shipments date range — use URL preset if available, else 60 days default
   const shipmentsUrlPreset = landedOnShipments ? (searchParams.get('datePreset') as DateRangePreset | null) : null
   const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
@@ -517,6 +519,7 @@ export function DataTable({
     carrierFilter: expandedCarrierFilter,
     destinationFilter: shipmentsDestinationFilter,
     fcFilter: shipmentsFcFilter,
+    tagsFilter: shipmentsTagsFilter,
     dateRange: shipmentsDateRange,
   }, undefined, currentTab === 'shipments')
 
@@ -636,6 +639,23 @@ export function DataTable({
     }
     loadReturnsFilterOptions()
   }, [clientId, currentTab])
+
+  // Load available tags for Shipments tab filter (only when tab is active)
+  React.useEffect(() => {
+    if (currentTab !== 'shipments' || !clientId) return
+    async function loadTags() {
+      try {
+        const response = await fetch(buildApiUrl('/api/data/tags', { clientId }))
+        if (response.ok) {
+          const result = await response.json()
+          setShipmentsTags((result.data || []).map((t: { name: string }) => t.name))
+        }
+      } catch (err) {
+        console.error('Failed to load tags:', err)
+      }
+    }
+    loadTags()
+  }, [clientId, currentTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load dynamic filter options for Receiving tab (only when tab is active)
   React.useEffect(() => {
@@ -768,6 +788,7 @@ export function DataTable({
       if (shipmentsCarrierFilter.length) params.set('carrier', shipmentsCarrierFilter.join(','))
       if (shipmentsDestinationFilter.length) params.set('dest', shipmentsDestinationFilter.join(','))
       if (shipmentsFcFilter.length) params.set('fc', shipmentsFcFilter.join(','))
+      if (shipmentsTagsFilter.length) params.set('tags', shipmentsTagsFilter.join(','))
       if (shipmentsDatePreset && shipmentsDatePreset !== 'all') {
         params.set('datePreset', shipmentsDatePreset)
         if (shipmentsDatePreset === 'custom' && shipmentsDateRange?.from && shipmentsDateRange?.to) {
@@ -827,7 +848,7 @@ export function DataTable({
     unfulfilledChannelFilter, unfulfilledDestinationFilter, unfulfilledDatePreset, unfulfilledDateRange,
     // Shipments
     shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter,
-    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange,
+    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange,
     // Additional Services
     additionalServicesTypeFilter, additionalServicesStatusFilter, additionalServicesDatePreset, additionalServicesDateRange,
     // Returns
@@ -872,7 +893,8 @@ export function DataTable({
   const hasShipmentsFilters = shipmentsStatusFilter.length > 0 ||
     shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
     shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0 ||
-    shipmentsDestinationFilter.length > 0 || shipmentsFcFilter.length > 0
+    shipmentsDestinationFilter.length > 0 || shipmentsFcFilter.length > 0 ||
+    shipmentsTagsFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
     shipmentsAgeFilter.length +
@@ -880,7 +902,8 @@ export function DataTable({
     shipmentsChannelFilter.length +
     shipmentsCarrierFilter.length +
     shipmentsDestinationFilter.length +
-    shipmentsFcFilter.length
+    shipmentsFcFilter.length +
+    shipmentsTagsFilter.length
 
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
@@ -891,6 +914,7 @@ export function DataTable({
     setShipmentsCarrierFilter([])
     setShipmentsDestinationFilter([])
     setShipmentsFcFilter([])
+    setShipmentsTagsFilter([])
   }
 
   // ============================================================================
@@ -927,12 +951,13 @@ export function DataTable({
     carrier: shipmentsCarrierFilter,
     destination: shipmentsDestinationFilter,
     fc: shipmentsFcFilter,
+    tags: shipmentsTagsFilter,
     datePreset: shipmentsDatePreset,
     dateRange: shipmentsDateRange ? {
       from: shipmentsDateRange.from?.toISOString(),
       to: shipmentsDateRange.to?.toISOString(),
     } : undefined,
-  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange])
+  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange])
 
   // Apply a saved view's filters to unfulfilled tab
   const applyUnfulfilledFilters = React.useCallback((filters: Record<string, unknown>) => {
@@ -966,6 +991,7 @@ export function DataTable({
     setShipmentsCarrierFilter((filters.carrier as string[]) || [])
     setShipmentsDestinationFilter((filters.destination as string[]) || [])
     setShipmentsFcFilter((filters.fc as string[]) || [])
+    setShipmentsTagsFilter((filters.tags as string[]) || [])
     // Restore date range
     const preset = filters.datePreset as DateRangePreset | undefined
     if (preset && preset !== 'custom') {
@@ -993,7 +1019,7 @@ export function DataTable({
     if (currentTab === 'shipments') {
       shipmentsSavedViews.checkIfModified(getShipmentsFilterSnapshot())
     }
-  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsFcFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Additional Services tab computed values
   // Note: Date range is NOT counted as a filter since it has its own indicator
@@ -1646,6 +1672,14 @@ export function DataTable({
                       selected={shipmentsDestinationFilter}
                       onSelectionChange={setShipmentsDestinationFilter}
                     />
+                    {shipmentsTags.length > 0 && (
+                      <MultiSelectFilter
+                        options={shipmentsTags.map(t => ({ value: t, label: t }))}
+                        selected={shipmentsTagsFilter}
+                        onSelectionChange={setShipmentsTagsFilter}
+                        placeholder="Tags"
+                      />
+                    )}
                   </>
                 )}
 
@@ -1824,6 +1858,7 @@ export function DataTable({
             carrierFilter={debouncedShipmentsFilters.carrierFilter}
             destinationFilter={debouncedShipmentsFilters.destinationFilter}
             fcFilter={debouncedShipmentsFilters.fcFilter}
+            tagsFilter={debouncedShipmentsFilters.tagsFilter}
             dateRange={debouncedShipmentsFilters.dateRange}
             searchQuery={searchQuery}
             onChannelsChange={setShipmentsChannels}

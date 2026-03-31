@@ -55,6 +55,7 @@ export interface MonitoredShipment {
   stuckAtFacility: string | null
   stuckDurationDays: number | null
   reshipmentId: string | null
+  tags: string[]
 }
 
 // Stats interface for filter counts

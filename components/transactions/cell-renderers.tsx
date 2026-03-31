@@ -551,6 +551,8 @@ export interface Shipment {
   claimCreditAmount?: number | null
   // Reshipment info (from shipments table)
   reshipmentId?: string | null
+  // Custom tags applied to this shipment
+  tags?: string[]
   // Note count (from shipment_notes table)
   noteCount?: number
 }
@@ -1328,6 +1330,7 @@ export function createShipmentCellRenderers(options?: {
   onClaimTicketClick?: (ticketId: string, ticketNumber?: number) => void
   onMarkReshipClick?: (shipmentId: string) => void
   onAddNoteClick?: (shipmentId: string) => void
+  onAddTagClick?: (shipmentId: string, currentTags: string[]) => void
   onWatchlistToggle?: (shipmentId: string) => void
   isWatched?: (shipmentId: string) => boolean
   isAdminOrCare?: boolean
@@ -1390,6 +1393,9 @@ export function createShipmentCellRenderers(options?: {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => options?.onAddNoteClick?.(row.shipmentId)}>
                   Add a Note
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => options?.onAddTagClick?.(row.shipmentId, row.tags || [])}>
+                  Add Tag
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => options?.onWatchlistToggle?.(row.shipmentId)}>
                   {options?.isWatched?.(row.shipmentId) ? 'Remove from Watchlist' : 'Add to Watchlist'}
