@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
 
   const rpcClientId = isAllClients ? null : clientId
 
-  const startDate = searchParams.get('startDate')
+  let startDate = searchParams.get('startDate')
   const rawEndDate = searchParams.get('endDate')
   const datePreset = (searchParams.get('datePreset') || '30d') as DateRangePreset
   const country = searchParams.get('country') || 'US'
@@ -128,7 +128,24 @@ export async function GET(request: NextRequest) {
   const yesterdayDate = new Date()
   yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1)
   const yesterdayStr = yesterdayDate.toISOString().substring(0, 10)
-  const endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
+  let endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
+
+  // Guard: if clamping to yesterday pushes endDate before startDate (e.g. MTD on 1st of month,
+  // YTD on Jan 1st), fall back to the prior full period so the user sees meaningful data.
+  if (startDate && endDate < startDate) {
+    const d = new Date(startDate + 'T00:00:00Z')
+    if (datePreset === 'mtd') {
+      // Show prior full month (e.g. on Apr 1 → show all of March)
+      d.setUTCMonth(d.getUTCMonth() - 1)
+      startDate = d.toISOString().substring(0, 10)
+    } else if (datePreset === 'ytd') {
+      // Show prior full year (e.g. on Jan 1 → show all of prior year)
+      d.setUTCFullYear(d.getUTCFullYear() - 1)
+      startDate = d.toISOString().substring(0, 10)
+    } else {
+      startDate = endDate
+    }
+  }
 
   // ── Check cache ────────────────────────────────────────────────────────
   const cacheKey = `v35:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
