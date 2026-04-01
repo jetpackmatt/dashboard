@@ -1417,12 +1417,20 @@ export default function AnalyticsContent() {
     }
   }, [adjustedBillingSummary, finBillingEfficiency, finBillingSummary])
 
+  // Filtered billing trend data — respects D2C-only and Include Credits toggles
+  const filteredBillingTrend = React.useMemo(() => {
+    return finBillingTrend.map(d => ({
+      ...d,
+      b2b: filterD2cOnly ? 0 : d.b2b,
+      credit: filterIncludeCredits ? d.credit : 0,
+    }))
+  }, [finBillingTrend, filterD2cOnly, filterIncludeCredits])
+
   // Compute Y-axis domain for cost breakdown chart — zoom in so non-shipping fees are visible
   const billingChartYDomain = React.useMemo(() => {
-    if (finBillingTrend.length === 0) return [0, 'auto'] as [number, string]
-    const minShipping = Math.min(...finBillingTrend.map(d => d.shipping))
-    // Stacked peak = sum of all positive categories (credit excluded from chart)
-    const stackedTotals = finBillingTrend.map(d =>
+    if (filteredBillingTrend.length === 0) return [0, 'auto'] as [number, string]
+    // Stacked peak = sum of all positive categories
+    const stackedTotals = filteredBillingTrend.map(d =>
       d.shipping + d.surcharges + d.extraPicks + d.warehousing + d.multiHubIQ + d.b2b + d.vasKitting + d.receiving + d.returns + d.dutyTax + d.other
     )
     const maxStacked = Math.max(...stackedTotals)
@@ -1432,7 +1440,7 @@ export default function AnalyticsContent() {
     const floor = Math.max(0, Math.floor(minStacked * 0.9 / step) * step)
     const ceil = Math.ceil(maxStacked * 1.05 / step) * step
     return [floor, ceil] as [number, number]
-  }, [finBillingTrend])
+  }, [filteredBillingTrend])
 
   // === sla tab ===
   const slaMetricsBase = React.useMemo(() => {
@@ -1612,7 +1620,16 @@ export default function AnalyticsContent() {
                           <div className="text-lg font-semibold">Cost Breakdown</div>
                           <div className="text-xs text-muted-foreground mt-0.5">All fee categories over time</div>
                         </div>
-                        <ChartSelectors chart={financialsSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <MultiSelectFilter
+                            options={FINANCIALS_FILTER_OPTIONS}
+                            selected={analyticsFilters}
+                            onSelectionChange={setAnalyticsFilters}
+                            placeholder="Filters"
+                            showCount={false}
+                          />
+                          <ChartSelectors chart={financialsSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                        </div>
                       </div>
                       {/* Chart */}
                       <div className="pl-4 lg:pl-6 pr-0 pb-4 flex-1">
@@ -1632,7 +1649,7 @@ export default function AnalyticsContent() {
                         }}
                         className="h-[440px] w-full [&_svg]:overflow-visible"
                       >
-                        <AreaChart data={finBillingTrend} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
+                        <AreaChart data={filteredBillingTrend} margin={{ top: 20, right: 0, left: 0, bottom: 0 }}>
                           <defs>
                             <linearGradient id="fillShipping" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="var(--color-shipping)" stopOpacity={0.6} />
@@ -1702,15 +1719,8 @@ export default function AnalyticsContent() {
                     {/* Summary Sidebar — 1 column, content area has border + gradient, fades to page bg below */}
                     <div className="lg:col-span-1 border-t lg:border-t-0 flex flex-col">
                       <div className="lg:border-l border-border bg-gradient-to-b from-zinc-100 via-zinc-50 to-zinc-50 dark:from-zinc-800 dark:via-zinc-900 dark:to-zinc-900 flex flex-col h-[calc(100%-76px)]">
-                      <div className="border-b border-border px-5 h-[52px] flex items-center justify-between gap-3">
+                      <div className="border-b border-border px-5 h-[52px] flex items-center">
                         <div className="text-sm font-semibold whitespace-nowrap">Period Summary</div>
-                        <MultiSelectFilter
-                          options={FINANCIALS_FILTER_OPTIONS}
-                          selected={analyticsFilters}
-                          onSelectionChange={setAnalyticsFilters}
-                          placeholder="Filters"
-                          showCount={false}
-                        />
                       </div>
                       {/* Row 1: Total Cost — full width */}
                       <div className="flex flex-col items-center justify-center px-4 bg-sky-50/50 dark:bg-sky-950/20 border-b border-border flex-1">
@@ -2853,7 +2863,7 @@ export default function AnalyticsContent() {
                                     axisLine={false}
                                     fontSize={11}
                                     tickFormatter={(v) => `$${v.toFixed(2)}`}
-                                    domain={['auto', 'auto']}
+                                    domain={[(dataMin: number) => Math.max(0, Math.floor(dataMin) - 1), (dataMax: number) => Math.ceil(dataMax) + 1]}
                                   />
                                   <ChartTooltip
                                     content={

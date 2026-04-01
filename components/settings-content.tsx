@@ -1332,15 +1332,20 @@ export function SettingsContent() {
                         </div>
                         <DialogFooter>
                           {brandInviteSuccess ? (
-                            <Button onClick={() => setBrandInviteOpen(false)}>
-                              Done
-                            </Button>
+                            <>
+                              <Button variant="outline" onClick={() => { setBrandInviteSuccess(null) }}>
+                                <UserPlus className="h-4 w-4 mr-2" />Invite Another
+                              </Button>
+                              <Button onClick={() => setBrandInviteOpen(false)}>
+                                Done
+                              </Button>
+                            </>
                           ) : (
                             <>
                               <Button variant="outline" onClick={() => setBrandInviteOpen(false)} disabled={isBrandInviting}>
                                 Cancel
                               </Button>
-                              <Button onClick={handleBrandInvite} disabled={isBrandInviting}>
+                              <Button onClick={handleBrandInvite} disabled={isBrandInviting || !brandInviteEmail.trim()}>
                                 {isBrandInviting ? (
                                   <><JetpackLoader size="sm" className="mr-2" />Sending...</>
                                 ) : (
