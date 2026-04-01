@@ -1961,26 +1961,38 @@ export default function AnalyticsContent() {
                         </AreaChart>
                       </ChartContainer>
                       {/* Min/Max indicators */}
-                      <div className="flex justify-between mt-3 text-xs">
-                        <div className="p-2 bg-green-500/10 rounded">
-                          <div className="text-[10px] text-muted-foreground">Lowest</div>
-                          <div className="font-semibold text-green-600 tabular-nums">
-                            ${(costPerOrderChart.data as CostPerOrderTrend[]).length > 0 ? Math.min(...(costPerOrderChart.data as CostPerOrderTrend[]).map(d => d.costPerOrder)).toFixed(2) : '0.00'}
+                      {(() => {
+                        const pts = costPerOrderChart.data as CostPerOrderTrend[]
+                        if (pts.length === 0) return null
+                        // When CPO chart is on the same preset as the financials section,
+                        // use the authoritative Period Summary value so the numbers match exactly.
+                        const useAuthoritativeAvg = costPerOrderChart.preset === financialsSection.preset
+                        const avg = useAuthoritativeAvg
+                          ? adjustedBillingSummary.costPerOrder
+                          : (() => { const tot = pts.reduce((s, d) => s + d.orderCount, 0); return tot > 0 ? pts.reduce((s, d) => s + d.costPerOrder * d.orderCount, 0) / tot : 0 })()
+                        return (
+                          <div className="flex justify-between mt-3 text-xs">
+                            <div className="p-2 bg-green-500/10 rounded">
+                              <div className="text-[10px] text-muted-foreground">Lowest</div>
+                              <div className="font-semibold text-green-600 tabular-nums">
+                                ${Math.min(...pts.map(d => d.costPerOrder)).toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="p-2 bg-muted/30 rounded">
+                              <div className="text-[10px] text-muted-foreground">Average</div>
+                              <div className="font-semibold tabular-nums">
+                                ${avg.toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="p-2 bg-red-500/10 rounded">
+                              <div className="text-[10px] text-muted-foreground">Highest</div>
+                              <div className="font-semibold text-red-600 tabular-nums">
+                                ${Math.max(...pts.map(d => d.costPerOrder)).toFixed(2)}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="p-2 bg-muted/30 rounded">
-                          <div className="text-[10px] text-muted-foreground">Average</div>
-                          <div className="font-semibold tabular-nums">
-                            ${(costPerOrderChart.data as CostPerOrderTrend[]).length > 0 ? (() => { const pts = costPerOrderChart.data as CostPerOrderTrend[]; const totalOrders = pts.reduce((s, d) => s + d.orderCount, 0); return totalOrders > 0 ? (pts.reduce((s, d) => s + d.costPerOrder * d.orderCount, 0) / totalOrders).toFixed(2) : '0.00' })() : '0.00'}
-                          </div>
-                        </div>
-                        <div className="p-2 bg-red-500/10 rounded">
-                          <div className="text-[10px] text-muted-foreground">Highest</div>
-                          <div className="font-semibold text-red-600 tabular-nums">
-                            ${(costPerOrderChart.data as CostPerOrderTrend[]).length > 0 ? Math.max(...(costPerOrderChart.data as CostPerOrderTrend[]).map(d => d.costPerOrder)).toFixed(2) : '0.00'}
-                          </div>
-                        </div>
-                      </div>
+                        )
+                      })()}
                     </CardContent>
                   </Card>
                 </div>
