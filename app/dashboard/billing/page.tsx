@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   CreditCardIcon,
   BuildingIcon,
@@ -208,6 +209,7 @@ export default function BillingPage() {
     await savePaymentMethod('credit_card', paymentMethodId)
     setShowStripeSetup(false)
     setStripeClientSecret(null)
+    toast.success('Card saved successfully')
   }
 
   const handleStripeCancel = () => {

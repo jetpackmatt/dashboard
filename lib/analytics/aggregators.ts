@@ -442,7 +442,7 @@ export function aggregateCarrierPerformance(
     .map(([carrier, data]) => ({
       carrier,
       orderCount: data.orderCount,
-      avgCost: data.totalCost / data.orderCount,
+      avgCost: data.orderCount > 0 ? data.totalCost / data.orderCount : 0,
       totalCost: data.totalCost,
       avgTransitTime: data.transitTimeCount > 0
         ? data.totalTransitTime / data.transitTimeCount

@@ -296,6 +296,8 @@ export async function GET(request: NextRequest) {
         : { data: null, error: null },
 
       // Distinct ship_option_name → ship_option_id mapping from shipments (for SLA tier classification)
+      // Note: fetches up to 1000 rows then deduplicates via Map. Safe because no client has
+      // anywhere near 1000 distinct ship option names (typical: 3-10).
       (needsCarrierZone && !isAllClients)
         ? timed('shipOptionMap', supabase
             .from('shipments')
@@ -305,6 +307,7 @@ export async function GET(request: NextRequest) {
             .lte('event_labeled', endDate + 'T23:59:59.999Z')
             .not('ship_option_name', 'is', null)
             .not('ship_option_id', 'is', null)
+            .order('ship_option_name')
             .limit(1000))
         : { data: null, error: null },
     ]) as any[]

@@ -15,7 +15,7 @@ export function BrandLabel() {
       .then(data => {
         if (data?.companyName) setCompanyName(data.companyName)
       })
-      .catch(() => {})
+      .catch(() => { /* brand label is non-critical — fail silently */ })
   }, [isLoading, isAdmin, isCareUser])
 
   if (isLoading || isAdmin || isCareUser || !companyName) return null
