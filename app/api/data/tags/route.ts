@@ -3,7 +3,7 @@ import {
   verifyClientAccess,
   handleAccessError,
 } from '@/lib/supabase/admin'
-import { createServerClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 /**
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
     // Fix #7: Get current user for audit trail
     let createdBy: string | null = null
     try {
-      const serverClient = await createServerClient()
+      const serverClient = await createClient()
       const { data: { user } } = await serverClient.auth.getUser()
       createdBy = user?.id ?? null
     } catch {

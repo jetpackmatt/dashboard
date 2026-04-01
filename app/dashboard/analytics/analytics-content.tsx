@@ -83,6 +83,9 @@ import type {
   FulfillmentTrendData,
   FCFulfillmentMetrics,
   OtdPercentiles,
+  SkuCostData,
+  SkuCostTrendPoint,
+  WeightCostData,
 } from "@/lib/analytics/types"
 import { getGranularityForRange, getGranularityLabel } from "@/lib/analytics/types"
 import { getDateRangeFromPreset } from "@/lib/analytics/aggregators"
@@ -331,7 +334,7 @@ function useChartSectionRange(
 
 // Reusable per-chart selector bar (date + country)
 function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hideAllCountry, hideCountry }: {
-  chart: ReturnType<typeof useChartDateRange>
+  chart: { preset: string; country: string; isFetching: boolean; setPreset: (v: string) => void; setCountry: (v: string) => void; data?: any }
   availableCountries: string[]
   dateRangeDisplayLabel: string
   hideAllCountry?: boolean
@@ -459,6 +462,13 @@ export default function AnalyticsContent() {
   const filterD2cOnly = !analyticsFilters.includes('b2b') && !analyticsFilters.includes('fba')
   const filterDomesticOnly = !analyticsFilters.includes('international')
   const filterIncludeCredits = analyticsFilters.includes('credits')
+  const [selectedTrendSku, setSelectedTrendSku] = React.useState<string | null>(null)
+  const [skuTrendData, setSkuTrendData] = React.useState<SkuCostTrendPoint[]>([])
+  const [skuTrendLoading, setSkuTrendLoading] = React.useState(false)
+  const [skuTrendPreset, setSkuTrendPreset] = React.useState<DateRangePreset>(dateRange)
+  const [skuTrendCountry, setSkuTrendCountry] = React.useState<string>(selectedCountry)
+  // Sync with page date range
+  React.useEffect(() => { setSkuTrendPreset(dateRange) }, [dateRange])
 
   const [includeIntlZones, setIncludeIntlZones] = React.useState(false)
 
@@ -1038,6 +1048,105 @@ export default function AnalyticsContent() {
   const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
   const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
   const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  const skuCostChart = useChartDateRange(analyticsData?.skuCostBreakdown || [], 'skuCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
+  const weightCostChart = useChartDateRange(analyticsData?.weightCostBreakdown || [], 'weightCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
+
+  // === SKU cost trend (fetched on-demand when a SKU is selected) ===
+  const [skuTrendQtys, setSkuTrendQtys] = React.useState<{ qty: number; orders: number }[]>([])
+  const [selectedTrendQty, setSelectedTrendQty] = React.useState<string>('all')
+  // Raw data keyed by qty for filtering
+  const [skuTrendRaw, setSkuTrendRaw] = React.useState<{ week: string; qty: number; orderCount: number; avgCostPerOrder: number }[]>([])
+  React.useEffect(() => {
+    if (!selectedTrendSku || !effectiveClientId || effectiveClientId === 'all') {
+      setSkuTrendData([])
+      setSkuTrendQtys([])
+      setSkuTrendRaw([])
+      return
+    }
+    const range = getDateRangeFromPreset(skuTrendPreset)
+    const startDate = range.from.toISOString().split('T')[0]
+    const endDate = range.to.toISOString().split('T')[0]
+    let cancelled = false
+    setSkuTrendLoading(true)
+    fetch(`/api/data/analytics/sku-cost-trend?clientId=${effectiveClientId}&sku=${encodeURIComponent(selectedTrendSku)}&startDate=${startDate}&endDate=${endDate}&country=${skuTrendCountry}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!cancelled) {
+          const raw = (d.data || []).map((p: any) => ({
+            week: p.week as string,
+            qty: Number(p.qty),
+            orderCount: Number(p.order_count),
+            avgCostPerOrder: Number(p.avg_cost_per_order),
+          }))
+
+          // Trim incomplete last week
+          const allWeeks = [...new Set(raw.map((r: any) => r.week))].sort() as string[]
+          if (allWeeks.length > 1) {
+            const lastWeek = new Date(allWeeks[allWeeks.length - 1] + 'T00:00:00')
+            const now = new Date()
+            if ((now.getTime() - lastWeek.getTime()) / (1000 * 60 * 60 * 24) < 7) {
+              const cutoff = allWeeks[allWeeks.length - 1]
+              raw.splice(0, raw.length, ...raw.filter((r: any) => r.week !== cutoff))
+            }
+          }
+
+          // Build qty options sorted by total orders
+          const qtyOrders = new Map<number, number>()
+          for (const r of raw) qtyOrders.set(r.qty, (qtyOrders.get(r.qty) || 0) + r.orderCount)
+          const qtys = [...qtyOrders.entries()]
+            .filter(([, orders]) => orders >= 5)
+            .sort((a, b) => a[0] - b[0])
+            .map(([qty, orders]) => ({ qty, orders }))
+
+          setSkuTrendRaw(raw)
+          setSkuTrendQtys(qtys)
+          // Auto-select most common qty, or 'all' if only one option
+          if (qtys.length <= 1) {
+            setSelectedTrendQty('all')
+          } else {
+            const mostCommon = qtys.reduce((a, b) => b.orders > a.orders ? b : a)
+            setSelectedTrendQty(String(mostCommon.qty))
+          }
+        }
+      })
+      .catch(() => { if (!cancelled) { setSkuTrendData([]); setSkuTrendQtys([]); setSkuTrendRaw([]) } })
+      .finally(() => { if (!cancelled) setSkuTrendLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedTrendSku, effectiveClientId, skuTrendPreset, skuTrendCountry])
+
+  // Derive chart data from raw + selected qty
+  React.useEffect(() => {
+    if (skuTrendRaw.length === 0) { setSkuTrendData([]); return }
+    const filtered = selectedTrendQty === 'all'
+      ? skuTrendRaw
+      : skuTrendRaw.filter(r => r.qty === Number(selectedTrendQty))
+    // Aggregate by week (for 'all', sum orders and compute weighted avg cost)
+    const weekMap = new Map<string, { totalCost: number; orders: number }>()
+    for (const r of filtered) {
+      const existing = weekMap.get(r.week) || { totalCost: 0, orders: 0 }
+      existing.totalCost += r.avgCostPerOrder * r.orderCount
+      existing.orders += r.orderCount
+      weekMap.set(r.week, existing)
+    }
+    const points: SkuCostTrendPoint[] = [...weekMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, { totalCost, orders }]) => ({
+        week,
+        avgCostPerOrder: orders > 0 ? Math.round((totalCost / orders) * 100) / 100 : 0,
+        orderCount: orders,
+      }))
+    setSkuTrendData(points)
+  }, [skuTrendRaw, selectedTrendQty])
+
+  // Cache SKU options so dropdown doesn't empty during refetches
+  const [cachedSkuOptions, setCachedSkuOptions] = React.useState<SkuCostData[]>([])
+  React.useEffect(() => {
+    const skuData = (skuCostChart.data as SkuCostData[]) || []
+    if (skuData.length > 0) {
+      setCachedSkuOptions(skuData)
+      if (!selectedTrendSku) setSelectedTrendSku(skuData[0].sku)
+    }
+  }, [skuCostChart.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // === SLA tab hooks ===
   const slaTrendChart = useChartDateRange(analyticsData?.onTimeTrend || [], 'onTimeTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache)
@@ -1268,7 +1377,6 @@ export default function AnalyticsContent() {
   const finBillingSummary: BillingSummary = finData?.billingSummary || billingSummary
   const finBillingEfficiency: BillingEfficiencyMetrics = finData?.billingEfficiency || billingEfficiencyMetrics
   const finBillingCategoryBreakdown: BillingCategoryBreakdown[] = finData?.billingCategoryBreakdown || billingCategoryBreakdown
-
   // Adjusted KPIs based on Period Summary toggles (Credits / D2C Only)
   const adjustedBillingSummary = React.useMemo(() => {
     let totalCost = finBillingSummary.totalCost
@@ -1875,7 +1983,7 @@ export default function AnalyticsContent() {
                         <div className="text-sm font-semibold">Non-Shipping Cost Breakdown</div>
                         <div className="text-xs text-muted-foreground mt-0.5">All fulfillment fees excluding shipping and credits</div>
                       </div>
-                      <ChartSelectors chart={additionalSvcChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                      <ChartSelectors chart={additionalSvcChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
                     <CardContent>
                       {(() => {
@@ -2562,6 +2670,233 @@ export default function AnalyticsContent() {
                       </div>
 
                     </div>
+
+                    {/* Avg Cost/Order by Weight — full width column chart */}
+                    {((weightCostChart.data as WeightCostData[]) || []).length > 0 && (() => {
+                      const weightData = [...((weightCostChart.data as WeightCostData[]) || [])].sort((a, b) => a.sortOrder - b.sortOrder).filter(d => d.orderCount >= 3)
+                      const totalOrders = weightData.reduce((s, d) => s + d.orderCount, 0)
+                      void totalOrders
+
+                      const wCosts = weightData.map(d => d.avgCostPerOrder).sort((a, b) => a - b)
+                      const wQ1 = wCosts[Math.floor(wCosts.length * 0.25)] || 0
+                      const wQ3 = wCosts[Math.floor(wCosts.length * 0.75)] || 0
+                      const wIqr = wQ3 - wQ1
+                      const getWeightBarColor = (cost: number) => {
+                        if (wIqr <= 0) return 'hsl(215, 65%, 55%)'
+                        if (cost > wQ3 + 1.5 * wIqr) return 'hsl(0, 65%, 55%)'
+                        if (cost < wQ1 - 1.5 * wIqr) return 'hsl(145, 55%, 45%)'
+                        if (cost > wQ3) return 'hsl(25, 75%, 55%)'
+                        if (cost < wQ1) return 'hsl(195, 65%, 50%)'
+                        return 'hsl(215, 65%, 55%)'
+                      }
+
+                      return (
+                        <div className="rounded-xl border border-border/60 overflow-hidden bg-background">
+                          <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                            <div>
+                              <div className="text-sm font-semibold">Avg Shipping Cost / Order by Weight</div>
+                              <div className="text-xs text-muted-foreground mt-0.5">Shipping cost grouped by actual package weight</div>
+                            </div>
+                            <ChartSelectors chart={weightCostChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
+                          </div>
+                          <div className="px-6 pb-6 pt-2">
+                            <ChartContainer
+                              config={{
+                                avgCostPerOrder: { label: "Avg Cost/Order", color: "hsl(215, 65%, 55%)" },
+                              }}
+                              className="h-[360px] w-full [&_svg]:overflow-visible"
+                            >
+                              <BarChart data={weightData} margin={{ top: 20, right: 10, left: 10, bottom: 0 }} barCategoryGap="12%">
+                                <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                                <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={11} tick={{ fill: 'hsl(var(--foreground))' }} interval={0} angle={weightData.length > 15 ? -45 : 0} textAnchor={weightData.length > 15 ? 'end' : 'middle'} height={weightData.length > 15 ? 40 : 28} />
+                                <YAxis tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => `$${v.toFixed(0)}`} />
+                                <ChartTooltip
+                                  content={
+                                    <ChartTooltipContent
+                                      indicator="dot"
+                                      formatter={(value, name, item) => (
+                                        <>
+                                          <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
+                                          <div className="flex flex-col gap-0.5 leading-none">
+                                            <div className="flex justify-between items-center gap-4">
+                                              <span className="text-muted-foreground">Avg Cost/Order</span>
+                                              <span className="font-mono font-medium tabular-nums text-foreground">${Number(value).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center gap-4">
+                                              <span className="text-muted-foreground">Orders</span>
+                                              <span className="font-mono font-medium tabular-nums text-foreground">{item.payload?.orderCount?.toLocaleString()}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center gap-4">
+                                              <span className="text-muted-foreground">% of Volume</span>
+                                              <span className="font-mono font-medium tabular-nums text-foreground">{totalOrders > 0 ? ((item.payload?.orderCount / totalOrders) * 100).toFixed(1) : '0'}%</span>
+                                            </div>
+                                          </div>
+                                        </>
+                                      )}
+                                    />
+                                  }
+                                />
+                                <Bar dataKey="avgCostPerOrder" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                                  {weightData.map((d, i) => (
+                                    <Cell key={i} fill={getWeightBarColor(d.avgCostPerOrder)} />
+                                  ))}
+                                  <LabelList dataKey="avgCostPerOrder" position="top" content={(props: any) => {
+                                    const { x, y, width, value } = props
+                                    return <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={10} fontWeight={600} fill="currentColor" style={{ fontVariantNumeric: 'tabular-nums' }}>${Number(value).toFixed(2)}</text>
+                                  }} />
+                                </Bar>
+                              </BarChart>
+                            </ChartContainer>
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Product Shipping Cost Over Time — area chart for selected product */}
+                    {(selectedTrendSku || cachedSkuOptions.length > 0) && (() => {
+                      const skuOptions = cachedSkuOptions
+                      const nameCount = new Map<string, number>()
+                      skuOptions.forEach(d => nameCount.set(d.productName || d.sku, (nameCount.get(d.productName || d.sku) || 0) + 1))
+                      const getDisplayLabel = (d: SkuCostData) => {
+                        const name = d.productName || d.sku
+                        return (nameCount.get(name) || 0) > 1 ? `${name} (${d.sku})` : name
+                      }
+                      const selectedProduct = skuOptions.find(d => d.sku === selectedTrendSku)
+                      const displayName = selectedProduct ? getDisplayLabel(selectedProduct) : selectedTrendSku || ''
+
+                      return (
+                        <div className="rounded-xl border border-border/60 overflow-hidden bg-background">
+                          <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
+                            <div>
+                              <div className="text-sm font-semibold">Product Shipping Cost Over Time</div>
+                              <div className="text-xs text-muted-foreground mt-0.5">Avg shipping cost for orders containing this product, grouped by quantity</div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <Select value={selectedTrendSku || ''} onValueChange={(v) => setSelectedTrendSku(v)}>
+                                <SelectTrigger className="h-[28px] w-auto max-w-[280px] gap-1 text-[11px] text-foreground bg-background border-border">
+                                  <SelectValue placeholder="Select product">{displayName.length > 45 ? displayName.slice(0, 45) + '…' : displayName}</SelectValue>
+                                </SelectTrigger>
+                                <SelectContent align="end" className="font-roboto text-xs max-h-[300px]">
+                                  {skuOptions.map(d => {
+                                    const label = getDisplayLabel(d)
+                                    return (
+                                      <SelectItem key={d.sku} value={d.sku}>
+                                        {label.length > 55 ? label.slice(0, 55) + '…' : label}
+                                      </SelectItem>
+                                    )
+                                  })}
+                                </SelectContent>
+                              </Select>
+                              {skuTrendQtys.length > 1 && (
+                                <Select value={selectedTrendQty} onValueChange={setSelectedTrendQty}>
+                                  <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent align="end" className="font-roboto text-xs">
+                                    <SelectItem value="all">All Quantities</SelectItem>
+                                    {skuTrendQtys.map(({ qty, orders }) => (
+                                      <SelectItem key={qty} value={String(qty)}>
+                                        {qty} unit{qty > 1 ? 's' : ''} ({orders.toLocaleString()})
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                              <ChartSelectors
+                                chart={{
+                                  data: skuTrendData,
+                                  preset: skuTrendPreset,
+                                  country: skuTrendCountry,
+                                  isFetching: skuTrendLoading,
+                                  setPreset: (v: string) => setSkuTrendPreset(v as DateRangePreset),
+                                  setCountry: (v: string) => setSkuTrendCountry(v),
+                                }}
+                                availableCountries={analyticsData?.availableCountries || []}
+                                dateRangeDisplayLabel={dateRangeDisplayLabel}
+                              />
+                            </div>
+                          </div>
+                          <div className="px-6 pb-6 pt-2">
+                            {skuTrendLoading ? (
+                              <div className="flex items-center justify-center h-[240px] text-xs text-muted-foreground">Loading…</div>
+                            ) : skuTrendData.length < 2 ? (
+                              <div className="flex items-center justify-center h-[240px] text-xs text-muted-foreground">Not enough data points for this time range</div>
+                            ) : (
+                              <ChartContainer
+                                config={{
+                                  avgCostPerOrder: { label: "Avg Cost/Order", color: "hsl(215, 65%, 55%)" },
+                                }}
+                                className="h-[240px] w-full"
+                              >
+                                <AreaChart data={skuTrendData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                                  <defs>
+                                    <linearGradient id="skuTrendGradient" x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor="hsl(215, 65%, 55%)" stopOpacity={0.3} />
+                                      <stop offset="95%" stopColor="hsl(215, 65%, 55%)" stopOpacity={0.05} />
+                                    </linearGradient>
+                                  </defs>
+                                  <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
+                                  <XAxis
+                                    dataKey="week"
+                                    tickLine={false}
+                                    axisLine={false}
+                                    fontSize={11}
+                                    tick={{ fill: 'hsl(var(--foreground))' }}
+                                    tickFormatter={(v) => {
+                                      const d = new Date(v + 'T00:00:00')
+                                      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                    }}
+                                    interval="preserveStartEnd"
+                                  />
+                                  <YAxis
+                                    tickLine={false}
+                                    axisLine={false}
+                                    fontSize={11}
+                                    tickFormatter={(v) => `$${v.toFixed(2)}`}
+                                    domain={['auto', 'auto']}
+                                  />
+                                  <ChartTooltip
+                                    content={
+                                      <ChartTooltipContent
+                                        indicator="dot"
+                                        labelFormatter={(label) => {
+                                          const d = new Date(label + 'T00:00:00')
+                                          return `Week of ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                                        }}
+                                        formatter={(value, name, item) => (
+                                          <>
+                                            <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: 'hsl(215, 65%, 55%)' }} />
+                                            <div className="flex flex-col gap-0.5 leading-none">
+                                              <div className="flex justify-between items-center gap-4">
+                                                <span className="text-muted-foreground">Avg Cost/Order</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">${Number(value).toFixed(2)}</span>
+                                              </div>
+                                              <div className="flex justify-between items-center gap-4">
+                                                <span className="text-muted-foreground">Orders</span>
+                                                <span className="font-mono font-medium tabular-nums text-foreground">{item.payload?.orderCount?.toLocaleString()}</span>
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
+                                      />
+                                    }
+                                  />
+                                  <Area
+                                    type="monotone"
+                                    dataKey="avgCostPerOrder"
+                                    stroke="hsl(215, 65%, 55%)"
+                                    strokeWidth={2}
+                                    fill="url(#skuTrendGradient)"
+                                    dot={{ r: 3, fill: 'hsl(215, 65%, 55%)', strokeWidth: 0 }}
+                                    activeDot={{ r: 5, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
+                                  />
+                                </AreaChart>
+                              </ChartContainer>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                   </div>
                 </div>

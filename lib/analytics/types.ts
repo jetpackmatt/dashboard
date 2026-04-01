@@ -510,3 +510,25 @@ export interface BillingEfficiencyMetrics {
   totalCredits: number
 }
 
+export interface SkuCostData {
+  sku: string
+  productName: string
+  orderCount: number
+  totalCost: number
+  avgCostPerOrder: number
+}
+
+export interface SkuCostTrendPoint {
+  week: string
+  avgCostPerOrder: number
+  orderCount: number
+}
+
+export interface WeightCostData {
+  sortOrder: number
+  label: string
+  orderCount: number
+  totalCost: number
+  avgCostPerOrder: number
+}
+

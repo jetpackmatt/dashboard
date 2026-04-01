@@ -20,6 +20,7 @@
 | `markup_rules` | `id` | Pricing rules |
 | `order_items` | `id` | Products per order |
 | `shipment_items` | `id` | Products per shipment |
+| `packing_material_skus` | `id` | SKUs that are packaging, not products (excluded from analytics) |
 | `shipment_cartons` | `id` | Carton/box data |
 | `products` | `id` | Product catalog |
 | `fulfillment_centers` | `id` | FC lookup |

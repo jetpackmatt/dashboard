@@ -86,8 +86,8 @@ export async function PATCH(
         return NextResponse.json({ error: 'Failed to validate tags' }, { status: 500 })
       }
 
-      const validNames = new Set((validTags || []).map(t => t.name))
-      const invalid = tags.filter(t => !validNames.has(t))
+      const validNames = new Set((validTags || []).map((t: { name: string }) => t.name))
+      const invalid = tags.filter((t: string) => !validNames.has(t))
       if (invalid.length > 0) {
         return NextResponse.json(
           { error: `Tags not found: ${invalid.join(', ')}. They may have been deleted.` },

@@ -117,6 +117,7 @@ export async function GET(request: NextRequest) {
   const needsPerformance = tab === 'all' || tab === 'state-performance'
   const needsCarrierZone = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
   const needsFinancials = tab === 'all' || tab === 'financials'
+  const needsSkuWeight = needsFinancials || tab === 'cost-speed'
 
   if (!startDate || !rawEndDate) {
     return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 })
@@ -130,7 +131,7 @@ export async function GET(request: NextRequest) {
   const endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
 
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `v25:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
+  const cacheKey = `v35:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
@@ -177,6 +178,8 @@ export async function GET(request: NextRequest) {
       orderVolumeResult,
       revenueResult,
       invoicesResult,
+      skuCostResult,
+      weightCostResult,
       otdByStateCleanResult,
       otdByStateDelayedResult,
       carrierZoneResult,
@@ -239,6 +242,16 @@ export async function GET(request: NextRequest) {
       // Invoice category breakdown for Financials
       (needsFinancials && !isAllClients)
         ? timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate }))
+        : { data: null, error: null },
+
+      // SKU cost breakdown (top 20 by volume) — used by Cost+Speed and Financials
+      (needsSkuWeight && !isAllClients)
+        ? timed('skuCost', supabase.rpc('get_cost_by_sku', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: country, p_limit: 20 }))
+        : { data: null, error: null },
+
+      // Weight cost breakdown (binned) — used by Cost+Speed and Financials
+      (needsSkuWeight && !isAllClients)
+        ? timed('weightCost', supabase.rpc('get_cost_by_weight', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: country }))
         : { data: null, error: null },
 
       // OTD percentiles — batched: national + all states (~900ms each, parallel)
@@ -1396,6 +1409,22 @@ export async function GET(request: NextRequest) {
     if (needsPerformance) {
       if (otdByStateCleanResult?.data) result.otdPercentilesByStateClean = otdByStateCleanResult.data
       if (otdByStateDelayedResult?.data) result.otdPercentilesByStateDelayed = otdByStateDelayedResult.data
+    }
+    if (needsSkuWeight) {
+      result.skuCostBreakdown = (skuCostResult.data || []).map((r: any) => ({
+        sku: r.sku,
+        productName: r.product_name || r.sku,
+        orderCount: Number(r.order_count),
+        totalCost: Number(r.total_cost),
+        avgCostPerOrder: Number(r.avg_cost_per_order),
+      }))
+      result.weightCostBreakdown = (weightCostResult.data || []).map((r: any) => ({
+        sortOrder: Number(r.sort_order),
+        label: r.label,
+        orderCount: Number(r.order_count),
+        totalCost: Number(r.total_cost),
+        avgCostPerOrder: Number(r.avg_cost_per_order),
+      }))
     }
 
     // Cache for warm-instance reuse
