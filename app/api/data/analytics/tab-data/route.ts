@@ -148,7 +148,7 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `v35:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
+  const cacheKey = `v36:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
@@ -847,12 +847,17 @@ export async function GET(request: NextRequest) {
 
     const costPerOrderTrend = Array.from(periodMap.entries())
       .filter(([period]) => granularity !== 'weekly' || isCompleteWeek(period))
-      .map(([period, g]) => ({
-        month: period,
-        monthLabel: formatMonthLabel(period, granularity),
-        costPerOrder: g.shipments > 0 ? (g.shipping + g.surcharges) / g.shipments : 0,
-        orderCount: g.shipments,
-      }))
+      .map(([period, p]) => {
+        const inv = invoiceByGranularity.get(period)
+        const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
+        const total = inv ? inv.invoiceTotal : categorySum
+        return {
+          month: period,
+          monthLabel: formatMonthLabel(period, granularity),
+          costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
+          orderCount: p.shipments,
+        }
+      })
       .sort((a, b) => a.month.localeCompare(b.month))
 
     // ── Ship Option Performance (pre-grouped) ──────────────────────────────

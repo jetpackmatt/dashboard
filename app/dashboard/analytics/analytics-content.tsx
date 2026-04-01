@@ -1920,7 +1920,7 @@ export default function AnalyticsContent() {
                     <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[48px]">
                       <div>
                         <div className="text-sm font-semibold">Cost per Order Trend</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">Average cost over time</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">All fees per order over time</div>
                       </div>
                       <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
                     </div>
@@ -1971,7 +1971,7 @@ export default function AnalyticsContent() {
                         <div className="p-2 bg-muted/30 rounded">
                           <div className="text-[10px] text-muted-foreground">Average</div>
                           <div className="font-semibold tabular-nums">
-                            ${(costPerOrderChart.data as CostPerOrderTrend[]).length > 0 ? ((costPerOrderChart.data as CostPerOrderTrend[]).reduce((s, d) => s + d.costPerOrder, 0) / (costPerOrderChart.data as CostPerOrderTrend[]).length).toFixed(2) : '0.00'}
+                            ${(costPerOrderChart.data as CostPerOrderTrend[]).length > 0 ? (() => { const pts = costPerOrderChart.data as CostPerOrderTrend[]; const totalOrders = pts.reduce((s, d) => s + d.orderCount, 0); return totalOrders > 0 ? (pts.reduce((s, d) => s + d.costPerOrder * d.orderCount, 0) / totalOrders).toFixed(2) : '0.00' })() : '0.00'}
                           </div>
                         </div>
                         <div className="p-2 bg-red-500/10 rounded">
