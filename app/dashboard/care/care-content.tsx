@@ -1789,11 +1789,11 @@ export default function CareContent() {
                                           )}
                                         </div>
 
-                                      {/* Center column: Details + Internal Notes */}
+                                      {/* Center column: Details + Timeline Notes */}
                                       <div className="flex flex-col flex-1 border-r-2 border-white dark:border-r-white/15">
                                         {/* Details Section */}
                                         <div className="border-b-2 border-white dark:border-b-white/15">
-                                          {/* Row 1: Ticket # + (Carrier/Tracking OR Files OR Internal Notes) */}
+                                          {/* Row 1: Ticket # + (Carrier/Tracking OR Files OR Timeline Notes) */}
                                           {(() => {
                                             const hasCarrierOrTracking = !!(ticket.carrier || ticket.trackingNumber)
                                             const hasFiles = ticket.attachments && ticket.attachments.length > 0
@@ -2025,12 +2025,12 @@ export default function CareContent() {
                                           )}
                                         </div>
 
-                                        {/* Internal Notes Section - always in second row for consistent layout */}
+                                        {/* Timeline Notes Section - always in second row for consistent layout */}
                                         {(effectiveIsAdmin || effectiveIsCareUser) && (
                                           <div className="flex-1 bg-white/25 dark:bg-black/20">
                                             <div className="p-5">
                                               <div className="flex items-center gap-2 mb-2">
-                                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider">Internal Notes</div>
+                                                <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wider">Timeline Notes</div>
                                                 <Popover open={addNoteOpenForTicket === ticket.id} onOpenChange={(open) => {
                                                   setAddNoteOpenForTicket(open ? ticket.id : null)
                                                   if (!open) setNewNoteText('')
@@ -2042,7 +2042,7 @@ export default function CareContent() {
                                                   </PopoverTrigger>
                                                   <PopoverContent className="w-72 p-3" align="end">
                                                     <div className="space-y-2">
-                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Add Internal Note</div>
+                                                      <div className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">Add Timeline Note</div>
                                                       <Textarea
                                                         placeholder="Type your note..."
                                                         value={newNoteText}

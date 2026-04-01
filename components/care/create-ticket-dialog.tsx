@@ -564,11 +564,11 @@ export function CreateTicketDialog({
             </div>
           )}
 
-          {/* Internal Note - admin/care only */}
+          {/* Timeline Note - admin/care only */}
           {!isBrandUser && (
             <div className="space-y-1.5">
               <Label htmlFor="initialNote" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                Internal Note (optional)
+                Timeline Note (optional)
               </Label>
               <Input
                 id="initialNote"

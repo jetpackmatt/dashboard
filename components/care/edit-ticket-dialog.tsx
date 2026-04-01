@@ -403,17 +403,17 @@ export function EditTicketDialog({
             />
           </div>
 
-          {/* Add Internal Note - admin/care only */}
+          {/* Add Timeline Note - admin/care only */}
           {!isBrandUser && (
             <div className="space-y-1.5">
               <Label htmlFor="edit-internalNote" className={labelClass}>
-                Add Internal Note
+                Add Timeline Note
               </Label>
               <Textarea
                 id="edit-internalNote"
                 value={editForm.internalNote}
                 onChange={(e) => setEditForm({ ...editForm, internalNote: e.target.value })}
-                placeholder="Add a new internal note..."
+                placeholder="Add a note to the timeline..."
                 rows={2}
                 className="placeholder:text-muted-foreground/40"
               />
