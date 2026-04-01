@@ -105,12 +105,12 @@ export default function DeliveryIQPage() {
   const router = useRouter()
   const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, brandRole, isLoading: isClientLoading } = useClient()
 
-  // Delivery IQ is admin/care + brand_owner only — redirect brand_team users
+  // Delivery IQ is admin/care only at launch — redirect all brand users
   React.useEffect(() => {
-    if (!isClientLoading && !effectiveIsAdmin && !effectiveIsCareUser && brandRole !== 'brand_owner') {
+    if (!isClientLoading && !effectiveIsAdmin && !effectiveIsCareUser) {
       router.replace('/dashboard')
     }
-  }, [isClientLoading, effectiveIsAdmin, effectiveIsCareUser, brandRole, router])
+  }, [isClientLoading, effectiveIsAdmin, effectiveIsCareUser, router])
 
   const [quickFilter, setQuickFilter] = React.useState<QuickFilterValue>('at_risk')
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')

@@ -974,6 +974,7 @@ export async function GET(request: NextRequest) {
     let insuranceMap: Record<string, number> = {}
     let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
     let noteCountMap: Record<string, number> = {}
+    let noteContentMap: Record<string, string[]> = {}
 
     if (shipmentIds.length > 0) {
       // Run item counts, billing, claim eligibility, and claim tickets queries IN PARALLEL
@@ -1109,7 +1110,6 @@ export async function GET(request: NextRequest) {
       }
 
       // Process note counts + content (for exports)
-      const noteContentMap: Record<string, string[]> = {}
       if (noteCountResult.data) {
         for (const n of noteCountResult.data) {
           if (n.shipment_id) {

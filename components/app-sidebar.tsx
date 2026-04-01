@@ -183,8 +183,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   let allNavItems = [...baseNavItems]
 
   if (mounted) {
-    // Hide Delivery IQ from brand_team users (visible to admin, care, and brand_owner)
-    if (!effectiveIsAdmin && !effectiveIsCareUser && brandRole !== 'brand_owner') {
+    // Hide Delivery IQ from all brand users (admin + care only at launch)
+    if (!effectiveIsAdmin && !effectiveIsCareUser) {
       allNavItems = allNavItems.filter(item => item.url !== '/dashboard/deliveryiq')
     }
 

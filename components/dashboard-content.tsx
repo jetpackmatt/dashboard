@@ -55,7 +55,7 @@ function SectionHeader({ title, datePreset, onDatePresetChange }: { title: strin
 export function DashboardContent({ displayName }: { displayName: string }) {
   const { selectedClientId, isLoading: isClientLoading, effectiveIsAdmin, effectiveIsCareUser, brandRole } = useClient()
   const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser
-  const canSeeDiq = effectiveIsAdmin || effectiveIsCareUser || brandRole === 'brand_owner'
+  const canSeeDiq = effectiveIsAdmin || effectiveIsCareUser
   const [datePreset, setDatePreset] = React.useState('90d')
 
   // KPI + Volume data
