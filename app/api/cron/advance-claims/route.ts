@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
               // Send the email
               await sendClaimEmail({
                 to: ['support@shipbob.com'],
-                cc: ['support@shipwithjetpack.com', 'matt@shipwithjetpack.com'],
+                cc: ['support@shipwithjetpack.com'],
                 subject: emailData.subject,
                 html: emailData.html,
                 text: emailData.text,
