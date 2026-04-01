@@ -114,6 +114,8 @@ function transformDataForExport<T extends Record<string, unknown>>(
       const value = item[col]
       // Format values for export
       if (value === null || value === undefined) return ''
+      // Arrays (tags, notes) → comma-delimited string
+      if (Array.isArray(value)) return value.join(', ')
       if (value instanceof Date) return formatDateForExport(value.toISOString())
       if (typeof value === 'boolean') return value ? 'Yes' : 'No'
       // Format ISO date strings

@@ -138,7 +138,7 @@ export async function POST(
           .from('care_tickets')
           .select('id, ticket_number, shipment_id, events, credit_amount')
           .eq('status', 'Credit Approved')
-          .eq('ticket_type', 'Claim')
+          .in('ticket_type', ['Claim', 'Shipping Inquiry'])
           .in('shipment_id', creditShipmentIds)
 
         if (ticketsToUpdate && ticketsToUpdate.length > 0) {
@@ -189,7 +189,7 @@ export async function POST(
         .from('care_tickets')
         .select('id, ticket_number, events')
         .eq('status', 'Credit Not Approved')
-        .eq('ticket_type', 'Claim')
+        .in('ticket_type', ['Claim', 'Shipping Inquiry'])
         .eq('client_id', invoice.client_id)
 
       if (ticketsToClose && ticketsToClose.length > 0) {

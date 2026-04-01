@@ -15,10 +15,6 @@ export async function GET(request: NextRequest) {
   try {
     const access = await verifyClientAccess(searchParams.get('clientId'))
     clientId = access.requestedClientId
-    // Delivery IQ is admin/care only at launch
-    if (!access.isAdmin && !access.isCareUser) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
-    }
   } catch (error) {
     return handleAccessError(error)
   }

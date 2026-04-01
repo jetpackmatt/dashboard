@@ -53,14 +53,15 @@ export const UNFULFILLED_TABLE_CONFIG: TableConfig = {
     { id: 'totalShipments', header: '# Shipments', width: 6,  priority: 12, defaultVisible: false },
     { id: 'destCountry',    header: 'Dest. Country', width: 8,  priority: 13, defaultVisible: false },
     { id: 'shipOption',     header: 'Ship Option',   width: 12, priority: 14, defaultVisible: false },
+    { id: 'actions',        header: '',              width: 10, priority: 1, shrinkToFit: true, tinted: true },
   ],
   breakpoints: {
-    '2xl': 14, // 1500px+: All columns including optional
-    xl: 11,  // 1280px+: All 11 columns (including Shipment ID)
-    lg: 8,   // 1024px: Hide Channel, Store ID, Shipment ID
-    md: 6,   // 768px: Also hide Type, SLA Date
-    sm: 4,   // 640px: Also hide Picks, Age
-    xs: 3,   // <640px: Just Order ID, Status, Order Date
+    '2xl': 15, // 1500px+: All columns including optional + actions
+    xl: 12,  // 1280px+: All columns including Shipment ID + actions
+    lg: 9,   // 1024px: Hide Channel, Store ID, Shipment ID
+    md: 7,   // 768px: Also hide Type, SLA Date
+    sm: 5,   // 640px: Also hide Picks, Age
+    xs: 4,   // <640px: Just Order ID, Status, Order Date, actions
   }
 }
 

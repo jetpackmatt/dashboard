@@ -102,8 +102,10 @@ export async function GET(request: NextRequest) {
   // Age filter - comma-separated age ranges like "0-1,1-2,7+"
   const ageFilter = searchParams.get('age')?.split(',').filter(Boolean) || []
 
-  // Tags filter - comma-separated tag names
+  // Tags filter - comma-separated tag names (custom shipment tags)
   const tagsFilter = searchParams.get('tags')?.split(',').filter(Boolean) || []
+  // Shopify tags filter - comma-separated Shopify order tags
+  const shopifyTagsFilter = searchParams.get('shopifyTags')?.split(',').filter(Boolean) || []
 
   // Sort params - defaults to event_labeled descending
   const allowedSortFields = ['recipient_name', 'carrier', 'event_labeled', 'transit_time_days']
@@ -123,7 +125,7 @@ export async function GET(request: NextRequest) {
     // Parse destination filter into country-level and state-level parts
     const parsedDestination = destinationFilter.length > 0 ? parseDestinationFilter(destinationFilter) : null
     const hasStateFilter = parsedDestination ? Object.keys(parsedDestination.statesByCountry).length > 0 : false
-    const hasOrderFilters = startDate || endDate || searchQuery || ageFilter.length > 0 || hasStateFilter
+    const hasOrderFilters = startDate || endDate || searchQuery || ageFilter.length > 0 || hasStateFilter || shopifyTagsFilter.length > 0
 
     // Pre-fetch shipment IDs that have notes (for "Has Note" filter)
     let noteShipmentIds: string[] | null = null
@@ -196,7 +198,8 @@ export async function GET(request: NextRequest) {
           zip_code,
           city,
           state,
-          country
+          country,
+          shopify_tags
         )
       `
       : `
@@ -245,7 +248,8 @@ export async function GET(request: NextRequest) {
           zip_code,
           city,
           state,
-          country
+          country,
+          shopify_tags
         )
       `
 
@@ -519,6 +523,11 @@ export async function GET(request: NextRequest) {
       query = query.overlaps('tags', tagsFilter)
     }
 
+    // Apply Shopify tags filter (orders with ANY of the selected Shopify tags)
+    if (shopifyTagsFilter.length > 0) {
+      query = query.overlaps('orders.shopify_tags', shopifyTagsFilter)
+    }
+
     // Apply watchlist filter (brand-only, filters to specific shipment IDs)
     if (watchlistFilter.length > 0) {
       query = query.in('shipment_id', watchlistFilter)
@@ -650,7 +659,7 @@ export async function GET(request: NextRequest) {
       // Skip RPC when hasNoteFilter or watchlistFilter is active since RPC doesn't support shipment ID filtering
       const rpcStartTime = Date.now()
       const statusFilterLower = statusFilter.map(s => s.toLowerCase())
-      const skipRpc = hasNoteFilter || watchlistFilter.length > 0 || fcFilter.length > 0 || tagsFilter.length > 0
+      const skipRpc = hasNoteFilter || watchlistFilter.length > 0 || fcFilter.length > 0 || tagsFilter.length > 0 || shopifyTagsFilter.length > 0
 
       const { data: rpcData, error: rpcError } = skipRpc ? { data: null, error: { message: 'skipped for shipment ID filter' } as any } : await supabase.rpc('get_shipments_by_age', {
         p_client_id: clientId || null,
@@ -735,6 +744,7 @@ export async function GET(request: NextRequest) {
           if (carrierFilter.length > 0) batchQuery = batchQuery.in('carrier', carrierFilter)
           if (fcFilter.length > 0) batchQuery = batchQuery.in('fc_name', fcFilter)
           if (tagsFilter.length > 0) batchQuery = batchQuery.overlaps('tags', tagsFilter)
+          if (shopifyTagsFilter.length > 0) batchQuery = batchQuery.overlaps('orders.shopify_tags', shopifyTagsFilter)
           if (watchlistFilter.length > 0) batchQuery = batchQuery.in('shipment_id', watchlistFilter)
           if (noteShipmentIds) batchQuery = batchQuery.in('shipment_id', noteShipmentIds)
 
@@ -754,6 +764,7 @@ export async function GET(request: NextRequest) {
         if (carrierFilter.length > 0) countQuery = countQuery.in('carrier', carrierFilter)
         if (fcFilter.length > 0) countQuery = countQuery.in('fc_name', fcFilter)
         if (tagsFilter.length > 0) countQuery = countQuery.overlaps('tags', tagsFilter)
+        if (shopifyTagsFilter.length > 0) countQuery = countQuery.overlaps('orders.shopify_tags', shopifyTagsFilter)
         if (watchlistFilter.length > 0) countQuery = countQuery.in('shipment_id', watchlistFilter)
         if (noteShipmentIds) countQuery = countQuery.in('shipment_id', noteShipmentIds)
 
@@ -888,6 +899,7 @@ export async function GET(request: NextRequest) {
       if (carrierFilter.length > 0) fallbackQuery = fallbackQuery.in('carrier', carrierFilter)
       if (fcFilter.length > 0) fallbackQuery = fallbackQuery.in('fc_name', fcFilter)
       if (tagsFilter.length > 0) fallbackQuery = fallbackQuery.overlaps('tags', tagsFilter)
+      if (shopifyTagsFilter.length > 0) fallbackQuery = fallbackQuery.overlaps('orders.shopify_tags', shopifyTagsFilter)
       if (watchlistFilter.length > 0) fallbackQuery = fallbackQuery.in('shipment_id', watchlistFilter)
       if (noteShipmentIds) fallbackQuery = fallbackQuery.in('shipment_id', noteShipmentIds)
 
@@ -1011,11 +1023,12 @@ export async function GET(request: NextRequest) {
         isExport
           ? supabase.from('clients').select('id, merchant_id, company_name')
           : Promise.resolve({ data: null }),
-        // Query 7: Note counts per shipment (lightweight - just shipment_id)
+        // Query 7: Notes per shipment (full content for export, just IDs for count otherwise)
         supabase
           .from('shipment_notes')
-          .select('shipment_id')
-          .in('shipment_id', shipmentIds),
+          .select(isExport ? 'shipment_id, note, created_at' : 'shipment_id')
+          .in('shipment_id', shipmentIds)
+          .order('created_at', { ascending: false }),
       ])
 
       // Process item counts (itemData is a flat array from batchedInQuery)
@@ -1095,11 +1108,16 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Process note counts
+      // Process note counts + content (for exports)
+      const noteContentMap: Record<string, string[]> = {}
       if (noteCountResult.data) {
         for (const n of noteCountResult.data) {
           if (n.shipment_id) {
             noteCountMap[n.shipment_id] = (noteCountMap[n.shipment_id] || 0) + 1
+            if (isExport && n.note) {
+              if (!noteContentMap[n.shipment_id]) noteContentMap[n.shipment_id] = []
+              noteContentMap[n.shipment_id].push(n.note)
+            }
           }
         }
       }
@@ -1236,6 +1254,7 @@ export async function GET(request: NextRequest) {
         claimCreditAmount: claimTicketMap[row.shipment_id]?.creditAmount || null,
         reshipmentId: row.reshipment_id || null,
         tags: row.tags || [],
+        shopifyTags: order?.shopify_tags || [],
         noteCount: noteCountMap[row.shipment_id] || 0,
         // Export-only fields (invoice format)
         ...(isExport ? {
@@ -1258,6 +1277,7 @@ export async function GET(request: NextRequest) {
           zipCode: order?.zip_code || '',
           city: order?.city || '',
           state: order?.state || '',
+          notes: noteContentMap[row.shipment_id] || [],
         } : {}),
       }
     })
@@ -1337,6 +1357,15 @@ export async function GET(request: NextRequest) {
     const { data: notedRows } = await notedQuery
     const notedShipmentCount = new Set((notedRows || []).map((r: { shipment_id: string }) => r.shipment_id)).size
 
+    // Collect unique Shopify tags from response data
+    const shopifyTagSet = new Set<string>()
+    for (const s of shipments) {
+      const st = (s as any).shopifyTags
+      if (Array.isArray(st)) {
+        for (const t of st) if (t) shopifyTagSet.add(t)
+      }
+    }
+
     return NextResponse.json({
       data: shipments,
       totalCount: finalTotalCount,
@@ -1346,6 +1375,7 @@ export async function GET(request: NextRequest) {
       destinations: allDestinationCountries,
       destinationStates,
       notedShipmentCount: notedShipmentCount || 0,
+      shopifyTags: [...shopifyTagSet].sort(),
     })
   } catch (err) {
     console.error('Shipments API error:', err)

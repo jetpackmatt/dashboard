@@ -473,6 +473,8 @@ export function DataTable({
   const [shipmentsFcFilter, setShipmentsFcFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('fc') : [])
   const [shipmentsTagsFilter, setShipmentsTagsFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('tags') : [])
   const [shipmentsTags, setShipmentsTags] = React.useState<string[]>([])
+  const [shipmentsShopifyTagsFilter, setShipmentsShopifyTagsFilter] = React.useState<string[]>(() => landedOnShipments ? getParamArray('shopifyTags') : [])
+  const [shipmentsShopifyTags, setShipmentsShopifyTags] = React.useState<string[]>([])
   // Initialize shipments date range — use URL preset if available, else 60 days default
   const shipmentsUrlPreset = landedOnShipments ? (searchParams.get('datePreset') as DateRangePreset | null) : null
   const [shipmentsDateRange, setShipmentsDateRange] = React.useState<DateRange | undefined>(() => {
@@ -520,6 +522,7 @@ export function DataTable({
     destinationFilter: shipmentsDestinationFilter,
     fcFilter: shipmentsFcFilter,
     tagsFilter: shipmentsTagsFilter,
+    shopifyTagsFilter: shipmentsShopifyTagsFilter,
     dateRange: shipmentsDateRange,
   }, undefined, currentTab === 'shipments')
 
@@ -789,6 +792,7 @@ export function DataTable({
       if (shipmentsDestinationFilter.length) params.set('dest', shipmentsDestinationFilter.join(','))
       if (shipmentsFcFilter.length) params.set('fc', shipmentsFcFilter.join(','))
       if (shipmentsTagsFilter.length) params.set('tags', shipmentsTagsFilter.join(','))
+      if (shipmentsShopifyTagsFilter.length) params.set('shopifyTags', shipmentsShopifyTagsFilter.join(','))
       if (shipmentsDatePreset && shipmentsDatePreset !== 'all') {
         params.set('datePreset', shipmentsDatePreset)
         if (shipmentsDatePreset === 'custom' && shipmentsDateRange?.from && shipmentsDateRange?.to) {
@@ -848,7 +852,7 @@ export function DataTable({
     unfulfilledChannelFilter, unfulfilledDestinationFilter, unfulfilledDatePreset, unfulfilledDateRange,
     // Shipments
     shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter,
-    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange,
+    shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsShopifyTagsFilter, shipmentsDatePreset, shipmentsDateRange,
     // Additional Services
     additionalServicesTypeFilter, additionalServicesStatusFilter, additionalServicesDatePreset, additionalServicesDateRange,
     // Returns
@@ -894,7 +898,7 @@ export function DataTable({
     shipmentsAgeFilter.length > 0 || shipmentsTypeFilter.length > 0 ||
     shipmentsChannelFilter.length > 0 || shipmentsCarrierFilter.length > 0 ||
     shipmentsDestinationFilter.length > 0 || shipmentsFcFilter.length > 0 ||
-    shipmentsTagsFilter.length > 0
+    shipmentsTagsFilter.length > 0 || shipmentsShopifyTagsFilter.length > 0
   const shipmentsFilterCount =
     shipmentsStatusFilter.length +
     shipmentsAgeFilter.length +
@@ -903,7 +907,8 @@ export function DataTable({
     shipmentsCarrierFilter.length +
     shipmentsDestinationFilter.length +
     shipmentsFcFilter.length +
-    shipmentsTagsFilter.length
+    shipmentsTagsFilter.length +
+    shipmentsShopifyTagsFilter.length
 
   // Clear shipments filters (does NOT clear date range - date has separate control)
   const clearShipmentsFilters = () => {
@@ -915,6 +920,7 @@ export function DataTable({
     setShipmentsDestinationFilter([])
     setShipmentsFcFilter([])
     setShipmentsTagsFilter([])
+    setShipmentsShopifyTagsFilter([])
   }
 
   // ============================================================================
@@ -952,12 +958,13 @@ export function DataTable({
     destination: shipmentsDestinationFilter,
     fc: shipmentsFcFilter,
     tags: shipmentsTagsFilter,
+    shopifyTags: shipmentsShopifyTagsFilter,
     datePreset: shipmentsDatePreset,
     dateRange: shipmentsDateRange ? {
       from: shipmentsDateRange.from?.toISOString(),
       to: shipmentsDateRange.to?.toISOString(),
     } : undefined,
-  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange])
+  }), [shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsDestinationFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsShopifyTagsFilter, shipmentsDatePreset, shipmentsDateRange])
 
   // Apply a saved view's filters to unfulfilled tab
   const applyUnfulfilledFilters = React.useCallback((filters: Record<string, unknown>) => {
@@ -992,6 +999,7 @@ export function DataTable({
     setShipmentsDestinationFilter((filters.destination as string[]) || [])
     setShipmentsFcFilter((filters.fc as string[]) || [])
     setShipmentsTagsFilter((filters.tags as string[]) || [])
+    setShipmentsShopifyTagsFilter((filters.shopifyTags as string[]) || [])
     // Restore date range
     const preset = filters.datePreset as DateRangePreset | undefined
     if (preset && preset !== 'custom') {
@@ -1019,7 +1027,7 @@ export function DataTable({
     if (currentTab === 'shipments') {
       shipmentsSavedViews.checkIfModified(getShipmentsFilterSnapshot())
     }
-  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentTab, shipmentsStatusFilter, shipmentsAgeFilter, shipmentsTypeFilter, shipmentsChannelFilter, shipmentsCarrierFilter, shipmentsFcFilter, shipmentsTagsFilter, shipmentsShopifyTagsFilter, shipmentsDatePreset, shipmentsDateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Additional Services tab computed values
   // Note: Date range is NOT counted as a filter since it has its own indicator
@@ -1452,16 +1460,11 @@ export function DataTable({
 
               {/* Columns - show for shipments and unfulfilled tabs */}
               {(currentTab === "shipments" || currentTab === "unfulfilled") && currentTableConfig && (() => {
-                // Maximum columns allowed to prevent horizontal scrolling
-                const MAX_VISIBLE_COLUMNS = 12
-
-                // Only count data columns (exclude action columns with no header)
+                // Count user-enabled data columns (exclude action columns with no header)
                 const dataColumns = currentTableConfig.columns.filter(c => c.header)
                 const enabledColumnCount = dataColumns.filter(
                   col => currentColumnVisibility[col.id] ?? col.defaultVisible !== false
                 ).length
-
-                const isAtLimit = enabledColumnCount >= MAX_VISIBLE_COLUMNS
 
                 return (
                   <div className="flex items-center gap-2">
@@ -1470,17 +1473,16 @@ export function DataTable({
                         <Button variant="outline" size="sm" className="h-[30px] flex-shrink-0 items-center text-muted-foreground">
                           <ColumnsIcon className="h-4 w-4" />
                           <span className="ml-[3px] text-xs hidden lg:inline leading-none">
-                            ({enabledColumnCount}/{MAX_VISIBLE_COLUMNS})
+                            ({enabledColumnCount})
                           </span>
                           <ChevronDownIcon className="h-4 w-4 lg:ml-1" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56 font-roboto text-xs">
-                        {/* Column limit message with Reset link */}
+                        {/* Header with Reset link */}
                         <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1 flex items-center justify-between">
                           <span>
-                            {enabledColumnCount} of {MAX_VISIBLE_COLUMNS} columns
-                            {isAtLimit && <span className="text-amber-600 dark:text-amber-400 ml-1">(max)</span>}
+                            {enabledColumnCount} columns enabled
                           </span>
                           {hasColumnCustomizations && (
                             <button
@@ -1493,15 +1495,12 @@ export function DataTable({
                         </div>
                         {currentTableConfig.columns.filter(c => c.header).map((column) => {
                           const isChecked = currentColumnVisibility[column.id] ?? column.defaultVisible !== false
-                          // Disable unchecked columns if at limit
-                          const isDisabled = !isChecked && isAtLimit
 
                           return (
                             <DropdownMenuCheckboxItem
                               key={column.id}
-                              className={cn("capitalize", isDisabled && "opacity-50 cursor-not-allowed")}
+                              className="capitalize"
                               checked={isChecked}
-                              disabled={isDisabled}
                               onCheckedChange={(value) =>
                                 setCurrentColumnVisibility((prev) => ({
                                   ...prev,
@@ -1678,6 +1677,14 @@ export function DataTable({
                       onSelectionChange={setShipmentsTagsFilter}
                       placeholder="Tags"
                     />
+                    {shipmentsShopifyTags.length > 0 && (
+                      <MultiSelectFilter
+                        options={shipmentsShopifyTags.map(t => ({ value: t, label: t }))}
+                        selected={shipmentsShopifyTagsFilter}
+                        onSelectionChange={setShipmentsShopifyTagsFilter}
+                        placeholder="Shopify Tags"
+                      />
+                    )}
                   </>
                 )}
 
@@ -1857,6 +1864,7 @@ export function DataTable({
             destinationFilter={debouncedShipmentsFilters.destinationFilter}
             fcFilter={debouncedShipmentsFilters.fcFilter}
             tagsFilter={debouncedShipmentsFilters.tagsFilter}
+            shopifyTagsFilter={debouncedShipmentsFilters.shopifyTagsFilter}
             dateRange={debouncedShipmentsFilters.dateRange}
             searchQuery={searchQuery}
             onChannelsChange={setShipmentsChannels}
@@ -1866,6 +1874,7 @@ export function DataTable({
               setShipmentsDestinations(countries)
               setShipmentsDestStates(states)
             }}
+            onShopifyTagsChange={setShipmentsShopifyTags}
             onLoadingChange={setIsShipmentsLoading}
             // Page size persistence
             initialPageSize={shipmentsPrefs.pageSize}
@@ -1881,6 +1890,13 @@ export function DataTable({
             watchlistIds={watchlistActive ? watchedIds : undefined}
             hasNotes={noteFilterActive}
             onNotedCountChange={setNotedShipmentCount}
+            onTagsChanged={() => {
+              // Re-fetch available tags so new tags appear in the filter immediately
+              fetch(buildApiUrl('/api/data/tags', { clientId }))
+                .then(r => r.ok ? r.json() : null)
+                .then(result => { if (result) setShipmentsTags((result.data || []).map((t: { name: string }) => t.name)) })
+                .catch(() => {})
+            }}
           />
         )}
       </TabsContent>

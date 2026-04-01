@@ -3,6 +3,7 @@ import {
   verifyClientAccess,
   handleAccessError,
 } from '@/lib/supabase/admin'
+import { createServerClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 /**
@@ -78,15 +79,40 @@ export async function POST(request: NextRequest) {
 
     const supabase = createAdminClient()
 
+    // Fix #6: Max 25 tag definitions per client
+    const { count, error: countError } = await supabase
+      .from('client_tags')
+      .select('*', { count: 'exact', head: true })
+      .eq('client_id', clientId)
+
+    if (countError) {
+      console.error('Error counting tags:', countError)
+      return NextResponse.json({ error: 'Failed to check tag count' }, { status: 500 })
+    }
+
+    if ((count ?? 0) >= 25) {
+      return NextResponse.json({ error: 'Maximum 25 tags per brand. Delete unused tags first.' }, { status: 400 })
+    }
+
+    // Fix #7: Get current user for audit trail
+    let createdBy: string | null = null
+    try {
+      const serverClient = await createServerClient()
+      const { data: { user } } = await serverClient.auth.getUser()
+      createdBy = user?.id ?? null
+    } catch {
+      // Non-critical — proceed without audit trail
+    }
+
     const { data, error } = await supabase
       .from('client_tags')
-      .insert({ client_id: clientId, name })
+      .insert({ client_id: clientId, name, created_by: createdBy })
       .select('id, name, created_at')
       .single()
 
     if (error) {
       if (error.code === '23505') {
-        return NextResponse.json({ error: 'Tag already exists' }, { status: 409 })
+        return NextResponse.json({ error: 'Tag already exists (names are case-insensitive)' }, { status: 409 })
       }
       console.error('Error creating tag:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -139,16 +165,21 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Tag not found' }, { status: 404 })
     }
 
-    // Remove this tag from all shipments that have it
-    await supabase.rpc('remove_tag_from_shipments', {
+    // Remove this tag from all shipments that have it — must succeed before we delete the definition
+    const { error: rpcError } = await supabase.rpc('remove_tag_from_shipments', {
       p_client_id: clientId,
       p_tag_name: tag.name,
-    }).catch(() => {
-      // If RPC doesn't exist yet, fall back to raw approach
-      // The tag will just be orphaned on shipments - acceptable
     })
 
-    // Delete the tag definition
+    if (rpcError) {
+      console.error('Error removing tag from shipments:', rpcError)
+      return NextResponse.json(
+        { error: 'Failed to remove tag from shipments. Tag was not deleted.' },
+        { status: 500 }
+      )
+    }
+
+    // Only delete the tag definition after shipments are cleaned up
     const { error: deleteError } = await supabase
       .from('client_tags')
       .delete()

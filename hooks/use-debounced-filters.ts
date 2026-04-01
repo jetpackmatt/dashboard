@@ -51,6 +51,7 @@ export interface ShipmentsFilters {
   destinationFilter: string[]
   fcFilter: string[]
   tagsFilter: string[]
+  shopifyTagsFilter: string[]
   dateRange: DateRange | undefined
 }
 

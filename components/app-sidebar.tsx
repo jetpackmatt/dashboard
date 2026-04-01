@@ -101,7 +101,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
-  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, isBrandUser, hasPermission } = useClient()
+  const { effectiveIsAdmin, effectiveIsCareUser, effectiveIsCareAdmin, isBrandUser, brandRole, hasPermission } = useClient()
   const [claimDialogOpen, setClaimDialogOpen] = React.useState(false)
   const [hasCommission, setHasCommission] = React.useState(false)
   const [mounted, setMounted] = React.useState(false)
@@ -183,8 +183,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   let allNavItems = [...baseNavItems]
 
   if (mounted) {
-    // Hide Delivery IQ from all brand users (admin/care only until launch)
-    if (!effectiveIsAdmin && !effectiveIsCareUser) {
+    // Hide Delivery IQ from brand_team users (visible to admin, care, and brand_owner)
+    if (!effectiveIsAdmin && !effectiveIsCareUser && brandRole !== 'brand_owner') {
       allNavItems = allNavItems.filter(item => item.url !== '/dashboard/deliveryiq')
     }
 

@@ -64,6 +64,8 @@ export async function GET(request: NextRequest) {
         carrier_service,
         fc_name,
         client_id,
+        tags,
+        reshipment_id,
         orders!inner(
           id,
           store_order_id,
@@ -95,7 +97,9 @@ export async function GET(request: NextRequest) {
         recipient_name,
         carrier_service,
         fc_name,
-        client_id
+        client_id,
+        tags,
+        reshipment_id
       `
 
     // Query shipments that haven't been shipped yet (no label generated)
@@ -296,6 +300,27 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Get notes for each shipment (content for exports, just IDs for counts)
+    let noteCounts: Record<string, number> = {}
+    const noteContentMap: Record<string, string[]> = {}
+    if (shipmentIds.length > 0) {
+      const { data: noteData } = await supabase
+        .from('shipment_notes')
+        .select(isExport ? 'shipment_id, note, created_at' : 'shipment_id')
+        .in('shipment_id', shipmentIds)
+        .order('created_at', { ascending: false })
+
+      if (noteData) {
+        for (const n of noteData as any[]) {
+          noteCounts[n.shipment_id] = (noteCounts[n.shipment_id] || 0) + 1
+          if (isExport && n.note) {
+            if (!noteContentMap[n.shipment_id]) noteContentMap[n.shipment_id] = []
+            noteContentMap[n.shipment_id].push(n.note)
+          }
+        }
+      }
+    }
+
     // Export: look up client merchant_id and company_name + products sold
     let clientInfoMap: Record<string, { merchantId: string; merchantName: string }> = {}
     let productsSoldMap: Record<string, string> = {}
@@ -366,6 +391,10 @@ export async function GET(request: NextRequest) {
         age: age,
         // Client identification (for admin badge)
         clientId: shipment.client_id || null,
+        // Tags, notes, reshipment
+        tags: shipment.tags || [],
+        noteCount: noteCounts[shipment.shipment_id] || 0,
+        reshipmentId: shipment.reshipment_id || null,
         // Export-only fields (invoice format - most blank for unfulfilled)
         ...(isExport ? {
           merchantId: clientInfoMap[shipment.client_id]?.merchantId || '',
@@ -395,6 +424,7 @@ export async function GET(request: NextRequest) {
           labelCreated: '',
           deliveredDate: '',
           transitTimeDays: '',
+          notes: noteContentMap[shipment.shipment_id] || [],
         } : {}),
       }
     })

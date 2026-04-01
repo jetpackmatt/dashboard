@@ -103,14 +103,14 @@ function getDateRangeFromPreset(preset: DateRangePreset): { from: Date; to: Date
 
 export default function DeliveryIQPage() {
   const router = useRouter()
-  const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, isLoading: isClientLoading } = useClient()
+  const { selectedClientId, effectiveIsAdmin, effectiveIsCareUser, brandRole, isLoading: isClientLoading } = useClient()
 
-  // Delivery IQ is admin/care only at launch — redirect brand users
+  // Delivery IQ is admin/care + brand_owner only — redirect brand_team users
   React.useEffect(() => {
-    if (!isClientLoading && !effectiveIsAdmin && !effectiveIsCareUser) {
+    if (!isClientLoading && !effectiveIsAdmin && !effectiveIsCareUser && brandRole !== 'brand_owner') {
       router.replace('/dashboard')
     }
-  }, [isClientLoading, effectiveIsAdmin, effectiveIsCareUser, router])
+  }, [isClientLoading, effectiveIsAdmin, effectiveIsCareUser, brandRole, router])
 
   const [quickFilter, setQuickFilter] = React.useState<QuickFilterValue>('at_risk')
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')

@@ -53,8 +53,9 @@ function SectionHeader({ title, datePreset, onDatePresetChange }: { title: strin
 }
 
 export function DashboardContent({ displayName }: { displayName: string }) {
-  const { selectedClientId, isLoading: isClientLoading, effectiveIsAdmin, effectiveIsCareUser } = useClient()
+  const { selectedClientId, isLoading: isClientLoading, effectiveIsAdmin, effectiveIsCareUser, brandRole } = useClient()
   const isBrandUser = !effectiveIsAdmin && !effectiveIsCareUser
+  const canSeeDiq = effectiveIsAdmin || effectiveIsCareUser || brandRole === 'brand_owner'
   const [datePreset, setDatePreset] = React.useState('90d')
 
   // KPI + Volume data
@@ -102,10 +103,9 @@ export function DashboardContent({ displayName }: { displayName: string }) {
   }, [effectiveClientId, datePreset, isClientLoading])
 
   // Fetch Delivery IQ stats (lightweight — no full shipment list needed)
-  // Skip DIQ fetch for brand users (Delivery IQ is admin/care only at launch)
   React.useEffect(() => {
-    if (isClientLoading || isBrandUser) {
-      if (isBrandUser) setIsDiqLoading(false)
+    if (isClientLoading || !canSeeDiq) {
+      if (!canSeeDiq) setIsDiqLoading(false)
       return
     }
     let cancelled = false
@@ -195,8 +195,8 @@ export function DashboardContent({ displayName }: { displayName: string }) {
               </div>
             )
 
-            // Hide DIQ section from brand users (admin/care only at launch)
-            if (isBrandUser) return volumeSection
+            // Hide DIQ section from users without access
+            if (!canSeeDiq) return volumeSection
             return diqFirst ? <>{diqSection}{volumeSection}</> : <>{volumeSection}{diqSection}</>
           })()}
         </div>

@@ -6,13 +6,19 @@ import { DateRange } from "react-day-picker"
 
 import { UNFULFILLED_TABLE_CONFIG } from "@/lib/table-config"
 import { TransactionsTable, PrefixColumn } from "./transactions-table"
-import { UnfulfilledOrder, unfulfilledCellRenderers } from "./cell-renderers"
+import { UnfulfilledOrder, createUnfulfilledCellRenderers } from "./cell-renderers"
 import { ShipmentDetailsDrawer } from "@/components/shipment-details-drawer"
 import { ClientBadge } from "./client-badge"
 import { useClient } from "@/components/client-context"
 import { exportData, ExportFormat, ExportScope } from "@/lib/export"
 import { useExport } from "@/components/export-context"
 import { SHIPMENTS_INVOICE_COLUMNS, toExportMapping } from "@/lib/export-configs"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { toast } from "sonner"
 
 // Calculate age in days from order date (used for filtering)
 function calculateAge(orderDate: string): number {
@@ -341,6 +347,91 @@ export function UnfulfilledTable({
     setDrawerOpen(true)
   }, [])
 
+  // Mark as Reshipped dialog state
+  const [reshipDialogOpen, setReshipDialogOpen] = React.useState(false)
+  const [reshipTargetId, setReshipTargetId] = React.useState<string | null>(null)
+  const [reshipInput, setReshipInput] = React.useState("")
+  const [reshipSaving, setReshipSaving] = React.useState(false)
+
+  // Note dialog state
+  const [noteDialogOpen, setNoteDialogOpen] = React.useState(false)
+  const [noteTargetId, setNoteTargetId] = React.useState<string | null>(null)
+  const [noteInput, setNoteInput] = React.useState("")
+  const [noteSaving, setNoteSaving] = React.useState(false)
+
+  const handleMarkReshipClick = React.useCallback((shipmentId: string) => {
+    setReshipTargetId(shipmentId)
+    setReshipInput("")
+    setReshipDialogOpen(true)
+  }, [])
+
+  const handleAddNoteClick = React.useCallback((shipmentId: string) => {
+    setNoteTargetId(shipmentId)
+    setNoteInput("")
+    setNoteDialogOpen(true)
+  }, [])
+
+  const handleReshipSave = React.useCallback(async () => {
+    if (!reshipTargetId || !reshipInput.trim()) return
+    setReshipSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${reshipTargetId}/reshipment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reshipmentId: reshipInput.trim() }),
+      })
+      if (!res.ok) throw new Error('Failed to save')
+      toast.success('Marked as reshipped')
+      setReshipDialogOpen(false)
+      // Update local data
+      setData(prev => prev.map(r =>
+        r.shipmentId === reshipTargetId ? { ...r, reshipmentId: reshipInput.trim() } : r
+      ))
+    } catch {
+      toast.error('Failed to mark as reshipped')
+    } finally {
+      setReshipSaving(false)
+    }
+  }, [reshipTargetId, reshipInput])
+
+  const handleNoteSave = React.useCallback(async () => {
+    if (!noteTargetId || !noteInput.trim()) return
+    setNoteSaving(true)
+    try {
+      const res = await fetch(`/api/data/shipments/${noteTargetId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: noteInput.trim() }),
+      })
+      if (!res.ok) throw new Error('Failed to save')
+      toast.success('Note added')
+      setNoteDialogOpen(false)
+      setData(prev => prev.map(r =>
+        r.shipmentId === noteTargetId ? { ...r, noteCount: (r.noteCount || 0) + 1 } : r
+      ))
+    } catch {
+      toast.error('Failed to add note')
+    } finally {
+      setNoteSaving(false)
+    }
+  }, [noteTargetId, noteInput])
+
+  const handleTagsSaved = React.useCallback((shipmentId: string, tags: string[]) => {
+    setData(prev => prev.map(r =>
+      r.shipmentId === shipmentId ? { ...r, tags } : r
+    ))
+  }, [])
+
+  // Cell renderers with action callbacks
+  const cellRenderers = React.useMemo(
+    () => createUnfulfilledCellRenderers({
+      onMarkReshipClick: handleMarkReshipClick,
+      onAddNoteClick: handleAddNoteClick,
+      onTagsSaved: handleTagsSaved,
+    }),
+    [handleMarkReshipClick, handleAddNoteClick, handleTagsSaved]
+  )
+
   // Export handler - fetches all data when scope is 'all', uses current data for 'current'
   const handleExport = React.useCallback(async (options: { format: ExportFormat; scope: ExportScope }) => {
     const { format: exportFormat, scope } = options
@@ -406,7 +497,7 @@ export function UnfulfilledTable({
       <TransactionsTable
         config={UNFULFILLED_TABLE_CONFIG}
         data={data}
-        cellRenderers={unfulfilledCellRenderers}
+        cellRenderers={cellRenderers}
         getRowKey={(row) => row.id}
         isLoading={isLoading}
         isPageLoading={isPageLoading}
@@ -431,6 +522,52 @@ export function UnfulfilledTable({
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
       />
+
+      {/* Reship dialog */}
+      <Dialog open={reshipDialogOpen} onOpenChange={setReshipDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Mark as Reshipped</DialogTitle>
+            <DialogDescription>Enter the new shipment ID for the reshipment.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reship-id">Reshipment Shipment ID</Label>
+            <Input id="reship-id" value={reshipInput} onChange={(e) => setReshipInput(e.target.value)} placeholder="e.g. 330867617" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReshipDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleReshipSave} disabled={reshipSaving || !reshipInput.trim()}>
+              {reshipSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Note dialog */}
+      <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Add a Note</DialogTitle>
+            <DialogDescription>Add a note to shipment {noteTargetId}.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Textarea
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value)}
+              placeholder="Enter your note..."
+              rows={3}
+              maxLength={500}
+            />
+            <p className="text-xs text-muted-foreground mt-1">{noteInput.length}/500</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoteDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleNoteSave} disabled={noteSaving || !noteInput.trim()}>
+              {noteSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

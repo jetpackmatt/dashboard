@@ -42,7 +42,7 @@ import { TrackingTimelineDrawer } from "./tracking-timeline-drawer"
 import { TrackingLink } from "@/components/tracking-link"
 import { useUserSettings } from "@/hooks/use-user-settings"
 import { useTablePreferences } from "@/hooks/use-table-preferences"
-import { TagPickerDialog } from "@/components/tags/tag-picker-dialog"
+import { TagPickerPopover } from "@/components/tags/tag-picker-popover"
 import type { MonitoredShipment } from "@/app/dashboard/deliveryiq/page"
 import type { QuickFilterValue } from "./quick-filters"
 
@@ -232,10 +232,6 @@ export function DeliveryIQTable({
   const [noteTargetId, setNoteTargetId] = React.useState<string | null>(null)
   const [noteInput, setNoteInput] = React.useState("")
   const [noteSaving, setNoteSaving] = React.useState(false)
-  const [tagPickerOpen, setTagPickerOpen] = React.useState(false)
-  const [tagTargetId, setTagTargetId] = React.useState<string | null>(null)
-  const [tagTargetTags, setTagTargetTags] = React.useState<string[]>([])
-
   const handleReshipSave = React.useCallback(async () => {
     if (!reshipTargetId || !reshipInput.trim()) return
     setReshipSaving(true)
@@ -280,10 +276,6 @@ export function DeliveryIQTable({
       setNoteSaving(false)
     }
   }, [noteTargetId, noteInput])
-
-  const handleTagsSaved = React.useCallback((_shipmentId: string, tags: string[]) => {
-    setTagTargetTags(tags)
-  }, [])
 
   // Reset page when data changes
   React.useEffect(() => {
@@ -697,15 +689,25 @@ export function DeliveryIQTable({
                             }}>
                               Add a Note
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {
-                              setTagTargetId(shipment.shipmentId)
-                              setTagTargetTags(shipment.tags || [])
-                              setTagPickerOpen(true)
-                            }}>
-                              Add Tag
-                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        <TagPickerPopover
+                          shipmentId={shipment.shipmentId}
+                          currentTags={shipment.tags || []}
+                          onTagsSaved={(sid, tags) => {
+                            // Update local data
+                            onRefresh()
+                          }}
+                          side="bottom"
+                          align="end"
+                        >
+                          <button
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-0.5 rounded text-[11px] font-medium text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-300 transition-colors"
+                          >
+                            Tags{(shipment.tags?.length ?? 0) > 0 ? ` (${shipment.tags!.length})` : ''}
+                          </button>
+                        </TagPickerPopover>
                         {shipment.claimEligibilityStatus === 'eligible' && (
                           <button
                             onClick={(e) => {
@@ -846,13 +848,6 @@ export function DeliveryIQTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <TagPickerDialog
-        open={tagPickerOpen}
-        onOpenChange={setTagPickerOpen}
-        shipmentId={tagTargetId}
-        currentTags={tagTargetTags}
-        onTagsSaved={handleTagsSaved}
-      />
     </div>
   )
 }

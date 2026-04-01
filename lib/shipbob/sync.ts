@@ -139,6 +139,97 @@ async function batchDelete(
   }
 }
 
+// ============================================================================
+// Store Order JSON (Shopify payload from ShipBob 1.0 API)
+// ============================================================================
+
+const SHIPBOB_API_BASE_1_0 = 'https://api.shipbob.com/1.0'
+
+/**
+ * Fetch the original Shopify order JSON from ShipBob's storeOrderJson endpoint.
+ * Returns the parsed JSON object, or null if not available.
+ * Uses the 1.0 API (not 2025-07).
+ */
+async function fetchStoreOrderJson(
+  token: string,
+  shipbobOrderId: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await fetch(`${SHIPBOB_API_BASE_1_0}/order/${shipbobOrderId}/storeOrderJson`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) return null
+    const text = await response.text()
+    if (!text || text === 'null' || text === '""') return null
+    // Response is a JSON string — may be double-encoded
+    let parsed = JSON.parse(text)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse Shopify tags from store order JSON.
+ * Shopify stores tags as a comma-separated string: "VIP, Subscription, Wholesale"
+ * Returns an array of trimmed, non-empty tag strings.
+ */
+function parseShopifyTags(storeOrderJson: Record<string, unknown>): string[] {
+  const tagsRaw = storeOrderJson.tags
+  if (!tagsRaw || typeof tagsRaw !== 'string' || tagsRaw.trim() === '') return []
+  return tagsRaw.split(',').map(t => t.trim()).filter(Boolean)
+}
+
+/**
+ * Fetch storeOrderJson for a batch of orders and update the database.
+ * Throttled to avoid rate limits. Returns count of orders updated.
+ */
+export async function fetchAndStoreOrderJsonBatch(
+  supabase: ReturnType<typeof createAdminClient>,
+  token: string,
+  orders: Array<{ shipbob_order_id: string }>,
+  delayMs: number = 200
+): Promise<{ fetched: number; withTags: number; errors: string[] }> {
+  let fetched = 0
+  let withTags = 0
+  const errors: string[] = []
+
+  for (const order of orders) {
+    try {
+      const json = await fetchStoreOrderJson(token, order.shipbob_order_id)
+      if (json) {
+        const shopifyTags = parseShopifyTags(json)
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            store_order_json: json,
+            shopify_tags: shopifyTags,
+          })
+          .eq('shipbob_order_id', order.shipbob_order_id)
+
+        if (error) {
+          errors.push(`Order ${order.shipbob_order_id}: ${error.message}`)
+        } else {
+          fetched++
+          if (shopifyTags.length > 0) withTags++
+        }
+      }
+    } catch (err) {
+      errors.push(`Order ${order.shipbob_order_id}: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+
+    // Throttle to respect rate limits
+    if (delayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+  }
+
+  return { fetched, withTags, errors }
+}
+
 // Timeline event type from ShipBob API
 interface TimelineEvent {
   log_type_id: number
@@ -728,6 +819,41 @@ export async function syncClient(
       for (const row of orderRows || []) {
         orderIdMap[row.shipbob_order_id] = row.id
       }
+    }
+
+    // STEP 2b: Fetch Store Order JSON (Shopify payload) for orders missing it
+    // Only fetch for orders that don't already have store_order_json to avoid redundant API calls
+    try {
+      const orderIdsToCheck = apiOrders.map(o => o.id.toString())
+      // Find which orders already have store_order_json
+      const existingJsonIds = new Set<string>()
+      for (let i = 0; i < orderIdsToCheck.length; i += 1000) {
+        const batch = orderIdsToCheck.slice(i, i + 1000)
+        const { data: rows } = await supabase
+          .from('orders')
+          .select('shipbob_order_id')
+          .eq('client_id', clientId)
+          .in('shipbob_order_id', batch)
+          .not('store_order_json', 'is', null)
+        for (const row of rows || []) {
+          existingJsonIds.add(row.shipbob_order_id)
+        }
+      }
+      const needsJson = orderIdsToCheck.filter(id => !existingJsonIds.has(id))
+      if (needsJson.length > 0) {
+        const jsonResult = await fetchAndStoreOrderJsonBatch(
+          supabase,
+          token,
+          needsJson.map(id => ({ shipbob_order_id: id })),
+          200 // 200ms between calls = ~5/sec, gentle on rate limits
+        )
+        console.log(`[Sync] StoreOrderJson: fetched ${jsonResult.fetched}/${needsJson.length}, ${jsonResult.withTags} with Shopify tags`)
+        if (jsonResult.errors.length > 0) {
+          result.errors.push(...jsonResult.errors.slice(0, 3)) // Cap error noise
+        }
+      }
+    } catch (err) {
+      console.warn('[Sync] StoreOrderJson fetch failed (non-fatal):', err)
     }
 
     // STEP 3: Upsert Shipments
@@ -2252,7 +2378,7 @@ export async function syncAllTransactions(
           .from('care_tickets')
           .select('id, ticket_number, shipment_id, events, credit_amount')
           .eq('status', 'Credit Requested')
-          .eq('ticket_type', 'Claim')
+          .in('ticket_type', ['Claim', 'Shipping Inquiry'])
           .in('shipment_id', creditShipmentIds)
 
         if (ticketFetchError) {

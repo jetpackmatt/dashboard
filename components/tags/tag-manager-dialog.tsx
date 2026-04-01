@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { PlusIcon, TrashIcon, LoaderIcon, TagIcon } from "lucide-react"
+import { PlusIcon, TrashIcon, LoaderIcon, TagIcon, AlertTriangleIcon } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -31,6 +31,9 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
   const [newTagName, setNewTagName] = React.useState("")
   const [isCreating, setIsCreating] = React.useState(false)
   const [deletingId, setDeletingId] = React.useState<string | null>(null)
+  const [confirmTag, setConfirmTag] = React.useState<ClientTag | null>(null)
+  const [confirmCount, setConfirmCount] = React.useState<number | null>(null)
+  const [isCountLoading, setIsCountLoading] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
 
   // Fetch tags on open
@@ -43,6 +46,14 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
       .catch(() => {})
       .finally(() => setIsLoading(false))
   }, [open, selectedClientId])
+
+  // Reset confirmation when dialog closes
+  React.useEffect(() => {
+    if (!open) {
+      setConfirmTag(null)
+      setConfirmCount(null)
+    }
+  }, [open])
 
   const handleCreate = async () => {
     const name = newTagName.trim()
@@ -62,7 +73,7 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
       })
 
       if (res.status === 409) {
-        toast.error("Tag already exists")
+        toast.error("Tag already exists (names are case-insensitive)")
         return
       }
 
@@ -83,8 +94,32 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
     }
   }
 
-  const handleDelete = async (tag: ClientTag) => {
+  const handleDeleteClick = async (tag: ClientTag) => {
     if (!selectedClientId) return
+    setConfirmTag(tag)
+    setConfirmCount(null)
+    setIsCountLoading(true)
+
+    try {
+      const res = await fetch(`/api/data/tags/count?clientId=${selectedClientId}&tagName=${encodeURIComponent(tag.name)}`)
+      if (res.ok) {
+        const result = await res.json()
+        setConfirmCount(result.count)
+      } else {
+        setConfirmCount(0)
+      }
+    } catch {
+      setConfirmCount(0)
+    } finally {
+      setIsCountLoading(false)
+    }
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmTag || !selectedClientId) return
+    const tag = confirmTag
+    setConfirmTag(null)
+    setConfirmCount(null)
     setDeletingId(tag.id)
     try {
       const res = await fetch(`/api/data/tags?clientId=${selectedClientId}`, {
@@ -113,7 +148,7 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
-      <DialogContent className="sm:max-w-[380px]">
+      <DialogContent className="sm:max-w-[380px]" onClick={(e) => e.stopPropagation()}>
         <DialogHeader>
           <DialogTitle className="text-base">Manage Tags</DialogTitle>
           <DialogDescription className="text-[12px]">
@@ -142,6 +177,48 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
           </Button>
         </div>
 
+        {/* Delete confirmation */}
+        {confirmTag && (
+          <div className="border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 rounded-md p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangleIcon className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+              <div className="text-[13px]">
+                <p className="font-medium text-red-700 dark:text-red-400">
+                  Delete &quot;{confirmTag.name}&quot;?
+                </p>
+                <p className="text-red-600/80 dark:text-red-400/70 text-[12px] mt-0.5">
+                  {isCountLoading ? (
+                    "Checking usage..."
+                  ) : confirmCount && confirmCount > 0 ? (
+                    <>This tag is used on <strong>{confirmCount}</strong> shipment{confirmCount !== 1 ? 's' : ''}. It will be removed from all of them.</>
+                  ) : (
+                    "This tag is not currently used on any shipments."
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setConfirmTag(null); setConfirmCount(null) }}
+                className="h-7 px-3 text-[12px]"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleDeleteConfirm}
+                disabled={isCountLoading}
+                className="h-7 px-3 text-[12px]"
+              >
+                Delete Tag
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Tag list */}
         <div className="max-h-[280px] overflow-y-auto -mx-1">
           {isLoading ? (
@@ -164,8 +241,8 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
                     <span className="text-[13px] truncate">{tag.name}</span>
                   </div>
                   <button
-                    onClick={() => handleDelete(tag)}
-                    disabled={deletingId === tag.id}
+                    onClick={() => handleDeleteClick(tag)}
+                    disabled={deletingId === tag.id || confirmTag?.id === tag.id}
                     className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-all shrink-0"
                     title={`Delete "${tag.name}"`}
                   >

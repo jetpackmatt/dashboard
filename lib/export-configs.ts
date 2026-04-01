@@ -52,6 +52,8 @@ export const SHIPMENTS_INVOICE_COLUMNS: InvoiceExportColumn[] = [
   { key: 'deliveredDate', header: 'Delivered' },
   { key: 'transitTimeDays', header: 'Transit Days' },
   { key: 'fcName', header: 'FC Name' },
+  { key: 'tags', header: 'Tags' },
+  { key: 'notes', header: 'Notes' },
 ]
 
 /**

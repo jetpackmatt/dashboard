@@ -47,6 +47,7 @@ import {
 import { CellRenderer } from "./transactions-table"
 import { getCarrierServiceDisplay } from "@/lib/utils/carrier-service-display"
 import { TrackingLink } from "@/components/tracking-link"
+import { TagPickerPopover } from "@/components/tags/tag-picker-popover"
 
 // ============================================
 // FEE TYPE DISPLAY NAME MAPPING
@@ -102,6 +103,12 @@ export interface UnfulfilledOrder {
   age?: number | null
   // Client identification (for admin badge)
   clientId?: string | null
+  // Custom tags applied to this shipment
+  tags?: string[]
+  // Note count
+  noteCount?: number
+  // Reshipment info
+  reshipmentId?: string | null
 }
 
 // Calculate age in days from order date
@@ -262,7 +269,12 @@ function ChannelIcon({ channelName }: { channelName: string }) {
 }
 
 // Cell renderers for unfulfilled orders table
-export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOrder>> = {
+export function createUnfulfilledCellRenderers(options?: {
+  onMarkReshipClick?: (shipmentId: string) => void
+  onAddNoteClick?: (shipmentId: string) => void
+  onTagsSaved?: (shipmentId: string, tags: string[]) => void
+}): Record<string, CellRenderer<UnfulfilledOrder>> {
+  return {
   orderId: (row) => {
     const handleCopy = (e: React.MouseEvent) => {
       e.preventDefault()
@@ -395,6 +407,52 @@ export const unfulfilledCellRenderers: Record<string, CellRenderer<UnfulfilledOr
   shipOption: (row) => (
     <div className="truncate">{row.shipOption || "-"}</div>
   ),
+
+  actions: (row) => {
+    return (
+      <div className="flex items-center gap-1.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="px-2 py-0.5 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-900/50 dark:hover:text-slate-300 transition-colors"
+            >
+              Mark
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem
+              onClick={() => options?.onMarkReshipClick?.(row.shipmentId)}
+              disabled={!!row.reshipmentId}
+            >
+              {row.reshipmentId ? 'Already Reshipped' : 'Mark as Reshipped'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => options?.onAddNoteClick?.(row.shipmentId)}>
+              Add a Note
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <TagPickerPopover
+          shipmentId={row.shipmentId}
+          currentTags={row.tags || []}
+          onTagsSaved={(sid, tags) => options?.onTagsSaved?.(sid, tags)}
+          side="bottom"
+          align="end"
+        >
+          <button
+            onClick={(e) => e.stopPropagation()}
+            className="px-2 py-0.5 rounded text-[11px] font-medium text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-300 transition-colors"
+          >
+            Tags{(row.tags?.length ?? 0) > 0 ? ` (${row.tags!.length})` : ''}
+          </button>
+        </TagPickerPopover>
+        {(row.noteCount ?? 0) > 0 && (
+          <ShipmentNoteHover shipmentId={row.shipmentId} noteCount={row.noteCount!} />
+        )}
+      </div>
+    )
+  },
+  }
 }
 
 // ============================================
@@ -553,6 +611,8 @@ export interface Shipment {
   reshipmentId?: string | null
   // Custom tags applied to this shipment
   tags?: string[]
+  // Shopify order tags (from orders.shopify_tags via storeOrderJson)
+  shopifyTags?: string[]
   // Note count (from shipment_notes table)
   noteCount?: number
 }
@@ -1330,7 +1390,7 @@ export function createShipmentCellRenderers(options?: {
   onClaimTicketClick?: (ticketId: string, ticketNumber?: number) => void
   onMarkReshipClick?: (shipmentId: string) => void
   onAddNoteClick?: (shipmentId: string) => void
-  onAddTagClick?: (shipmentId: string, currentTags: string[]) => void
+  onTagsSaved?: (shipmentId: string, tags: string[]) => void
   onWatchlistToggle?: (shipmentId: string) => void
   isWatched?: (shipmentId: string) => boolean
   isAdminOrCare?: boolean
@@ -1394,15 +1454,26 @@ export function createShipmentCellRenderers(options?: {
                 <DropdownMenuItem onClick={() => options?.onAddNoteClick?.(row.shipmentId)}>
                   Add a Note
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => options?.onAddTagClick?.(row.shipmentId, row.tags || [])}>
-                  Add Tag
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => options?.onWatchlistToggle?.(row.shipmentId)}>
                   {options?.isWatched?.(row.shipmentId) ? 'Remove from Watchlist' : 'Add to Watchlist'}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          <TagPickerPopover
+            shipmentId={row.shipmentId}
+            currentTags={row.tags || []}
+            onTagsSaved={(sid, tags) => options?.onTagsSaved?.(sid, tags)}
+            side="bottom"
+            align="end"
+          >
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="px-2 py-0.5 rounded text-[11px] font-medium text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-300 transition-colors"
+            >
+              Tags{(row.tags?.length ?? 0) > 0 ? ` (${row.tags!.length})` : ''}
+            </button>
+          </TagPickerPopover>
           {(row.noteCount ?? 0) > 0 && (
             <ShipmentNoteHover shipmentId={row.shipmentId} noteCount={row.noteCount!} />
           )}
