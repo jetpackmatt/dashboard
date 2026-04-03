@@ -1146,26 +1146,27 @@ export async function GET(request: NextRequest) {
       surcharges: 'Surcharges',
     }
     const categoryTotals = new Map<string, { amount: number; quantity: number }>()
+    const addToCategory = (name: string, amount: number, qty: number) => {
+      const existing = categoryTotals.get(name)
+      if (existing) {
+        existing.amount += amount
+        existing.quantity += qty
+      } else {
+        categoryTotals.set(name, { amount, quantity: qty })
+      }
+    }
     for (const f of billingFeeData) {
       if (f.fee_type === 'Shipping') {
         // Split shipping billed_amount into base (marked up) and surcharges (pass-through)
         const shippingBase = Number(f.total_billed) - Number(f.total_surcharge)
-        categoryTotals.set('Shipping', { amount: shippingBase, quantity: f.transaction_count })
+        addToCategory('Shipping', shippingBase, f.transaction_count)
         if (Number(f.total_surcharge) > 0.01) {
-          categoryTotals.set('Surcharges', { amount: Number(f.total_surcharge), quantity: f.transaction_count })
+          addToCategory('Surcharges', Number(f.total_surcharge), f.transaction_count)
         }
       } else {
         const cat = feeTypeToCategory(f.fee_type)
         const displayName = categoryDisplayNames[cat] || cat
-        const existing = categoryTotals.get(displayName)
-        const amount = Number(f.total_billed)
-        const qty = f.transaction_count
-        if (existing) {
-          existing.amount += amount
-          existing.quantity += qty
-        } else {
-          categoryTotals.set(displayName, { amount, quantity: qty })
-        }
+        addToCategory(displayName, Number(f.total_billed), f.transaction_count)
       }
     }
     const grandTotal = Array.from(categoryTotals.values()).reduce((s, c) => s + c.amount, 0)

@@ -1179,13 +1179,13 @@ export default function AnalyticsContent() {
     return Object.keys(params).length > 0 ? params : undefined
   }, [selectedServiceGroups, filterDomesticOnly, selectedCountry, activeOrderTypes])
   const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
-  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
-  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
   const skuCostChart = useChartDateRange(analyticsData?.skuCostBreakdown || [], 'skuCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
   const weightCostChart = useChartDateRange(analyticsData?.weightCostBreakdown || [], 'weightCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
 
@@ -1952,13 +1952,14 @@ export default function AnalyticsContent() {
                         const categories = costDistChart.data as BillingCategoryBreakdown[]
                         const positiveCategories = categories.filter(c => c.amount > 0)
                         const positiveTotal = positiveCategories.reduce((s, c) => s + c.amount, 0)
+                        const chartTotal = categories.reduce((s, c) => s + c.amount, 0)
 
                         return (
                           <div>
                             {/* Total */}
                             <div className="flex items-baseline gap-2 mb-4">
                               <span className="text-2xl font-bold tabular-nums">
-                                ${billingSummary.totalCost >= 1000 ? `${(billingSummary.totalCost / 1000).toFixed(1)}k` : billingSummary.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                ${chartTotal >= 1000 ? `${(chartTotal / 1000).toFixed(1)}k` : chartTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                               </span>
                               <span className="text-xs text-muted-foreground">total spend</span>
                             </div>
