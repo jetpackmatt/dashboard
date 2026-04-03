@@ -1,0 +1,19 @@
+-- Migration: Replace p_d2c_only boolean with p_order_types text[] for flexible order type filtering
+--
+-- Problem: D2C/B2B/FBA filter toggles in analytics did nothing because:
+--   1. get_billing_period_summary had no order type parameter
+--   2. get_analytics_from_summaries used p_d2c_only boolean (only "DTC only" possible, not "B2B only")
+--   3. Frontend never wired orderTypes to the financials section's separate fetch
+--
+-- Fix: Both RPCs now accept p_order_types text[] DEFAULT NULL
+--   - NULL = no filter (show all order types)
+--   - ['DTC'] = DTC only
+--   - ['B2B', 'FBA'] = B2B + FBA only (excludes DTC)
+--   - [] = empty = match nothing
+--
+-- For get_billing_period_summary: only Shipment-type transactions are filtered by order_type.
+-- Non-shipment fees (warehousing, storage, returns, credits) always pass through as shared costs.
+--
+-- Applied via Supabase MCP on 2026-04-02.
+-- get_analytics_from_summaries: DROP + CREATE with p_order_types replacing p_d2c_only
+-- get_billing_period_summary: DROP both overloads + CREATE single with p_order_types

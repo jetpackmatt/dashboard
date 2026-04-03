@@ -39,6 +39,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
 import {
   ChartContainer,
   ChartTooltip,
@@ -127,8 +129,8 @@ const DATE_RANGE_PRESETS = [
   { value: 'custom', label: 'Custom' },
 ]
 
-// Per-chart date presets (no custom — custom requires a date picker which is page-level only)
-const CHART_DATE_PRESETS = DATE_RANGE_PRESETS.filter(p => p.value !== 'custom')
+// Per-chart date presets (includes custom — each chart has its own inline date picker)
+const CHART_DATE_PRESETS = DATE_RANGE_PRESETS
 
 // Unified analytics filters — shared state across Cost & Speed and Financials tabs
 // Cost & Speed shows order-type + geography filters; Financials adds Include Credits
@@ -140,9 +142,19 @@ const COST_SPEED_FILTER_OPTIONS: FilterOption[] = [
 ]
 const FINANCIALS_FILTER_OPTIONS: FilterOption[] = [
   ...COST_SPEED_FILTER_OPTIONS,
-  { value: 'credits', label: 'Include Credits' },
+  { value: 'credits', label: 'Credits' },
 ]
 const ALL_ANALYTICS_FILTERS = FINANCIALS_FILTER_OPTIONS.map(o => o.value)
+
+// Hardcoded service-level groups — classified by ship_option_name in RPC
+const SERVICE_GROUP_OPTIONS: FilterOption[] = [
+  { value: 'ground', label: 'Ground' },
+  { value: '2day', label: '2-Day' },
+  { value: 'overnight', label: 'Overnight' },
+  { value: 'other', label: 'Other' },
+]
+const ALL_SERVICE_GROUPS = SERVICE_GROUP_OPTIONS.map(o => o.value)
+const ALL_ORDER_TYPES_LIST = ['DTC', 'B2B', 'FBA'] as const
 
 // Column color tinting — pure function for HSL cell backgrounds
 const tintFn = (h: number, s: number, l: number, max: number) =>
@@ -183,11 +195,16 @@ function useChartDateRange(
 ) {
   const [chartPreset, setChartPreset] = React.useState<DateRangePreset>(pageDateRange)
   const [chartCountry, setChartCountry] = React.useState<string>(lockedCountry || pageCountry)
+  const [chartCustomRange, setChartCustomRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined })
   const [chartData, setChartData] = React.useState<any>(null)
   const [isFetching, setIsFetching] = React.useState(false)
 
   // Stable stringified extraParams for dependency arrays
   const extraParamsKey = extraParams ? Object.entries(extraParams).sort().map(([k, v]) => `${k}=${v}`).join('&') : ''
+  // Stable key for custom range
+  const customRangeKey = chartPreset === 'custom' && chartCustomRange.from && chartCustomRange.to
+    ? `${chartCustomRange.from.toISOString().split('T')[0]}:${chartCustomRange.to.toISOString().split('T')[0]}`
+    : ''
 
   // Sync chart-level selectors when page-level values change (e.g. country toggle)
   // Skip country sync when lockedCountry is set (chart stays on its locked value)
@@ -197,8 +214,14 @@ function useChartDateRange(
   // Resolve data: when chart preset+country match page (and no extraParams), use page data directly.
   // When they diverge or extraParams exist, look up from cache or fetch independently.
   React.useEffect(() => {
+    // Custom preset without both dates selected — wait for user to pick dates
+    if (chartPreset === 'custom' && !customRangeKey) {
+      setIsFetching(false)
+      return
+    }
+
     // Chart matches page AND no extra params — use pageFieldData (via null fallback), no fetch needed
-    if (chartPreset === pageDateRange && chartCountry === pageCountry && !extraParamsKey) {
+    if (chartPreset === pageDateRange && chartPreset !== 'custom' && chartCountry === pageCountry && !extraParamsKey) {
       setChartData(null)
       setIsFetching(false)
       return
@@ -206,7 +229,7 @@ function useChartDateRange(
 
     // Check cache (include extraParams + fetchTab in cache key)
     const tabKey = fetchTab || 'sp'
-    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
+    const cacheKey = `${chartPreset}:${customRangeKey}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached[fieldName])
@@ -220,7 +243,9 @@ function useChartDateRange(
     let cancelled = false
     setIsFetching(true)
 
-    const range = getDateRangeFromPreset(chartPreset)
+    const range = chartPreset === 'custom' && chartCustomRange.from && chartCustomRange.to
+      ? { from: chartCustomRange.from, to: chartCustomRange.to }
+      : getDateRangeFromPreset(chartPreset)
     const params = new URLSearchParams({
       clientId,
       startDate: range.from.toISOString().split('T')[0],
@@ -244,15 +269,20 @@ function useChartDateRange(
       .finally(() => { if (!cancelled) setIsFetching(false) })
 
     return () => { cancelled = true }
-  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, fieldName, cache, extraParamsKey, fetchTab])
+  }, [chartPreset, customRangeKey, chartCountry, pageDateRange, pageCountry, clientId, timezone, fieldName, cache, extraParamsKey, fetchTab])
 
   return {
     data: chartData ?? pageFieldData,
     preset: chartPreset,
     country: chartCountry,
+    customRange: chartCustomRange,
     isFetching,
-    setPreset: (v: string) => setChartPreset(v as DateRangePreset),
+    setPreset: (v: string) => {
+      setChartPreset(v as DateRangePreset)
+      if (v !== 'custom') setChartCustomRange({ from: undefined, to: undefined })
+    },
     setCountry: (v: string) => setChartCountry(v),
+    setCustomRange: setChartCustomRange,
   }
 }
 
@@ -270,11 +300,16 @@ function useChartSectionRange(
 ) {
   const [chartPreset, setChartPreset] = React.useState<DateRangePreset>(pageDateRange)
   const [chartCountry, setChartCountry] = React.useState<string>(lockedCountry || pageCountry)
+  const [chartCustomRange, setChartCustomRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined })
   const [chartData, setChartData] = React.useState<any>(null)
   const [isFetching, setIsFetching] = React.useState(false)
 
   // Stable stringified extraParams for dependency arrays
   const extraParamsKey = extraParams ? Object.entries(extraParams).sort().map(([k, v]) => `${k}=${v}`).join('&') : ''
+  // Stable key for custom range
+  const customRangeKey = chartPreset === 'custom' && chartCustomRange.from && chartCustomRange.to
+    ? `${chartCustomRange.from.toISOString().split('T')[0]}:${chartCustomRange.to.toISOString().split('T')[0]}`
+    : ''
 
   // Sync chart-level selectors when page-level values change
   // Skip country sync when lockedCountry is set
@@ -282,13 +317,19 @@ function useChartSectionRange(
   React.useEffect(() => { if (!lockedCountry) setChartCountry(pageCountry) }, [pageCountry, lockedCountry])
 
   React.useEffect(() => {
-    if (chartPreset === pageDateRange && chartCountry === pageCountry && !extraParamsKey) {
+    // Custom preset without both dates selected — wait for user to pick dates
+    if (chartPreset === 'custom' && !customRangeKey) {
+      setIsFetching(false)
+      return
+    }
+
+    if (chartPreset === pageDateRange && chartPreset !== 'custom' && chartCountry === pageCountry && !extraParamsKey) {
       setChartData(null)
       setIsFetching(false)
       return
     }
     const tabKey = fetchTab || 'sp'
-    const cacheKey = `${chartPreset}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
+    const cacheKey = `${chartPreset}:${customRangeKey}:${chartCountry}:${timezone}:${clientId}:${tabKey}${extraParamsKey ? ':' + extraParamsKey : ''}`
     const cached = cache.current.get(cacheKey)
     if (cached) {
       setChartData(cached)
@@ -298,7 +339,9 @@ function useChartSectionRange(
     if (!clientId) return
     let cancelled = false
     setIsFetching(true)
-    const range = getDateRangeFromPreset(chartPreset)
+    const range = chartPreset === 'custom' && chartCustomRange.from && chartCustomRange.to
+      ? { from: chartCustomRange.from, to: chartCustomRange.to }
+      : getDateRangeFromPreset(chartPreset)
     const params = new URLSearchParams({
       clientId,
       startDate: range.from.toISOString().split('T')[0],
@@ -320,39 +363,122 @@ function useChartSectionRange(
       .catch(() => {})
       .finally(() => { if (!cancelled) setIsFetching(false) })
     return () => { cancelled = true }
-  }, [chartPreset, chartCountry, pageDateRange, pageCountry, clientId, timezone, cache, extraParamsKey, fetchTab])
+  }, [chartPreset, customRangeKey, chartCountry, pageDateRange, pageCountry, clientId, timezone, cache, extraParamsKey, fetchTab])
 
   return {
     data: chartData ?? pageData,
     preset: chartPreset,
     country: chartCountry,
+    customRange: chartCustomRange,
     isFetching,
-    setPreset: (v: string) => setChartPreset(v as DateRangePreset),
+    setPreset: (v: string) => {
+      setChartPreset(v as DateRangePreset)
+      if (v !== 'custom') setChartCustomRange({ from: undefined, to: undefined })
+    },
     setCountry: (v: string) => setChartCountry(v),
+    setCustomRange: setChartCustomRange,
   }
 }
 
-// Reusable per-chart selector bar (date + country)
-function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hideAllCountry, hideCountry }: {
-  chart: { preset: string; country: string; isFetching: boolean; setPreset: (v: string) => void; setCountry: (v: string) => void; data?: any }
+// Reusable per-chart selector bar (date + country + optional custom date picker)
+function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hideAllCountry, hideCountry, hideLoader }: {
+  chart: {
+    preset: string; country: string; isFetching: boolean
+    setPreset: (v: string) => void; setCountry: (v: string) => void
+    customRange?: { from: Date | undefined; to: Date | undefined }
+    setCustomRange?: (range: { from: Date | undefined; to: Date | undefined }) => void
+    data?: any
+  }
   availableCountries: string[]
   dateRangeDisplayLabel: string
   hideAllCountry?: boolean
   hideCountry?: boolean
+  hideLoader?: boolean
 }) {
+  const [calendarOpen, setCalendarOpen] = React.useState(false)
+  const prevPresetRef = React.useRef(chart.preset)
+
+  // Auto-open calendar when preset changes to 'custom'
+  React.useEffect(() => {
+    if (chart.preset === 'custom' && prevPresetRef.current !== 'custom') {
+      // Small delay so Select dropdown closes first
+      const t = setTimeout(() => setCalendarOpen(true), 150)
+      prevPresetRef.current = chart.preset
+      return () => clearTimeout(t)
+    }
+    prevPresetRef.current = chart.preset
+  }, [chart.preset])
+
+  // Display label for the date selector value
+  const displayLabel = chart.preset === 'custom' && chart.customRange?.from && chart.customRange?.to
+    ? `${format(chart.customRange.from, 'MMM d')} – ${format(chart.customRange.to, 'MMM d, yyyy')}`
+    : CHART_DATE_PRESETS.find(p => p.value === chart.preset)?.label || dateRangeDisplayLabel
+
+  // Track range selection state for calendar (need two clicks)
+  const [isSelectingRange, setIsSelectingRange] = React.useState(false)
+
   return (
     <div className="flex items-center gap-1.5 shrink-0">
-      {chart.isFetching && <JetpackLoader size="sm" />}
-      <Select value={chart.preset} onValueChange={chart.setPreset}>
-        <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
-          <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === chart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
-        </SelectTrigger>
-        <SelectContent align="end" className="font-roboto text-xs">
-          {CHART_DATE_PRESETS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {chart.isFetching && !hideLoader && <JetpackLoader size="sm" />}
+      {chart.preset === 'custom' && chart.setCustomRange ? (
+        <Popover open={calendarOpen} onOpenChange={(open) => {
+          setCalendarOpen(open)
+          if (!open) setIsSelectingRange(false)
+        }} modal>
+          <PopoverTrigger asChild>
+            <button
+              className="h-[28px] flex items-center gap-1 px-2 rounded-md border border-input bg-background text-[11px] hover:bg-accent transition-colors"
+              onClick={() => setCalendarOpen(true)}
+            >
+              <span>{displayLabel}</span>
+              <svg className="h-3 w-3 opacity-50" viewBox="0 0 15 15" fill="none"><path d="M4.93179 5.43179C4.75605 5.60753 4.75605 5.89245 4.93179 6.06819C5.10753 6.24392 5.39245 6.24392 5.56819 6.06819L7.49999 4.13638L9.43179 6.06819C9.60753 6.24392 9.89245 6.24392 10.0682 6.06819C10.2439 5.89245 10.2439 5.60753 10.0682 5.43179L7.81819 3.18179C7.73379 3.0974 7.61933 3.04999 7.49999 3.04999C7.38064 3.04999 7.26618 3.0974 7.18179 3.18179L4.93179 5.43179ZM10.0682 9.56819C10.2439 9.39245 10.2439 9.10753 10.0682 8.93179C9.89245 8.75606 9.60753 8.75606 9.43179 8.93179L7.49999 10.8636L5.56819 8.93179C5.39245 8.75606 5.10753 8.75606 4.93179 8.93179C4.75605 9.10753 4.75605 9.39245 4.93179 9.56819L7.18179 11.8182C7.35753 11.9939 7.64245 11.9939 7.81819 11.8182L10.0682 9.56819Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"/></svg>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="end">
+            <Calendar
+              mode="range"
+              defaultMonth={chart.customRange?.from || new Date()}
+              selected={chart.customRange?.from && chart.customRange?.to ? { from: chart.customRange.from, to: chart.customRange.to } : undefined}
+              onSelect={(range) => {
+                if (range?.from) {
+                  chart.setCustomRange!({ from: range.from, to: range.to })
+                  if (!isSelectingRange) {
+                    setIsSelectingRange(true)
+                    return
+                  }
+                  if (range.to) {
+                    setCalendarOpen(false)
+                    setIsSelectingRange(false)
+                  }
+                }
+              }}
+              numberOfMonths={2}
+            />
+            <div className="flex items-center px-3 pb-2">
+              <button
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => {
+                  chart.setPreset('90d')
+                  setCalendarOpen(false)
+                }}
+              >
+                Back to presets
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <Select value={chart.preset} onValueChange={chart.setPreset}>
+          <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
+            <SelectValue>{displayLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent align="end" className="font-roboto text-xs">
+            {CHART_DATE_PRESETS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
       {!hideCountry && availableCountries.length > 1 && (
         <Select value={chart.country} onValueChange={chart.setCountry}>
           <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
@@ -459,14 +585,20 @@ export default function AnalyticsContent() {
   // Unified analytics filters — shared across Cost & Speed and Financials tabs
   // All options pre-checked by default (include everything)
   const [analyticsFilters, setAnalyticsFilters] = React.useState<string[]>(ALL_ANALYTICS_FILTERS)
-  const filterD2cOnly = !analyticsFilters.includes('b2b') && !analyticsFilters.includes('fba')
+  // Derive active order types from filter checkboxes: dtc→DTC, b2b→B2B, fba→FBA
+  const activeOrderTypes = React.useMemo(() => {
+    const types = (['dtc', 'b2b', 'fba'] as const).filter(t => analyticsFilters.includes(t)).map(t => t.toUpperCase())
+    return types.length < ALL_ORDER_TYPES_LIST.length ? types : null // null = no filter
+  }, [analyticsFilters])
   const filterDomesticOnly = !analyticsFilters.includes('international')
   const filterIncludeCredits = analyticsFilters.includes('credits')
+  const [selectedServiceGroups, setSelectedServiceGroups] = React.useState<string[]>(ALL_SERVICE_GROUPS)
   const [selectedTrendSku, setSelectedTrendSku] = React.useState<string | null>(null)
   const [skuTrendData, setSkuTrendData] = React.useState<SkuCostTrendPoint[]>([])
   const [skuTrendLoading, setSkuTrendLoading] = React.useState(false)
   const [skuTrendPreset, setSkuTrendPreset] = React.useState<DateRangePreset>(dateRange)
   const [skuTrendCountry, setSkuTrendCountry] = React.useState<string>(selectedCountry)
+  const [skuTrendCustomRange, setSkuTrendCustomRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined })
   // Sync with page date range
   React.useEffect(() => { setSkuTrendPreset(dateRange) }, [dateRange])
 
@@ -505,12 +637,10 @@ export default function AnalyticsContent() {
       timezone: settings.timezone,
       tab,
     })
-    if (tab === 'cost-speed') {
-      if (filterDomesticOnly && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
-      if (filterD2cOnly) params.set('d2cOnly', 'true')
-    }
+    if (filterDomesticOnly && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
+    if (activeOrderTypes) params.set('orderTypes', activeOrderTypes.join(','))
     return params
-  }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone, filterD2cOnly, filterDomesticOnly])
+  }, [effectiveClientId, currentDateRange, dateRange, selectedCountry, settings.timezone, activeOrderTypes, filterDomesticOnly])
 
   // OTD percentiles — pre-loaded for all states in one query via tab-data route
   // Both clean and with-delayed variants fetched so the toggle switches instantly
@@ -533,18 +663,21 @@ export default function AnalyticsContent() {
 
   // Prefetch tracking ref — declared early so invalidation effect below can reference it
   const prefetchedRef = React.useRef(false)
+  // Generation counter — increments each prefetch cycle so stale responses from a previous
+  // context (country/date/client change) are discarded instead of overwriting current data
+  const prefetchGenRef = React.useRef(0)
 
   // Client-side cache for cost-speed filter variants — enables instant filter switching
   const csFilterCacheRef = React.useRef(new Map<string, any>())
-  const buildCsFilterCacheKey = React.useCallback((d2c: boolean, domestic: boolean) => {
+  const buildCsFilterCacheKey = React.useCallback((ot: string[] | null, domestic: boolean) => {
     if (!effectiveClientId || !currentDateRange) return null
     const s = currentDateRange.from.toISOString().split('T')[0]
     const e = currentDateRange.to.toISOString().split('T')[0]
-    return `${effectiveClientId}:${s}:${e}:${selectedCountry}:${settings.timezone}:${d2c}:${domestic}`
+    return `${effectiveClientId}:${s}:${e}:${selectedCountry}:${settings.timezone}:${ot?.join(',') || 'all'}:${domestic}`
   }, [effectiveClientId, currentDateRange, selectedCountry, settings.timezone])
 
   // Whether cost-speed filters are active (different from defaults = all included)
-  const hasActiveCostSpeedFilters = filterD2cOnly || filterDomesticOnly
+  const hasActiveCostSpeedFilters = activeOrderTypes !== null || filterDomesticOnly
   // When filters are active, cost-speed reads from the filtered response stored in _csFiltered;
   // otherwise falls back to the standard analyticsData. This prevents contaminating other tabs.
   const csAnalyticsData = hasActiveCostSpeedFilters && analyticsData?._csFiltered
@@ -552,14 +685,14 @@ export default function AnalyticsContent() {
     : analyticsData
 
   // Invalidate cost-speed data when server-affecting filters change (D2C-only, domestic-only)
-  const costSpeedFilterKey = `${filterD2cOnly}:${filterDomesticOnly}`
+  const costSpeedFilterKey = `${activeOrderTypes?.join(',') || 'all'}:${filterDomesticOnly}`
   const prevCostSpeedFilterRef = React.useRef(costSpeedFilterKey)
   React.useEffect(() => {
     if (prevCostSpeedFilterRef.current === costSpeedFilterKey) return
     prevCostSpeedFilterRef.current = costSpeedFilterKey
 
     // Check client-side cache for instant switching (preloaded in background)
-    const cacheKey = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+    const cacheKey = buildCsFilterCacheKey(activeOrderTypes, filterDomesticOnly)
     const cached = cacheKey ? csFilterCacheRef.current.get(cacheKey) : null
     if (cached) {
       // Instant update — skip loading animation entirely
@@ -576,7 +709,7 @@ export default function AnalyticsContent() {
     loadedTabsRef.current.delete('cost-speed')
     prefetchedRef.current = false
     setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: null } : prev)
-  }, [costSpeedFilterKey, buildCsFilterCacheKey, hasActiveCostSpeedFilters, filterD2cOnly, filterDomesticOnly])
+  }, [costSpeedFilterKey, buildCsFilterCacheKey, hasActiveCostSpeedFilters, activeOrderTypes, filterDomesticOnly])
 
   // Fetch pre-aggregated data from server when client, date range, or country changes
   React.useEffect(() => {
@@ -629,7 +762,7 @@ export default function AnalyticsContent() {
         }
         // Cache cost-speed response for instant filter switching
         if (activeTab === 'cost-speed') {
-          const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+          const ck = buildCsFilterCacheKey(activeOrderTypes, filterDomesticOnly)
           if (ck) csFilterCacheRef.current.set(ck, data)
         }
       } catch (err) {
@@ -692,7 +825,7 @@ export default function AnalyticsContent() {
         }
         // Cache cost-speed response for instant filter switching
         if (activeTab === 'cost-speed') {
-          const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+          const ck = buildCsFilterCacheKey(activeOrderTypes, filterDomesticOnly)
           if (ck) csFilterCacheRef.current.set(ck, data)
         }
       } catch {
@@ -711,6 +844,7 @@ export default function AnalyticsContent() {
   React.useEffect(() => {
     if (!analyticsData || !effectiveClientId || prefetchedRef.current) return
     prefetchedRef.current = true
+    const gen = ++prefetchGenRef.current
 
     const allTabs = ['state-performance', 'cost-speed', 'order-volume', 'carriers-zones', 'financials']
     const remaining = allTabs.filter(t => !loadedTabsRef.current.has(t))
@@ -720,12 +854,13 @@ export default function AnalyticsContent() {
     let delay = 500
     for (const tab of remaining) {
       setTimeout(() => {
+        if (prefetchGenRef.current !== gen) return
         const params = buildFetchParams(tab)
         if (!params) return
         fetch(`/api/data/analytics/tab-data?${params}`)
           .then(res => res.ok ? res.json() : null)
           .then(data => {
-            if (data) {
+            if (data && prefetchGenRef.current === gen) {
               loadedTabsRef.current.add(tab)
               if (tab === 'cost-speed' && hasActiveCostSpeedFilters) {
                 setAnalyticsData((prev: any) => prev ? { ...prev, _csFiltered: data } : prev)
@@ -734,7 +869,7 @@ export default function AnalyticsContent() {
               }
               // Cache cost-speed response for instant filter switching
               if (tab === 'cost-speed') {
-                const ck = buildCsFilterCacheKey(filterD2cOnly, filterDomesticOnly)
+                const ck = buildCsFilterCacheKey(activeOrderTypes, filterDomesticOnly)
                 if (ck) csFilterCacheRef.current.set(ck, data)
               }
             }
@@ -746,51 +881,42 @@ export default function AnalyticsContent() {
   }, [analyticsData, effectiveClientId, buildFetchParams])
 
   // Preload cost-speed filter variants in background for instant switching
-  // After cost-speed tab loads, fetch the 3 remaining d2c/domestic combos
+  // After cost-speed tab loads, preload the opposite domestic variant
   const csPreloadedRef = React.useRef(false)
   React.useEffect(() => {
     if (!analyticsData || !effectiveClientId || !loadedTabsRef.current.has('cost-speed')) return
     if (csPreloadedRef.current) return
     csPreloadedRef.current = true
 
-    const variants: [boolean, boolean][] = [
-      [false, false], // all orders, all countries
-      [true, false],  // d2c only, all countries
-      [false, true],  // all orders, domestic only
-      [true, true],   // d2c only, domestic only
-    ]
+    // Preload the opposite domestic toggle with current order types
+    const oppDomestic = !filterDomesticOnly
+    const ck = buildCsFilterCacheKey(activeOrderTypes, oppDomestic)
+    if (!ck || csFilterCacheRef.current.has(ck)) return
 
-    let delay = 2000 // start 2s after cost-speed loads
-    for (const [d2c, domestic] of variants) {
-      const ck = buildCsFilterCacheKey(d2c, domestic)
-      if (!ck || csFilterCacheRef.current.has(ck)) continue // already cached
+    setTimeout(() => {
+      if (!effectiveClientId || !currentDateRange) return
+      const startDate = currentDateRange.from.toISOString().split('T')[0]
+      const endDate = currentDateRange.to.toISOString().split('T')[0]
+      const params = new URLSearchParams({
+        clientId: effectiveClientId,
+        startDate,
+        endDate,
+        datePreset: dateRange,
+        country: selectedCountry,
+        timezone: settings.timezone,
+        tab: 'cost-speed',
+      })
+      if (oppDomestic && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
+      if (activeOrderTypes) params.set('orderTypes', activeOrderTypes.join(','))
 
-      setTimeout(() => {
-        if (!effectiveClientId || !currentDateRange) return
-        const startDate = currentDateRange.from.toISOString().split('T')[0]
-        const endDate = currentDateRange.to.toISOString().split('T')[0]
-        const params = new URLSearchParams({
-          clientId: effectiveClientId,
-          startDate,
-          endDate,
-          datePreset: dateRange,
-          country: selectedCountry,
-          timezone: settings.timezone,
-          tab: 'cost-speed',
+      fetch(`/api/data/analytics/tab-data?${params}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && ck) csFilterCacheRef.current.set(ck, data)
         })
-        if (domestic && selectedCountry !== 'ALL') params.set('domesticOnly', 'true')
-        if (d2c) params.set('d2cOnly', 'true')
-
-        fetch(`/api/data/analytics/tab-data?${params}`)
-          .then(res => res.ok ? res.json() : null)
-          .then(data => {
-            if (data && ck) csFilterCacheRef.current.set(ck, data)
-          })
-          .catch(() => {})
-      }, delay)
-      delay += 1500
-    }
-  }, [analyticsData, effectiveClientId, buildCsFilterCacheKey, currentDateRange, dateRange, selectedCountry, settings.timezone])
+        .catch(() => {})
+    }, 2000)
+  }, [analyticsData, effectiveClientId, buildCsFilterCacheKey, currentDateRange, dateRange, selectedCountry, settings.timezone, activeOrderTypes, filterDomesticOnly])
 
   // ── ALL DATA IS NOW PRE-AGGREGATED SERVER-SIDE ──
   // No client-side aggregation needed. Data comes from /api/data/analytics/tab-data
@@ -1037,17 +1163,29 @@ export default function AnalyticsContent() {
   const fcFulfillmentMetrics: FCFulfillmentMetrics[] = analyticsData?.fcFulfillmentMetrics || []
 
   // === Financials tab hooks ===
-  // Financials always uses 'ALL' via lockedCountry — invoices can't be split by country.
-  // pageCountry = selectedCountry (truthful about what page data contains) so the hook
-  // knows when to use page data vs fetch independently with country='ALL'.
-  const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
-  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, 'ALL', undefined, 'financials')
+  // Financials now supports origin-country filtering (US/CA/ALL).
+  // No lockedCountry — charts follow the page-level country selector and can be independently changed.
+  const shipOptionExtraParams = React.useMemo(() => {
+    const params: Record<string, string> = {}
+    if (selectedServiceGroups.length < ALL_SERVICE_GROUPS.length) {
+      params.shipOptionGroups = selectedServiceGroups.join(',')
+    }
+    if (filterDomesticOnly && selectedCountry !== 'ALL') {
+      params.domesticOnly = 'true'
+    }
+    if (activeOrderTypes) {
+      params.orderTypes = activeOrderTypes.join(',')
+    }
+    return Object.keys(params).length > 0 ? params : undefined
+  }, [selectedServiceGroups, filterDomesticOnly, selectedCountry, activeOrderTypes])
+  const financialsSection = useChartSectionRange(analyticsData, dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, shipOptionExtraParams, 'financials')
+  const billingTrendChart = useChartDateRange(billingTrendData, 'billingTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const costDistChart = useChartDateRange(billingCategoryBreakdown, 'billingCategoryBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const feeBreakdownChart = useChartDateRange(analyticsData?.billingTrendWeekly || billingTrendData, 'billingTrendWeekly', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const pickPackChart = useChartDateRange(pickPackDistribution, 'pickPackDistribution', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const costPerOrderChart = useChartDateRange(costPerOrderTrend, 'costPerOrderTrend', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const shippingByZoneChart = useChartDateRange(analyticsData?.shippingCostByZone || [], 'shippingCostByZone', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
+  const additionalSvcChart = useChartDateRange(additionalServicesBreakdown, 'additionalServicesBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'financials')
   const skuCostChart = useChartDateRange(analyticsData?.skuCostBreakdown || [], 'skuCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
   const weightCostChart = useChartDateRange(analyticsData?.weightCostBreakdown || [], 'weightCostBreakdown', dateRange, effectiveClientId, selectedCountry, settings.timezone, chartDataCache, undefined, undefined, 'cost-speed')
 
@@ -1063,7 +1201,10 @@ export default function AnalyticsContent() {
       setSkuTrendRaw([])
       return
     }
-    const range = getDateRangeFromPreset(skuTrendPreset)
+    if (skuTrendPreset === 'custom' && (!skuTrendCustomRange.from || !skuTrendCustomRange.to)) return
+    const range = skuTrendPreset === 'custom' && skuTrendCustomRange.from && skuTrendCustomRange.to
+      ? { from: skuTrendCustomRange.from, to: skuTrendCustomRange.to }
+      : getDateRangeFromPreset(skuTrendPreset)
     const startDate = range.from.toISOString().split('T')[0]
     const endDate = range.to.toISOString().split('T')[0]
     let cancelled = false
@@ -1112,7 +1253,7 @@ export default function AnalyticsContent() {
       .catch(() => { if (!cancelled) { setSkuTrendData([]); setSkuTrendQtys([]); setSkuTrendRaw([]) } })
       .finally(() => { if (!cancelled) setSkuTrendLoading(false) })
     return () => { cancelled = true }
-  }, [selectedTrendSku, effectiveClientId, skuTrendPreset, skuTrendCountry])
+  }, [selectedTrendSku, effectiveClientId, skuTrendPreset, skuTrendCountry, skuTrendCustomRange])
 
   // Derive chart data from raw + selected qty
   React.useEffect(() => {
@@ -1377,10 +1518,10 @@ export default function AnalyticsContent() {
   const finBillingSummary: BillingSummary = finData?.billingSummary || billingSummary
   const finBillingEfficiency: BillingEfficiencyMetrics = finData?.billingEfficiency || billingEfficiencyMetrics
   const finBillingCategoryBreakdown: BillingCategoryBreakdown[] = finData?.billingCategoryBreakdown || billingCategoryBreakdown
-  // Adjusted KPIs based on Period Summary toggles (Credits / D2C Only)
+  // Adjusted KPIs based on Period Summary toggles (Credits only — order type filtering is now server-side)
   const adjustedBillingSummary = React.useMemo(() => {
     let totalCost = finBillingSummary.totalCost
-    let orderCount = finBillingSummary.orderCount
+    const orderCount = finBillingSummary.orderCount
 
     // Credits are already subtracted from totalCost by the API.
     // When Include Credits is unchecked, add credits back to show gross cost.
@@ -1389,17 +1530,9 @@ export default function AnalyticsContent() {
       totalCost += creditAmount
     }
 
-    // D2C Only: subtract B2B category costs when B2B + FBA are unchecked
-    if (filterD2cOnly) {
-      const b2bCategory = finBillingCategoryBreakdown.find(c => c.category === 'B2B')
-      if (b2bCategory) {
-        totalCost -= b2bCategory.amount
-      }
-    }
-
     const costPerOrder = orderCount > 0 ? totalCost / orderCount : 0
     return { totalCost, orderCount, costPerOrder, periodChange: finBillingSummary.periodChange }
-  }, [finBillingSummary, finBillingEfficiency, finBillingCategoryBreakdown, filterIncludeCredits, filterD2cOnly])
+  }, [finBillingSummary, finBillingEfficiency, filterIncludeCredits])
 
   const adjustedBillingEfficiency = React.useMemo(() => {
     const totalCost = adjustedBillingSummary.totalCost
@@ -1417,14 +1550,14 @@ export default function AnalyticsContent() {
     }
   }, [adjustedBillingSummary, finBillingEfficiency, finBillingSummary])
 
-  // Filtered billing trend data — respects D2C-only and Include Credits toggles
+  // Filtered billing trend data — respects Include Credits toggle
+  // Order type filtering is handled server-side via p_order_types parameter
   const filteredBillingTrend = React.useMemo(() => {
     return finBillingTrend.map(d => ({
       ...d,
-      b2b: filterD2cOnly ? 0 : d.b2b,
       credit: filterIncludeCredits ? d.credit : 0,
     }))
-  }, [finBillingTrend, filterD2cOnly, filterIncludeCredits])
+  }, [finBillingTrend, filterIncludeCredits])
 
   // Compute Y-axis domain for cost breakdown chart — zoom in so non-shipping fees are visible
   const billingChartYDomain = React.useMemo(() => {
@@ -1611,7 +1744,7 @@ export default function AnalyticsContent() {
               <TabsContent value="financials" className="mt-0">
                 <div className="-mx-4 lg:-mx-6 -mt-5 -mb-6 h-[calc(100vh-64px)] overflow-y-auto bg-zinc-50 dark:bg-zinc-900">
                   {/* Featured Row: Chart (2 cols) + Summary Sidebar (1 col) */}
-                  <div className="grid lg:grid-cols-3">
+                  <div className={`grid lg:grid-cols-3 transition-opacity duration-300 ${financialsSection.isFetching ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
                     {/* Chart — 2 columns */}
                     <div className="lg:col-span-2 bg-muted dark:bg-zinc-900 relative flex flex-col after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[15%] after:bg-gradient-to-b after:from-transparent after:to-zinc-50 dark:after:to-zinc-900 after:pointer-events-none after:z-[1]">
                       {/* Header bar — inside chart column */}
@@ -1621,14 +1754,22 @@ export default function AnalyticsContent() {
                           <div className="text-xs text-muted-foreground mt-0.5">All fee categories over time</div>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
+                          {financialsSection.isFetching && <JetpackLoader size="sm" />}
+                          <MultiSelectFilter
+                            options={SERVICE_GROUP_OPTIONS}
+                            selected={selectedServiceGroups}
+                            onSelectionChange={setSelectedServiceGroups}
+                            placeholder="Services"
+                            showCount={false}
+                          />
                           <MultiSelectFilter
                             options={FINANCIALS_FILTER_OPTIONS}
                             selected={analyticsFilters}
                             onSelectionChange={setAnalyticsFilters}
-                            placeholder="Filters"
+                            placeholder="Include"
                             showCount={false}
                           />
-                          <ChartSelectors chart={financialsSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                          <ChartSelectors chart={financialsSection} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideLoader />
                         </div>
                       </div>
                       {/* Chart */}
@@ -1803,7 +1944,7 @@ export default function AnalyticsContent() {
                           <CardTitle className="text-sm font-medium"><div>Cost Distribution</div></CardTitle>
                           <CardDescription className="text-xs">Breakdown by category</CardDescription>
                         </div>
-                        <ChartSelectors chart={costDistChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                        <ChartSelectors chart={costDistChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                       </div>
                     </CardHeader>
                     <CardContent className="pt-4">
@@ -1877,7 +2018,7 @@ export default function AnalyticsContent() {
                         <div className="text-sm font-semibold">Pick &amp; Pack Distribution</div>
                         <div className="text-xs text-muted-foreground mt-0.5">Orders by item count</div>
                       </div>
-                      <ChartSelectors chart={pickPackChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                      <ChartSelectors chart={pickPackChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
                     <CardContent className="flex-1 flex flex-col">
                       <ChartContainer
@@ -1922,7 +2063,7 @@ export default function AnalyticsContent() {
                         <div className="text-sm font-semibold">Cost per Order Trend</div>
                         <div className="text-xs text-muted-foreground mt-0.5">All fees per order over time</div>
                       </div>
-                      <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                      <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
                     <CardContent className="flex-1 flex flex-col">
                       <ChartContainer
@@ -2067,7 +2208,7 @@ export default function AnalyticsContent() {
                         <CardDescription className="text-xs">Detailed breakdown by category</CardDescription>
                       </div>
                       <div className="flex items-center gap-2">
-                        <ChartSelectors chart={feeBreakdownChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} hideCountry />
+                        <ChartSelectors chart={feeBreakdownChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                         <Button variant="outline" size="sm" className="h-[28px] text-xs">
                           <DownloadIcon className="w-4 h-4 mr-1" />
                           Export
@@ -2829,9 +2970,14 @@ export default function AnalyticsContent() {
                                   data: skuTrendData,
                                   preset: skuTrendPreset,
                                   country: skuTrendCountry,
+                                  customRange: skuTrendCustomRange,
                                   isFetching: skuTrendLoading,
-                                  setPreset: (v: string) => setSkuTrendPreset(v as DateRangePreset),
+                                  setPreset: (v: string) => {
+                                    setSkuTrendPreset(v as DateRangePreset)
+                                    if (v !== 'custom') setSkuTrendCustomRange({ from: undefined, to: undefined })
+                                  },
                                   setCountry: (v: string) => setSkuTrendCountry(v),
+                                  setCustomRange: setSkuTrendCustomRange,
                                 }}
                                 availableCountries={analyticsData?.availableCountries || []}
                                 dateRangeDisplayLabel={dateRangeDisplayLabel}

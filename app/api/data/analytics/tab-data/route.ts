@@ -108,7 +108,30 @@ export async function GET(request: NextRequest) {
   const timezone = searchParams.get('timezone') || 'America/New_York'
   const tab = searchParams.get('tab') || 'all'
   const domesticOnly = searchParams.get('domesticOnly') === 'true'
-  const d2cOnly = searchParams.get('d2cOnly') === 'true'
+  // Order type filter (comma-separated: DTC,B2B,FBA)
+  // null (param absent) = no filter; '' (param present, empty) = match nothing; 'DTC,B2B' = those only
+  const orderTypesRaw = searchParams.get('orderTypes') // null if absent, '' if empty
+  const ALL_ORDER_TYPES = ['DTC', 'B2B', 'FBA']
+  let orderTypes: string[] | null = null
+  if (orderTypesRaw !== null) {
+    if (orderTypesRaw === '') {
+      orderTypes = [] // all unchecked = match nothing
+    } else {
+      const parsed = orderTypesRaw.split(',').filter(t => ALL_ORDER_TYPES.includes(t))
+      orderTypes = parsed.length < ALL_ORDER_TYPES.length ? parsed : null
+    }
+  }
+  // Service group filter (comma-separated: ground,2day,overnight,other)
+  // NULL or all 4 selected = no filter
+  const shipOptionGroupsRaw = searchParams.get('shipOptionGroups') || null
+  const ALL_SERVICE_GROUPS = ['ground', '2day', 'overnight', 'other']
+  const serviceGroups = shipOptionGroupsRaw
+    ? shipOptionGroupsRaw.split(',').filter(g => ALL_SERVICE_GROUPS.includes(g))
+    : null
+  // If all groups selected, no filter needed
+  const serviceGroupsParam = serviceGroups && serviceGroups.length < ALL_SERVICE_GROUPS.length
+    ? serviceGroups
+    : null
 
   // Tab-based lazy loading: skip expensive raw-table queries unless the active tab needs them
   const needsTransit = tab === 'all' || tab === 'carriers-zones' || tab === 'cost-speed'
@@ -123,11 +146,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 })
   }
 
-  // Never include today — charges won't be fully synced/marked up until overnight crons run
-  const todayStr = new Date().toISOString().substring(0, 10)
-  const yesterdayDate = new Date()
-  yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1)
-  const yesterdayStr = yesterdayDate.toISOString().substring(0, 10)
+  // Never include today — charges won't be fully synced until overnight crons run.
+  // Use the user's timezone so "today" matches their local date, not UTC.
+  const nowInTz = new Date(new Date().toLocaleString('en-US', { timeZone: timezone }))
+  const todayStr = `${nowInTz.getFullYear()}-${String(nowInTz.getMonth() + 1).padStart(2, '0')}-${String(nowInTz.getDate()).padStart(2, '0')}`
+  const yesterdayInTz = new Date(nowInTz)
+  yesterdayInTz.setDate(yesterdayInTz.getDate() - 1)
+  const yesterdayStr = `${yesterdayInTz.getFullYear()}-${String(yesterdayInTz.getMonth() + 1).padStart(2, '0')}-${String(yesterdayInTz.getDate()).padStart(2, '0')}`
   let endDate = rawEndDate >= todayStr ? yesterdayStr : rawEndDate
 
   // Guard: if clamping to yesterday pushes endDate before startDate (e.g. MTD on 1st of month,
@@ -148,18 +173,18 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Check cache ────────────────────────────────────────────────────────
-  const cacheKey = `v36:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${d2cOnly}`
+  const cacheKey = `v43:${clientId}:${startDate}:${endDate}:${datePreset}:${country}:${timezone}:${tab}:${domesticOnly}:${orderTypes?.join(',') || ''}:${serviceGroupsParam?.join(',') || ''}`
   const cached = responseCache.get(cacheKey)
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return NextResponse.json(cached.json)
   }
 
   const supabase = createAdminClient()
-  const granularity = getGranularityForRange(datePreset)
-
-  // Previous period dates — mirror the actual date range length
   const rangeMs = new Date(endDate + 'T00:00:00Z').getTime() - new Date(startDate + 'T00:00:00Z').getTime()
   const days = Math.max(1, Math.round(rangeMs / (1000 * 60 * 60 * 24)) + 1)
+  const granularity = getGranularityForRange(datePreset, days)
+
+  // Previous period dates — mirror the actual date range length
   const prevTo = new Date(startDate + 'T00:00:00Z')
   prevTo.setUTCDate(prevTo.getUTCDate() - 1)
   const prevFrom = new Date(prevTo)
@@ -201,6 +226,8 @@ export async function GET(request: NextRequest) {
       otdByStateDelayedResult,
       carrierZoneResult,
       shipOptionMappingResult,
+      billingPeriodResult,
+      billingPeriodPrevResult,
     ] = await Promise.all([
       // Core: Single RPC — all GROUP BY queries from pre-aggregated summaries (~100ms)
       timed('summaries', supabase.rpc('get_analytics_from_summaries', {
@@ -212,7 +239,8 @@ export async function GET(request: NextRequest) {
         p_country: country,
         p_trend_start: trendStartDate,
         p_domestic_only: domesticOnly,
-        p_d2c_only: d2cOnly,
+        p_order_types: orderTypes,
+        p_service_groups: serviceGroupsParam,
       })),
 
       // Transit distribution — raw shipments scan (~545ms), only for carriers/cost-speed tabs
@@ -256,10 +284,9 @@ export async function GET(request: NextRequest) {
         ? timed('revenue', supabase.rpc('get_total_revenue', { p_client_id: clientId, p_start: startDate, p_end: endDate, p_country: 'ALL' }))
         : { data: null, error: null },
 
-      // Invoice category breakdown for Financials
-      (needsFinancials && !isAllClients)
-        ? timed('invoices', supabase.rpc('get_invoice_billing_breakdown', { p_client_id: clientId, p_start: startDate, p_end: endDate }))
-        : { data: null, error: null },
+      // Invoice breakdown no longer used — chart uses pre-aggregated summaries for consistency
+      // across country views. Period Summary KPIs provide authoritative billed totals.
+      { data: null, error: null },
 
       // SKU cost breakdown (top 20 by volume) — used by Cost+Speed and Financials
       (needsSkuWeight && !isAllClients)
@@ -299,7 +326,7 @@ export async function GET(request: NextRequest) {
                 .gt('shipment_count', 0)
                 .order('id', { ascending: true })
                 .limit(1000)
-              if (country !== 'ALL') q = q.eq('country', country)
+              if (country !== 'ALL') q = q.eq('origin_country', country)
               if (lastId) q = q.gt('id', lastId)
               const { data, error } = await q
               if (error) return { data: null, error }
@@ -312,10 +339,10 @@ export async function GET(request: NextRequest) {
           })())
         : { data: null, error: null },
 
-      // Distinct ship_option_name → ship_option_id mapping from shipments (for SLA tier classification)
+      // Distinct ship_option_name → ship_option_id mapping from shipments (for SLA tier classification + financials filter)
       // Note: fetches up to 1000 rows then deduplicates via Map. Safe because no client has
       // anywhere near 1000 distinct ship option names (typical: 3-10).
-      (needsCarrierZone && !isAllClients)
+      ((needsCarrierZone || needsFinancials) && !isAllClients)
         ? timed('shipOptionMap', supabase
             .from('shipments')
             .select('ship_option_name, ship_option_id')
@@ -323,9 +350,34 @@ export async function GET(request: NextRequest) {
             .gte('event_labeled', startDate)
             .lte('event_labeled', endDate + 'T23:59:59.999Z')
             .not('ship_option_name', 'is', null)
-            .not('ship_option_id', 'is', null)
             .order('ship_option_name')
             .limit(1000))
+        : { data: null, error: null },
+
+      // Actual billing totals from transactions (replaces approximated summary data for Period Summary)
+      (!isAllClients)
+        ? timed('billingPeriod', supabase.rpc('get_billing_period_summary', {
+            p_client_id: clientId,
+            p_start: startDate,
+            p_end: endDate,
+            p_country: country,
+            p_service_groups: serviceGroupsParam,
+            p_domestic_only: domesticOnly,
+            p_order_types: orderTypes,
+          }))
+        : { data: null, error: null },
+
+      // Previous period billing (for period-over-period change calculations)
+      (!isAllClients)
+        ? timed('billingPeriodPrev', supabase.rpc('get_billing_period_summary', {
+            p_client_id: clientId,
+            p_start: prevStartDate,
+            p_end: prevEndDate,
+            p_country: country,
+            p_service_groups: serviceGroupsParam,
+            p_domestic_only: domesticOnly,
+            p_order_types: orderTypes,
+          }))
         : { data: null, error: null },
     ]) as any[]
     console.log(`[analytics] All queries done in ${Date.now() - t0}ms (tab=${tab})`)
@@ -358,51 +410,6 @@ export async function GET(request: NextRequest) {
       if (feeType === 'Shipbob Freight Fee - Accessorial' || feeType.toLowerCase().includes('freight')) return 'surcharges'
       if (feeType === 'Payment') return 'credit'
       return 'other'
-    }
-
-    // Build invoice data map: period_start → full category breakdown from invoice line items
-    // For invoiced weeks, this replaces pre-aggregated summaries (which drift after invoicing)
-    type InvoicePeriod = BillingPeriod & { invoiceTotal: number }
-    const invoiceDataMap = new Map<string, InvoicePeriod>()
-    for (const row of (invoicesResult.data || []) as any[]) {
-      const key = (row.period_start || '').substring(0, 10)
-      if (!key) continue
-      if (!invoiceDataMap.has(key)) {
-        invoiceDataMap.set(key, { ...emptyPeriod(), invoiceTotal: Number(row.invoice_total) })
-      }
-      const p = invoiceDataMap.get(key)!
-      const amount = Number(row.category_total) || 0
-      const tax = Number(row.tax_total) || 0
-      const surcharge = Number(row.surcharge_total) || 0
-      const lc = row.line_category as string
-      const ft = row.fee_type as string || ''
-      // Route tax from all line items into dutyTax
-      p.dutyTax += tax
-      if (lc === 'Shipping') {
-        p.shipping += amount - surcharge
-        p.surcharges += surcharge
-        p.shipments += Number(row.item_count) || 0
-      } else if (lc === 'Pick Fees') {
-        p.extraPicks += amount
-      } else if (lc === 'Storage') {
-        p.warehousing += amount
-      } else if (lc === 'B2B Fees') {
-        p.b2b += amount
-      } else if (lc === 'Returns') {
-        p.returns += amount
-      } else if (lc === 'Receiving') {
-        p.receiving += amount
-      } else if (lc === 'Credits') {
-        p.credit += amount
-      } else if (lc === 'Additional Services') {
-        const cat = feeTypeToCategory(ft)
-        if (cat === 'multiHubIQ') p.multiHubIQ += amount
-        else if (cat === 'vasKitting') p.vasKitting += amount
-        else if (cat === 'dutyTax') p.dutyTax += amount
-        else p.other += amount
-      } else {
-        p.other += amount
-      }
     }
 
     if (summaryResult.error) throw new Error(summaryResult.error.message)
@@ -696,8 +703,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Non-shipping fees from analytics_billing_summaries (by_date_fee_type)
+    // Skip 'Shipping' — already accounted for from daily_summaries total_base_charge + total_surcharge above
     const byDateFeeType: { summary_date: string; fee_type: string; total_amount: number }[] = s.by_date_fee_type as any[] || []
     for (const r of byDateFeeType) {
+      if (r.fee_type === 'Shipping') continue
       if (r.summary_date < weekExtendedStart) continue
       const key = getTimeKey(r.summary_date, granularity)
       if (!periodMap.has(key)) periodMap.set(key, emptyPeriod())
@@ -716,44 +725,23 @@ export async function GET(request: NextRequest) {
       return sunday.toISOString().substring(0, 10) <= todayStr
     }
 
-    // Merge invoice-backed periods into periodMap (replaces summary data for invoiced weeks/months)
-    // Skip for daily granularity — invoice totals can't be meaningfully assigned to a single day;
-    // the pre-aggregated daily summaries already have data spread across actual transaction dates.
-    const invoiceByGranularity = new Map<string, InvoicePeriod>()
-    if (granularity !== 'daily') {
-      for (const [key, inv] of invoiceDataMap) {
-        const gKey = getTimeKey(key, granularity)
-        if (!invoiceByGranularity.has(gKey)) {
-          invoiceByGranularity.set(gKey, { ...emptyPeriod(), invoiceTotal: 0 })
-        }
-        const merged = invoiceByGranularity.get(gKey)!
-        merged.shipping += inv.shipping
-        merged.surcharges += inv.surcharges
-        merged.extraPicks += inv.extraPicks
-        merged.warehousing += inv.warehousing
-        merged.multiHubIQ += inv.multiHubIQ
-        merged.b2b += inv.b2b
-        merged.vasKitting += inv.vasKitting
-        merged.receiving += inv.receiving
-        merged.returns += inv.returns
-        merged.dutyTax += inv.dutyTax
-        merged.other += inv.other
-        merged.credit += inv.credit
-        merged.shipments += inv.shipments
-        merged.invoiceTotal += inv.invoiceTotal
-      }
-      for (const [gKey, inv] of invoiceByGranularity) {
-        periodMap.set(gKey, inv)
-      }
-    }
+    // Invoice overlay removed — the chart always uses pre-aggregated summary data so that
+    // US + CA = ALL consistently. The Period Summary KPIs (from get_billing_period_summary)
+    // provide the authoritative billed totals. Invoices can't be split by country and use
+    // billed amounts vs summaries' raw charges, causing mismatches when switching views.
+
+    // Filter out incomplete trailing month (current month with partial data)
+    const currentMonthKey = todayStr.substring(0, 7) // e.g. "2026-04"
 
     const billingTrend = Array.from(periodMap.entries())
-      .filter(([period]) => granularity !== 'weekly' || isCompleteWeek(period))
+      .filter(([period]) => {
+        if (granularity === 'weekly') return isCompleteWeek(period)
+        if (granularity === 'monthly') return period < currentMonthKey
+        return true // daily: already clamped to yesterday by endDate
+      })
       .map(([period, p]) => {
-        const inv = invoiceByGranularity.get(period)
-        // For invoiced periods: use invoice total (includes tax); otherwise sum categories
         const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-        const total = inv ? inv.invoiceTotal : categorySum
+        const total = categorySum
         return {
           month: period,
           monthLabel: formatMonthLabel(period, granularity),
@@ -798,6 +786,7 @@ export async function GET(request: NextRequest) {
         p.shipments += r.shipment_count
       }
       for (const r of byDateFeeType) {
+        if (r.fee_type === 'Shipping') continue
         if (r.summary_date < weeklyExtStart) continue
         const key = getTimeKey(r.summary_date, 'weekly')
         if (!weeklyMap.has(key)) weeklyMap.set(key, emptyPeriod())
@@ -805,32 +794,10 @@ export async function GET(request: NextRequest) {
         const cat = feeTypeToCategory(r.fee_type)
         if (cat in p) { ;(p as any)[cat] += Number(r.total_amount) / 100 }
       }
-      // Merge invoice data (re-keyed to weekly) — only when not country-filtered
-      // (invoices contain all countries' data; can't split by country)
-      const invoiceByWeek = new Map<string, InvoicePeriod>()
-      if (country === 'ALL') {
-        for (const [key, inv] of invoiceDataMap) {
-          const wKey = getTimeKey(key, 'weekly')
-          if (!invoiceByWeek.has(wKey)) {
-            invoiceByWeek.set(wKey, { ...emptyPeriod(), invoiceTotal: 0 })
-          }
-          const m = invoiceByWeek.get(wKey)!
-          m.shipping += inv.shipping; m.surcharges += inv.surcharges; m.extraPicks += inv.extraPicks
-          m.warehousing += inv.warehousing; m.multiHubIQ += inv.multiHubIQ; m.b2b += inv.b2b
-          m.vasKitting += inv.vasKitting; m.receiving += inv.receiving; m.returns += inv.returns
-          m.dutyTax += inv.dutyTax; m.other += inv.other; m.credit += inv.credit
-          m.shipments += inv.shipments; m.invoiceTotal += inv.invoiceTotal
-        }
-        for (const [wKey, inv] of invoiceByWeek) {
-          weeklyMap.set(wKey, inv)
-        }
-      }
       billingTrendWeekly = Array.from(weeklyMap.entries())
         .filter(([period]) => isCompleteWeek(period))
         .map(([period, p]) => {
-          const inv = invoiceByWeek.get(period)
           const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-          const total = inv ? inv.invoiceTotal : categorySum
           return {
             month: period,
             monthLabel: formatMonthLabel(period, 'weekly'),
@@ -838,8 +805,8 @@ export async function GET(request: NextRequest) {
             warehousing: p.warehousing, multiHubIQ: p.multiHubIQ, b2b: p.b2b,
             vasKitting: p.vasKitting, receiving: p.receiving, returns: p.returns,
             dutyTax: p.dutyTax, other: p.other, credit: p.credit,
-            total, orderCount: p.shipments,
-            costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
+            total: categorySum, orderCount: p.shipments,
+            costPerOrder: p.shipments > 0 ? categorySum / p.shipments : 0,
           }
         })
         .sort((a, b) => a.month.localeCompare(b.month))
@@ -848,13 +815,11 @@ export async function GET(request: NextRequest) {
     const costPerOrderTrend = Array.from(periodMap.entries())
       .filter(([period]) => granularity !== 'weekly' || isCompleteWeek(period))
       .map(([period, p]) => {
-        const inv = invoiceByGranularity.get(period)
         const categorySum = p.shipping + p.surcharges + p.extraPicks + p.warehousing + p.multiHubIQ + p.b2b + p.vasKitting + p.receiving + p.returns + p.dutyTax + p.other + p.credit
-        const total = inv ? inv.invoiceTotal : categorySum
         return {
           month: period,
           monthLabel: formatMonthLabel(period, granularity),
-          costPerOrder: p.shipments > 0 ? total / p.shipments : 0,
+          costPerOrder: p.shipments > 0 ? categorySum / p.shipments : 0,
           orderCount: p.shipments,
         }
       })
@@ -929,12 +894,20 @@ export async function GET(request: NextRequest) {
     // "UspsPriority", "FedexGround"). We bucket these into 3 SLA tiers based on service level.
     // We also query shipments for ship_option_id to help classify unknown names.
     const shipOptionIdMap = new Map<string, number>()
+    const shipOptionNameCounts = new Map<string, number>()
     const shipOptionMappingRows: any[] = shipOptionMappingResult?.data || []
     for (const r of shipOptionMappingRows) {
-      if (r.ship_option_name && r.ship_option_id != null) {
-        shipOptionIdMap.set(r.ship_option_name, r.ship_option_id)
+      if (r.ship_option_name) {
+        shipOptionNameCounts.set(r.ship_option_name, (shipOptionNameCounts.get(r.ship_option_name) || 0) + 1)
+        if (r.ship_option_id != null) {
+          shipOptionIdMap.set(r.ship_option_name, r.ship_option_id)
+        }
       }
     }
+    // Distinct ship option names sorted by usage (for financials ship option filter)
+    const availableShipOptionNames = Array.from(shipOptionNameCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name)
 
     const getShipOptionTier = (shipOption: string | null): string => {
       if (!shipOption) return 'Standard / Economy'
@@ -1094,29 +1067,78 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // ── Billing Summary (real data from summaries) ─────────────────────────
-    const currentShippingDollars = cur.total_charge / 100
-    const prevShippingDollars = prev.total_charge / 100
-    // Add non-shipping fees from billing summaries
-    const billingFees: { fee_type: string; transaction_count: number; total_amount: number }[] = s.billing as any[] || []
-    const totalNonShippingFees = billingFees.reduce((sum, f) => sum + Number(f.total_amount) / 100, 0)
-    const currentCostDollars = currentShippingDollars + totalNonShippingFees
-    const prevCostDollars = prevShippingDollars // prev period non-shipping fees not available in single RPC call
-    const currentCPO = cur.shipment_count > 0 ? currentCostDollars / cur.shipment_count : 0
-    const prevCPO = prev.shipment_count > 0 ? prevCostDollars / prev.shipment_count : 0
+    // ── Billing Summary (actual transaction charges when available) ─────────
+    // Uses billed_amount from markup estimator (runs nightly, covers through yesterday)
+    // Falls back to approximated analytics summaries for All Brands view
+    type ActualFeeEntry = { fee_type: string; transaction_count: number; total_billed: number; total_surcharge: number }
+    const bp = billingPeriodResult?.data as { by_fee_type: ActualFeeEntry[]; shipment_count: number } | null
+    const bpPrev = billingPeriodPrevResult?.data as { by_fee_type: ActualFeeEntry[]; shipment_count: number } | null
+    if (billingPeriodResult?.error) console.error('[analytics] billingPeriod RPC error:', billingPeriodResult.error.message)
+
+    // Billing summaries from pre-aggregated tables (used as fallback for All Brands)
+    const summaryBillingFees: { fee_type: string; transaction_count: number; total_amount: number }[] = s.billing as any[] || []
+
+    let currentCostDollars: number
+    let prevCostDollars: number
+    let billingOrderCount: number
+    let billingPrevOrderCount: number
+    let currentCPO: number
+    let prevCPO: number
+    let billingFeeData: ActualFeeEntry[] // normalized fee-type breakdown for category/additional breakdowns
+    let billingSurchargeTotal: number
+
+    if (bp) {
+      // ── Actual transaction data (billed_amount from markup estimator) ──
+      const feeTypes = (bp.by_fee_type || []) as ActualFeeEntry[]
+      const shippingEntry = feeTypes.find(f => f.fee_type === 'Shipping')
+      currentCostDollars = feeTypes.reduce((sum, f) => sum + Number(f.total_billed), 0)
+      billingOrderCount = bp.shipment_count || 0
+      currentCPO = billingOrderCount > 0 ? currentCostDollars / billingOrderCount : 0
+      billingFeeData = feeTypes
+      billingSurchargeTotal = shippingEntry ? Number(shippingEntry.total_surcharge) : 0
+    } else {
+      // ── Fallback: approximated summaries (All Brands view) ──
+      const currentShippingDollars = cur.total_charge / 100
+      const totalNonShippingFees = summaryBillingFees.reduce((sum, f) => sum + Number(f.total_amount) / 100, 0)
+      currentCostDollars = currentShippingDollars + totalNonShippingFees
+      billingOrderCount = cur.shipment_count
+      currentCPO = billingOrderCount > 0 ? currentCostDollars / billingOrderCount : 0
+      // Convert summary billing fees to the same shape as actual fee data
+      billingFeeData = [
+        { fee_type: 'Shipping', transaction_count: cur.shipment_count, total_billed: cur.total_charge / 100, total_surcharge: cur.total_surcharge / 100 },
+        ...summaryBillingFees.map(f => ({
+          fee_type: f.fee_type,
+          transaction_count: f.transaction_count,
+          total_billed: Number(f.total_amount) / 100,
+          total_surcharge: 0,
+        })),
+      ]
+      billingSurchargeTotal = cur.total_surcharge / 100
+    }
+
+    if (bpPrev) {
+      const prevFeeTypes = (bpPrev.by_fee_type || []) as ActualFeeEntry[]
+      prevCostDollars = prevFeeTypes.reduce((sum, f) => sum + Number(f.total_billed), 0)
+      billingPrevOrderCount = bpPrev.shipment_count || 0
+      prevCPO = billingPrevOrderCount > 0 ? prevCostDollars / billingPrevOrderCount : 0
+    } else {
+      prevCostDollars = prev.total_charge / 100
+      billingPrevOrderCount = prev.shipment_count
+      prevCPO = billingPrevOrderCount > 0 ? prevCostDollars / billingPrevOrderCount : 0
+    }
+
     const billingSummary = {
       totalCost: currentCostDollars,
-      orderCount: cur.shipment_count,
+      orderCount: billingOrderCount,
       costPerOrder: currentCPO,
       periodChange: {
         totalCost: pctChange(currentCostDollars, prevCostDollars),
-        orderCount: pctChange(cur.shipment_count, prev.shipment_count),
+        orderCount: pctChange(billingOrderCount, billingPrevOrderCount),
         costPerOrder: pctChange(currentCPO, prevCPO),
       },
     }
 
-    // ── Billing Category Breakdown (real data from billing summaries) ─────
-    // Map real fee types to UI categories, then build breakdown
+    // ── Billing Category Breakdown (from actual fee data) ────────────────
     const categoryDisplayNames: Record<string, string> = {
       extraPicks: 'Extra Picks', warehousing: 'Warehousing', receiving: 'Receiving',
       b2b: 'B2B', multiHubIQ: 'MultiHub IQ', vasKitting: 'VAS/Kitting',
@@ -1124,23 +1146,26 @@ export async function GET(request: NextRequest) {
       surcharges: 'Surcharges',
     }
     const categoryTotals = new Map<string, { amount: number; quantity: number }>()
-    // Start with shipping (base charge) and surcharges
-    const currentBaseDollars = cur.total_base_charge / 100
-    const currentSurchargeDollars = cur.total_surcharge / 100
-    categoryTotals.set('Shipping', { amount: currentBaseDollars, quantity: cur.shipment_count })
-    categoryTotals.set('Surcharges', { amount: currentSurchargeDollars, quantity: cur.shipment_count })
-    // Add each billing fee type mapped to its category
-    for (const f of billingFees) {
-      const cat = feeTypeToCategory(f.fee_type)
-      const displayName = categoryDisplayNames[cat] || cat
-      const existing = categoryTotals.get(displayName)
-      const amount = Number(f.total_amount) / 100
-      const qty = f.transaction_count
-      if (existing) {
-        existing.amount += amount
-        existing.quantity += qty
+    for (const f of billingFeeData) {
+      if (f.fee_type === 'Shipping') {
+        // Split shipping billed_amount into base (marked up) and surcharges (pass-through)
+        const shippingBase = Number(f.total_billed) - Number(f.total_surcharge)
+        categoryTotals.set('Shipping', { amount: shippingBase, quantity: f.transaction_count })
+        if (Number(f.total_surcharge) > 0.01) {
+          categoryTotals.set('Surcharges', { amount: Number(f.total_surcharge), quantity: f.transaction_count })
+        }
       } else {
-        categoryTotals.set(displayName, { amount, quantity: qty })
+        const cat = feeTypeToCategory(f.fee_type)
+        const displayName = categoryDisplayNames[cat] || cat
+        const existing = categoryTotals.get(displayName)
+        const amount = Number(f.total_billed)
+        const qty = f.transaction_count
+        if (existing) {
+          existing.amount += amount
+          existing.quantity += qty
+        } else {
+          categoryTotals.set(displayName, { amount, quantity: qty })
+        }
       }
     }
     const grandTotal = Array.from(categoryTotals.values()).reduce((s, c) => s + c.amount, 0)
@@ -1199,8 +1224,8 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // ── Non-Shipping Cost Breakdown (from billing summaries — REAL data) ──
-    const nonShippingFees = (s.billing as any[]).filter((r: any) => r.fee_type !== 'Credit' && r.fee_type !== 'Payment')
+    // ── Non-Shipping Cost Breakdown (from actual fee data) ─────────────────
+    const nonShippingFeeData = billingFeeData.filter(f => f.fee_type !== 'Shipping' && f.fee_type !== 'Credit' && f.fee_type !== 'Payment')
     // Relabel fee types for user-friendly display (no grouping — show each individually)
     const feeTypeLabel = (ft: string): string => {
       switch (ft) {
@@ -1231,10 +1256,10 @@ export async function GET(request: NextRequest) {
       }
     }
     const groupedFees = new Map<string, { amount: number; count: number }>()
-    for (const r of nonShippingFees) {
-      const label = feeTypeLabel(r.fee_type as string)
+    for (const r of nonShippingFeeData) {
+      const label = feeTypeLabel(r.fee_type)
       const existing = groupedFees.get(label) || { amount: 0, count: 0 }
-      existing.amount += r.total_amount / 100
+      existing.amount += Number(r.total_billed)
       existing.count += r.transaction_count
       groupedFees.set(label, existing)
     }
@@ -1253,13 +1278,14 @@ export async function GET(request: NextRequest) {
     if (revenueResult.error) console.error('[analytics] Revenue RPC error:', revenueResult.error.message)
     const totalRevenue: number = revenueData?.total_revenue ?? 0
     const ordersWithPrice: number = revenueData?.orders_with_price ?? 0
+    const creditEntry = billingFeeData.find(f => f.fee_type === 'Credit')
     const billingEfficiency = {
       costPerItem: cur.total_items > 0 ? currentCostDollars / cur.total_items : 0,
       avgItemsPerOrder: cur.shipment_count > 0 ? cur.total_items / cur.shipment_count : 0,
       fulfillmentAsPercentOfRevenue: totalRevenue > 0 ? (currentCostDollars / totalRevenue) * 100 : 0,
       avgRevenuePerOrder: ordersWithPrice > 0 ? totalRevenue / ordersWithPrice : 0,
-      surchargePercentOfCost: currentCostDollars > 0 ? ((cur.total_surcharge / 100) / currentCostDollars) * 100 : 0,
-      totalCredits: Math.abs(billingFees.filter((f: any) => f.fee_type === 'Credit').reduce((sum: number, f: any) => sum + Number(f.total_amount) / 100, 0)),
+      surchargePercentOfCost: currentCostDollars > 0 ? (billingSurchargeTotal / currentCostDollars) * 100 : 0,
+      totalCredits: creditEntry ? Math.abs(Number(creditEntry.total_billed)) : 0,
     }
 
     // ── SLA Metrics ────────────────────────────────────────────────────────
@@ -1380,19 +1406,11 @@ export async function GET(request: NextRequest) {
       stateCostSpeed,
       zoneCost,
       carrierPerformance,
-      carrierZoneBreakdown,
-      availableShipOptions,
-      carrierPerformanceByShipOption,
-      carrierZoneByShipOption,
       billingSummary,
       billingCategoryBreakdown,
-      billingTrend,
-      billingTrendWeekly,
       pickPackDistribution,
-      costPerOrderTrend,
       shippingCostByZone,
       additionalServicesBreakdown,
-      billingEfficiency,
       fulfillmentTrend,
       fcFulfillmentMetrics,
       onTimeTrend,
@@ -1434,6 +1452,22 @@ export async function GET(request: NextRequest) {
     if (needsPerformance) {
       if (otdByStateCleanResult?.data) result.otdPercentilesByStateClean = otdByStateCleanResult.data
       if (otdByStateDelayedResult?.data) result.otdPercentilesByStateDelayed = otdByStateDelayedResult.data
+    }
+    if (needsFinancials) {
+      // Only include these when the financials-specific queries (revenue RPC, invoice breakdown)
+      // actually ran. Prevents prefetches for other tabs from overwriting invoice-backed data
+      // with summary-only approximations.
+      result.billingEfficiency = billingEfficiency
+      result.billingTrend = billingTrend
+      result.billingTrendWeekly = billingTrendWeekly
+      result.costPerOrderTrend = costPerOrderTrend
+    }
+    if (needsCarrierZone) {
+      result.carrierZoneBreakdown = carrierZoneBreakdown
+      result.carrierPerformanceByShipOption = carrierPerformanceByShipOption
+      result.carrierZoneByShipOption = carrierZoneByShipOption
+      result.availableShipOptions = availableShipOptions
+      result.availableShipOptionNames = availableShipOptionNames
     }
     if (needsSkuWeight) {
       result.skuCostBreakdown = (skuCostResult.data || []).map((r: any) => ({

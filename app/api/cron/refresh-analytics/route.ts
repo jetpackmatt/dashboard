@@ -80,30 +80,42 @@ export async function GET(request: NextRequest) {
         console.error(`[Cron RefreshAnalytics] Error on batch ${i + 1}:`, error.message)
         consecutiveErrors++
 
-        // Poison pill protection: skip the oldest unprocessed entry
-        // This prevents a single bad entry from blocking the queue forever
+        // Find the oldest unprocessed entry that likely caused the failure
         const { data: stuckEntries } = await supabase
           .from('analytics_refresh_queue')
-          .select('id, client_id, summary_date, reason')
+          .select('id, client_id, summary_date, reason, retry_count')
           .is('processed_at', null)
           .order('created_at', { ascending: true })
           .limit(1)
 
         if (stuckEntries && stuckEntries.length > 0) {
           const stuck = stuckEntries[0]
-          console.warn(`[Cron RefreshAnalytics] Skipping stuck entry: client=${stuck.client_id} date=${stuck.summary_date} reason=${stuck.reason}`)
+          const retries = (stuck.retry_count || 0) + 1
 
-          // Mark as processed so it doesn't block the queue, but with a reason
-          // so it can be investigated and re-queued manually if needed
-          await supabase
-            .from('analytics_refresh_queue')
-            .update({
-              processed_at: new Date().toISOString(),
-              reason: `SKIPPED: ${error.message.substring(0, 100)} (was: ${stuck.reason || 'trigger'})`,
-            })
-            .eq('id', stuck.id)
-
-          skippedEntries++
+          if (retries >= 5) {
+            // Permanently skip after 5 failures — this is a true poison pill
+            console.error(`[Cron RefreshAnalytics] Permanently skipping after ${retries} retries: client=${stuck.client_id} date=${stuck.summary_date}`)
+            await supabase
+              .from('analytics_refresh_queue')
+              .update({
+                processed_at: new Date().toISOString(),
+                reason: `SKIPPED(${retries}x): ${error.message.substring(0, 80)} (was: ${stuck.reason || 'trigger'})`,
+                retry_count: retries,
+              })
+              .eq('id', stuck.id)
+            skippedEntries++
+          } else {
+            // Transient error — bump retry count and move to back of queue
+            console.warn(`[Cron RefreshAnalytics] Retry ${retries}/5 for: client=${stuck.client_id} date=${stuck.summary_date}`)
+            await supabase
+              .from('analytics_refresh_queue')
+              .update({
+                retry_count: retries,
+                created_at: new Date().toISOString(), // Move to back of queue
+                reason: `retry(${retries}): ${stuck.reason || 'trigger'}`,
+              })
+              .eq('id', stuck.id)
+          }
         }
 
         // After 3 consecutive errors, give up for this run
@@ -112,7 +124,7 @@ export async function GET(request: NextRequest) {
           break
         }
 
-        continue // Try next batch (the stuck entry was skipped)
+        continue // Try next batch
       }
 
       consecutiveErrors = 0 // Reset on success

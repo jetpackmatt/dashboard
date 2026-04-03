@@ -190,22 +190,27 @@ export type DateRangePreset = '14d' | '30d' | '60d' | '90d' | '6mo' | '1yr' | 'm
 export type ChartGranularity = 'daily' | 'weekly' | 'monthly'
 
 // Helper to determine appropriate granularity based on date range
-export function getGranularityForRange(preset: DateRangePreset): ChartGranularity {
+export function getGranularityForRange(preset: DateRangePreset, days?: number): ChartGranularity {
   switch (preset) {
     case '14d':
     case '30d':
+    case 'mtd':
       return 'daily'
     case '60d':
     case '90d':
       return 'weekly'
-    case 'mtd':
-      return 'daily'
     case '6mo':
+      return 'weekly'
     case '1yr':
     case 'ytd':
     case 'all':
+      return 'monthly'
     case 'custom':
     default:
+      if (days !== undefined) {
+        if (days <= 35) return 'daily'
+        if (days <= 120) return 'weekly'
+      }
       return 'monthly'
   }
 }

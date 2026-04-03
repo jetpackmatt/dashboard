@@ -493,15 +493,18 @@ export async function syncClient(
     // FC names like "Twin Lakes (WI)", "Ontario 6 (CA)", "Feltham (UK)"
     const getOriginCountry = (fcName: string | null): string => {
       if (!fcName) return 'US'
-      const match = fcName.match(/\(([A-Z]{2})\)$/)
+      // Match 2-letter code in parens, with optional trailing number: "Twin Lakes (WI)" or "Brampton (Ontario) 2"
+      const match = fcName.match(/\(([A-Za-z]{2,})\)\s*\d*$/)
       if (!match) return 'US'
       const code = match[1]
-      // Canadian provinces
-      if (['ON', 'BC', 'AB', 'QC', 'MB', 'SK', 'NS', 'NB', 'PE', 'NL', 'YT', 'NT', 'NU'].includes(code)) return 'CA'
+      // Canadian provinces (codes and full names)
+      const CA_CODES = ['ON', 'BC', 'AB', 'QC', 'MB', 'SK', 'NS', 'NB', 'PE', 'NL', 'YT', 'NT', 'NU']
+      const CA_NAMES: Record<string, boolean> = { Ontario: true, Quebec: true, 'British Columbia': true, Alberta: true, Manitoba: true, Saskatchewan: true, 'Nova Scotia': true }
+      if (CA_CODES.includes(code.toUpperCase()) || CA_NAMES[code]) return 'CA'
       // UK
-      if (code === 'UK') return 'GB'
+      if (code.toUpperCase() === 'UK') return 'GB'
       // Australian states
-      if (['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT'].includes(code)) return 'AU'
+      if (['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT'].includes(code.toUpperCase())) return 'AU'
       // Default to US (most state codes like WI, PA, CA, TX are US)
       return 'US'
     }
@@ -512,19 +515,28 @@ export async function syncClient(
     })
     const methods = await methodsRes.json()
     const shipOptionLookup: Record<string, number> = {}
+    const normalizeShipOption = (s: string) => s.toLowerCase().replace(/[\s\-]+/g, '')
     for (const method of methods) {
       const name = method.service_level?.name?.trim()
       const id = method.service_level?.id
       if (name && id) {
         shipOptionLookup[name] = id
-        shipOptionLookup[name.toLowerCase().replace(/\s+/g, '')] = id
+        shipOptionLookup[normalizeShipOption(name)] = id
       }
     }
-    const manualMappings: Record<string, number> = { Ground: 3, '1 Day': 8, '2 Day': 9 }
+    // Manual mappings for ship option names that the /shipping-method API
+    // may not return for every client. These are ShipBob-defined ship options,
+    // NOT carrier services (UPS2day, FedexGround, etc. are carrier services).
+    const manualMappings: Record<string, number> = {
+      Ground: 3, '1 Day': 8, '2 Day': 9,
+      ShipBob2Day: 30, 'ShipBob 2-Day': 30, 'ShipBob 2 Day': 30,
+      Economy3Day: 49, 'Economy 3-Day': 49, '3 Day': 49,
+      'Walmart FBM': 160,
+    }
     const getShipOptionId = (shipOption: string | null): number | null => {
       if (!shipOption) return null
       if (shipOptionLookup[shipOption]) return shipOptionLookup[shipOption]
-      const normalized = shipOption.toLowerCase().replace(/\s+/g, '')
+      const normalized = normalizeShipOption(shipOption)
       if (shipOptionLookup[normalized]) return shipOptionLookup[normalized]
       return manualMappings[shipOption] || null
     }
