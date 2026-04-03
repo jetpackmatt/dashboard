@@ -160,9 +160,12 @@ export async function POST(request: NextRequest) {
       }
 
       // Update the care ticket: set status to Credit Approved, credit amount, and add event
-      // IMPORTANT: Use billed_amount (marked up) not cost (raw ShipBob) — clients must never see raw costs
-      if (tx.fee_type === 'Credit' && tx.cost) {
-        const creditAmount = Math.abs(parseFloat(tx.billed_amount) || parseFloat(tx.cost) || 0)
+      // CRITICAL: Only use billed_amount (marked up) — NEVER expose raw ShipBob cost to clients.
+      // If billed_amount is null (credit not yet classified), omit the dollar amount from the message.
+      // preview-markups will later set credit_amount and update the event with the correct amount.
+      if (tx.fee_type === 'Credit') {
+        const hasBilledAmount = tx.billed_amount != null
+        const creditAmount = hasBilledAmount ? Math.abs(parseFloat(tx.billed_amount)) : null
         const creditDateISO = tx.charge_date
           ? (tx.charge_date.includes('T') ? tx.charge_date : `${tx.charge_date}T00:00:00.000Z`)
           : new Date().toISOString()
@@ -182,7 +185,9 @@ export async function POST(request: NextRequest) {
           if (!hasApproved) {
             const newEvent = {
               status: 'Credit Approved',
-              note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+              note: creditAmount != null
+                ? `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`
+                : 'A credit has been approved and will appear on your next invoice.',
               createdAt: creditDateISO,
               createdBy: 'System',
             }
@@ -194,7 +199,7 @@ export async function POST(request: NextRequest) {
             .from('care_tickets')
             .update({
               status: 'Credit Approved',
-              credit_amount: creditAmount,
+              ...(creditAmount != null && { credit_amount: creditAmount }),
               events: existingEvents,
             })
             .eq('id', careTicketId)
@@ -263,8 +268,9 @@ export async function POST(request: NextRequest) {
       const { data: { user } } = await authSupabase.auth.getUser()
       const userName = user?.user_metadata?.full_name || user?.email || 'System'
 
-      // Use billed_amount (includes markup) when available, fall back to cost for unclassified credits
-      const creditAmount = Math.abs(parseFloat(tx.billed_amount) || parseFloat(tx.cost) || 0)
+      // CRITICAL: Only use billed_amount (marked up) — never expose raw ShipBob cost
+      const hasBilledAmount = tx.billed_amount != null
+      const creditAmount = hasBilledAmount ? Math.abs(parseFloat(tx.billed_amount)) : null
       const { shipmentId: newShipmentId, description, issueType } = body
       const validIssueTypes = ['Loss', 'Damage', 'Incorrect Items', 'Incorrect Quantity', 'Claim']
 
@@ -302,7 +308,9 @@ export async function POST(request: NextRequest) {
       if (isAlreadyInvoiced) {
         events.push({
           status: 'Resolved',
-          note: `Your credit of $${creditAmount.toFixed(2)} has been applied to invoice #${tx.invoice_id_jp}.`,
+          note: creditAmount != null
+            ? `Your credit of $${creditAmount.toFixed(2)} has been applied to invoice #${tx.invoice_id_jp}.`
+            : `Your credit has been applied to invoice #${tx.invoice_id_jp}.`,
           createdAt: `${invoiceDate}T00:00:00.000Z`,
           createdBy: 'System',
         })
@@ -310,7 +318,9 @@ export async function POST(request: NextRequest) {
 
       events.push({
         status: 'Credit Approved',
-        note: `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+        note: creditAmount != null
+          ? `A credit of $${creditAmount.toFixed(2)} has been approved and will appear on your next invoice.`
+          : 'A credit has been approved and will appear on your next invoice.',
         createdAt: creditDateISO,
         createdBy: 'System',
       })
@@ -334,7 +344,7 @@ export async function POST(request: NextRequest) {
         ticket_type: 'Claim',
         issue_type: validIssueTypes.includes(issueType) ? issueType : 'Loss',
         status: isAlreadyInvoiced ? 'Resolved' : 'Credit Approved',
-        credit_amount: creditAmount,
+        ...(creditAmount != null && { credit_amount: creditAmount }),
         currency: 'USD',
         description: description?.trim() || null,
         shipment_id: ticketShipmentId || null,

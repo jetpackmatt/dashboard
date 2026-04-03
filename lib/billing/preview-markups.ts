@@ -868,16 +868,36 @@ export async function calculateCreditPreviewMarkups(
               updated_at: new Date().toISOString(),
             }
 
-            // Only advance status if ticket is still waiting for credit
-            if (ticket && ticket.status === 'Credit Requested') {
-              const approvedEvent = {
-                note: `A credit of $${correctAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
-                status: 'Credit Approved',
-                createdAt: new Date().toISOString(),
-                createdBy: 'System',
+            if (ticket) {
+              const events = [...(ticket.events || [])]
+              if (ticket.status === 'Credit Requested') {
+                // Advance status and add event
+                const approvedEvent = {
+                  note: `A credit of $${correctAmount.toFixed(2)} has been approved and will appear on your next invoice.`,
+                  status: 'Credit Approved',
+                  createdAt: new Date().toISOString(),
+                  createdBy: 'System',
+                }
+                ticketUpdate.status = 'Credit Approved'
+                ticketUpdate.events = [approvedEvent, ...events]
+              } else if (ticket.status === 'Credit Approved') {
+                // Ticket already advanced (e.g. via misfits connect) — update existing
+                // Credit Approved event with the correct marked-up amount
+                let updated = false
+                for (const evt of events) {
+                  if (evt.status === 'Credit Approved' && (
+                    evt.note === 'A credit has been approved and will appear on your next invoice.' ||
+                    evt.note.startsWith('A credit of $')
+                  )) {
+                    evt.note = `A credit of $${correctAmount.toFixed(2)} has been approved and will appear on your next invoice.`
+                    updated = true
+                    break
+                  }
+                }
+                if (updated) {
+                  ticketUpdate.events = events
+                }
               }
-              ticketUpdate.status = 'Credit Approved'
-              ticketUpdate.events = [approvedEvent, ...(ticket.events || [])]
             }
 
             await supabase
