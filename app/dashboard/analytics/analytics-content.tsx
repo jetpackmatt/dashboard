@@ -477,11 +477,13 @@ function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hide
               onSelect={(range) => {
                 if (range?.from) {
                   chart.setCustomRange!({ from: range.from, to: range.to })
+                  // v9: first click fires {from: date, to: date} (same date) — treat as incomplete
+                  const isComplete = range.to && range.from.getTime() !== range.to.getTime()
                   if (!isSelectingRange) {
                     setIsSelectingRange(true)
                     return
                   }
-                  if (range.to) {
+                  if (isComplete) {
                     setCalendarOpen(false)
                     setIsSelectingRange(false)
                   }
@@ -1709,6 +1711,12 @@ export default function AnalyticsContent() {
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
     setActiveTab(value)
+    // Reset custom date range so it doesn't bleed across tabs
+    if (dateRange === 'custom') {
+      setDateRange('90d')
+      setCustomDateRange({ from: undefined, to: undefined })
+      setCustomPickerOpen(false)
+    }
     const params = new URLSearchParams(searchParams.toString())
     params.set('tab', value)
     router.push(`?${params.toString()}`, { scroll: false })

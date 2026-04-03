@@ -1130,14 +1130,19 @@ export function DataTable({
 
   const currentTabDateState = getCurrentTabDateRange()
 
+  const [customPickerOpen, setCustomPickerOpen] = React.useState(false)
+
   // Generic date preset change handler
-  const handleGenericDatePresetChange = (preset: DateRangePreset) => {
+  const handleGenericDatePresetChange = (value: string) => {
     const { setPreset, setDateRange } = currentTabDateState
-    setPreset(preset)
-    if (preset === 'custom') {
-      // Clear range so the picker opens fresh for selection
+    if (value === 'custom') {
+      setPreset('custom' as DateRangePreset)
       setDateRange(undefined)
+      setCustomPickerOpen(true)
     } else {
+      const preset = value as DateRangePreset
+      setPreset(preset)
+      setCustomPickerOpen(false)
       const range = getDateRangeFromPreset(preset)
       if (range) {
         setDateRange({ from: range.from, to: range.to })
@@ -1347,16 +1352,18 @@ export function DataTable({
               {currentTab !== "storage" && (
                 <div className="flex items-center gap-1.5">
                   <Select
-                    value={currentTabDateState.preset || '60d'}
+                    value={currentTabDateState.preset === 'custom' && currentTabDateState.dateRange?.from && currentTabDateState.dateRange?.to && !customPickerOpen ? 'custom-active' : (currentTabDateState.preset || '60d')}
                     onValueChange={(value) => {
                       if (value) {
-                        handleGenericDatePresetChange(value as DateRangePreset)
+                        handleGenericDatePresetChange(value)
                       }
                     }}
                   >
                     <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                       <SelectValue>
-                        {(currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
+                        {currentTabDateState.preset === 'custom' && currentTabDateState.dateRange?.from && currentTabDateState.dateRange?.to
+                          ? `${currentTabDateState.dateRange.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${currentTabDateState.dateRange.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                          : (currentTab === "unfulfilled" ? UNFULFILLED_DATE_PRESETS : DATE_RANGE_PRESETS).find(p => p.value === currentTabDateState.preset)?.label || '60D'}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent align="start" className="font-roboto text-xs">
@@ -1368,12 +1375,13 @@ export function DataTable({
                     </SelectContent>
                   </Select>
 
-                  {/* Inline date range picker - only visible when Custom is selected */}
-                  {currentTabDateState.preset === 'custom' && (
+                  {/* Inline date range picker - only visible when Custom is selected and picker is open */}
+                  {customPickerOpen && currentTabDateState.preset === 'custom' && (
                     <InlineDateRangePicker
                       dateRange={currentTabDateState.dateRange}
                       onDateRangeChange={(range) => {
                         currentTabDateState.setDateRange(range)
+                        setCustomPickerOpen(false)
                       }}
                       autoOpen
                     />

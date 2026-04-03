@@ -39,6 +39,8 @@ export function InlineDateRangePicker({
   }, [autoOpen])
   // Track if user is in the middle of selecting a new range
   const [isSelectingNewRange, setIsSelectingNewRange] = React.useState(false)
+  // Local in-progress range for visual tracking (Calendar selected prop)
+  const [pendingRange, setPendingRange] = React.useState<DateRange | undefined>(undefined)
   // Store the range when popover opens to detect new selections
   const rangeOnOpenRef = React.useRef<DateRange | undefined>(undefined)
 
@@ -52,6 +54,7 @@ export function InlineDateRangePicker({
     if (newOpen) {
       // Store the current range when opening
       rangeOnOpenRef.current = dateRange
+      setPendingRange(dateRange)
       setIsSelectingNewRange(false)
     }
   }
@@ -97,27 +100,22 @@ export function InlineDateRangePicker({
         <Calendar
           mode="range"
           defaultMonth={dateRange?.from}
-          selected={dateRange}
+          selected={pendingRange}
           onSelect={(range) => {
-            onDateRangeChange(range)
+            // Always update local state so Calendar shows the selection visually
+            setPendingRange(range ?? undefined)
 
-            // Detect if this is the start of a new selection
-            // (user clicked a date different from the original range)
-            const originalFrom = rangeOnOpenRef.current?.from?.getTime()
-            const originalTo = rangeOnOpenRef.current?.to?.getTime()
-            const newFrom = range?.from?.getTime()
-            const newTo = range?.to?.getTime()
+            // v9: first click fires {from: date, to: date} (same date) — incomplete
+            const isComplete = range?.from && range?.to && range.from.getTime() !== range.to.getTime()
 
             if (!isSelectingNewRange) {
-              // First click - check if it's different from original
-              if (newFrom !== originalFrom || !range?.to) {
-                setIsSelectingNewRange(true)
-                return // Don't close, wait for second click
-              }
+              setIsSelectingNewRange(true)
+              return // First click — wait for second
             }
 
-            // Close when both dates are selected AND we've completed a new selection
-            if (range?.from && range?.to && isSelectingNewRange) {
+            // Complete range selected — forward to parent and close
+            if (isComplete) {
+              onDateRangeChange(range)
               setOpen(false)
               setIsSelectingNewRange(false)
             }

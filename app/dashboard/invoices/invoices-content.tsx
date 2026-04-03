@@ -258,6 +258,7 @@ export default function InvoicesContent() {
   const [statusFilter, setStatusFilter] = React.useState<string[]>([])
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined)
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')
+  const [customPickerOpen, setCustomPickerOpen] = React.useState(false)
 
   // Pagination state
   const [currentPage, setCurrentPage] = React.useState(0)
@@ -541,14 +542,17 @@ export default function InvoicesContent() {
               {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
               <div className="flex items-center gap-1.5">
                 <Select
-                  value={datePreset || 'all'}
+                  value={datePreset === 'custom' && dateRange?.from && dateRange?.to && !customPickerOpen ? 'custom-active' : (datePreset || 'all')}
                   onValueChange={(value) => {
                     if (value) {
-                      const preset = value as DateRangePreset
-                      setDatePreset(preset)
-                      if (preset === 'custom') {
+                      if (value === 'custom') {
+                        setDatePreset('custom' as DateRangePreset)
                         setDateRange(undefined)
+                        setCustomPickerOpen(true)
                       } else {
+                        const preset = value as DateRangePreset
+                        setDatePreset(preset)
+                        setCustomPickerOpen(false)
                         const range = getDateRangeFromPreset(preset)
                         if (range) {
                           setDateRange({ from: range.from, to: range.to })
@@ -562,7 +566,9 @@ export default function InvoicesContent() {
                 >
                   <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                     <SelectValue>
-                      {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
+                      {datePreset === 'custom' && dateRange?.from && dateRange?.to
+                        ? `${dateRange.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${dateRange.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent align="start" className="font-roboto text-xs">
@@ -574,11 +580,12 @@ export default function InvoicesContent() {
                   </SelectContent>
                 </Select>
 
-                {datePreset === 'custom' && (
+                {customPickerOpen && datePreset === 'custom' && (
                   <InlineDateRangePicker
                     dateRange={dateRange}
                     onDateRangeChange={(range) => {
                       setDateRange(range)
+                      setCustomPickerOpen(false)
                       setCurrentPage(0)
                     }}
                     autoOpen

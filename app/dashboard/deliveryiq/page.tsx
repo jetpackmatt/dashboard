@@ -115,6 +115,7 @@ export default function DeliveryIQPage() {
   const [quickFilter, setQuickFilter] = React.useState<QuickFilterValue>('at_risk')
   const [datePreset, setDatePreset] = React.useState<DateRangePreset>('all')
   const [customDateRange, setCustomDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined })
+  const [customPickerOpen, setCustomPickerOpen] = React.useState(false)
 
   // Compute effective date range from preset or custom
   const dateRange = React.useMemo<DateRange | undefined>(() => {
@@ -297,10 +298,15 @@ export default function DeliveryIQPage() {
 
   const handleQuickFilterChange = (filter: QuickFilterValue) => setQuickFilter(filter)
   const handleDatePresetChange = (value: string) => {
-    const preset = value as DateRangePreset
-    setDatePreset(preset)
-    if (preset !== 'custom') {
+    if (value === 'custom') {
+      setDatePreset('custom' as DateRangePreset)
       setCustomDateRange({ from: undefined, to: undefined })
+      setCustomPickerOpen(true)
+    } else {
+      const preset = value as DateRangePreset
+      setDatePreset(preset)
+      setCustomDateRange({ from: undefined, to: undefined })
+      setCustomPickerOpen(false)
     }
   }
 
@@ -383,10 +389,12 @@ export default function DeliveryIQPage() {
                   onChange={handleQuickFilterChange}
                   stats={stats}
                 /> */}
-                <Select value={datePreset} onValueChange={handleDatePresetChange}>
+                <Select value={datePreset === 'custom' && customDateRange.from && customDateRange.to && !customPickerOpen ? 'custom-active' : datePreset} onValueChange={handleDatePresetChange}>
                   <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                     <SelectValue>
-                      {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || '60D'}
+                      {datePreset === 'custom' && customDateRange.from && customDateRange.to
+                        ? `${customDateRange.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${customDateRange.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || '60D'}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent align="end" className="font-roboto text-xs">
@@ -397,12 +405,13 @@ export default function DeliveryIQPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                {datePreset === 'custom' && (
+                {customPickerOpen && datePreset === 'custom' && (
                   <InlineDateRangePicker
                     dateRange={customDateRange.from && customDateRange.to ? { from: customDateRange.from, to: customDateRange.to } : undefined}
                     onDateRangeChange={(range) => {
                       if (range?.from && range?.to) {
                         setCustomDateRange({ from: range.from, to: range.to })
+                        setCustomPickerOpen(false)
                       }
                     }}
                     autoOpen

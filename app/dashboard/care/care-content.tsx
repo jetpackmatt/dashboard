@@ -200,6 +200,7 @@ export default function CareContent() {
   // Date range state
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>(undefined)
   const [datePreset, setDatePreset] = React.useState<DateRangePreset | undefined>('all')
+  const [customPickerOpen, setCustomPickerOpen] = React.useState(false)
 
   // Filter state - multi-select arrays
   const [showFilters, setShowFilters] = React.useState(false)
@@ -522,16 +523,22 @@ export default function CareContent() {
   }
 
   // Handle date preset change
-  const handleDatePresetChange = (preset: DateRangePreset) => {
-    setDatePreset(preset)
-    if (preset === 'custom') {
+  const handleDatePresetChange = (value: string) => {
+    if (value === 'custom') {
+      setDatePreset('custom')
       setDateRange(undefined)
-    } else if (preset === 'all') {
-      setDateRange(undefined)
+      setCustomPickerOpen(true)
     } else {
-      const range = getDateRangeFromPreset(preset)
-      if (range) {
-        setDateRange({ from: range.from, to: range.to })
+      const preset = value as DateRangePreset
+      setDatePreset(preset)
+      setCustomPickerOpen(false)
+      if (preset === 'all') {
+        setDateRange(undefined)
+      } else {
+        const range = getDateRangeFromPreset(preset)
+        if (range) {
+          setDateRange({ from: range.from, to: range.to })
+        }
       }
     }
     setCurrentPage(1)
@@ -981,16 +988,18 @@ export default function CareContent() {
               {/* Date Range - Preset dropdown + Inline date range picker (shown only for Custom) */}
               <div className="flex items-center gap-1.5">
                 <Select
-                  value={datePreset || 'all'}
+                  value={datePreset === 'custom' && dateRange?.from && dateRange?.to && !customPickerOpen ? 'custom-active' : (datePreset || 'all')}
                   onValueChange={(value) => {
                     if (value) {
-                      handleDatePresetChange(value as DateRangePreset)
+                      handleDatePresetChange(value)
                     }
                   }}
                 >
                   <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                     <SelectValue>
-                      {DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
+                      {datePreset === 'custom' && dateRange?.from && dateRange?.to
+                        ? `${dateRange.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${dateRange.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : DATE_RANGE_PRESETS.find(p => p.value === datePreset)?.label || 'All'}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent align="start" className="font-roboto text-xs">
@@ -1002,11 +1011,12 @@ export default function CareContent() {
                   </SelectContent>
                 </Select>
 
-                {datePreset === 'custom' && (
+                {customPickerOpen && datePreset === 'custom' && (
                   <InlineDateRangePicker
                     dateRange={dateRange}
                     onDateRangeChange={(range) => {
                       setDateRange(range)
+                      setCustomPickerOpen(false)
                       setCurrentPage(1)
                     }}
                     autoOpen
