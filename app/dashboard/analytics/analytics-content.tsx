@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { format } from "date-fns"
-import { DownloadIcon } from "lucide-react"
+import { CalendarIcon, DownloadIcon } from "lucide-react"
 import { JetpackLoader } from "@/components/jetpack-loader"
 import {
   Area,
@@ -20,6 +20,7 @@ import {
   YAxis,
   Label as RechartsLabel,
   LabelList,
+  Customized,
 } from "recharts"
 
 import { SiteHeader } from "@/components/site-header"
@@ -131,6 +132,19 @@ const DATE_RANGE_PRESETS = [
 
 // Per-chart date presets (includes custom — each chart has its own inline date picker)
 const CHART_DATE_PRESETS = DATE_RANGE_PRESETS
+
+// Helper: get display label for a chart's date selector
+function chartPresetLabel(chart: { preset: string; customRange?: { from: Date | undefined; to: Date | undefined } }, fallback: string) {
+  if (chart.preset === 'custom' && chart.customRange?.from && chart.customRange?.to) {
+    return `${format(chart.customRange.from, 'MMM d')} – ${format(chart.customRange.to, 'MMM d, yyyy')}`
+  }
+  return CHART_DATE_PRESETS.find(p => p.value === chart.preset)?.label || fallback
+}
+
+// Helper: Select value that allows re-clicking "Custom" after dates are set
+function chartSelectVal(chart: { preset: string; customRange?: { from: Date | undefined; to: Date | undefined } }) {
+  return chart.preset === 'custom' && chart.customRange?.from && chart.customRange?.to ? 'custom-active' : chart.preset
+}
 
 // Unified analytics filters — shared state across Cost & Speed and Financials tabs
 // Cost & Speed shows order-type + geography filters; Financials adds Include Credits
@@ -417,10 +431,33 @@ function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hide
   // Track range selection state for calendar (need two clicks)
   const [isSelectingRange, setIsSelectingRange] = React.useState(false)
 
+  // When custom dates are set, use a non-matching value so "Custom" can be re-clicked
+  const chartSelectValue = chart.preset === 'custom' && chart.customRange?.from && chart.customRange?.to && !calendarOpen
+    ? 'custom-active'
+    : chart.preset
+
   return (
     <div className="flex items-center gap-1.5 shrink-0">
       {chart.isFetching && !hideLoader && <JetpackLoader size="sm" />}
-      {chart.preset === 'custom' && chart.setCustomRange ? (
+      <Select value={chartSelectValue} onValueChange={(v) => {
+        if (v === 'custom') {
+          chart.setPreset('custom')
+          setCalendarOpen(true)
+        } else {
+          chart.setPreset(v)
+          setCalendarOpen(false)
+        }
+      }}>
+        <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
+          <SelectValue>{displayLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectContent align="end" className="font-roboto text-xs">
+          {CHART_DATE_PRESETS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {calendarOpen && chart.preset === 'custom' && chart.setCustomRange && (
         <Popover open={calendarOpen} onOpenChange={(open) => {
           setCalendarOpen(open)
           if (!open) setIsSelectingRange(false)
@@ -428,10 +465,8 @@ function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hide
           <PopoverTrigger asChild>
             <button
               className="h-[28px] flex items-center gap-1 px-2 rounded-md border border-input bg-background text-[11px] hover:bg-accent transition-colors"
-              onClick={() => setCalendarOpen(true)}
             >
-              <span>{displayLabel}</span>
-              <svg className="h-3 w-3 opacity-50" viewBox="0 0 15 15" fill="none"><path d="M4.93179 5.43179C4.75605 5.60753 4.75605 5.89245 4.93179 6.06819C5.10753 6.24392 5.39245 6.24392 5.56819 6.06819L7.49999 4.13638L9.43179 6.06819C9.60753 6.24392 9.89245 6.24392 10.0682 6.06819C10.2439 5.89245 10.2439 5.60753 10.0682 5.43179L7.81819 3.18179C7.73379 3.0974 7.61933 3.04999 7.49999 3.04999C7.38064 3.04999 7.26618 3.0974 7.18179 3.18179L4.93179 5.43179ZM10.0682 9.56819C10.2439 9.39245 10.2439 9.10753 10.0682 8.93179C9.89245 8.75606 9.60753 8.75606 9.43179 8.93179L7.49999 10.8636L5.56819 8.93179C5.39245 8.75606 5.10753 8.75606 4.93179 8.93179C4.75605 9.10753 4.75605 9.39245 4.93179 9.56819L7.18179 11.8182C7.35753 11.9939 7.64245 11.9939 7.81819 11.8182L10.0682 9.56819Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"/></svg>
+              <CalendarIcon className="h-3 w-3 text-muted-foreground" />
             </button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="end">
@@ -454,30 +489,8 @@ function ChartSelectors({ chart, availableCountries, dateRangeDisplayLabel, hide
               }}
               numberOfMonths={2}
             />
-            <div className="flex items-center px-3 pb-2">
-              <button
-                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => {
-                  chart.setPreset('90d')
-                  setCalendarOpen(false)
-                }}
-              >
-                Back to presets
-              </button>
-            </div>
           </PopoverContent>
         </Popover>
-      ) : (
-        <Select value={chart.preset} onValueChange={chart.setPreset}>
-          <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-background border-border">
-            <SelectValue>{displayLabel}</SelectValue>
-          </SelectTrigger>
-          <SelectContent align="end" className="font-roboto text-xs">
-            {CHART_DATE_PRESETS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       )}
       {!hideCountry && availableCountries.length > 1 && (
         <Select value={chart.country} onValueChange={chart.setCountry}>
@@ -572,6 +585,8 @@ export default function AnalyticsContent() {
     from: undefined,
     to: undefined,
   })
+  // Controls whether the calendar picker is visible (hides after dates are picked)
+  const [customPickerOpen, setCustomPickerOpen] = React.useState(false)
 
   const [selectedState, setSelectedState] = React.useState<string | null>(null)
   const [selectedCountry, setSelectedCountry] = React.useState('US')
@@ -1673,11 +1688,19 @@ export default function AnalyticsContent() {
   const handleDatePresetChange = (value: string) => {
     if (value === 'custom') {
       setDateRange('custom' as DateRangePreset)
+      setCustomPickerOpen(true)
     } else {
       setDateRange(value as DateRangePreset)
       setCustomDateRange({ from: undefined, to: undefined })
+      setCustomPickerOpen(false)
     }
   }
+
+  // When custom is active with dates set, use a non-matching value so
+  // "Custom" isn't highlighted and can be re-clicked to reopen the picker
+  const dateRangeSelectValue = dateRange === 'custom' && customDateRange.from && customDateRange.to && !customPickerOpen
+    ? 'custom-active'
+    : dateRange
 
   // Volume data is always current since it comes pre-computed from the server
   // When no client is selected, treat as "current" so Loading indicator doesn't show forever
@@ -1934,10 +1957,10 @@ export default function AnalyticsContent() {
                   </div>
 
                   <div className="px-5 lg:px-8 py-8 space-y-12">
-                {/* Row 2: Cost Distribution + Pick/Pack + Cost per Order Trend */}
-                <div className="grid gap-[50px] md:grid-cols-2 lg:grid-cols-3">
+                {/* Row 2: Cost Distribution + Cost per Order Trend */}
+                <div className="grid gap-[50px] md:grid-cols-2">
                   {/* Cost Distribution */}
-                  <Card className="bg-transparent shadow-none">
+                  <Card className="bg-transparent shadow-none min-h-[250px]">
                     <CardHeader className="pb-0">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1949,10 +1972,11 @@ export default function AnalyticsContent() {
                     </CardHeader>
                     <CardContent className="pt-4">
                       {(() => {
-                        const categories = costDistChart.data as BillingCategoryBreakdown[]
-                        const positiveCategories = categories.filter(c => c.amount > 0)
+                        const allCategories = costDistChart.data as BillingCategoryBreakdown[]
+                        const categories = allCategories.filter(c => c.amount > 0)
+                        const positiveCategories = categories
                         const positiveTotal = positiveCategories.reduce((s, c) => s + c.amount, 0)
-                        const chartTotal = categories.reduce((s, c) => s + c.amount, 0)
+                        const chartTotal = positiveTotal
 
                         return (
                           <div>
@@ -1964,47 +1988,48 @@ export default function AnalyticsContent() {
                               <span className="text-xs text-muted-foreground">total spend</span>
                             </div>
 
-                            {/* Stacked proportion bar */}
+                            {/* Stacked proportion bar — cube-root scale so small categories are visible */}
                             <div className="h-3 rounded-full overflow-hidden flex mb-5 bg-muted/20">
-                              {positiveCategories.map((cat, idx) => {
-                                const originalIdx = categories.indexOf(cat)
-                                const widthPct = positiveTotal > 0 ? (cat.amount / positiveTotal) * 100 : 0
-                                return (
-                                  <div
-                                    key={cat.category}
-                                    className="h-full transition-all"
-                                    style={{
-                                      width: `${widthPct}%`,
-                                      backgroundColor: COST_DIST_COLORS[originalIdx] || COST_DIST_COLORS[idx % COST_DIST_COLORS.length],
-                                      opacity: 0.85,
-                                    }}
-                                  />
-                                )
-                              })}
+                              {(() => {
+                                const cbrtWidths = positiveCategories.map(c => Math.cbrt(c.amount))
+                                const cbrtTotal = cbrtWidths.reduce((s, w) => s + w, 0)
+                                return positiveCategories.map((cat, idx) => {
+                                  const originalIdx = categories.indexOf(cat)
+                                  const widthPct = cbrtTotal > 0 ? (cbrtWidths[idx] / cbrtTotal) * 100 : 0
+                                  return (
+                                    <div
+                                      key={cat.category}
+                                      className="h-full transition-all"
+                                      style={{
+                                        width: `${widthPct}%`,
+                                        backgroundColor: COST_DIST_COLORS[originalIdx] || COST_DIST_COLORS[idx % COST_DIST_COLORS.length],
+                                        opacity: 0.85,
+                                      }}
+                                    />
+                                  )
+                                })
+                              })()}
                             </div>
 
                             {/* Category rows */}
-                            <div className="space-y-2.5">
-                              {categories.map((cat, idx) => {
-                                const isNegative = cat.amount < 0
-                                return (
-                                  <div key={cat.category} className="flex items-center gap-2.5">
+                            <div className="space-y-1.5">
+                              {categories.map((cat, idx) => (
+                                  <div key={cat.category} className="flex items-center gap-2">
                                     <span
-                                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                                      className="w-2 h-2 rounded-sm flex-shrink-0"
                                       style={{ backgroundColor: COST_DIST_COLORS[idx % COST_DIST_COLORS.length] }}
                                     />
                                     <span className="text-xs flex-1 truncate">{cat.category}</span>
-                                    <span className={`text-xs font-medium tabular-nums text-right ${isNegative ? 'text-green-600' : ''}`}>
-                                      {isNegative ? '-' : ''}${Math.abs(cat.amount) >= 1000
-                                        ? `${(Math.abs(cat.amount) / 1000).toFixed(1)}k`
-                                        : Math.abs(cat.amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                    <span className="text-xs font-medium tabular-nums text-right">
+                                      ${cat.amount >= 1000
+                                        ? `${(cat.amount / 1000).toFixed(1)}k`
+                                        : cat.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                                     </span>
-                                    <span className={`text-[11px] tabular-nums text-right w-12 ${isNegative ? 'text-green-600' : 'text-muted-foreground'}`}>
-                                      {cat.percent >= 0 ? '' : ''}{cat.percent.toFixed(1)}%
+                                    <span className="text-[11px] tabular-nums text-right w-12 text-muted-foreground">
+                                      {cat.percent.toFixed(1)}%
                                     </span>
                                   </div>
-                                )
-                              })}
+                                ))}
                             </div>
                           </div>
                         )
@@ -2012,21 +2037,159 @@ export default function AnalyticsContent() {
                     </CardContent>
                   </Card>
 
+                  {/* Cost per Order Trend */}
+                  <Card className="bg-transparent shadow-none flex flex-col min-h-0 overflow-hidden">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[15px]">
+                      <div>
+                        <div className="text-sm font-semibold">Cost per Order Trend</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">All fees per order over time</div>
+                      </div>
+                      <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
+                    </div>
+                    <CardContent className="flex-1 min-h-0 relative">
+                      <div className="absolute inset-0">
+                      <ChartContainer
+                        config={{
+                          costPerOrder: { label: "Cost per Order", color: "hsl(var(--chart-1))" },
+                        }}
+                        className="w-full h-full !aspect-auto"
+                      >
+                        <AreaChart data={costPerOrderChart.data as CostPerOrderTrend[]} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="fillCostPerOrder" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="var(--color-costPerOrder)" stopOpacity={0.8} />
+                              <stop offset="95%" stopColor="var(--color-costPerOrder)" stopOpacity={0.1} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid vertical={false} />
+                          <XAxis dataKey="monthLabel" tickLine={false} axisLine={false} fontSize={10} tickMargin={8} />
+                          <YAxis tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
+                          <ChartTooltip
+                            content={
+                              <ChartTooltipContent
+                                indicator="dot"
+                                formatter={(value, name, item) => (
+                                  <>
+                                    <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
+                                    <div className="flex flex-1 justify-between items-center leading-none">
+                                      <span className="text-muted-foreground">Cost per Order</span>
+                                      <span className="font-mono font-medium tabular-nums text-foreground ml-4">${Number(value).toFixed(2)}</span>
+                                    </div>
+                                  </>
+                                )}
+                              />
+                            }
+                          />
+                          <Area type="monotone" dataKey="costPerOrder" stroke="var(--color-costPerOrder)" fill="url(#fillCostPerOrder)" />
+                          <Customized component={(props: any) => {
+                            const { width, height, offset } = props
+                            if (!offset) return null
+                            const pts = costPerOrderChart.data as CostPerOrderTrend[]
+                            if (!pts || pts.length === 0) return null
+                            const useAuthoritativeAvg = costPerOrderChart.preset === financialsSection.preset
+                            const avg = useAuthoritativeAvg
+                              ? adjustedBillingSummary.costPerOrder
+                              : (() => { const tot = pts.reduce((s: number, d: any) => s + d.orderCount, 0); return tot > 0 ? pts.reduce((s: number, d: any) => s + d.costPerOrder * d.orderCount, 0) / tot : 0 })()
+                            const plotLeft = offset.left
+                            const plotRight = width - offset.right
+                            const plotBottom = height - offset.bottom
+                            const plotCenterX = (plotLeft + plotRight) / 2
+                            const badgeH = 36
+                            const badgeW = 72
+                            return (
+                              <g className="pointer-events-none">
+                                <foreignObject x={plotLeft} y={plotBottom - badgeH} width={badgeW} height={badgeH}>
+                                  <div className="px-2 py-1 bg-green-500/10 backdrop-blur-sm rounded-tr border border-green-500/20 border-l-0 border-b-0">
+                                    <div className="text-[9px] text-muted-foreground leading-tight">Lowest</div>
+                                    <div className="text-xs font-semibold text-green-600 tabular-nums">${Math.min(...pts.map((d: any) => d.costPerOrder)).toFixed(2)}</div>
+                                  </div>
+                                </foreignObject>
+                                <foreignObject x={plotCenterX - badgeW / 2} y={plotBottom - badgeH} width={badgeW} height={badgeH}>
+                                  <div className="px-2 py-1 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-sm rounded-t border border-border/40 border-b-0">
+                                    <div className="text-[9px] text-muted-foreground leading-tight">Average</div>
+                                    <div className="text-xs font-semibold tabular-nums">${avg.toFixed(2)}</div>
+                                  </div>
+                                </foreignObject>
+                                <foreignObject x={plotRight - badgeW} y={plotBottom - badgeH} width={badgeW} height={badgeH}>
+                                  <div className="px-2 py-1 bg-red-500/10 backdrop-blur-sm rounded-tl border border-red-500/20 border-r-0 border-b-0">
+                                    <div className="text-[9px] text-muted-foreground leading-tight">Highest</div>
+                                    <div className="text-xs font-semibold text-red-600 tabular-nums">${Math.max(...pts.map((d: any) => d.costPerOrder)).toFixed(2)}</div>
+                                  </div>
+                                </foreignObject>
+                              </g>
+                            )
+                          }} />
+                        </AreaChart>
+                      </ChartContainer>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Row 3: Non-Shipping Cost Breakdown + Pick & Pack Distribution */}
+                <div className="grid gap-[50px] md:grid-cols-2">
+                  <Card className="bg-transparent shadow-none min-h-[250px]">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[15px]">
+                      <div>
+                        <div className="text-sm font-semibold">Non-Shipping Cost Breakdown</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">All fulfillment fees excluding shipping and credits</div>
+                      </div>
+                      <ChartSelectors chart={additionalSvcChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
+                    </div>
+                    <CardContent>
+                      {(() => {
+                        const svcData = (additionalSvcChart.data as AdditionalServicesBreakdown[]) || []
+                        const totalAmount = svcData.reduce((s, d) => s + d.amount, 0)
+                        const maxAmount = Math.max(...svcData.map(d => d.amount), 1)
+                        // Cube-root scale: middle ground between sqrt and log compression
+                        const cbrtMax = Math.cbrt(maxAmount)
+                        return (
+                          <div className="space-y-2.5">
+                            {svcData.map((d, i) => {
+                              const pct = totalAmount > 0 ? (d.amount / totalAmount * 100) : 0
+                              // cube-root scale with 3% minimum so even tiny amounts show a sliver
+                              const barWidth = Math.max(3, (Math.cbrt(d.amount) / cbrtMax) * 100)
+                              const hue = 217
+                              const lightness = 42 + i * (30 / Math.max(svcData.length - 1, 1))
+                              return (
+                                <div key={d.category} className="flex items-center gap-3">
+                                  <div className="w-[130px] shrink-0 text-[11px] font-medium truncate">{d.category}</div>
+                                  <div className="flex-1 min-w-0">
+                                    <div
+                                      className="h-[18px] rounded"
+                                      style={{
+                                        width: `${barWidth}%`,
+                                        backgroundColor: `hsl(${hue}, 72%, ${lightness}%)`,
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="shrink-0 text-[11px] font-medium tabular-nums text-right w-[140px]">
+                                    ${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({pct.toFixed(1)}%)
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </CardContent>
+                  </Card>
+
                   {/* Pick/Pack Distribution */}
-                  <Card className="bg-transparent shadow-none flex flex-col">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[55px]">
+                  <Card className="bg-transparent shadow-none flex flex-col min-h-0 overflow-hidden">
+                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[15px]">
                       <div>
                         <div className="text-sm font-semibold">Pick &amp; Pack Distribution</div>
                         <div className="text-xs text-muted-foreground mt-0.5">Orders by item count</div>
                       </div>
                       <ChartSelectors chart={pickPackChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                     </div>
-                    <CardContent className="flex-1 flex flex-col">
+                    <CardContent className="flex-1 flex flex-col min-h-0">
                       <ChartContainer
                         config={{
                           orderCount: { label: "Orders", color: "hsl(var(--chart-1))" },
                         }}
-                        className="w-full flex-1 min-h-[280px]"
+                        className="w-full flex-1 min-h-0 !aspect-auto"
                       >
                         <BarChart data={(pickPackChart.data as PickPackDistribution[]) || []} margin={{ top: 10, right: 0, left: 0, bottom: 17 }}>
                           <XAxis type="category" dataKey="itemCount" tickLine={false} axisLine={false} fontSize={11} tick={(tickProps: any) => {
@@ -2056,148 +2219,6 @@ export default function AnalyticsContent() {
                       </ChartContainer>
                     </CardContent>
                   </Card>
-
-                  {/* Cost per Order Trend */}
-                  <Card className="bg-transparent shadow-none flex flex-col">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[48px]">
-                      <div>
-                        <div className="text-sm font-semibold">Cost per Order Trend</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">All fees per order over time</div>
-                      </div>
-                      <ChartSelectors chart={costPerOrderChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
-                    </div>
-                    <CardContent className="flex-1 flex flex-col">
-                      <ChartContainer
-                        config={{
-                          costPerOrder: { label: "Cost per Order", color: "hsl(var(--chart-1))" },
-                        }}
-                        className="w-full flex-1 min-h-[240px]"
-                      >
-                        <AreaChart data={costPerOrderChart.data as CostPerOrderTrend[]} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="fillCostPerOrder" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="var(--color-costPerOrder)" stopOpacity={0.8} />
-                              <stop offset="95%" stopColor="var(--color-costPerOrder)" stopOpacity={0.1} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid vertical={false} />
-                          <XAxis dataKey="monthLabel" tickLine={false} axisLine={false} fontSize={10} tickMargin={8} />
-                          <YAxis tickLine={false} axisLine={false} fontSize={11} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
-                          <ChartTooltip
-                            content={
-                              <ChartTooltipContent
-                                indicator="dot"
-                                formatter={(value, name, item) => (
-                                  <>
-                                    <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
-                                    <div className="flex flex-1 justify-between items-center leading-none">
-                                      <span className="text-muted-foreground">Cost per Order</span>
-                                      <span className="font-mono font-medium tabular-nums text-foreground ml-4">${Number(value).toFixed(2)}</span>
-                                    </div>
-                                  </>
-                                )}
-                              />
-                            }
-                          />
-                          <Area type="monotone" dataKey="costPerOrder" stroke="var(--color-costPerOrder)" fill="url(#fillCostPerOrder)" />
-                        </AreaChart>
-                      </ChartContainer>
-                      {/* Min/Max indicators */}
-                      {(() => {
-                        const pts = costPerOrderChart.data as CostPerOrderTrend[]
-                        if (pts.length === 0) return null
-                        // When CPO chart is on the same preset as the financials section,
-                        // use the authoritative Period Summary value so the numbers match exactly.
-                        const useAuthoritativeAvg = costPerOrderChart.preset === financialsSection.preset
-                        const avg = useAuthoritativeAvg
-                          ? adjustedBillingSummary.costPerOrder
-                          : (() => { const tot = pts.reduce((s, d) => s + d.orderCount, 0); return tot > 0 ? pts.reduce((s, d) => s + d.costPerOrder * d.orderCount, 0) / tot : 0 })()
-                        return (
-                          <div className="flex justify-between mt-3 text-xs">
-                            <div className="p-2 bg-green-500/10 rounded">
-                              <div className="text-[10px] text-muted-foreground">Lowest</div>
-                              <div className="font-semibold text-green-600 tabular-nums">
-                                ${Math.min(...pts.map(d => d.costPerOrder)).toFixed(2)}
-                              </div>
-                            </div>
-                            <div className="p-2 bg-muted/30 rounded">
-                              <div className="text-[10px] text-muted-foreground">Average</div>
-                              <div className="font-semibold tabular-nums">
-                                ${avg.toFixed(2)}
-                              </div>
-                            </div>
-                            <div className="p-2 bg-red-500/10 rounded">
-                              <div className="text-[10px] text-muted-foreground">Highest</div>
-                              <div className="font-semibold text-red-600 tabular-nums">
-                                ${Math.max(...pts.map(d => d.costPerOrder)).toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })()}
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Non-Shipping Cost Breakdown — full width */}
-                <div>
-                  <Card className="bg-transparent shadow-none">
-                    <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-[15px]">
-                      <div>
-                        <div className="text-sm font-semibold">Non-Shipping Cost Breakdown</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">All fulfillment fees excluding shipping and credits</div>
-                      </div>
-                      <ChartSelectors chart={additionalSvcChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
-                    </div>
-                    <CardContent>
-                      {(() => {
-                        const svcData = (additionalSvcChart.data as AdditionalServicesBreakdown[]) || []
-                        const totalAmount = svcData.reduce((s, d) => s + d.amount, 0)
-                        const yAxisWidth = Math.max(80, ...svcData.map(d => d.category.length * 6 + 12))
-                        return (
-                      <ChartContainer
-                        config={{
-                          amount: { label: "Amount", color: "hsl(var(--chart-1))" },
-                        }}
-                        className="w-full [&_svg]:overflow-visible" style={{ height: `${Math.max(200, svcData.length * 34 + 20)}px` }}
-                      >
-                        <BarChart data={svcData} layout="vertical" margin={{ top: 0, right: 0, left: 0, bottom: 0 }} barCategoryGap="20%">
-                          <XAxis type="number" hide />
-                          <YAxis type="category" dataKey="category" tickLine={false} axisLine={false} fontSize={11} fontWeight={500} width={yAxisWidth} interval={0} tick={{ textAnchor: 'start', dx: -(yAxisWidth - 8) }} />
-                          <ChartTooltip
-                            content={
-                              <ChartTooltipContent
-                                indicator="dot"
-                                formatter={(value, name, item) => (
-                                  <>
-                                    <div className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
-                                    <div className="flex flex-1 justify-between items-center leading-none">
-                                      <span className="text-muted-foreground">Amount</span>
-                                      <span className="font-mono font-medium tabular-nums text-foreground ml-4">${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                    </div>
-                                  </>
-                                )}
-                              />
-                            }
-                          />
-                          <Bar dataKey="amount" radius={4} barSize={18}>
-                            {svcData.map((_, i) => {
-                              const opacity = 1 - (i / Math.max(svcData.length - 1, 1)) * 0.55
-                              return <Cell key={i} fill={`hsl(217, 72%, ${42 + i * (30 / Math.max(svcData.length - 1, 1))}%)`} fillOpacity={opacity} />
-                            })}
-                            <LabelList dataKey="amount" position="right" content={(props: any) => {
-                              const { x, y, width, height, value } = props
-                              const pct = totalAmount > 0 ? (value / totalAmount * 100).toFixed(1) : '0'
-                              const label = `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${pct}%)`
-                              return <text x={x + width + 6} y={y + height / 2} dominantBaseline="central" fontSize={11} fontWeight={500} fill="currentColor" style={{ fontVariantNumeric: 'tabular-nums' }}>{label}</text>
-                            }} />
-                          </Bar>
-                        </BarChart>
-                      </ChartContainer>
-                        )
-                      })()}
-                    </CardContent>
-                  </Card>
                 </div>
 
                 {/* Row 4: Detailed Breakdown Table */}
@@ -2205,7 +2226,7 @@ export default function AnalyticsContent() {
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle className="text-sm font-medium"><div>Weekly Fee Breakdown</div></CardTitle>
+                        <CardTitle className="text-sm font-medium"><div>Weekly Invoice Fee Breakdown</div></CardTitle>
                         <CardDescription className="text-xs">Detailed breakdown by category</CardDescription>
                       </div>
                       <div className="flex items-center gap-2">
@@ -3089,9 +3110,13 @@ export default function AnalyticsContent() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
-                            <Select value={dateRange} onValueChange={handleDatePresetChange}>
+                            <Select value={dateRangeSelectValue} onValueChange={handleDatePresetChange}>
                               <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
-                                <SelectValue>{DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}</SelectValue>
+                                <SelectValue>
+                                  {dateRange === 'custom' && customDateRange.from && customDateRange.to
+                                    ? dateRangeDisplayLabel
+                                    : DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '90D'}
+                                </SelectValue>
                               </SelectTrigger>
                               <SelectContent align="end" className="font-roboto text-xs">
                                 {DATE_RANGE_PRESETS.map((option) => (
@@ -3099,6 +3124,18 @@ export default function AnalyticsContent() {
                                 ))}
                               </SelectContent>
                             </Select>
+                            {customPickerOpen && dateRange === 'custom' && (
+                              <InlineDateRangePicker
+                                dateRange={customDateRange.from && customDateRange.to ? { from: customDateRange.from, to: customDateRange.to } : undefined}
+                                onDateRangeChange={(range) => {
+                                  if (range?.from && range?.to) {
+                                    setCustomDateRange({ from: range.from, to: range.to })
+                                    setCustomPickerOpen(false)
+                                  }
+                                }}
+                                autoOpen
+                              />
+                            )}
                             {(analyticsData?.availableCountries || []).length > 1 && (
                               <Select value={selectedCountry} onValueChange={(v) => { setSelectedCountry(v); setSelectedState(null) }}>
                                 <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
@@ -3150,9 +3187,9 @@ export default function AnalyticsContent() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {dailyVolumeChart.isFetching && <JetpackLoader size="sm" />}
-                      <Select value={dailyVolumeChart.preset} onValueChange={dailyVolumeChart.setPreset}>
+                      <Select value={chartSelectVal(dailyVolumeChart)} onValueChange={dailyVolumeChart.setPreset}>
                         <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-muted/50 border-border/50">
-                          <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === dailyVolumeChart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
+                          <SelectValue>{chartPresetLabel(dailyVolumeChart, dateRangeDisplayLabel)}</SelectValue>
                         </SelectTrigger>
                         <SelectContent align="end" className="font-roboto text-xs">
                           {CHART_DATE_PRESETS.map((option) => (
@@ -3240,9 +3277,9 @@ export default function AnalyticsContent() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {hourChart.isFetching && <JetpackLoader size="sm" />}
-                        <Select value={hourChart.preset} onValueChange={hourChart.setPreset}>
+                        <Select value={chartSelectVal(hourChart)} onValueChange={hourChart.setPreset}>
                           <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-muted/50 border-border/50">
-                            <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === hourChart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
+                            <SelectValue>{chartPresetLabel(hourChart, dateRangeDisplayLabel)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent align="end" className="font-roboto text-xs">
                             {CHART_DATE_PRESETS.map((option) => (
@@ -3323,9 +3360,9 @@ export default function AnalyticsContent() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {dowChart.isFetching && <JetpackLoader size="sm" />}
-                        <Select value={dowChart.preset} onValueChange={dowChart.setPreset}>
+                        <Select value={chartSelectVal(dowChart)} onValueChange={dowChart.setPreset}>
                           <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-muted/50 border-border/50">
-                            <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === dowChart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
+                            <SelectValue>{chartPresetLabel(dowChart, dateRangeDisplayLabel)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent align="end" className="font-roboto text-xs">
                             {CHART_DATE_PRESETS.map((option) => (
@@ -3399,9 +3436,9 @@ export default function AnalyticsContent() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {fcChart.isFetching && <JetpackLoader size="sm" />}
-                        <Select value={fcChart.preset} onValueChange={fcChart.setPreset}>
+                        <Select value={chartSelectVal(fcChart)} onValueChange={fcChart.setPreset}>
                           <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-muted/50 border-border/50">
-                            <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === fcChart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
+                            <SelectValue>{chartPresetLabel(fcChart, dateRangeDisplayLabel)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent align="end" className="font-roboto text-xs">
                             {CHART_DATE_PRESETS.map((option) => (
@@ -3453,9 +3490,9 @@ export default function AnalyticsContent() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {storeChart.isFetching && <JetpackLoader size="sm" />}
-                        <Select value={storeChart.preset} onValueChange={storeChart.setPreset}>
+                        <Select value={chartSelectVal(storeChart)} onValueChange={storeChart.setPreset}>
                           <SelectTrigger className="h-[28px] w-auto gap-1 text-[11px] text-foreground bg-muted/50 border-border/50">
-                            <SelectValue>{CHART_DATE_PRESETS.find(p => p.value === storeChart.preset)?.label || dateRangeDisplayLabel}</SelectValue>
+                            <SelectValue>{chartPresetLabel(storeChart, dateRangeDisplayLabel)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent align="end" className="font-roboto text-xs">
                             {CHART_DATE_PRESETS.map((option) => (
@@ -4224,12 +4261,14 @@ export default function AnalyticsContent() {
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0 -mt-[2px]">
                           <Select
-                            value={dateRange}
+                            value={dateRangeSelectValue}
                             onValueChange={handleDatePresetChange}
                           >
                             <SelectTrigger className="h-[30px] w-auto gap-1.5 text-xs text-foreground bg-background">
                               <SelectValue>
-                                {DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '30D'}
+                                {dateRange === 'custom' && customDateRange.from && customDateRange.to
+                                  ? dateRangeDisplayLabel
+                                  : DATE_RANGE_PRESETS.find(p => p.value === dateRange)?.label || '90D'}
                               </SelectValue>
                             </SelectTrigger>
                             <SelectContent align="end" className="font-roboto text-xs">
@@ -4240,7 +4279,7 @@ export default function AnalyticsContent() {
                               ))}
                             </SelectContent>
                           </Select>
-                          {dateRange === 'custom' && (
+                          {customPickerOpen && dateRange === 'custom' && (
                             <InlineDateRangePicker
                               dateRange={customDateRange.from && customDateRange.to ? { from: customDateRange.from, to: customDateRange.to } : undefined}
                               onDateRangeChange={(range) => {
@@ -4257,10 +4296,12 @@ export default function AnalyticsContent() {
                                     minFrom.setHours(0, 0, 0, 0)
                                     if (range.from > minFrom) {
                                       setCustomDateRange({ from: minFrom, to: today })
+                                      setCustomPickerOpen(false)
                                       return
                                     }
                                   }
                                   setCustomDateRange({ from: range.from, to: range.to })
+                                  setCustomPickerOpen(false)
                                 }
                               }}
                               autoOpen
