@@ -31,9 +31,10 @@ export interface ValidationSummary {
   creditsTransactions: number
   creditsCost: number
 
-  // Shipments sheet field completion
+  // Shipments sheet field completion (excludes Processing/Pending shipments)
   shipments: {
     total: number
+    processingExcluded: number  // Count of Processing/Pending shipments excluded from checks
     withTrackingId: number
     withBaseCost: number
     withCarrier: number
@@ -176,7 +177,7 @@ export async function runPreflightValidation(
         shipment_id, tracking_id, carrier, carrier_service, ship_option_id,
         zone_used, actual_weight_oz, dim_weight_oz, billable_weight_oz,
         length, width, height, event_labeled, event_created, fc_name, order_id,
-        recipient_name
+        recipient_name, status
       `)
       .eq('client_id', clientId)
       .in('shipment_id', shipmentIds.slice(0, 500)) // First batch
@@ -191,7 +192,7 @@ export async function runPreflightValidation(
           shipment_id, tracking_id, carrier, carrier_service, ship_option_id,
           zone_used, actual_weight_oz, dim_weight_oz, billable_weight_oz,
           length, width, height, event_labeled, event_created, fc_name, order_id,
-          recipient_name
+          recipient_name, status
         `)
         .eq('client_id', clientId)
         .in('shipment_id', shipmentIds.slice(i, i + 500))
@@ -624,6 +625,15 @@ export async function runPreflightValidation(
   const sumCostPlusTaxes = (txs: Record<string, unknown>[]) =>
     txs.reduce((sum, tx) => sum + parseNum(tx.cost) + sumTaxes(tx.taxes), 0)
 
+  // Exclude Processing/Pending shipments from field checks — they haven't shipped yet
+  // and naturally lack tracking, carrier, zone, timeline, dimensions, and weight data.
+  // They'll either ship (and get populated) or get cancelled (and transactions voided).
+  const shippedShipments = shipmentsData.filter(s => {
+    const status = String(s.status || '')
+    return status !== 'Processing' && status !== 'Pending' && status !== 'None'
+  })
+  const processingCount = shipmentsData.length - shippedShipments.length
+
   const summary: ValidationSummary = {
     shippingTransactions: shippingTransactions.length,
     shippingCost: sumShippingCost(shippingTransactions),
@@ -639,19 +649,22 @@ export async function runPreflightValidation(
     creditsCost: sumCost(creditsTransactions),
 
     shipments: {
-      total: shipmentsData.length,
-      withTrackingId: shipmentsData.filter(s => s.tracking_id).length,
+      total: shippedShipments.length,
+      processingExcluded: processingCount,
+      withTrackingId: shippedShipments.filter(s => s.tracking_id).length,
       withBaseCost: shippingTransactions.filter(tx => tx.base_cost !== null).length,
-      withCarrier: shipmentsData.filter(s => s.carrier).length,
-      withCarrierService: shipmentsData.filter(s => s.carrier_service).length,
-      withZone: shipmentsData.filter(s => s.zone_used !== null).length,
-      withWeights: shipmentsData.filter(s => s.actual_weight_oz !== null || s.billable_weight_oz !== null).length,
-      withDimensions: shipmentsData.filter(s => s.length !== null && s.width !== null && s.height !== null).length,
-      withEventLabeled: shipmentsData.filter(s => s.event_labeled).length,
-      withEventCreated: shipmentsData.filter(s => s.event_created).length,
+      withCarrier: shippedShipments.filter(s => s.carrier).length,
+      withCarrierService: shippedShipments.filter(s => s.carrier_service).length,
+      withZone: shippedShipments.filter(s => s.zone_used !== null).length,
+      withWeights: shippedShipments.filter(s => s.actual_weight_oz !== null || s.billable_weight_oz !== null).length,
+      withDimensions: shippedShipments.filter(s => s.length !== null && s.width !== null && s.height !== null).length,
+      // Invoice generator falls back to created_at when event_labeled is null,
+      // so only flag as missing when NEITHER exists
+      withEventLabeled: shippedShipments.filter(s => s.event_labeled || s.event_created).length,
+      withEventCreated: shippedShipments.filter(s => s.event_created).length,
       // Products sold: both name and quantity required (quantity falls back to order_items)
       // Exception: B2B orders and manual orders
-      withProductsSold: shipmentsData.filter(s => {
+      withProductsSold: shippedShipments.filter(s => {
         const sid = String(s.shipment_id)
         const items = shipmentItemsMap.get(sid)
         const order = orderDataMap.get(String(s.order_id))
@@ -668,7 +681,7 @@ export async function runPreflightValidation(
         // Normal orders: require both name and quantity
         return items?.hasName && items?.hasQuantity
       }).length,
-      withCustomerName: shipmentsData.filter(s => {
+      withCustomerName: shippedShipments.filter(s => {
         // Primary: orders.customer_name
         const order = orderDataMap.get(String(s.order_id))
         const customerName = order ? (order as { customer_name?: string }).customer_name : null
@@ -678,7 +691,7 @@ export async function runPreflightValidation(
         return !!(recipientName && String(recipientName).trim())
       }).length,
       // Zip code: required for US, optional for international (many countries don't use them)
-      withZipCode: shipmentsData.filter(s => {
+      withZipCode: shippedShipments.filter(s => {
         const order = orderDataMap.get(String(s.order_id))
         if (!order) return false
         const o = order as { zip_code?: string; country?: string }
@@ -688,7 +701,7 @@ export async function runPreflightValidation(
       }).length,
       // store_order_id: only required for DTC orders from external channels
       // Manual orders (ShipBob Default, N/A channels) and B2B orders don't have external store IDs
-      withStoreOrderId: shipmentsData.filter(s => {
+      withStoreOrderId: shippedShipments.filter(s => {
         const order = orderDataMap.get(String(s.order_id))
         if (!order) return false
         const o = order as { store_order_id?: string; channel_name?: string; order_type?: string }
@@ -815,13 +828,23 @@ export async function runPreflightValidation(
   }
 
   // SHIPMENTS SHEET VALIDATIONS
+  // Note: Processing/Pending shipments are excluded from s.total — they haven't shipped yet
+  // and naturally lack tracking/carrier/zone/timeline/dimension data
   const s = summary.shipments
+  if (s.processingExcluded > 0) {
+    warnings.push({
+      category: 'SHIPMENTS',
+      message: `${s.processingExcluded} shipments excluded from validation (still Processing/Pending)`,
+      count: s.processingExcluded,
+      percentage: 0,
+    })
+  }
   checkField('SHIPMENTS', 'tracking_id', s.total, s.withTrackingId, 'shipments')
   checkField('SFTP_BREAKDOWN', 'base_cost (SFTP breakdown)', shippingTransactions.length, s.withBaseCost, 'shipments')
   checkField('SHIPMENTS', 'carrier', s.total, s.withCarrier, 'shipments')
   checkField('SHIPMENTS', 'carrier_service', s.total, s.withCarrierService, 'shipments')
   checkField('SHIPMENTS', 'zone_used', s.total, s.withZone, 'shipments')
-  checkField('SHIPMENTS', 'weights (actual/billable)', s.total, s.withWeights, 'shipments')
+  checkField('SHIPMENTS', 'weights (actual/billable)', s.total, s.withWeights, 'shipments', 'warning')
   checkField('SHIPMENTS', 'dimensions (L×W×H)', s.total, s.withDimensions, 'shipments')
   checkField('TIMELINE', 'event_labeled (transaction date)', s.total, s.withEventLabeled, 'shipments')
   checkField('TIMELINE', 'event_created (order created)', s.total, s.withEventCreated, 'shipments')

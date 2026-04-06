@@ -10,6 +10,7 @@ import {
   formatValidationResult,
   type ValidationResult,
 } from '@/lib/billing/preflight-validation'
+import { syncBillingAwareTimelines } from '@/lib/shipbob/sync'
 
 /**
  * GET /api/cron/sync-invoices
@@ -821,6 +822,21 @@ export async function GET(request: Request) {
     console.log(`Found ${unprocessedInvoices.length} unprocessed ShipBob invoices`)
     console.log(`  Invoice IDs: ${shipbobInvoiceIds.join(', ')}`)
     console.log(`  Types: ${[...new Set(unprocessedInvoices.map((i: { invoice_type: string }) => i.invoice_type))].join(', ')}`)
+
+    // Step 4.5: Backfill missing timeline data before preflight
+    // Catches shipments where initial sync ran before ShipBob recorded the Labeled event.
+    // Run with larger batch size (200) to clear backlog before preflight checks.
+    console.log('[InvoiceSync] Step 4.5: Backfilling missing timeline data...')
+    try {
+      const timelineResult = await syncBillingAwareTimelines(200)
+      if (timelineResult.updated > 0 || timelineResult.errors.length > 0) {
+        console.log(`[InvoiceSync] Timeline backfill: ${timelineResult.updated} updated, ${timelineResult.skipped} skipped, ${timelineResult.errors.length} errors`)
+      } else {
+        console.log('[InvoiceSync] Timeline backfill: no missing timelines found')
+      }
+    } catch (err) {
+      console.error('[InvoiceSync] Timeline backfill failed (non-fatal):', err)
+    }
 
     // Step 5: Run preflight validation for each client
     const preflightResults: Array<{

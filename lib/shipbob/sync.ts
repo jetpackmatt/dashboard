@@ -2552,10 +2552,11 @@ export async function syncAllUndeliveredTimelines(
     const olderCheckWindow = new Date(now)
     olderCheckWindow.setHours(olderCheckWindow.getHours() - 2) // 2 hours ago
 
-    // Per-client capacity split: 70% fresh, 30% older
+    // Per-client capacity split: 60% fresh, 25% older, 15% missing-labeled
     // Each client gets their own batchSize (default 100) to maximize their rate limit budget
-    const freshLimitPerClient = Math.floor(batchSize * 0.7)  // 70 per client
-    const olderLimitPerClient = batchSize - freshLimitPerClient  // 30 per client
+    const freshLimitPerClient = Math.floor(batchSize * 0.6)  // 60 per client
+    const olderLimitPerClient = Math.floor(batchSize * 0.25)  // 25 per client
+    const missingLabeledLimitPerClient = batchSize - freshLimitPerClient - olderLimitPerClient  // 15 per client
 
     // Query shipments PER CLIENT in parallel - each client has their own 150 req/min rate limit
     const clientIds = Object.keys(clientTokens)
@@ -2599,15 +2600,36 @@ export async function syncAllUndeliveredTimelines(
           .order('timeline_checked_at', { ascending: true, nullsFirst: true })
           .limit(actualOlderLimit)
 
+        // Query shipments that never got event_labeled on initial sync
+        // These are invisible to the fresh/older tiers (which require event_labeled IS NOT NULL)
+        // They were synced before ShipBob recorded the Labeled event — this tier catches them
+        const actualMissingLimit = missingLabeledLimitPerClient +
+          (freshLimitPerClient - freshCount) +
+          (olderLimitPerClient - (olderShipments?.length || 0))
+
+        const { data: missingLabeledShipments, error: missingError } = await supabase
+          .from('shipments')
+          .select('id, shipment_id, client_id, status')
+          .eq('client_id', clientId)
+          .is('event_labeled', null)
+          .not('event_created', 'is', null)
+          .is('deleted_at', null)
+          .not('status', 'in', '("Cancelled","Processing","None","Pending")')
+          .gte('created_date', cutoffDate.toISOString())
+          .order('created_date', { ascending: false })
+          .limit(actualMissingLimit)
+
         const errors: string[] = []
         if (freshError) errors.push(`Fresh query error for ${clientId}: ${freshError.message}`)
         if (olderError) errors.push(`Older query error for ${clientId}: ${olderError.message}`)
+        if (missingError) errors.push(`Missing-labeled query error for ${clientId}: ${missingError.message}`)
 
         return {
           clientId,
-          shipments: [...(freshShipments || []), ...(olderShipments || [])],
+          shipments: [...(freshShipments || []), ...(olderShipments || []), ...(missingLabeledShipments || [])],
           freshCount,
           olderCount: olderShipments?.length || 0,
+          missingLabeledCount: missingLabeledShipments?.length || 0,
           errors,
         }
       })
@@ -2617,18 +2639,20 @@ export async function syncAllUndeliveredTimelines(
     const shipmentsByClient: Record<string, Array<{ id: string; shipment_id: string; client_id: string; status: string }>> = {}
     let totalFresh = 0
     let totalOlder = 0
+    let totalMissingLabeled = 0
 
     for (const cr of clientShipmentResults) {
       shipmentsByClient[cr.clientId] = cr.shipments
       totalFresh += cr.freshCount
       totalOlder += cr.olderCount
+      totalMissingLabeled += cr.missingLabeledCount || 0
       result.errors.push(...cr.errors)
     }
 
-    const totalShipments = totalFresh + totalOlder
+    const totalShipments = totalFresh + totalOlder + totalMissingLabeled
     result.totalShipments = totalShipments
 
-    console.log(`[TimelineSync] Found ${totalFresh} fresh (0-3d) + ${totalOlder} older (3-14d) across ${clientIds.length} clients`)
+    console.log(`[TimelineSync] Found ${totalFresh} fresh (0-3d) + ${totalOlder} older (3-14d) + ${totalMissingLabeled} missing-labeled across ${clientIds.length} clients`)
 
     if (totalShipments === 0) {
       console.log('[TimelineSync] No undelivered shipments to update')
@@ -2823,69 +2847,27 @@ export async function syncBillingAwareTimelines(
   }
 
   try {
-    // Find shipments with Shipping transactions but missing event_labeled
-    // These are billable shipments that need timeline data for proper invoicing
+    // Find shipments missing event_labeled that have been synced at least once (event_created exists)
+    // These are shipments where the initial sync ran before ShipBob recorded the Labeled event.
+    // The tiered timeline cron (syncAllUndeliveredTimelines) requires event_labeled IS NOT NULL,
+    // so these shipments are permanently invisible to it — this function is the safety net.
     const { data: missingTimelines, error: queryError } = await supabase
       .from('shipments')
-      .select(`
-        id,
-        shipment_id,
-        client_id,
-        status
-      `)
+      .select('id, shipment_id, client_id, status')
       .is('event_labeled', null)
       .is('deleted_at', null)
+      .not('event_created', 'is', null)
       .not('status', 'in', '("Cancelled","Processing","None","Pending")')
-      .in('shipment_id', supabase
-        .from('transactions')
-        .select('reference_id')
-        .eq('fee_type', 'Shipping')
-        .eq('reference_type', 'Shipment')
-      )
+      .order('created_date', { ascending: false })
       .limit(batchSize)
 
     if (queryError) {
-      // Fallback to raw SQL if the subquery approach doesn't work
-      const { data: fallbackData, error: fallbackError } = await supabase.rpc('get_billable_shipments_missing_timeline', {
-        batch_limit: batchSize
-      }).catch(() => ({ data: null, error: { message: 'RPC not available' } }))
+      result.errors.push(`Query error: ${queryError.message}`)
+      result.duration = Date.now() - startTime
+      return result
+    }
 
-      if (fallbackError || !fallbackData) {
-        // Use a simpler two-step approach
-        const { data: shippingTx } = await supabase
-          .from('transactions')
-          .select('reference_id')
-          .eq('fee_type', 'Shipping')
-          .eq('reference_type', 'Shipment')
-          .not('reference_id', 'is', null)
-          .limit(5000)
-
-        if (shippingTx && shippingTx.length > 0) {
-          const shipmentIds: string[] = [...new Set<string>(shippingTx.map((t: { reference_id: string }) => t.reference_id))]
-
-          const { data: ships } = await supabase
-            .from('shipments')
-            .select('id, shipment_id, client_id, status')
-            .in('shipment_id', shipmentIds)
-            .is('event_labeled', null)
-            .is('deleted_at', null)
-            .not('status', 'in', '("Cancelled","Processing","None","Pending")')
-            .limit(batchSize)
-
-          if (ships) {
-            result.totalShipments = ships.length
-            if (ships.length > 0) {
-              await processTimelineUpdates(supabase, ships, result)
-            }
-          }
-        }
-      } else if (fallbackData) {
-        result.totalShipments = fallbackData.length
-        if (fallbackData.length > 0) {
-          await processTimelineUpdates(supabase, fallbackData, result)
-        }
-      }
-    } else if (missingTimelines && missingTimelines.length > 0) {
+    if (missingTimelines && missingTimelines.length > 0) {
       result.totalShipments = missingTimelines.length
       await processTimelineUpdates(supabase, missingTimelines, result)
     }

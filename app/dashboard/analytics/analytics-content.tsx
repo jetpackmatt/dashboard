@@ -2034,7 +2034,7 @@ export default function AnalyticsContent() {
                                         : cat.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                                     </span>
                                     <span className="text-[11px] tabular-nums text-right w-12 text-muted-foreground">
-                                      {cat.percent.toFixed(1)}%
+                                      {(positiveTotal > 0 ? (cat.amount / positiveTotal * 100) : 0).toFixed(1)}%
                                     </span>
                                   </div>
                                 ))}
