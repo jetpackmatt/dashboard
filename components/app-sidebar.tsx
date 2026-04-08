@@ -286,7 +286,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <>
       <Sidebar collapsible="offcanvas" {...props}>
-        <SidebarHeader>
+        <SidebarHeader className="pl-[15px] pt-[15px]">
           <Link href="/dashboard" prefetch={false} className="flex items-center px-2 py-1 transition-[filter] hover:brightness-75">
             <Image
               src="/logos/jetpack-dark.svg"
@@ -306,7 +306,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             />
           </Link>
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="pl-[7px]">
           <NavMain items={navMainWithActive} />
           {data.documents.length > 0 && <NavDocuments items={data.documents} />}
           <NavSecondary items={filteredSecondaryItems} className="mt-auto" />

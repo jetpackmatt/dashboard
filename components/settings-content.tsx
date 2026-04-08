@@ -19,6 +19,7 @@ import {
   HeartHandshake,
   Settings2,
   UserCog,
+  Trash2,
 } from 'lucide-react'
 import { JetpackLoader } from '@/components/jetpack-loader'
 import { cn } from '@/lib/utils'
@@ -109,6 +110,7 @@ export function SettingsContent() {
   }, [searchParams, router, pathname])
 
   // Profile state
+  const [currentUserId, setCurrentUserId] = React.useState<string | null>(null)
   const [profileName, setProfileName] = React.useState('')
   const [profileEmail, setProfileEmail] = React.useState('')
   const [profileAvatar, setProfileAvatar] = React.useState<string | null>(null)
@@ -129,6 +131,8 @@ export function SettingsContent() {
   // User management state
   const [users, setUsers] = React.useState<UserWithClients[]>([])
   const [isLoadingUsers, setIsLoadingUsers] = React.useState(false)
+  const [deleteUserId, setDeleteUserId] = React.useState<string | null>(null)
+  const [isDeletingUser, setIsDeletingUser] = React.useState(false)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteEmail, setInviteEmail] = React.useState('')
   const [inviteFullName, setInviteFullName] = React.useState('')
@@ -195,6 +199,7 @@ export function SettingsContent() {
         const response = await fetch('/api/auth/profile')
         if (response.ok) {
           const data = await response.json()
+          setCurrentUserId(data.user?.id || null)
           setProfileName(data.user?.user_metadata?.full_name || '')
           setProfileEmail(data.user?.email || '')
           setProfileAvatar(data.user?.user_metadata?.avatar_url || null)
@@ -378,6 +383,24 @@ export function SettingsContent() {
       fetchUsers()
     }
   }, [effectiveIsAdmin, effectiveIsCareAdmin, fetchUsers])
+
+  const handleDeleteUser = async (userId: string) => {
+    setIsDeletingUser(true)
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' })
+      if (res.ok) {
+        setUsers(prev => prev.filter(u => u.id !== userId))
+      } else {
+        const data = await res.json()
+        console.error('Failed to delete user:', data.error)
+      }
+    } catch (error) {
+      console.error('Failed to delete user:', error)
+    } finally {
+      setIsDeletingUser(false)
+      setDeleteUserId(null)
+    }
+  }
 
   // ── Brand Team Management (for brand_owner users) ────────────────────────
   const isBrandOwner = brandRole === 'brand_owner'
@@ -1182,6 +1205,7 @@ export function SettingsContent() {
                     No users found. Invite users to get started.
                   </div>
                 ) : (
+                  <>
                   <div className="space-y-4">
                     {users.map((user) => (
                       <div
@@ -1236,10 +1260,43 @@ export function SettingsContent() {
                           ) : (
                             !user.user_metadata?.role && <Badge variant="secondary">No brands</Badge>
                           )}
+                          {effectiveIsAdmin && user.id !== currentUserId && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                              onClick={() => setDeleteUserId(user.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Delete user confirmation */}
+                  <AlertDialog open={!!deleteUserId} onOpenChange={(open) => { if (!open) setDeleteUserId(null) }}>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete user</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently remove {users.find(u => u.id === deleteUserId)?.email} from the platform, including all brand assignments. This cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isDeletingUser}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-red-600 hover:bg-red-700"
+                          disabled={isDeletingUser}
+                          onClick={() => deleteUserId && handleDeleteUser(deleteUserId)}
+                        >
+                          {isDeletingUser ? 'Deleting...' : 'Delete User'}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  </>
                 )
               ) : isBrandOwner ? (
                 /* ── Brand Owner Team Management ──────────────────────── */
