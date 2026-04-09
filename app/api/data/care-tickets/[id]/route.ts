@@ -199,24 +199,8 @@ export async function PATCH(
       deleteEventIndex, // Index of event to delete (admin/care_admin/care_team only)
     } = body
 
-    // Care Team users can only add internal notes or edit/delete events - reject if trying to update other fields
-    if (isCareTeam) {
-      const hasOtherFields = ticketType !== undefined || issueType !== undefined ||
-        status !== undefined || manager !== undefined || orderId !== undefined ||
-        shipmentId !== undefined || shipDate !== undefined || carrier !== undefined ||
-        trackingNumber !== undefined || reshipmentStatus !== undefined ||
-        whatToReship !== undefined || reshipmentId !== undefined ||
-        compensationRequest !== undefined || creditAmount !== undefined ||
-        currency !== undefined || workOrderId !== undefined || inventoryId !== undefined ||
-        description !== undefined || eventNote !== undefined || clientId !== undefined
-
-      if (hasOtherFields) {
-        return NextResponse.json(
-          { error: 'Care Team users can only add internal notes or edit/delete events' },
-          { status: 403 }
-        )
-      }
-    }
+    // Care Team users have full ticket edit access (status updates, field edits, notes)
+    // Only client attribution (clientId) is restricted to admin/care_admin below.
 
     // Build update object (only include fields that were provided)
     const updateData: Record<string, unknown> = {}
