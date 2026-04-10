@@ -156,8 +156,9 @@ export async function PATCH(
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
     }
 
-    // For regular users, verify they have access to this client
-    if (!isAdmin && !isCareAdmin) {
+    // For brand users, verify they have access to this client
+    // Care team are internal staff — they can access all tickets
+    if (!isAdmin && !isCareAdmin && !isCareTeam) {
       const { data: userClient } = await supabase
         .from('user_clients')
         .select('client_id')
