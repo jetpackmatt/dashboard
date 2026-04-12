@@ -54,11 +54,12 @@ export async function GET(request: NextRequest) {
 
     console.log(`Calculating client sizes for period: ${periodStart} to ${periodEnd}`)
 
-    // Get all active clients
+    // Get all active, non-demo clients
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
       .select('id, company_name, merchant_id, eshipper_id')
       .eq('is_active', true)
+      .eq('is_demo', false)
 
     if (clientsError) {
       console.error('Error fetching clients:', clientsError)

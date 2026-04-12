@@ -147,12 +147,13 @@ export async function calculateUserCommission(
   let clients: ClientWithPartners[] = []
 
   if (userCommission.include_all_clients) {
-    // "All Clients" mode: include every active, non-internal client
+    // "All Clients" mode: include every active, non-internal, non-demo client
     const { data: allClients, error: acError } = await supabase
       .from('clients')
       .select('id, company_name, merchant_id, eshipper_id, gofo_id')
       .eq('is_active', true)
       .eq('is_internal', false)
+      .eq('is_demo', false)
 
     if (acError || !allClients) {
       return null

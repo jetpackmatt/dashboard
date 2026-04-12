@@ -503,11 +503,16 @@ export async function getClientsWithTokenStatus(): Promise<
 > {
   const supabase = createAdminClient()
 
-  // Get all clients
+  // Get all active, non-demo clients.
+  // Demo clients (Paul's Boutique etc.) are hidden from the admin selector so
+  // admin/care staff never see them in dropdowns or "All Brands" aggregates.
+  // Demo users reach their demo client via the `user_clients` path in the brand
+  // branch of /api/auth/clients — this function is ONLY used for admin/care.
   const { data: clients, error: clientsError } = await supabase
     .from('clients')
     .select('*')
     .eq('is_active', true)
+    .eq('is_demo', false)
     .order('company_name')
 
   if (clientsError) {

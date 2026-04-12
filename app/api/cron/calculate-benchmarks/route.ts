@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 export const maxDuration = 300
 
@@ -162,6 +163,8 @@ async function computeCarrierBenchmarks(
       query = query.gt('id', lastId)
     }
 
+    query = await excludeDemoClients(supabase, query)
+
     const { data, error } = await query
     if (error || !data || data.length === 0) break
 
@@ -240,6 +243,8 @@ async function computeInternationalBenchmarks(
     if (lastId) {
       query = query.gt('id', lastId)
     }
+
+    query = await excludeDemoClients(supabase, query)
 
     const { data, error } = await query
     if (error || !data || data.length === 0) break

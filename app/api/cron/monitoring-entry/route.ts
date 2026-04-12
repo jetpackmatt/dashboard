@@ -4,6 +4,7 @@ import { getTracking, getLastCheckpointDate } from '@/lib/trackingmore/client'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { generateAssessment, calculateNextCheckTime, type ShipmentDataForAssessment } from '@/lib/ai/client'
 import { calculateEligibleAfterDate } from '@/lib/claims/eligibility'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 // Types for shipment candidates
 interface ShipmentCandidate {
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
     const threeDaysAgo = new Date()
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
 
-    const { data: candidates, error: candidatesError } = await supabase
+    let candidatesQuery = supabase
       .from('shipments')
       .select(`
         shipment_id,
@@ -94,6 +95,10 @@ export async function POST(request: NextRequest) {
       .not('tracking_id', 'is', null)
       .order('event_labeled', { ascending: true })
       .limit(500)
+
+    candidatesQuery = await excludeDemoClients(supabase, candidatesQuery)
+
+    const { data: candidates, error: candidatesError } = await candidatesQuery
 
     if (candidatesError) {
       console.error('[MonitoringEntry] Error fetching candidates:', candidatesError)

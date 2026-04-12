@@ -26,11 +26,12 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
   try {
-    // Get all clients with auto-file enabled
+    // Get all clients with auto-file enabled (exclude demo clients)
     const { data: clients, error: clientError } = await supabase
       .from('clients')
       .select('id, company_name')
       .eq('auto_file_claims', true)
+      .eq('is_demo', false)
 
     if (clientError) {
       console.error('[AutoFile Cron] Error fetching clients:', clientError)
