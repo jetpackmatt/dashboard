@@ -67,16 +67,17 @@ function shuffle(arr) {
 }
 
 // 9-digit numeric IDs in reserved demo range (700000000-899999999).
-// Real ShipBob IDs are in the 300M-400M range so 7xxM is guaranteed collision-free.
-// Kept as strings because shipment_id / shipbob_order_id are text columns.
-function demoId(_prefix) {
-  return String(700000000 + Math.floor(Math.random() * 200_000_000))
-}
-// Transactions aren't shown to users directly; keep ULID for uniqueness across runs.
+// Real ShipBob IDs are in the 300M-400M range so 7xxM / 8xxM is collision-free
+// with production. Use a COUNTER (not random) to also avoid intra-demo
+// birthday-paradox collisions at ~40K shipments.
+// Shipment IDs: 700000000+   Order IDs: 800000000+
+let _shipmentCounter = 700_000_000
+let _orderCounter    = 800_000_000
+function nextShipmentId() { return String(_shipmentCounter++) }
+function nextOrderId()    { return String(_orderCounter++) }
+// Transactions aren't shown to users; keep ULID-style (always unique).
 function demoTxId() {
-  const ts = Date.now().toString(36)
-  const rnd = crypto.randomBytes(6).toString('hex')
-  return `DEMO-TX-${ts}-${rnd}`
+  return `DEMO-TX-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}`
 }
 
 // Volume calc: walk backward from current month
@@ -280,8 +281,8 @@ async function buildAndInsertBatch(sampledShipments) {
     const phone = anonymizePhone(country)
 
     const orderUuid = crypto.randomUUID()
-    const shipbobOrderId = demoId('DEMO-ORD')
-    const shipmentId = demoId('DEMO-SHP')
+    const shipbobOrderId = nextOrderId()
+    const shipmentId = nextShipmentId()
     const now = new Date().toISOString()
 
     // Items: 1-3 random demo products. Dedupe by product id, sum quantities

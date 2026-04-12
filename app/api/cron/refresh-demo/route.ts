@@ -62,9 +62,20 @@ const STREETS = ['Main St','Oak Ave','Maple Dr','Pine Rd','Cedar Ln','Elm St','W
 
 function randInt(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min }
 function randomChoice<T>(arr: readonly T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
-// 9-digit numeric ID in reserved demo range (700M-899M, no collision w/ real ShipBob 300M-400M)
-function demoId(_prefix: string) { return String(700000000 + Math.floor(Math.random() * 200_000_000)) }
+// 9-digit numeric IDs in reserved demo range. Counter starts from max+1 of
+// existing demo data so concurrent/sequential cron runs never collide.
+// Shipment IDs: 700M base | Order IDs: 800M base.
 function demoTxId() { return `DEMO-TX-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}` }
+async function nextIdAllocators(supabase: ReturnType<typeof createAdminClient>, demoClientId: string) {
+  const { data: maxS } = await supabase.from('shipments').select('shipment_id').eq('client_id', demoClientId).gte('shipment_id', '700000000').lte('shipment_id', '799999999').order('shipment_id', { ascending: false }).limit(1).maybeSingle()
+  const { data: maxO } = await supabase.from('orders').select('shipbob_order_id').eq('client_id', demoClientId).gte('shipbob_order_id', '800000000').lte('shipbob_order_id', '899999999').order('shipbob_order_id', { ascending: false }).limit(1).maybeSingle()
+  let shipCounter = Math.max(700_000_000, Number(maxS?.shipment_id || '699999999') + 1)
+  let ordCounter = Math.max(800_000_000, Number(maxO?.shipbob_order_id || '799999999') + 1)
+  return {
+    nextShipmentId: () => String(shipCounter++),
+    nextOrderId: () => String(ordCounter++),
+  }
+}
 
 function anonymizeName() { return `${randomChoice(FIRST_NAMES)} ${randomChoice(LAST_NAMES)}` }
 function anonymizeEmail(name: string) { const [f, l] = name.toLowerCase().split(' '); return `${f}.${l}${randInt(10,999)}@example.com` }
@@ -135,6 +146,7 @@ export async function POST(request: NextRequest) {
 
   const DEMO_CLIENT_ID = demoClient.id
   const DEMO_MERCHANT = demoClient.merchant_id
+  const { nextShipmentId, nextOrderId } = await nextIdAllocators(supabase, DEMO_CLIENT_ID)
 
   const now = new Date()
   const { us: targetUs, ca: targetCa } = dailyTargets(now)
@@ -202,8 +214,8 @@ export async function POST(request: NextRequest) {
       const addr = anonymizeAddress()
       const phone = anonymizePhone(country)
       const orderUuid = crypto.randomUUID()
-      const shipbobOrderId = demoId('DEMO-ORD')
-      const shipmentId = demoId('DEMO-SHP')
+      const shipbobOrderId = nextOrderId()
+      const shipmentId = nextShipmentId()
 
       // Shift timestamps so today's shipments look like today
       const origCreated = new Date(src.created_at)
