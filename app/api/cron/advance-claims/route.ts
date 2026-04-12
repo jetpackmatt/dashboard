@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendClaimEmail, fetchAttachmentBuffers } from '@/lib/email/client'
 import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/templates'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 /**
  * Cron endpoint to advance claims and sync claim statuses
@@ -39,7 +40,9 @@ export async function GET(request: NextRequest) {
     const fiveMinutesAgo = new Date()
     fiveMinutesAgo.setMinutes(fiveMinutesAgo.getMinutes() - 5)
 
-    const { data: claimsToAdvance, error: fetchError } = await supabase
+    // CRITICAL: exclude demo clients. This cron sends live emails to ShipBob
+    // support — demo tickets would trigger hundreds of real emails.
+    let claimsQuery = supabase
       .from('care_tickets')
       .select(`
         id,
@@ -62,6 +65,10 @@ export async function GET(request: NextRequest) {
       .eq('ticket_type', 'Claim')
       .eq('status', 'Under Review')
       .lte('created_at', fiveMinutesAgo.toISOString())
+
+    claimsQuery = await excludeDemoClients(supabase, claimsQuery)
+
+    const { data: claimsToAdvance, error: fetchError } = await claimsQuery
 
     if (fetchError) {
       console.error('[Cron AdvanceClaims] Error fetching claims:', fetchError.message)
