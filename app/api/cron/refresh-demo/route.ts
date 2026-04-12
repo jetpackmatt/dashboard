@@ -260,6 +260,7 @@ export async function POST(request: NextRequest) {
       shipmentRows.push({
         id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT, order_id: orderUuid,
         shipment_id: shipmentId, shipbob_order_id: shipbobOrderId, tracking_id: src.tracking_id,
+        estimated_fulfillment_date_status: Math.random() < 0.90 ? 'FulfilledOnTime' : (Math.random() < 0.80 ? 'FulfilledLate' : 'AwaitingInventoryAllocation'),
         tracking_url: src.tracking_url, status: src.status || 'Completed',
         transit_time_days: src.transit_time_days, carrier: src.carrier, carrier_service: src.carrier_service,
         ship_option_id: src.ship_option_id, ship_option_name: src.ship_option_name, zone_used: src.zone_used,
@@ -508,7 +509,7 @@ async function generateWeeklyInvoice(
   // Find un-invoiced demo transactions in that period
   const { data: txs } = await supabase
     .from('transactions')
-    .select('id, cost, billed_amount, fee_type, charge_date')
+    .select('id, transaction_id, cost, billed_amount, markup_applied, markup_percentage, fee_type, fulfillment_center, charge_date, reference_id')
     .eq('client_id', demoClientId)
     .is('invoice_id_jp', null)
     .gte('charge_date', periodStart.toISOString().split('T')[0])
@@ -518,6 +519,32 @@ async function generateWeeklyInvoice(
   const subtotal = txs.reduce((s: number, t: any) => s + Number(t.cost || 0), 0)
   const total = txs.reduce((s: number, t: any) => s + Number(t.billed_amount || 0), 0)
   const markup = total - subtotal
+
+  // Build UI-compatible line items: one row per transaction with lineCategory
+  const lineCategoryFor = (ft: string | null) => {
+    if (ft === 'Shipping') return 'Shipping'
+    if (ft === 'Pick') return 'Pick Fees'
+    if (ft === 'Return') return 'Returns'
+    if (ft === 'Receiving') return 'Receiving'
+    if (ft === 'Storage') return 'Storage'
+    if (ft === 'Credit') return 'Credits'
+    return 'Additional Services'
+  }
+  const perTxItems = txs.map((t: any) => ({
+    id: t.transaction_id,
+    billingRecordId: t.transaction_id,
+    feeType: t.fee_type,
+    description: t.fee_type,
+    baseAmount: Number(t.cost || 0),
+    billedAmount: Number(t.billed_amount || 0),
+    markupApplied: Number(t.markup_applied || 0),
+    markupPercentage: Number(t.markup_percentage || 0),
+    fcName: t.fulfillment_center,
+    originCountry: 'US',
+    transactionDate: t.charge_date,
+    lineCategory: lineCategoryFor(t.fee_type),
+    orderNumber: t.reference_id,
+  }))
   const invoiceDate = new Date(today)
   const mm = String(invoiceDate.getUTCMonth() + 1).padStart(2, '0')
   const dd = String(invoiceDate.getUTCDate()).padStart(2, '0')
@@ -525,15 +552,6 @@ async function generateWeeklyInvoice(
   const { data: lastInv } = await supabase.from('invoices_jetpack').select('invoice_number').eq('client_id', demoClientId).order('created_at', { ascending: false }).limit(1).maybeSingle()
   const seq = lastInv ? (parseInt((lastInv.invoice_number || '').split('-')[1] || '0', 10) + 1) : 1
   const invoiceNumber = `JPPB-${String(seq).padStart(4, '0')}-${mm}${dd}${yy}`
-
-  const byFee = new Map<string, { count: number; cost: number; total: number }>()
-  for (const t of txs) {
-    const ft = (t as any).fee_type || 'Other'
-    const e = byFee.get(ft) || { count: 0, cost: 0, total: 0 }
-    e.count++; e.cost += Number((t as any).cost || 0); e.total += Number((t as any).billed_amount || 0)
-    byFee.set(ft, e)
-  }
-  const lineItems = [...byFee.entries()].map(([fee_type, v]) => ({ fee_type, count: v.count, cost: +v.cost.toFixed(2), markup: +(v.total - v.cost).toFixed(2), total: +v.total.toFixed(2) }))
 
   const { data: inserted, error } = await supabase.from('invoices_jetpack').insert({
     client_id: demoClientId, invoice_number: invoiceNumber,
@@ -543,7 +561,7 @@ async function generateWeeklyInvoice(
     subtotal: +subtotal.toFixed(2), total_markup: +markup.toFixed(2), total_amount: +total.toFixed(2),
     status: 'sent', paid_status: 'unpaid',
     generated_at: invoiceDate.toISOString(), approved_at: invoiceDate.toISOString(),
-    line_items_json: lineItems, shipbob_invoice_ids: [], version: 1,
+    line_items_json: perTxItems, shipbob_invoice_ids: [], version: 1,
     created_at: invoiceDate.toISOString(), updated_at: invoiceDate.toISOString(),
   }).select('invoice_number').single()
   if (error) { console.warn('[weekly invoice]', error.message); return false }

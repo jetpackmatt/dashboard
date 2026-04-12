@@ -62,7 +62,7 @@ async function main() {
   while (true) {
     let q = supabase
       .from('transactions')
-      .select('id, transaction_id, charge_date, billed_amount, cost, fee_type, invoiced_status_jp')
+      .select('id, transaction_id, charge_date, billed_amount, cost, fee_type, fulfillment_center, markup_applied, markup_percentage, reference_id, invoiced_status_jp')
       .eq('client_id', DEMO_CLIENT_ID)
       .is('invoice_id_jp', null)
       .order('id', { ascending: true })
@@ -154,21 +154,32 @@ async function main() {
 
 function randBizDays(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min }
 
+// UI-compatible: one line per transaction with lineCategory + billedAmount.
+// Matches the structure from the real invoice generator.
+function lineCategoryFor(ft) {
+  if (ft === 'Shipping') return 'Shipping'
+  if (ft === 'Pick') return 'Pick Fees'
+  if (ft === 'Return') return 'Returns'
+  if (ft === 'Receiving') return 'Receiving'
+  if (ft === 'Storage') return 'Storage'
+  if (ft === 'Credit') return 'Credits'
+  return 'Additional Services'
+}
 function buildLineItems(txs) {
-  const byFeeType = new Map()
-  for (const tx of txs) {
-    const ft = tx.fee_type || 'Other'
-    const e = byFeeType.get(ft) || { fee_type: ft, count: 0, cost: 0, billed: 0 }
-    e.count++
-    e.cost += Number(tx.cost || 0)
-    e.billed += Number(tx.billed_amount || 0)
-    byFeeType.set(ft, e)
-  }
-  return [...byFeeType.values()].map(e => ({
-    fee_type: e.fee_type, count: e.count,
-    cost: +e.cost.toFixed(2),
-    markup: +(e.billed - e.cost).toFixed(2),
-    total: +e.billed.toFixed(2),
+  return txs.map(t => ({
+    id: t.transaction_id,
+    billingRecordId: t.transaction_id,
+    feeType: t.fee_type,
+    description: t.fee_type,
+    baseAmount: Number(t.cost || 0),
+    billedAmount: Number(t.billed_amount || 0),
+    markupApplied: Number(t.markup_applied || 0),
+    markupPercentage: Number(t.markup_percentage || 0),
+    fcName: t.fulfillment_center || null,
+    originCountry: 'US',
+    transactionDate: t.charge_date,
+    lineCategory: lineCategoryFor(t.fee_type),
+    orderNumber: t.reference_id,
   }))
 }
 

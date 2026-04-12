@@ -377,6 +377,7 @@ async function buildAndInsertBatch(sampledShipments) {
       shipment_id: shipmentId,
       shipbob_order_id: shipbobOrderId,
       tracking_id: src.tracking_id, // REAL tracking id → carrier links work
+      estimated_fulfillment_date_status: Math.random() < 0.90 ? 'FulfilledOnTime' : (Math.random() < 0.80 ? 'FulfilledLate' : 'AwaitingInventoryAllocation'),
       tracking_url: src.tracking_url,
       status: src.status || 'Completed',
       transit_time_days: src.transit_time_days,
