@@ -592,6 +592,34 @@ npm run dev
 
 ---
 
+## Demo Client Isolation (Paul's Boutique)
+
+A demo brand ("Paul's Boutique", guitar accessories) lives in the production DB tagged `is_demo=true`. Its data feeds the demo user's dashboard but MUST NOT appear in any aggregate analytics, admin "All Brands" views, financial/commission reporting, benchmarks, or client-size rankings.
+
+**How isolation works:**
+- `clients.is_demo` boolean column (partial-indexed via `idx_clients_is_demo`)
+- `public.is_demo_client(uuid)` SQL helper + `lib/demo/exclusion.ts` TS helper (`excludeDemoClients()`)
+- Admin selector (`getClientsWithTokenStatus()` in `lib/supabase/admin.ts`) filters `is_demo=false`
+- Cross-client crons filter demo: `calculate-benchmarks`, `monitoring-entry`, `calculate-client-sizes`, `auto-file-claims`
+- Commissions (`lib/commissions/calculator.ts`) skip demo in all-clients mode
+- `get_monitoring_stats` RPC patched with `NOT is_demo_client(client_id)`
+
+**Known follow-up:** `get_analytics_from_summaries` RPC (~300 lines with ~15 WHERE clauses) is NOT yet patched. Mitigation: admin selector hides demo, so an admin cannot switch to demo or reach "All Brands including demo" via normal UI. A future migration should add `AND NOT is_demo_client(client_id)` to each all-brands branch for defense-in-depth.
+
+**Scripts:**
+- `scripts/seed-demo.js` — create demo client + 20 guitar SKUs + demo user
+- `scripts/backfill-demo-shipments.js <CLIENT_ID>` — 12 months of shipments (anonymized clones from 4 real clients)
+- `scripts/backfill-demo-care.js <CLIENT_ID>` — 1% care tickets with real-sampled language
+- `scripts/purge-demo.js [--execute]` — full teardown (delete all `is_demo=true` rows); reversibility guarantee
+
+**Daily refresh:** `/api/cron/refresh-demo` at 02:00 UTC (before 04:00 benchmarks cron). Adds ~1 day of shipments with +/- random(3,77) daily variance and +5%/mo compounding growth. Also advances care ticket lifecycles.
+
+**Demo credentials:** `demo@jetpack3pl.com` / `PaulsBoutique2026!`
+
+**DO NOT** add new cross-client aggregate queries without calling `excludeDemoClients()` (TS) or `is_demo_client()` (SQL).
+
+---
+
 ## Update Protocol
 
 After ANY technology/architecture/schema change, update the relevant CLAUDE file immediately. Don't wait to be asked.

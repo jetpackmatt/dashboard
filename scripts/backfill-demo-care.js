@@ -159,11 +159,13 @@ async function main() {
   const { data: maxRow } = await supabase.from('care_tickets').select('ticket_number').order('ticket_number', { ascending: false }).limit(1).single()
   let nextTicketNum = (maxRow?.ticket_number || 100000) + 1
 
+  // Valid issue_types (DB constraint): Loss, Damage, Pick Error, Short Ship,
+  // Other, Incorrect Items, Incorrect Quantity, Incorrect Delivery, Claim
   const ticketTypes = [
     { type: 'Claim', issue: 'Loss', weight: 50 },
     { type: 'Claim', issue: 'Damage', weight: 25 },
     { type: 'Claim', issue: 'Incorrect Items', weight: 15 },
-    { type: 'Claim', issue: 'Missing Item', weight: 10 },
+    { type: 'Claim', issue: 'Short Ship', weight: 10 },
   ]
   const weightedTypes = []
   for (const t of ticketTypes) for (let i = 0; i < t.weight; i++) weightedTypes.push(t)
