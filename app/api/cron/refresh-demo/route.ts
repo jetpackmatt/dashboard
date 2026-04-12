@@ -96,8 +96,8 @@ function dailyTargets(now: Date): { us: number; ca: number } {
   // Use deterministic-ish growth: +5% average per month
   const growthFactor = Math.pow(1.05, Math.max(0, monthsSinceAnchor))
   const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate()
-  const monthlyUs = Math.round(3000 * growthFactor)
-  const monthlyCa = Math.round(1000 * growthFactor)
+  const monthlyUs = Math.round(7000 * growthFactor)
+  const monthlyCa = Math.round(2000 * growthFactor)
   const baseUs = monthlyUs / daysInMonth
   const baseCa = monthlyCa / daysInMonth
   const noise = () => (Math.random() < 0.5 ? -1 : 1) * randInt(3, 77)

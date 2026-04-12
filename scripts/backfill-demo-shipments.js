@@ -84,8 +84,8 @@ function demoTxId() {
 function computeMonthlyTargets(monthsBack = 12) {
   // month 0 = current month, month -12 = oldest
   const targets = {}
-  let us = 3000
-  let ca = 1000
+  let us = 7000   // current-month baseline
+  let ca = 2000
   targets[0] = { us, ca }
   for (let m = 1; m <= monthsBack; m++) {
     const growthUs = 0.03 + Math.random() * 0.05  // 3-8%
@@ -635,12 +635,253 @@ async function main() {
     }
   }
 
-  console.log(`\n✅ Backfill complete:`)
+  console.log(`\n✅ Shipment backfill complete:`)
   console.log(`   Orders:      ${summary.orders.toLocaleString()}`)
   console.log(`   Shipments:   ${summary.shipments.toLocaleString()}`)
   console.log(`   Items:       ${summary.items.toLocaleString()} (order + shipment combined)`)
   console.log(`   Transactions: ${summary.tx.toLocaleString()}`)
-  console.log(`\nNext: node scripts/backfill-demo-care-tickets.js ${DEMO_CLIENT_ID}`)
+
+  console.log(`\n📦 Generating ancillary data (storage, receiving, returns, DIQ)...`)
+  const ancillary = await generateAncillaryData()
+  console.log(`   Storage tx:    ${ancillary.storage}`)
+  console.log(`   Receiving tx:  ${ancillary.receivingTx}   (receiving_orders: ${ancillary.receivingOrders})`)
+  console.log(`   Returns tx:    ${ancillary.returnsTx}     (returns: ${ancillary.returns})`)
+  console.log(`   Addl services: ${ancillary.additionalTx}`)
+  console.log(`   DIQ entries:   ${ancillary.diqEntries}`)
+
+  console.log(`\nNext: node scripts/backfill-demo-care.js ${DEMO_CLIENT_ID}`)
+  console.log(`      node scripts/backfill-demo-invoices.js ${DEMO_CLIENT_ID}`)
+}
+
+// ============ ANCILLARY DATA ============
+// Generates realistic ancillary data: storage, receiving, returns, additional
+// services, and Delivery IQ entries from the already-inserted demo shipments.
+async function generateAncillaryData() {
+  const result = { storage: 0, receivingOrders: 0, receivingTx: 0, returns: 0, returnsTx: 0, additionalTx: 0, diqEntries: 0 }
+
+  // Gather all demo shipments (needed for returns + DIQ sampling)
+  const allShipments = []
+  let lastId = null
+  while (true) {
+    let q = supabase.from('shipments')
+      .select('id, shipment_id, shipbob_order_id, tracking_id, carrier, fc_name, event_labeled, event_delivered, created_at, destination_country')
+      .eq('client_id', DEMO_CLIENT_ID)
+      .order('id', { ascending: true }).limit(1000)
+    if (lastId) q = q.gt('id', lastId)
+    const { data } = await q
+    if (!data || data.length === 0) break
+    allShipments.push(...data)
+    lastId = data[data.length - 1].id
+    if (data.length < 1000) break
+  }
+  console.log(`   Loaded ${allShipments.length.toLocaleString()} demo shipments for ancillary generation`)
+
+  // Determine month range
+  const dates = allShipments.map(s => new Date(s.created_at)).filter(d => !isNaN(d))
+  if (dates.length === 0) return result
+  const minDate = new Date(Math.min(...dates))
+  const maxDate = new Date(Math.max(...dates))
+  const months = []
+  const cursor = new Date(minDate.getFullYear(), minDate.getMonth(), 1)
+  while (cursor <= maxDate) {
+    months.push(new Date(cursor))
+    cursor.setMonth(cursor.getMonth() + 1)
+  }
+
+  const FC_NAMES = ['Twin Lakes (WI)', 'Fort Worth 3', 'Ontario 6 (CA)', 'Riverside (CA)', 'Elwood (IL)', 'Brampton (Ontario) 2', 'Trenton (NJ)', 'Wind Gap 2 (PA)']
+
+  // === Storage + WRO + Additional services per month ===
+  const storageRows = []
+  const receivingOrderRows = []
+  const receivingTxRows = []
+  const additionalTxRows = []
+  let receivingIdCounter = 900_000_001
+  for (const monthStart of months) {
+    const chargeDate = new Date(monthStart); chargeDate.setDate(28) // last week of month
+    const dateStr = chargeDate.toISOString().split('T')[0]
+    const monthIso = chargeDate.toISOString()
+
+    // STORAGE — 1 monthly transaction, scales up over time
+    const monthsAgo = Math.max(0, Math.round((Date.now() - monthStart.getTime()) / (30.4 * 86400_000)))
+    const storageCost = +(400 + 20 * (12 - monthsAgo) + Math.random() * 150).toFixed(2)
+    const storageBilled = +(storageCost * 1.15).toFixed(2)
+    storageRows.push({
+      id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+      transaction_id: demoTxId(), reference_id: null, reference_type: null,
+      cost: storageCost, base_cost: storageCost, surcharge: 0,
+      base_charge: storageBilled, total_charge: storageBilled, billed_amount: storageBilled,
+      markup_applied: +(storageBilled - storageCost).toFixed(2), markup_percentage: 15,
+      markup_is_preview: false, is_voided: false, currency_code: 'USD',
+      charge_date: dateStr, fee_type: 'Storage', transaction_type: 'Charge',
+      fulfillment_center: randomChoice(FC_NAMES),
+      invoiced_status_sb: true, invoiced_status_jp: false,
+      created_at: monthIso, updated_at: monthIso,
+    })
+
+    // RECEIVING (WRO) — 4 to 8 per month at varying sizes
+    const wroCount = randInt(4, 8)
+    for (let i = 0; i < wroCount; i++) {
+      const wroId = receivingIdCounter++
+      const wroDate = new Date(monthStart); wroDate.setDate(randInt(1, 27)); wroDate.setHours(randInt(8, 17), randInt(0, 59))
+      const wroIso = wroDate.toISOString()
+      const fc = randomChoice(FC_NAMES)
+      const quantityReceived = randInt(50, 2000)
+      receivingOrderRows.push({
+        id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+        shipbob_receiving_id: wroId,
+        purchase_order_number: `PO-${randInt(10000, 99999)}`,
+        status: 'Completed', package_type: randomChoice(['Box', 'Pallet', 'Envelope']),
+        box_packaging_type: 'Box',
+        fc_name: fc, fc_country: 'US',
+        expected_arrival_date: wroIso, insert_date: wroIso, last_updated_date: wroIso,
+        inventory_quantities: [{ name: 'Guitar accessories', quantity: quantityReceived }],
+        synced_at: wroIso,
+      })
+      const wroCost = +(15 + quantityReceived * 0.02 + Math.random() * 40).toFixed(2)
+      const wroBilled = +(wroCost * 1.15).toFixed(2)
+      receivingTxRows.push({
+        id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+        transaction_id: demoTxId(), reference_id: String(wroId), reference_type: 'WRO',
+        cost: wroCost, base_cost: wroCost, surcharge: 0,
+        base_charge: wroBilled, total_charge: wroBilled, billed_amount: wroBilled,
+        markup_applied: +(wroBilled - wroCost).toFixed(2), markup_percentage: 15,
+        markup_is_preview: false, is_voided: false, currency_code: 'USD',
+        charge_date: wroIso.split('T')[0], fee_type: 'Receiving', transaction_type: 'Charge',
+        fulfillment_center: fc, invoiced_status_sb: true, invoiced_status_jp: false,
+        created_at: wroIso, updated_at: wroIso,
+      })
+    }
+
+    // ADDITIONAL SERVICES — a few small misc charges per month
+    const addlCount = randInt(3, 10)
+    for (let i = 0; i < addlCount; i++) {
+      const addlDate = new Date(monthStart); addlDate.setDate(randInt(1, 27))
+      const cost = +(5 + Math.random() * 80).toFixed(2)
+      const billed = +(cost * 1.15).toFixed(2)
+      additionalTxRows.push({
+        id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+        transaction_id: demoTxId(), reference_id: null, reference_type: null,
+        cost, base_cost: cost, surcharge: 0,
+        base_charge: billed, total_charge: billed, billed_amount: billed,
+        markup_applied: +(billed - cost).toFixed(2), markup_percentage: 15,
+        markup_is_preview: false, is_voided: false, currency_code: 'USD',
+        charge_date: addlDate.toISOString().split('T')[0],
+        fee_type: randomChoice(['Special Project', 'VAS', 'Case Pick', 'B2B Label']),
+        transaction_type: 'Charge', fulfillment_center: randomChoice(FC_NAMES),
+        invoiced_status_sb: true, invoiced_status_jp: false,
+        created_at: addlDate.toISOString(), updated_at: addlDate.toISOString(),
+      })
+    }
+  }
+
+  // === RETURNS — ~3% of shipments ===
+  const returnRows = []
+  const returnsTxRows = []
+  let returnIdCounter = 950_000_001
+  const returnCandidates = allShipments.filter(s => s.event_delivered && Math.random() < 0.03)
+  for (const s of returnCandidates) {
+    const retId = returnIdCounter++
+    const delivered = new Date(s.event_delivered)
+    const requestedAt = new Date(delivered.getTime() + randInt(1, 30) * 86400_000)
+    const arrivedAt = new Date(requestedAt.getTime() + randInt(3, 14) * 86400_000)
+    const processedAt = new Date(arrivedAt.getTime() + randInt(1, 5) * 86400_000)
+    const completedAt = new Date(processedAt.getTime() + randInt(1, 3) * 86400_000)
+    const invAmt = +(10 + Math.random() * 60).toFixed(2)
+    returnRows.push({
+      id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+      shipbob_return_id: retId,
+      reference_id: s.shipment_id,
+      status: 'Completed', return_type: randomChoice(['Return', 'Refund']),
+      tracking_number: `RET${randInt(100000000, 999999999)}`,
+      shipment_tracking_number: s.tracking_id,
+      original_shipment_id: Number(s.shipment_id),
+      store_order_id: `PB-${randInt(100000, 999999)}`,
+      invoice_amount: invAmt, invoice_currency: 'USD',
+      fc_name: s.fc_name, channel_name: 'Shopify',
+      insert_date: requestedAt.toISOString(),
+      awaiting_arrival_date: requestedAt.toISOString(),
+      arrived_date: arrivedAt.toISOString(),
+      processing_date: processedAt.toISOString(),
+      completed_date: completedAt.toISOString(),
+      status_history: [], inventory: [], synced_at: completedAt.toISOString(),
+    })
+    const retCost = +(2.5 + Math.random() * 4).toFixed(2)
+    const retBilled = +(retCost * 1.15).toFixed(2)
+    returnsTxRows.push({
+      id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT_ID,
+      transaction_id: demoTxId(), reference_id: String(retId), reference_type: 'Return',
+      cost: retCost, base_cost: retCost, surcharge: 0,
+      base_charge: retBilled, total_charge: retBilled, billed_amount: retBilled,
+      markup_applied: +(retBilled - retCost).toFixed(2), markup_percentage: 15,
+      markup_is_preview: false, is_voided: false, currency_code: 'USD',
+      charge_date: completedAt.toISOString().split('T')[0],
+      fee_type: 'Return', transaction_type: 'Charge',
+      fulfillment_center: s.fc_name, invoiced_status_sb: true, invoiced_status_jp: false,
+      created_at: completedAt.toISOString(), updated_at: completedAt.toISOString(),
+    })
+  }
+
+  // === DIQ / Lost-in-Transit Checks — ~2% of undelivered or slow-delivered shipments ===
+  const diqRows = []
+  const diqCandidates = allShipments.filter(s => {
+    if (!s.event_labeled) return false
+    const labeledDays = (Date.now() - new Date(s.event_labeled).getTime()) / 86400_000
+    if (labeledDays < 4) return false
+    if (s.event_delivered) {
+      const transit = (new Date(s.event_delivered) - new Date(s.event_labeled)) / 86400_000
+      if (transit < 8) return false  // only slow ones
+    }
+    return Math.random() < 0.02
+  })
+  for (const s of diqCandidates) {
+    const labeledAt = new Date(s.event_labeled)
+    const daysInTransit = Math.floor((Date.now() - labeledAt.getTime()) / 86400_000)
+    const eligibleAfter = new Date(labeledAt.getTime() + 15 * 86400_000).toISOString().split('T')[0]
+    const firstChecked = new Date(labeledAt.getTime() + 3 * 86400_000 + randInt(0, 2 * 86400_000)).toISOString()
+    const status = s.event_delivered ? 'resolved' : randomChoice(['at_risk', 'at_risk', 'at_risk', 'eligible', 'eligible', 'claim_filed', 'approved', 'denied'])
+    const statusBadge = randomChoice(['STUCK', 'STALLED', 'LOST', 'RETURNING', 'NORMAL'])
+    const watchReason = randomChoice(['STALLED', 'NO SCAN', 'NEEDS ACTION', 'INTL DELAY', 'DELAYED'])
+    diqRows.push({
+      shipment_id: s.shipment_id, tracking_number: s.tracking_id, carrier: s.carrier,
+      client_id: DEMO_CLIENT_ID, checked_at: firstChecked,
+      first_checked_at: firstChecked, last_recheck_at: firstChecked,
+      eligible_after: eligibleAfter, is_international: s.destination_country === 'CA',
+      claim_eligibility_status: status,
+      ai_status_badge: statusBadge, watch_reason: watchReason,
+      ai_reshipment_urgency: randInt(20, 95), ai_customer_anxiety: randInt(10, 90),
+      ai_risk_level: randomChoice(['LOW', 'MEDIUM', 'HIGH']),
+      ai_predicted_outcome: randomChoice(['delivered', 'returned_to_sender', 'lost']),
+      days_in_transit: daysInTransit, stuck_duration_days: randInt(0, 10),
+      last_scan_date: new Date(Date.now() - randInt(1, 14) * 86400_000).toISOString(),
+      last_scan_description: randomChoice(['Arrived at facility', 'In transit', 'Out for delivery attempt', 'Departed facility', 'Processing at carrier']),
+      last_scan_location: randomChoice(['Louisville KY', 'Atlanta GA', 'Memphis TN', 'Chicago IL', 'Mississauga ON']),
+    })
+  }
+
+  // === Insert all ===
+  const BATCH = 500
+  const insertBatch = async (table, rows) => {
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const { error } = await supabase.from(table).insert(rows.slice(i, i + BATCH))
+      if (error) console.warn(`  [${table}] batch ${i / BATCH}: ${error.message}`)
+    }
+  }
+  await insertBatch('transactions', storageRows)
+  await insertBatch('receiving_orders', receivingOrderRows)
+  await insertBatch('transactions', receivingTxRows)
+  await insertBatch('transactions', additionalTxRows)
+  await insertBatch('returns', returnRows)
+  await insertBatch('transactions', returnsTxRows)
+  await insertBatch('lost_in_transit_checks', diqRows)
+
+  result.storage = storageRows.length
+  result.receivingOrders = receivingOrderRows.length
+  result.receivingTx = receivingTxRows.length
+  result.additionalTx = additionalTxRows.length
+  result.returns = returnRows.length
+  result.returnsTx = returnsTxRows.length
+  result.diqEntries = diqRows.length
+  return result
 }
 
 main().catch(err => {
