@@ -838,7 +838,10 @@ async function generateAncillaryData() {
     const daysInTransit = Math.floor((Date.now() - labeledAt.getTime()) / 86400_000)
     const eligibleAfter = new Date(labeledAt.getTime() + 15 * 86400_000).toISOString().split('T')[0]
     const firstChecked = new Date(labeledAt.getTime() + 3 * 86400_000 + randInt(0, 2 * 86400_000)).toISOString()
-    const status = s.event_delivered ? 'resolved' : randomChoice(['at_risk', 'at_risk', 'at_risk', 'eligible', 'eligible', 'claim_filed', 'approved', 'denied'])
+    // Allowed: at_risk, eligible, claim_filed, approved, denied, missed_window, returned_to_sender
+    const status = s.event_delivered
+      ? randomChoice(['returned_to_sender', 'missed_window'])
+      : randomChoice(['at_risk', 'at_risk', 'at_risk', 'eligible', 'eligible', 'claim_filed', 'approved', 'denied'])
     const statusBadge = randomChoice(['STUCK', 'STALLED', 'LOST', 'RETURNING', 'NORMAL'])
     const watchReason = randomChoice(['STALLED', 'NO SCAN', 'NEEDS ACTION', 'INTL DELAY', 'DELAYED'])
     diqRows.push({

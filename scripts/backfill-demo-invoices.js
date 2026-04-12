@@ -111,7 +111,7 @@ async function main() {
     if (isFuture) continue
     const daysSince = Math.floor((now - invoiceDate) / 86400_000)
     const status = 'sent'
-    const paidStatus = daysSince > 10 ? 'paid' : 'open'
+    const paidStatus = daysSince > 10 ? 'paid' : 'unpaid'
     const paidAt = paidStatus === 'paid' ? new Date(invoiceDate.getTime() + randBizDays(3, 10) * 86400_000).toISOString() : null
 
     const lineItems = buildLineItems(w.txs)
