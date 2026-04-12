@@ -43,7 +43,7 @@ export async function getDemoClientIds(supabase: AnySupabase): Promise<string[]>
  *   let q = supabase.from('shipments').select('*').gte('event_delivered', someDate)
  *   q = await excludeDemoClients(supabase, q)
  */
-export async function excludeDemoClients<Q extends { not: Function }>(
+export async function excludeDemoClients<Q extends { not: (...args: any[]) => any }>(
   supabase: AnySupabase,
   query: Q,
   column: string = 'client_id'
