@@ -4,6 +4,7 @@ import { getTracking, getLastCheckpointDate } from '@/lib/trackingmore/client'
 import { storeCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { generateAssessment, calculateNextCheckTime, classifyWatchReason, getNextCheckInterval, type ShipmentDataForAssessment } from '@/lib/ai/client'
 import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 // Types for database records
 interface LostInTransitCheck {
@@ -57,8 +58,9 @@ export async function POST(request: NextRequest) {
   console.log('[AIReassess] Starting AI reassessment cron...')
 
   try {
-    // Find shipments due for reassessment
-    const { data: dueShipments, error: fetchError } = await supabase
+    // Find shipments due for reassessment.
+    // CRITICAL: exclude demo clients — this cron makes paid Gemini + TrackingMore calls.
+    let dueQuery = supabase
       .from('lost_in_transit_checks')
       .select(`
         id,
@@ -76,6 +78,8 @@ export async function POST(request: NextRequest) {
       .not('claim_eligibility_status', 'in', '("approved","denied")') // Don't reassess resolved claims
       .order('ai_next_check_at', { ascending: true })
       .limit(100) // Process in batches
+    dueQuery = await excludeDemoClients(supabase, dueQuery)
+    const { data: dueShipments, error: fetchError } = await dueQuery
 
     if (fetchError) {
       console.error('[AIReassess] Error fetching due shipments:', fetchError)

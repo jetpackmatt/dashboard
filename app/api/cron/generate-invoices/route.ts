@@ -66,12 +66,16 @@ export async function GET(request: Request) {
     // NOTE: SFTP breakdown data is now synced daily by /api/cron/sync-sftp-costs
     // No need to fetch here - transactions already have base_cost/surcharge populated
 
-    // Step 1: Get all active clients with billing info (exclude internal/system entries)
+    // Step 1: Get all active clients with billing info (exclude internal, system, AND demo).
+    // CRITICAL: demo exclusion prevents this cron from generating real invoices +
+    // sending invoice emails for demo clients. Demo invoices are created by
+    // scripts/backfill-demo-invoices.js directly.
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
       .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
+      .eq('is_demo', false)
 
     if (clientsError || !clients) {
       console.error('Error fetching clients:', clientsError)

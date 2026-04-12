@@ -88,10 +88,10 @@ export async function getAtRiskCandidates(
   const cutoffDate = new Date()
   cutoffDate.setDate(cutoffDate.getDate() - minDaysOld)
 
-  // Find shipments that are potentially stuck
-  // Status filter: Processing (labeled but no carrier scan), In Transit, Out for Delivery, Exception
-  // Key requirement: event_labeled must exist (label was created, package handed to carrier)
-  const { data: shipments, error } = await supabase
+  // Find shipments that are potentially stuck.
+  // CRITICAL: exclude demo clients — each match creates a paid TrackingMore tracking ($0.04).
+  const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+  let query = supabase
     .from('shipments')
     .select(`
       id,
@@ -109,8 +109,6 @@ export async function getAtRiskCandidates(
     .not('tracking_id', 'is', null)
     .not('event_labeled', 'is', null)
     .lt('event_labeled', cutoffDate.toISOString())
-    // Status indicates package is "in progress" - not yet delivered
-    // Processing = labeled but carrier never scanned (lost at pickup)
     .or(
       'status_details->0->>name.eq.Processing,' +
       'status_details->0->>name.eq.InTransit,' +
@@ -124,6 +122,8 @@ export async function getAtRiskCandidates(
     )
     .order('event_labeled', { ascending: true })
     .limit(limit)
+  query = await excludeDemoClients(supabase, query)
+  const { data: shipments, error } = await query
 
   if (error) {
     console.error('[At-Risk] Error fetching candidates:', error)

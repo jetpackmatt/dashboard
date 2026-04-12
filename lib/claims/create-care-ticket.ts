@@ -240,24 +240,27 @@ export async function createCareTicket(
     }
   }
 
-  // Slack alert: brand users submitting Address Change tickets
+  // Slack alert: brand users submitting Address Change tickets.
+  // Skip demo clients — we don't want demo users to trigger live Slack pings.
   if (isBrandSubmission && ticketType === 'Address Change') {
     const { data: clientRow } = await supabase
       .from('clients')
-      .select('company_name')
+      .select('company_name, is_demo')
       .eq('id', clientId)
       .single()
     const brandName = clientRow?.company_name || 'Unknown Brand'
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.shipwithjetpack.com'
-    const ticketUrl = `${baseUrl}/dashboard/care?ticket=${ticket.ticket_number}`
+    if (!clientRow?.is_demo) {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.shipwithjetpack.com'
+      const ticketUrl = `${baseUrl}/dashboard/care?ticket=${ticket.ticket_number}`
 
-    sendSlackAlert(
-      `📦 *Address Change Request* — <${ticketUrl}|Ticket #${ticket.ticket_number}>\n` +
-      `Brand: ${brandName}\n` +
-      `Shipment: ${shipmentId || 'N/A'}\n` +
-      `Submitted by: ${userName}`
-    )
+      sendSlackAlert(
+        `📦 *Address Change Request* — <${ticketUrl}|Ticket #${ticket.ticket_number}>\n` +
+        `Brand: ${brandName}\n` +
+        `Shipment: ${shipmentId || 'N/A'}\n` +
+        `Submitted by: ${userName}`
+      )
+    }
   }
 
   return {

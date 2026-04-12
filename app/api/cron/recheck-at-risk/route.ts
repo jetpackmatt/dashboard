@@ -13,6 +13,7 @@ import { getCheckpoints } from '@/lib/trackingmore/checkpoint-storage'
 import { evaluateMovement, classifyWatchReason, getNextCheckInterval, type WatchReason } from '@/lib/ai/client'
 import { calculateEligibleAfterDate } from '@/lib/claims/eligibility'
 import { detectReshipments } from '@/lib/claims/detect-reshipments'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 // Patterns that indicate the carrier has admitted the package is lost
 // These should trigger immediate promotion to "eligible" (Ready to File)
@@ -124,8 +125,9 @@ export async function GET(request: NextRequest) {
   const noScanShipmentIds: string[] = []
 
   try {
-    // Get all shipments currently marked as at_risk OR eligible (need to check both for missed windows)
-    const { data: atRiskShipments, error: fetchError } = await supabase
+    // Get all shipments currently marked as at_risk OR eligible (need to check both for missed windows).
+    // CRITICAL: exclude demo clients — this cron makes TrackingMore API calls (free but still external).
+    let atRiskQuery = supabase
       .from('lost_in_transit_checks')
       .select(`
         id,
@@ -142,6 +144,8 @@ export async function GET(request: NextRequest) {
       .in('claim_eligibility_status', ['at_risk', 'eligible'])
       .order('last_recheck_at', { ascending: true, nullsFirst: true })
       .limit(300)
+    atRiskQuery = await excludeDemoClients(supabase, atRiskQuery)
+    const { data: atRiskShipments, error: fetchError } = await atRiskQuery
 
     if (fetchError) {
       console.error('[At-Risk Recheck] Error fetching at-risk shipments:', fetchError)

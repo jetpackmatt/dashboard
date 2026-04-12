@@ -526,8 +526,10 @@ export async function syncNewDeliveryOutcomes(): Promise<{ added: number; errors
   let lastShipmentId: string | null = null
   const batchSize = 500
 
+  const { excludeDemoClients } = await import('@/lib/demo/exclusion')
   while (true) {
-    // Query shipments with event_intransit that aren't in delivery_outcomes
+    // Query shipments with event_intransit that aren't in delivery_outcomes.
+    // Exclude demo — we don't want demo shipments polluting our ML training data.
     let query = supabase
       .from('shipments')
       .select(`
@@ -548,6 +550,7 @@ export async function syncNewDeliveryOutcomes(): Promise<{ added: number; errors
       .not('event_intransit', 'is', null)
       .order('shipment_id', { ascending: true })
       .limit(batchSize)
+    query = await excludeDemoClients(supabase, query)
 
     if (lastShipmentId) {
       query = query.gt('shipment_id', lastShipmentId)
