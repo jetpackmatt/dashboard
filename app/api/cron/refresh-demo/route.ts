@@ -311,16 +311,262 @@ export async function POST(request: NextRequest) {
     totalTx += txRows.length
   }
 
-  // === Care ticket lifecycle ===
-  totalCare = await advanceCareLifecycle(supabase, DEMO_CLIENT_ID)
+  // === Advance demo shipment event timestamps (labeled → intransit → delivered) ===
+  const progressed = await progressShipmentEvents(supabase, DEMO_CLIENT_ID)
+
+  // === Synthetic Delivery IQ churn (new entries + status evolution) ===
+  const diqChanges = await advanceDeliveryIQ(supabase, DEMO_CLIENT_ID)
+
+  // === Care ticket lifecycle (+ credit transactions for newly-Approved tickets) ===
+  const { changes: totalCareChanges, credits: creditsCreated } = await advanceCareLifecycle(supabase, DEMO_CLIENT_ID, DEMO_MERCHANT)
+  totalCare = totalCareChanges
+
+  // === Weekly invoice (only on Mondays) ===
+  let invoiceCreated = false
+  if (now.getUTCDay() === 1) {
+    invoiceCreated = await generateWeeklyInvoice(supabase, DEMO_CLIENT_ID)
+  }
 
   const duration = Date.now() - startTime
-  console.log(`[refresh-demo] done in ${duration}ms: +${totalShipments} shipments, +${totalTx} tx, ${totalCare} care changes`)
-  return NextResponse.json({ success: true, duration, shipments: totalShipments, transactions: totalTx, care: totalCare })
+  console.log(`[refresh-demo] done in ${duration}ms: +${totalShipments} ships, +${totalTx} tx, ${progressed.delivered} delivered, ${progressed.inTransit} in-transit, ${diqChanges.added} DIQ+, ${diqChanges.updated} DIQ~, ${totalCare} care, ${creditsCreated} credits, invoice=${invoiceCreated}`)
+  return NextResponse.json({
+    success: true, duration,
+    shipments: totalShipments, transactions: totalTx,
+    shipmentsProgressed: progressed,
+    diqChanges, care: totalCare, credits: creditsCreated,
+    invoiceGenerated: invoiceCreated,
+  })
 }
 
-async function advanceCareLifecycle(supabase: ReturnType<typeof createAdminClient>, demoClientId: string): Promise<number> {
+// ========== Shipment event progression ==========
+// Walk stationary demo shipments forward through event stages based on elapsed
+// time since event_labeled. No external calls — pure time-based simulation.
+async function progressShipmentEvents(
+  supabase: ReturnType<typeof createAdminClient>,
+  demoClientId: string
+): Promise<{ inTransit: number; outForDelivery: number; delivered: number }> {
+  const result = { inTransit: 0, outForDelivery: 0, delivered: 0 }
+  const nowIso = new Date().toISOString()
+
+  // Fetch shipments still in-progress (labeled, not delivered)
+  const { data: ships, error } = await supabase
+    .from('shipments')
+    .select('id, shipment_id, event_labeled, event_intransit, event_outfordelivery, event_delivered, destination_country')
+    .eq('client_id', demoClientId)
+    .not('event_labeled', 'is', null)
+    .is('event_delivered', null)
+    .limit(2000)
+  if (error) { console.warn('[progress] fetch error:', error.message); return result }
+
+  const updates: { id: string; patch: any }[] = []
+  for (const s of ships || []) {
+    const labeledAt = new Date(s.event_labeled).getTime()
+    const hoursSinceLabeled = (Date.now() - labeledAt) / 3600_000
+    const daysSinceLabeled = hoursSinceLabeled / 24
+    const isIntl = s.destination_country === 'CA'
+    const intransitAfterH = 12 + Math.random() * 36  // 12-48h
+    const outForDeliveryAfterD = isIntl ? (4 + Math.random() * 3) : (2 + Math.random() * 2)  // 2-4d US, 4-7d CA
+    const deliveredAfterD = isIntl ? (5 + Math.random() * 3) : (3 + Math.random() * 2)       // 3-5d US, 5-8d CA
+
+    const patch: any = {}
+    if (!s.event_intransit && hoursSinceLabeled >= intransitAfterH) {
+      patch.event_intransit = new Date(labeledAt + intransitAfterH * 3600_000).toISOString()
+      result.inTransit++
+    }
+    if (!s.event_outfordelivery && daysSinceLabeled >= outForDeliveryAfterD) {
+      patch.event_outfordelivery = new Date(labeledAt + outForDeliveryAfterD * 86400_000).toISOString()
+      result.outForDelivery++
+    }
+    if (!s.event_delivered && daysSinceLabeled >= deliveredAfterD) {
+      const deliveredAt = new Date(labeledAt + deliveredAfterD * 86400_000)
+      patch.event_delivered = deliveredAt.toISOString()
+      patch.transit_time_days = +(deliveredAfterD).toFixed(1)
+      patch.last_update_at = deliveredAt.toISOString()
+      result.delivered++
+    }
+    if (Object.keys(patch).length > 0) updates.push({ id: s.id, patch: { ...patch, updated_at: nowIso } })
+  }
+
+  // Apply in chunks
+  for (let i = 0; i < updates.length; i += 100) {
+    const chunk = updates.slice(i, i + 100)
+    await Promise.all(chunk.map(u => supabase.from('shipments').update(u.patch).eq('id', u.id)))
+  }
+  return result
+}
+
+// ========== Delivery IQ churn ==========
+// Add new DIQ rows for aged demo shipments AND evolve existing DIQ statuses.
+async function advanceDeliveryIQ(
+  supabase: ReturnType<typeof createAdminClient>,
+  demoClientId: string
+): Promise<{ added: number; updated: number; removed: number }> {
+  const result = { added: 0, updated: 0, removed: 0 }
+
+  // --- Add new DIQ entries for shipments labeled 15+ days ago and still undelivered ---
+  const cutoff = new Date(Date.now() - 15 * 86400_000).toISOString()
+  const { data: candidates } = await supabase
+    .from('shipments')
+    .select('shipment_id, tracking_id, carrier, destination_country, event_labeled')
+    .eq('client_id', demoClientId)
+    .is('event_delivered', null)
+    .not('event_labeled', 'is', null)
+    .lt('event_labeled', cutoff)
+    .not('tracking_id', 'is', null)
+    .limit(500)
+  const shipmentIds = (candidates || []).map((c: any) => c.shipment_id)
+  const { data: existing } = await supabase
+    .from('lost_in_transit_checks')
+    .select('shipment_id')
+    .in('shipment_id', shipmentIds.length > 0 ? shipmentIds : ['__none__'])
+  const existingSet = new Set((existing || []).map((e: any) => e.shipment_id))
+  const diqRows = []
+  for (const s of candidates || []) {
+    if (existingSet.has(s.shipment_id)) continue
+    if (Math.random() > 0.3) continue  // only some candidates get a DIQ entry
+    const labeledAt = new Date(s.event_labeled!).getTime()
+    const daysInTransit = Math.floor((Date.now() - labeledAt) / 86400_000)
+    diqRows.push({
+      shipment_id: s.shipment_id, tracking_number: s.tracking_id, carrier: s.carrier,
+      client_id: demoClientId,
+      checked_at: new Date().toISOString(),
+      first_checked_at: new Date(labeledAt + 3 * 86400_000).toISOString(),
+      last_recheck_at: new Date().toISOString(),
+      eligible_after: new Date(labeledAt + 15 * 86400_000).toISOString().split('T')[0],
+      is_international: s.destination_country === 'CA',
+      claim_eligibility_status: daysInTransit >= 20 ? 'eligible' : 'at_risk',
+      ai_status_badge: ['STUCK', 'STALLED', 'NORMAL'][Math.floor(Math.random() * 3)],
+      watch_reason: ['STALLED', 'NO SCAN', 'NEEDS ACTION'][Math.floor(Math.random() * 3)],
+      ai_reshipment_urgency: randInt(20, 95),
+      ai_customer_anxiety: randInt(10, 90),
+      ai_risk_level: ['LOW', 'MEDIUM', 'HIGH'][Math.floor(Math.random() * 3)],
+      ai_predicted_outcome: ['delivered', 'lost', 'returned_to_sender'][Math.floor(Math.random() * 3)],
+      days_in_transit: daysInTransit,
+      stuck_duration_days: randInt(0, 10),
+      last_scan_date: new Date(Date.now() - randInt(1, 10) * 86400_000).toISOString(),
+      last_scan_description: ['In transit', 'Arrived at facility', 'Out for delivery attempt'][Math.floor(Math.random() * 3)],
+      last_scan_location: ['Louisville KY', 'Atlanta GA', 'Memphis TN', 'Chicago IL'][Math.floor(Math.random() * 4)],
+    })
+  }
+  if (diqRows.length > 0) {
+    const { error } = await supabase.from('lost_in_transit_checks').insert(diqRows)
+    if (!error) result.added = diqRows.length
+    else console.warn('[diq-add]', error.message)
+  }
+
+  // --- Evolve existing DIQ statuses + remove delivered ones ---
+  const { data: existing_diq } = await supabase
+    .from('lost_in_transit_checks')
+    .select('id, shipment_id, claim_eligibility_status, days_in_transit')
+    .eq('client_id', demoClientId)
+    .limit(500)
+  for (const d of existing_diq || []) {
+    // Check if corresponding shipment got delivered (via progressShipmentEvents above)
+    const { data: ship } = await supabase
+      .from('shipments')
+      .select('event_delivered')
+      .eq('client_id', demoClientId)
+      .eq('shipment_id', d.shipment_id)
+      .maybeSingle()
+    if (ship?.event_delivered) {
+      await supabase.from('lost_in_transit_checks').delete().eq('id', d.id)
+      result.removed++
+      continue
+    }
+    // Evolve at_risk → eligible (~15%), eligible → claim_filed (~10%), claim_filed → approved/denied (~20%)
+    const cur = d.claim_eligibility_status
+    let next: string | null = null
+    if (cur === 'at_risk' && Math.random() < 0.15) next = 'eligible'
+    else if (cur === 'eligible' && Math.random() < 0.10) next = 'claim_filed'
+    else if (cur === 'claim_filed' && Math.random() < 0.20) next = Math.random() < 0.8 ? 'approved' : 'denied'
+    if (next) {
+      await supabase.from('lost_in_transit_checks').update({
+        claim_eligibility_status: next,
+        last_recheck_at: new Date().toISOString(),
+        days_in_transit: (d.days_in_transit || 0) + 1,
+      }).eq('id', d.id)
+      result.updated++
+    }
+  }
+  return result
+}
+
+// ========== Weekly invoice (Mondays) ==========
+async function generateWeeklyInvoice(
+  supabase: ReturnType<typeof createAdminClient>,
+  demoClientId: string
+): Promise<boolean> {
+  // Period = previous Monday..Sunday
+  const today = new Date()
+  const periodEnd = new Date(today)
+  periodEnd.setUTCDate(today.getUTCDate() - 1)  // yesterday (Sunday)
+  periodEnd.setUTCHours(23, 59, 59, 999)
+  const periodStart = new Date(periodEnd)
+  periodStart.setUTCDate(periodStart.getUTCDate() - 6)
+  periodStart.setUTCHours(0, 0, 0, 0)
+
+  // Find un-invoiced demo transactions in that period
+  const { data: txs } = await supabase
+    .from('transactions')
+    .select('id, cost, billed_amount, fee_type, charge_date')
+    .eq('client_id', demoClientId)
+    .is('invoice_id_jp', null)
+    .gte('charge_date', periodStart.toISOString().split('T')[0])
+    .lte('charge_date', periodEnd.toISOString().split('T')[0])
+  if (!txs || txs.length === 0) return false
+
+  const subtotal = txs.reduce((s: number, t: any) => s + Number(t.cost || 0), 0)
+  const total = txs.reduce((s: number, t: any) => s + Number(t.billed_amount || 0), 0)
+  const markup = total - subtotal
+  const invoiceDate = new Date(today)
+  const mm = String(invoiceDate.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(invoiceDate.getUTCDate()).padStart(2, '0')
+  const yy = String(invoiceDate.getUTCFullYear()).slice(-2)
+  const { data: lastInv } = await supabase.from('invoices_jetpack').select('invoice_number').eq('client_id', demoClientId).order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const seq = lastInv ? (parseInt((lastInv.invoice_number || '').split('-')[1] || '0', 10) + 1) : 1
+  const invoiceNumber = `JPPB-${String(seq).padStart(4, '0')}-${mm}${dd}${yy}`
+
+  const byFee = new Map<string, { count: number; cost: number; total: number }>()
+  for (const t of txs) {
+    const ft = (t as any).fee_type || 'Other'
+    const e = byFee.get(ft) || { count: 0, cost: 0, total: 0 }
+    e.count++; e.cost += Number((t as any).cost || 0); e.total += Number((t as any).billed_amount || 0)
+    byFee.set(ft, e)
+  }
+  const lineItems = [...byFee.entries()].map(([fee_type, v]) => ({ fee_type, count: v.count, cost: +v.cost.toFixed(2), markup: +(v.total - v.cost).toFixed(2), total: +v.total.toFixed(2) }))
+
+  const { data: inserted, error } = await supabase.from('invoices_jetpack').insert({
+    client_id: demoClientId, invoice_number: invoiceNumber,
+    invoice_date: invoiceDate.toISOString().split('T')[0],
+    period_start: periodStart.toISOString().split('T')[0],
+    period_end: periodEnd.toISOString().split('T')[0],
+    subtotal: +subtotal.toFixed(2), total_markup: +markup.toFixed(2), total_amount: +total.toFixed(2),
+    status: 'sent', paid_status: 'unpaid',
+    generated_at: invoiceDate.toISOString(), approved_at: invoiceDate.toISOString(),
+    line_items_json: lineItems, shipbob_invoice_ids: [], version: 1,
+    created_at: invoiceDate.toISOString(), updated_at: invoiceDate.toISOString(),
+  }).select('invoice_number').single()
+  if (error) { console.warn('[weekly invoice]', error.message); return false }
+
+  // Link transactions
+  const ids = txs.map((t: any) => t.id)
+  for (let i = 0; i < ids.length; i += 500) {
+    await supabase.from('transactions').update({
+      invoice_id_jp: inserted.invoice_number,
+      invoice_date_jp: invoiceDate.toISOString(),
+      invoiced_status_jp: true,
+    }).in('id', ids.slice(i, i + 500))
+  }
+  return true
+}
+
+async function advanceCareLifecycle(
+  supabase: ReturnType<typeof createAdminClient>,
+  demoClientId: string,
+  demoMerchant: string | null
+): Promise<{ changes: number; credits: number }> {
   let changes = 0
+  let credits = 0
 
   // Advance Under Review → Credit Requested (10%)
   const { data: ur } = await supabase.from('care_tickets').select('id, events, credit_amount').eq('client_id', demoClientId).eq('status', 'Under Review').limit(200)
@@ -334,8 +580,8 @@ async function advanceCareLifecycle(supabase: ReturnType<typeof createAdminClien
     changes++
   }
 
-  // Credit Requested → Credit Approved (20%)
-  const { data: cr } = await supabase.from('care_tickets').select('id, events, credit_amount').eq('client_id', demoClientId).eq('status', 'Credit Requested').limit(200)
+  // Credit Requested → Credit Approved (20%) + insert a Credit transaction
+  const { data: cr } = await supabase.from('care_tickets').select('id, events, credit_amount, shipment_id').eq('client_id', demoClientId).eq('status', 'Credit Requested').limit(200)
   for (const t of cr || []) {
     if (Math.random() > 0.20) continue
     const amount = t.credit_amount || +(Math.random() * 40 + 10).toFixed(2)
@@ -345,6 +591,22 @@ async function advanceCareLifecycle(supabase: ReturnType<typeof createAdminClien
     }, ...(t.events || [])]
     await supabase.from('care_tickets').update({ status: 'Credit Approved', credit_amount: amount, events, updated_at: new Date().toISOString() }).eq('id', t.id)
     changes++
+
+    // Create a matching Credit transaction row tied to the shipment (negative billed_amount by convention)
+    const creditId = `DEMO-CR-${Date.now().toString(36)}-${crypto.randomBytes(5).toString('hex')}`
+    const { error: txErr } = await supabase.from('transactions').insert({
+      client_id: demoClientId, merchant_id: demoMerchant, transaction_id: creditId,
+      reference_id: t.shipment_id || null, reference_type: 'Shipment',
+      cost: -amount, base_cost: -amount, surcharge: 0,
+      base_charge: -amount, total_charge: -amount, billed_amount: -amount,
+      markup_applied: 0, markup_percentage: 0, markup_is_preview: false, is_voided: false,
+      currency_code: 'USD', charge_date: new Date().toISOString().split('T')[0],
+      fee_type: 'Credit', transaction_type: 'Credit',
+      care_ticket_id: t.id,
+      invoiced_status_sb: true, invoiced_status_jp: false,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    })
+    if (!txErr) credits++
   }
 
   // Credit Approved → Resolved (15%)
@@ -360,7 +622,7 @@ async function advanceCareLifecycle(supabase: ReturnType<typeof createAdminClien
     changes++
   }
 
-  return changes
+  return { changes, credits }
 }
 
 export async function GET(request: NextRequest) { return POST(request) }
