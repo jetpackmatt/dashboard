@@ -172,39 +172,70 @@ function pickProducts() {
 
 // ============ CORE ============
 
-// Fetch source shipments for one month (paginated).
-async function fetchSourceShipments(monthStart, monthEnd, country, need) {
+// Fetch source shipments for a date range (paginated by UUID id).
+// If `anyDate=true`, ignore monthStart/monthEnd and pull from the most recent
+// window we have data for (used to date-shift into months with no source data).
+async function fetchSourceShipments(monthStart, monthEnd, country, need, anyDate = false) {
   const pool = []
-  const perClient = Math.ceil(need / SOURCE_CLIENT_IDS.length) + 50
   for (const cid of SOURCE_CLIENT_IDS) {
     let lastId = null
     let pageCount = 0
-    while (pool.length < need * 2 && pageCount < 20) {
+    while (pool.length < need * 3 && pageCount < 30) {
       let q = supabase
         .from('shipments')
         .select(
-          'shipment_id, order_id, tracking_id, carrier, carrier_service, ship_option_id, ship_option_name, zone_used, fc_name, actual_weight_oz, dim_weight_oz, billable_weight_oz, length, width, height, origin_country, destination_country, status, transit_time_days, event_created, event_picked, event_packed, event_labeled, event_labelvalidated, event_intransit, event_outfordelivery, event_delivered, created_at, updated_at, estimated_fulfillment_date, estimated_delivery_date, tracking_url, insurance_value, last_update_at'
+          'id, shipment_id, order_id, tracking_id, carrier, carrier_service, ship_option_id, ship_option_name, zone_used, fc_name, actual_weight_oz, dim_weight_oz, billable_weight_oz, length, width, height, origin_country, destination_country, status, transit_time_days, event_created, event_picked, event_packed, event_labeled, event_labelvalidated, event_intransit, event_outfordelivery, event_delivered, created_at, updated_at, estimated_fulfillment_date, estimated_delivery_date, tracking_url, insurance_value, last_update_at'
         )
         .eq('client_id', cid)
         .eq('destination_country', country)
-        .gte('created_at', monthStart)
-        .lt('created_at', monthEnd)
         .order('id', { ascending: true })
         .limit(1000)
+      if (!anyDate) {
+        q = q.gte('created_at', monthStart).lt('created_at', monthEnd)
+      }
       if (lastId) q = q.gt('id', lastId)
       const { data, error } = await q
       if (error) {
-        console.warn(`  [source fetch] ${cid}: ${error.message}`)
+        console.warn(`  [source fetch] ${cid.slice(0, 8)}: ${error.message}`)
         break
       }
       if (!data || data.length === 0) break
       pool.push(...data)
-      lastId = data[data.length - 1].shipment_id
-      if (data.length < 1000 || pool.length >= perClient * SOURCE_CLIENT_IDS.length) break
+      lastId = data[data.length - 1].id
+      if (data.length < 1000) break
       pageCount++
     }
   }
   return pool
+}
+
+// Shift all timestamp fields on a source shipment so its created_at lands in
+// the target month at roughly the same day-of-month and time-of-day.
+function dateShiftShipment(src, targetMonthStart, targetMonthEnd) {
+  const origCreated = new Date(src.created_at)
+  const targetStart = new Date(targetMonthStart)
+  const targetEnd = new Date(targetMonthEnd)
+  const daysInTarget = Math.ceil((targetEnd - targetStart) / 86400_000)
+  const origDayOfMonth = origCreated.getUTCDate()
+  const targetDay = Math.min(origDayOfMonth, daysInTarget) - 1
+  const newCreated = new Date(targetStart)
+  newCreated.setUTCDate(targetStart.getUTCDate() + targetDay)
+  newCreated.setUTCHours(origCreated.getUTCHours(), origCreated.getUTCMinutes(), 0, 0)
+  const deltaMs = newCreated.getTime() - origCreated.getTime()
+  const shiftField = (iso) => {
+    if (!iso) return null
+    return new Date(new Date(iso).getTime() + deltaMs).toISOString()
+  }
+  const shifted = { ...src }
+  for (const k of [
+    'created_at', 'updated_at', 'event_created', 'event_picked', 'event_packed',
+    'event_labeled', 'event_labelvalidated', 'event_intransit', 'event_outfordelivery',
+    'event_delivered', 'estimated_fulfillment_date', 'estimated_delivery_date',
+    'last_update_at',
+  ]) {
+    shifted[k] = shiftField(shifted[k])
+  }
+  return shifted
 }
 
 // Fetch one source order per shipment (for city/state/zip)
@@ -247,16 +278,23 @@ async function buildAndInsertBatch(sampledShipments) {
     const shipmentId = demoId('DEMO-SHP')
     const now = new Date().toISOString()
 
-    // Items: 1-3 random demo products
+    // Items: 1-3 random demo products. Dedupe by product id, sum quantities
+    // (order_items UNIQUE on order_id+shipbob_product_id).
     const chosenProducts = pickProducts()
+    const byProduct = new Map()
+    for (const prod of chosenProducts) {
+      const qty = Math.random() < 0.85 ? 1 : (Math.random() < 0.7 ? 2 : 3)
+      const existing = byProduct.get(prod.id)
+      if (existing) existing.qty += qty
+      else byProduct.set(prod.id, { ...prod, qty })
+    }
     let orderTotal = 0
     const lineItemLinks = []
-    chosenProducts.forEach((prod, idx) => {
-      const qty = Math.random() < 0.85 ? 1 : (Math.random() < 0.7 ? 2 : 3)
-      const lineTotal = prod.price * qty
-      orderTotal += lineTotal
-      lineItemLinks.push({ ...prod, qty, lineIdx: idx })
-    })
+    let lineIdx = 0
+    for (const item of byProduct.values()) {
+      orderTotal += item.price * item.qty
+      lineItemLinks.push({ ...item, lineIdx: lineIdx++ })
+    }
 
     orderRows.push({
       id: orderUuid,
@@ -539,13 +577,35 @@ async function main() {
 
     for (const country of ['US', 'CA']) {
       const need = targets[m][country.toLowerCase()]
-      const pool = await fetchSourceShipments(monthStart, monthEnd, country, need)
+      let pool = await fetchSourceShipments(monthStart, monthEnd, country, need)
+      let dateShifted = false
+      if (pool.length < need / 2) {
+        // Not enough source data in this month — pull from any date and shift.
+        pool = await fetchSourceShipments(null, null, country, need, true)
+        dateShifted = true
+      }
       if (pool.length === 0) {
-        console.log(`  ${label} ${country}: no source shipments, skipping`)
+        console.log(`  ${label} ${country}: no source shipments anywhere, skipping`)
         continue
       }
-      const sampled = sampleByDay(pool, monthStart, monthEnd, need, country)
-      console.log(`  ${label} ${country}: pool=${pool.length} sampled=${sampled.length} target=${need}`)
+      // Sample flat-random from pool to hit the daily targets
+      let sampled
+      if (dateShifted) {
+        // For shifted months, pick `need + variance` from pool (with replacement),
+        // then date-shift each to land within monthStart..monthEnd.
+        const daysInMonth = Math.ceil((new Date(monthEnd) - new Date(monthStart)) / 86400_000)
+        const dailyTargets = []
+        for (let i = 0; i < daysInMonth; i++) dailyTargets.push(dailyCount(need, daysInMonth))
+        const total = dailyTargets.reduce((a, b) => a + b, 0)
+        sampled = []
+        for (let i = 0; i < total; i++) {
+          const src = pool[i % pool.length]
+          sampled.push(dateShiftShipment(src, monthStart, monthEnd))
+        }
+      } else {
+        sampled = sampleByDay(pool, monthStart, monthEnd, need, country)
+      }
+      console.log(`  ${label} ${country}: pool=${pool.length} sampled=${sampled.length} target=${need}${dateShifted ? ' (date-shifted)' : ''}`)
 
       // Process in chunks to avoid huge memory/single insert
       const CHUNK = 500
