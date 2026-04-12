@@ -62,7 +62,9 @@ const STREETS = ['Main St','Oak Ave','Maple Dr','Pine Rd','Cedar Ln','Elm St','W
 
 function randInt(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min }
 function randomChoice<T>(arr: readonly T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
-function demoId(prefix: string) { return `${prefix}-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}` }
+// 9-digit numeric ID in reserved demo range (700M-899M, no collision w/ real ShipBob 300M-400M)
+function demoId(_prefix: string) { return String(700000000 + Math.floor(Math.random() * 200_000_000)) }
+function demoTxId() { return `DEMO-TX-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}` }
 
 function anonymizeName() { return `${randomChoice(FIRST_NAMES)} ${randomChoice(LAST_NAMES)}` }
 function anonymizeEmail(name: string) { const [f, l] = name.toLowerCase().split(' '); return `${f}.${l}${randInt(10,999)}@example.com` }
@@ -272,7 +274,7 @@ export async function POST(request: NextRequest) {
       const totalCharge = +(baseCharge + surcharge).toFixed(2)
       txRows.push({
         id: crypto.randomUUID(), client_id: DEMO_CLIENT_ID, merchant_id: DEMO_MERCHANT,
-        transaction_id: demoId('DEMO-TXS'), reference_id: shipmentId, reference_type: 'Shipment',
+        transaction_id: demoTxId(), reference_id: shipmentId, reference_type: 'Shipment',
         cost: +baseCost.toFixed(2), base_cost: +baseCost.toFixed(2), surcharge: +surcharge.toFixed(2),
         base_charge: baseCharge, total_charge: totalCharge, billed_amount: totalCharge,
         markup_applied: +(totalCharge - baseCost - surcharge).toFixed(2), markup_percentage: markupPct,

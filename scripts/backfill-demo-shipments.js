@@ -66,11 +66,17 @@ function shuffle(arr) {
   return a
 }
 
-// ULID-ish (time-sortable random ID)
-function demoId(prefix = 'DEMO') {
+// 9-digit numeric IDs in reserved demo range (700000000-899999999).
+// Real ShipBob IDs are in the 300M-400M range so 7xxM is guaranteed collision-free.
+// Kept as strings because shipment_id / shipbob_order_id are text columns.
+function demoId(_prefix) {
+  return String(700000000 + Math.floor(Math.random() * 200_000_000))
+}
+// Transactions aren't shown to users directly; keep ULID for uniqueness across runs.
+function demoTxId() {
   const ts = Date.now().toString(36)
   const rnd = crypto.randomBytes(6).toString('hex')
-  return `${prefix}-${ts}-${rnd}`
+  return `DEMO-TX-${ts}-${rnd}`
 }
 
 // Volume calc: walk backward from current month
@@ -418,7 +424,7 @@ async function buildAndInsertBatch(sampledShipments) {
       id: crypto.randomUUID(),
       client_id: DEMO_CLIENT_ID,
       merchant_id: DEMO_MERCHANT_ID,
-      transaction_id: demoId('DEMO-TXS'),
+      transaction_id: demoTxId(),
       reference_id: shipmentId,
       reference_type: 'Shipment',
       cost: +baseCost.toFixed(2),
@@ -452,7 +458,7 @@ async function buildAndInsertBatch(sampledShipments) {
         id: crypto.randomUUID(),
         client_id: DEMO_CLIENT_ID,
         merchant_id: DEMO_MERCHANT_ID,
-        transaction_id: demoId('DEMO-TXP'),
+        transaction_id: demoTxId(),
         reference_id: shipmentId,
         reference_type: 'Shipment',
         cost: +pickCost.toFixed(2),

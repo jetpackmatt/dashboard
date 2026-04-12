@@ -11,6 +11,7 @@ export interface ClientInfo {
   gofo_id: string | null
   short_code: string | null
   has_token: boolean
+  is_demo?: boolean
 }
 
 // Dev role type for role simulator

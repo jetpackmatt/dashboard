@@ -38,7 +38,7 @@ export async function GET() {
     const admin = createAdminClient()
     const { data: userClientRows, error } = await admin
       .from('user_clients')
-      .select('client_id, role, permissions, clients(company_name, merchant_id, eshipper_id, gofo_id, short_code)')
+      .select('client_id, role, permissions, clients(company_name, merchant_id, eshipper_id, gofo_id, short_code, is_demo)')
       .eq('user_id', user.id)
 
     if (error) {
@@ -54,6 +54,7 @@ export async function GET() {
       gofo_id: row.clients?.gofo_id || null,
       short_code: row.clients?.short_code || null,
       has_token: false,
+      is_demo: row.clients?.is_demo || false,
     }))
 
     return NextResponse.json({
