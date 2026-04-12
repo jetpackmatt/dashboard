@@ -245,18 +245,24 @@ function dateShiftShipment(src, targetMonthStart, targetMonthEnd) {
   return shifted
 }
 
-// Fetch one source order per shipment (for city/state/zip)
+// Fetch one source order per shipment (for city/state/zip).
+// IMPORTANT: chunk size must stay small — PostgREST URL-length limit causes
+// .in() with ~500 UUIDs (~18KB URL) to silently fail and return no data. Use 100.
 async function fetchSourceOrders(orderUuids) {
   const ids = [...new Set(orderUuids.filter(Boolean))]
   if (ids.length === 0) return new Map()
   const map = new Map()
-  const chunkSize = 500
+  const chunkSize = 100
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('orders')
       .select('id, city, state, zip_code, country, channel_name, channel_id, order_import_date, purchase_date, shipping_method, order_type, application_name')
       .in('id', chunk)
+    if (error) {
+      console.warn(`  [fetchSourceOrders] chunk ${i / chunkSize} failed: ${error.message}`)
+      continue
+    }
     for (const r of data || []) map.set(r.id, r)
   }
   return map

@@ -192,12 +192,14 @@ export async function POST(request: NextRequest) {
     const selected = []
     for (let i = 0; i < need; i++) selected.push(pool[Math.floor(Math.random() * pool.length)])
 
-    // Fetch source orders
+    // Fetch source orders. Chunk size kept small (100) — PostgREST silently
+    // drops .in() queries when URL exceeds ~16KB (500 UUIDs).
     const orderIds = [...new Set(selected.map(s => s.order_id).filter(Boolean))]
     const orderMap = new Map<string, any>()
-    const CHUNK = 500
+    const CHUNK = 100
     for (let i = 0; i < orderIds.length; i += CHUNK) {
-      const { data } = await supabase.from('orders').select('id, city, state, zip_code, country, channel_name, channel_id, shipping_method, order_type, application_name').in('id', orderIds.slice(i, i + CHUNK))
+      const { data, error } = await supabase.from('orders').select('id, city, state, zip_code, country, channel_name, channel_id, shipping_method, order_type, application_name').in('id', orderIds.slice(i, i + CHUNK))
+      if (error) { console.warn('[refresh-demo] orderMap chunk error:', error.message); continue }
       for (const r of data || []) orderMap.set(r.id, r)
     }
 
