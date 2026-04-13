@@ -4,6 +4,7 @@ import {
   handleAccessError,
   isCareAdminRole,
 } from '@/lib/supabase/admin'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 import { checkPermission } from '@/lib/permissions'
 import { createClient } from '@/lib/supabase/server'
 import { createCareTicket } from '@/lib/claims/create-care-ticket'
@@ -93,6 +94,9 @@ export async function GET(request: NextRequest) {
     // Filter by client if specified (or if user is not admin/care)
     if (clientId) {
       query = query.eq('client_id', clientId)
+    } else {
+      // All-brands view: exclude demo client tickets
+      query = await excludeDemoClients(query, 'client_id')
     }
 
     // Status filter
