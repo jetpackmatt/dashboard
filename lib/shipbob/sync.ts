@@ -2873,6 +2873,46 @@ export async function syncBillingAwareTimelines(
       await processTimelineUpdates(supabase, missingTimelines, result)
     }
 
+    // FALLBACK: For shipments where ShipBob's API persistently returns no
+    // timeline data (status Exception/LabeledCreated/Completed but never
+    // emitted a Labeled event), use the shipping transaction's charge_date
+    // as event_labeled. This unblocks invoicing for shipments that ShipBob
+    // forgot to record. Only applies to shipments with an actual billable
+    // shipping transaction — true ghosts stay stuck (correctly excluded).
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { data: fallback } = await supabase
+      .from('shipments')
+      .select('id, shipment_id')
+      .is('event_labeled', null)
+      .is('deleted_at', null)
+      .in('status', ['LabeledCreated', 'Completed', 'Exception'])
+      .not('timeline_checked_at', 'is', null)
+      .lt('timeline_checked_at', oneDayAgo)
+      .limit(500)
+
+    if (fallback && fallback.length > 0) {
+      const ids = fallback.map((r: any) => r.shipment_id)
+      const { data: txs } = await supabase
+        .from('transactions')
+        .select('reference_id, charge_date')
+        .eq('fee_type', 'Shipping')
+        .eq('reference_type', 'Shipment')
+        .in('reference_id', ids)
+      const chargeByShip = new Map<string, string>()
+      for (const t of txs || []) if (t.reference_id && t.charge_date) chargeByShip.set(t.reference_id, t.charge_date)
+
+      for (const ship of fallback as any[]) {
+        const charge = chargeByShip.get(ship.shipment_id)
+        if (!charge) continue
+        await supabase.from('shipments').update({
+          event_labeled: new Date(charge).toISOString(),
+          event_created: new Date(charge).toISOString(),
+        }).eq('id', ship.id)
+        result.updated++
+      }
+      console.log(`[BillingTimelines] Fallback applied to ${fallback.length} stuck shipments`)
+    }
+
     console.log(`[BillingTimelines] Complete: ${result.updated} updated, ${result.skipped} skipped`)
     result.success = true
     result.duration = Date.now() - startTime
