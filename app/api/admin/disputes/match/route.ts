@@ -33,12 +33,17 @@ export async function POST(request: NextRequest) {
     // Verify credit transaction exists
     const { data: credit } = await adminClient
       .from('transactions')
-      .select('transaction_id, cost, matched_credit_id')
+      .select('transaction_id, cost, matched_credit_id, client_id, clients(is_demo)')
       .eq('transaction_id', credit_transaction_id)
       .single()
 
     if (!credit) {
       return NextResponse.json({ error: 'Credit transaction not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse demo credit
+    if ((credit.clients as any)?.is_demo) {
+      return NextResponse.json({ error: 'Cannot match demo transactions — sales-demo brand' }, { status: 403 })
     }
 
     // Verify credit is negative (it's actually a credit)
@@ -61,8 +66,13 @@ export async function POST(request: NextRequest) {
     // Verify all charge transactions exist
     const { data: charges, error: chargesError } = await adminClient
       .from('transactions')
-      .select('transaction_id, cost, dispute_status')
+      .select('transaction_id, cost, dispute_status, client_id, clients(is_demo)')
       .in('transaction_id', chargeIds)
+
+    // CRITICAL: refuse if any charge is on a demo client
+    if (charges?.some((c: any) => c.clients?.is_demo)) {
+      return NextResponse.json({ error: 'Cannot match demo transactions — sales-demo brand' }, { status: 403 })
+    }
 
     if (chargesError) {
       console.error('Error fetching charges:', chargesError)

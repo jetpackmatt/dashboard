@@ -27,11 +27,16 @@ export async function GET(
     // Get invoice details including stored file paths
     const { data: invoice, error } = await adminClient
       .from('invoices_jetpack')
-      .select('id, invoice_number, client_id, xlsx_path, pdf_path')
+      .select('id, invoice_number, client_id, xlsx_path, pdf_path, clients(is_demo)')
       .eq('id', invoiceId)
       .single()
 
     if (error || !invoice) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to surface demo invoice files (they don't exist anyway)
+    if ((invoice.clients as any)?.is_demo) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
     }
 

@@ -179,6 +179,12 @@ export async function calculatePreviewMarkups(
       query = query.is('markup_is_preview', null)
     }
 
+    // CRITICAL: exclude demo client transactions — they have their own
+    // markup applied by the demo backfill / refresh-demo cron and should
+    // never be touched by the production preview-markup pipeline.
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+    query = await excludeDemoClients(supabase, query)
+
     const { data: transactions, error: fetchError } = await query
 
     if (fetchError) {
@@ -580,8 +586,10 @@ export async function calculateCreditPreviewMarkups(
   }
 
   try {
-    // 1. Fetch uninvoiced Credit transactions needing markup classification
-    const { data: credits, error: fetchError } = await supabase
+    // 1. Fetch uninvoiced Credit transactions needing markup classification.
+    // Exclude demo client — its credits are managed by refresh-demo cron.
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+    let creditQuery = supabase
       .from('transactions')
       .select('id, transaction_id, client_id, cost, reference_id, reference_type, care_ticket_id, taxes, charge_date')
       .eq('fee_type', 'Credit')
@@ -591,6 +599,8 @@ export async function calculateCreditPreviewMarkups(
       .is('markup_is_preview', null)
       .order('charge_date', { ascending: false })
       .limit(options.limit || 500)
+    creditQuery = await excludeDemoClients(supabase, creditQuery)
+    const { data: credits, error: fetchError } = await creditQuery
 
     if (fetchError) {
       result.errors.push(`Fetch error: ${fetchError.message}`)

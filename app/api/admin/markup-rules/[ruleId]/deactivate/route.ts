@@ -27,12 +27,17 @@ export async function POST(
     // Get current rule for history
     const { data: currentRule } = await adminClient
       .from('markup_rules')
-      .select('*')
+      .select('*, clients(is_demo)')
       .eq('id', ruleId)
       .single()
 
     if (!currentRule) {
       return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to deactivate demo client's markup rule
+    if ((currentRule.clients as any)?.is_demo) {
+      return NextResponse.json({ error: 'Cannot deactivate demo client markup rule' }, { status: 403 })
     }
 
     // Deactivate rule

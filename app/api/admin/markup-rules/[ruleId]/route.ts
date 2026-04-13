@@ -24,11 +24,16 @@ export async function GET(
     // Fetch rule
     const { data: rule, error: ruleError } = await adminClient
       .from('markup_rules')
-      .select('*')
+      .select('*, clients(is_demo)')
       .eq('id', ruleId)
       .single()
 
     if (ruleError || !rule) {
+      return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+    }
+
+    // CRITICAL: hide demo client's markup rule from admin
+    if ((rule.clients as any)?.is_demo) {
       return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
     }
 
@@ -68,12 +73,17 @@ export async function PATCH(
     // Get current rule for history
     const { data: currentRule } = await adminClient
       .from('markup_rules')
-      .select('*')
+      .select('*, clients(is_demo)')
       .eq('id', ruleId)
       .single()
 
     if (!currentRule) {
       return NextResponse.json({ error: 'Rule not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to modify demo client's markup rule
+    if ((currentRule.clients as any)?.is_demo) {
+      return NextResponse.json({ error: 'Cannot modify demo client markup rule' }, { status: 403 })
     }
 
     // Update rule
