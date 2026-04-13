@@ -34,12 +34,20 @@ export async function POST(
     // Get invoice with client info
     const { data: invoice, error: fetchError } = await adminClient
       .from('invoices_jetpack')
-      .select('*, client:clients(id, company_name, billing_emails)')
+      .select('*, client:clients(id, company_name, billing_emails, is_demo)')
       .eq('id', invoiceId)
       .single()
 
     if (fetchError || !invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to resend demo-client invoices — would send a real email.
+    if ((invoice.client as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Demo invoices cannot be re-sent — this is a sales-demo brand' },
+        { status: 403 }
+      )
     }
 
     // Can only resend approved invoices

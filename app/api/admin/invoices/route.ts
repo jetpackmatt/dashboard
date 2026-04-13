@@ -17,7 +17,9 @@ export async function GET() {
 
     // Fetch recent invoices with client info (including Stripe fields for CC payments)
     // Explicitly select columns to avoid fetching large JSONB columns (line_items_json is ~19MB TOAST data)
-    const { data: invoices, error } = await adminClient
+    // CRITICAL: exclude invoices for demo clients — admin must never see / act on demo invoices.
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+    let q = adminClient
       .from('invoices_jetpack')
       .select(`
         id, client_id, invoice_number, invoice_date, period_start, period_end,
@@ -30,6 +32,8 @@ export async function GET() {
       .order('invoice_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(100)
+    q = await excludeDemoClients(adminClient, q)
+    const { data: invoices, error } = await q
 
     if (error) {
       console.error('Error fetching invoices:', error)

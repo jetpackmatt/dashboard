@@ -59,7 +59,8 @@ export async function POST(
           id,
           company_name,
           stripe_customer_id,
-          stripe_payment_method_id
+          stripe_payment_method_id,
+          is_demo
         )
       `)
       .eq('id', invoiceId)
@@ -67,6 +68,14 @@ export async function POST(
 
     if (invoiceError || !invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to charge demo-client invoices — would hit real Stripe.
+    if ((invoice.client as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Demo invoices cannot be charged — this is a sales-demo brand' },
+        { status: 403 }
+      )
     }
 
     // Validate invoice state

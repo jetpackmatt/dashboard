@@ -81,12 +81,15 @@ export async function POST(request: NextRequest) {
 
     console.log(`Invoice date: ${invoiceDate.toISOString().split('T')[0]}`)
 
-    // Get clients to process - only billable clients (must have short_code configured)
+    // Get clients to process - only billable clients (must have short_code configured).
+    // CRITICAL: exclude demo clients — demo has its own self-contained invoice
+    // pipeline in refresh-demo cron and must never touch real invoice generation.
     let clientsQuery = adminClient
       .from('clients')
       .select('id, company_name, short_code, next_invoice_number, billing_email, billing_terms, merchant_id, billing_address, payment_method')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
+      .eq('is_demo', false)
       .not('short_code', 'is', null)
 
     if (clientId) {

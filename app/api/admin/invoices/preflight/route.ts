@@ -34,12 +34,15 @@ export async function GET() {
 
     const adminClient = createAdminClient()
 
-    // Get all active clients (exclude internal)
+    // Get all active clients (exclude internal AND demo — demo has its own
+    // invoice pipeline via refresh-demo cron and must never touch the real
+    // invoice generation/approval flow).
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
       .select('id, company_name, short_code')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
+      .eq('is_demo', false)
 
     if (clientsError || !clients) {
       return NextResponse.json({ error: 'Failed to fetch clients' }, { status: 500 })

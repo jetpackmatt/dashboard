@@ -53,12 +53,21 @@ export async function POST(
     // Get current invoice with client info (including Stripe fields for auto-charge and billing_emails for invoice email)
     const { data: invoice, error: fetchError } = await adminClient
       .from('invoices_jetpack')
-      .select('*, client:clients(id, company_name, short_code, stripe_customer_id, stripe_payment_method_id, payment_method, billing_emails)')
+      .select('*, client:clients(id, company_name, short_code, stripe_customer_id, stripe_payment_method_id, payment_method, billing_emails, is_demo)')
       .eq('id', invoiceId)
       .single()
 
     if (fetchError || !invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse to approve demo-client invoices — this endpoint sends
+    // emails and can auto-charge cards. Demo invoices are decorative only.
+    if ((invoice.client as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Demo invoices cannot be approved — this is a sales-demo brand' },
+        { status: 403 }
+      )
     }
 
     if (invoice.status !== 'draft') {

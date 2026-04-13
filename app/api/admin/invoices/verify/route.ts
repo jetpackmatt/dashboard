@@ -353,7 +353,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const invoiceId = searchParams.get('invoiceId')
 
-    // Build query
+    // Build query. CRITICAL: exclude demo client invoices.
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
     let query = adminClient
       .from('invoices_jetpack')
       .select('id, invoice_number, client_id, period_start, period_end, total_amount, line_items_json, clients(company_name)')
@@ -364,6 +365,7 @@ export async function GET(request: NextRequest) {
     } else {
       query = query.eq('status', 'draft')
     }
+    query = await excludeDemoClients(adminClient, query)
 
     const { data: invoices, error } = await query
 
