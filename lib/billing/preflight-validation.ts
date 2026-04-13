@@ -147,7 +147,7 @@ export async function runPreflightValidation(
   while (hasMoreShipping) {
     const { data: shippingBatch } = await supabase
       .from('transactions')
-      .select('id, reference_id, base_cost, surcharge, tracking_id, cost, taxes')
+      .select('id, reference_id, base_cost, surcharge, tracking_id, cost, taxes, charge_date')
       .eq('client_id', clientId)
       .eq('fee_type', 'Shipping')
       .eq('reference_type', 'Shipment')
