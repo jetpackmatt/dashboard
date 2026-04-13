@@ -219,12 +219,19 @@ export async function POST(request: NextRequest) {
       const shipbobOrderId = nextOrderId()
       const shipmentId = nextShipmentId()
 
-      // Shift timestamps so today's shipments look like today
+      // Shift timestamps so today's shipments look like today.
+      // Any event_* that lands in the future means "hasn't happened yet" —
+      // represent it as NULL so the shipment looks like a fresh label.
       const origCreated = new Date(src.created_at)
       const shifted = new Date(now)
       shifted.setUTCHours(origCreated.getUTCHours(), origCreated.getUTCMinutes(), 0, 0)
       const deltaMs = shifted.getTime() - origCreated.getTime()
-      const shift = (iso: string | null) => iso ? new Date(new Date(iso).getTime() + deltaMs).toISOString() : null
+      const nowMs = now.getTime()
+      const shift = (iso: string | null) => {
+        if (!iso) return null
+        const ms = new Date(iso).getTime() + deltaMs
+        return ms > nowMs ? null : new Date(ms).toISOString()
+      }
 
       const products = pickProductsForOrder()
       let orderTotal = 0

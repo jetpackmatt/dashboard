@@ -229,9 +229,13 @@ function dateShiftShipment(src, targetMonthStart, targetMonthEnd) {
   newCreated.setUTCDate(targetStart.getUTCDate() + targetDay)
   newCreated.setUTCHours(origCreated.getUTCHours(), origCreated.getUTCMinutes(), 0, 0)
   const deltaMs = newCreated.getTime() - origCreated.getTime()
+  const nowMs = Date.now()
   const shiftField = (iso) => {
     if (!iso) return null
-    return new Date(new Date(iso).getTime() + deltaMs).toISOString()
+    const ms = new Date(iso).getTime() + deltaMs
+    // If the shifted time lands in the future, that event hasn't happened
+    // yet from the demo's point of view — represent as NULL.
+    return ms > nowMs ? null : new Date(ms).toISOString()
   }
   const shifted = { ...src }
   for (const k of [
