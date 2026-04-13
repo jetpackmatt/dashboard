@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
       query = query.eq('client_id', clientId)
     } else {
       // All-brands view: exclude demo client tickets
-      query = await excludeDemoClients(query, 'client_id')
+      query = await excludeDemoClients(supabase, query, 'client_id')
     }
 
     // Status filter

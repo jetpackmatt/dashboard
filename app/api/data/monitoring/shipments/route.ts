@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient, verifyClientAccess, handleAccessError } from '@/lib/supabase/admin'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 // Type for lost_in_transit_checks record
 interface LostInTransitCheck {
@@ -129,6 +130,8 @@ export async function GET(request: NextRequest) {
     // Client filter (admins can see all, clients see only their own)
     if (clientId && clientId !== 'all') {
       query = query.eq('client_id', clientId)
+    } else {
+      query = await excludeDemoClients(supabase, query, 'client_id')
     }
 
     // Apply filter

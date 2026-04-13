@@ -4,6 +4,7 @@ import {
   handleAccessError,
   isCareAdminRole,
 } from '@/lib/supabase/admin'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 import { NextRequest, NextResponse } from 'next/server'
 
 /**
@@ -80,6 +81,12 @@ export async function GET(request: NextRequest) {
 
       if (referenceType) { q1 = q1.eq('reference_type', referenceType); q2 = q2.eq('reference_type', referenceType) }
       if (searchOrFilter) { q1 = q1.or(searchOrFilter); q2 = q2.or(searchOrFilter) }
+
+      // Exclude demo client credits
+      ;[q1, q2] = await Promise.all([
+        excludeDemoClients(supabase, q1),
+        excludeDemoClients(supabase, q2),
+      ])
 
       const [result1, result2] = await Promise.all([q1, q2])
 
@@ -175,6 +182,12 @@ export async function GET(request: NextRequest) {
       if (feeType && feeType !== 'Credit') q3 = q3.eq('fee_type', feeType)
       if (referenceType) q3 = q3.eq('reference_type', referenceType)
       if (searchOrFilter) q3 = q3.or(searchOrFilter)
+
+      // Exclude demo client transactions from all branches (q2/q3 are credits which can have a client_id)
+      ;[q2, q3] = await Promise.all([
+        excludeDemoClients(supabase, q2),
+        excludeDemoClients(supabase, q3),
+      ])
 
       const [result1, result2, result3] = await Promise.all([q1, q2, q3])
 

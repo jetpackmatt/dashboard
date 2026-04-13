@@ -3,6 +3,7 @@ import { checkPermission } from '@/lib/permissions'
 import { parseDestinationFilter } from '@/lib/destination-data'
 import { NextRequest, NextResponse } from 'next/server'
 import { SupabaseClient } from '@supabase/supabase-js'
+import { excludeDemoClients } from '@/lib/demo/exclusion'
 
 /**
  * Batched .in() query helper.
@@ -260,6 +261,8 @@ export async function GET(request: NextRequest) {
     // Filter by client_id on shipments table
     if (clientId) {
       query = query.eq('client_id', clientId)
+    } else {
+      query = await excludeDemoClients(supabase, query, 'client_id')
     }
 
     // Only show shipments that have actually shipped (have event_labeled or event_intransit)
