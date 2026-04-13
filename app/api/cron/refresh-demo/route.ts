@@ -409,98 +409,140 @@ async function progressShipmentEvents(
   return result
 }
 
-// ========== Delivery IQ churn ==========
-// Add new DIQ rows for aged demo shipments AND evolve existing DIQ statuses.
+// ========== Delivery IQ — mirror real source DIQ to demo ==========
+// Replaces demo DIQ nightly with a small mirror of the source clients'
+// ACTIVE DIQ entries. This gives us:
+//   - Real, current, actively-tracked tracking numbers (carrier pages work)
+//   - Accurate watch_reason / ai_status_badge that match the real state
+//   - Variety of reasons (STALLED, NO SCANS, NEEDS ACTION, CUSTOMS, PICKUP, RETURNING)
+//   - Consistent with TrackingMore checkpoints already in tracking_checkpoints
+//
+// Target demo volume: realistic for a 7K/month client.
+const DEMO_DIQ_TARGETS = {
+  at_risk: 15,
+  eligible: 21,
+  claim_filed: 8,
+  approved: 6,
+  denied: 2,
+  returned_to_sender: 3,
+}
+
 async function advanceDeliveryIQ(
   supabase: ReturnType<typeof createAdminClient>,
   demoClientId: string
 ): Promise<{ added: number; updated: number; removed: number }> {
   const result = { added: 0, updated: 0, removed: 0 }
 
-  // --- Add new DIQ entries for shipments labeled 15+ days ago and still undelivered ---
-  const cutoff = new Date(Date.now() - 15 * 86400_000).toISOString()
-  const { data: candidates } = await supabase
+  // Build a map of demo tracking_id → demo shipment_id (for reusing demo shipments)
+  const { data: demoShips } = await supabase
     .from('shipments')
     .select('shipment_id, tracking_id, carrier, destination_country, event_labeled')
     .eq('client_id', demoClientId)
-    .is('event_delivered', null)
-    .not('event_labeled', 'is', null)
-    .lt('event_labeled', cutoff)
     .not('tracking_id', 'is', null)
-    .limit(500)
-  const shipmentIds = (candidates || []).map((c: any) => c.shipment_id)
-  const { data: existing } = await supabase
-    .from('lost_in_transit_checks')
-    .select('shipment_id')
-    .in('shipment_id', shipmentIds.length > 0 ? shipmentIds : ['__none__'])
-  const existingSet = new Set((existing || []).map((e: any) => e.shipment_id))
-  const diqRows = []
-  for (const s of candidates || []) {
-    if (existingSet.has(s.shipment_id)) continue
-    if (Math.random() > 0.3) continue  // only some candidates get a DIQ entry
-    const labeledAt = new Date(s.event_labeled!).getTime()
-    const daysInTransit = Math.floor((Date.now() - labeledAt) / 86400_000)
-    diqRows.push({
-      shipment_id: s.shipment_id, tracking_number: s.tracking_id, carrier: s.carrier,
-      client_id: demoClientId,
-      checked_at: new Date().toISOString(),
-      first_checked_at: new Date(labeledAt + 3 * 86400_000).toISOString(),
-      last_recheck_at: new Date().toISOString(),
-      eligible_after: new Date(labeledAt + 15 * 86400_000).toISOString().split('T')[0],
-      is_international: s.destination_country === 'CA',
-      claim_eligibility_status: daysInTransit >= 20 ? 'eligible' : 'at_risk',
-      ai_status_badge: ['STUCK', 'STALLED', 'NORMAL'][Math.floor(Math.random() * 3)],
-      watch_reason: ['STALLED', 'NO SCAN', 'NEEDS ACTION'][Math.floor(Math.random() * 3)],
-      ai_reshipment_urgency: randInt(20, 95),
-      ai_customer_anxiety: randInt(10, 90),
-      ai_risk_level: ['LOW', 'MEDIUM', 'HIGH'][Math.floor(Math.random() * 3)],
-      ai_predicted_outcome: ['delivered', 'lost', 'returned_to_sender'][Math.floor(Math.random() * 3)],
-      days_in_transit: daysInTransit,
-      stuck_duration_days: randInt(0, 10),
-      last_scan_date: new Date(Date.now() - randInt(1, 10) * 86400_000).toISOString(),
-      last_scan_description: ['In transit', 'Arrived at facility', 'Out for delivery attempt'][Math.floor(Math.random() * 3)],
-      last_scan_location: ['Louisville KY', 'Atlanta GA', 'Memphis TN', 'Chicago IL'][Math.floor(Math.random() * 4)],
-    })
-  }
-  if (diqRows.length > 0) {
-    const { error } = await supabase.from('lost_in_transit_checks').insert(diqRows)
-    if (!error) result.added = diqRows.length
-    else console.warn('[diq-add]', error.message)
+    .limit(20000)
+  const byTracking = new Map<string, any>()
+  for (const s of demoShips || []) {
+    if (s.tracking_id && !byTracking.has(s.tracking_id)) byTracking.set(s.tracking_id, s)
   }
 
-  // --- Evolve existing DIQ statuses + remove delivered ones ---
-  const { data: existing_diq } = await supabase
+  // Wipe existing demo DIQ — we rebuild fresh each night for accurate data
+  const { count: existingCount } = await supabase
     .from('lost_in_transit_checks')
-    .select('id, shipment_id, claim_eligibility_status, days_in_transit')
+    .select('*', { count: 'exact', head: true })
     .eq('client_id', demoClientId)
-    .limit(500)
-  for (const d of existing_diq || []) {
-    // Check if corresponding shipment got delivered (via progressShipmentEvents above)
-    const { data: ship } = await supabase
-      .from('shipments')
-      .select('event_delivered')
-      .eq('client_id', demoClientId)
-      .eq('shipment_id', d.shipment_id)
-      .maybeSingle()
-    if (ship?.event_delivered) {
-      await supabase.from('lost_in_transit_checks').delete().eq('id', d.id)
-      result.removed++
-      continue
+  await supabase.from('lost_in_transit_checks').delete().eq('client_id', demoClientId)
+  result.removed = existingCount || 0
+
+  // Source client IDs (real clients we mirror DIQ from)
+  const SOURCE_CLIENT_IDS = [
+    '78854d47-a4eb-4bc1-af16-f2ac624cdc9d',
+    'e6220921-695e-41f9-9f49-af3e0cdc828a',
+    '6b94c274-0446-4167-9d02-b998f8be59ad',
+    'ca33dd0e-bd81-4ff7-88d1-18a3caf81d8e',
+  ]
+
+  const toInsert: any[] = []
+
+  for (const [status, target] of Object.entries(DEMO_DIQ_TARGETS)) {
+    // Pull a pool of real DIQ entries with this status, prefer recent + varied reasons
+    const { data: pool } = await supabase
+      .from('lost_in_transit_checks')
+      .select('shipment_id, tracking_number, carrier, is_international, watch_reason, ai_status_badge, ai_risk_level, ai_reshipment_urgency, ai_customer_anxiety, ai_predicted_outcome, ai_assessment, days_in_transit, stuck_duration_days, stuck_at_facility, last_scan_date, last_scan_description, last_scan_location, first_checked_at, eligible_after, substatus_category')
+      .in('client_id', SOURCE_CLIENT_IDS)
+      .eq('claim_eligibility_status', status)
+      .order('last_recheck_at', { ascending: false, nullsFirst: false })
+      .limit(200)
+    if (!pool || pool.length === 0) continue
+
+    // Group by watch_reason so we get variety
+    const byReason = new Map<string, any[]>()
+    for (const r of pool) {
+      const key = r.watch_reason || 'STALLED'
+      if (!byReason.has(key)) byReason.set(key, [])
+      byReason.get(key)!.push(r)
     }
-    // Evolve at_risk → eligible (~15%), eligible → claim_filed (~10%), claim_filed → approved/denied (~20%)
-    const cur = d.claim_eligibility_status
-    let next: string | null = null
-    if (cur === 'at_risk' && Math.random() < 0.15) next = 'eligible'
-    else if (cur === 'eligible' && Math.random() < 0.10) next = 'claim_filed'
-    else if (cur === 'claim_filed' && Math.random() < 0.20) next = Math.random() < 0.8 ? 'approved' : 'denied'
-    if (next) {
-      await supabase.from('lost_in_transit_checks').update({
-        claim_eligibility_status: next,
+
+    // Pick round-robin from each reason bucket to get a diverse sample
+    const reasons = [...byReason.keys()]
+    const picked: any[] = []
+    let reasonIdx = 0
+    while (picked.length < target && reasons.length > 0) {
+      const reasonKey = reasons[reasonIdx % reasons.length]
+      const bucket = byReason.get(reasonKey)!
+      if (bucket.length === 0) {
+        reasons.splice(reasonIdx % reasons.length, 1)
+        if (reasons.length === 0) break
+        continue
+      }
+      picked.push(bucket.shift()!)
+      reasonIdx++
+    }
+
+    for (const source of picked) {
+      // Find a demo shipment with matching tracking — so the drawer shows demo's
+      // anonymized customer but the tracking link resolves to real carrier data.
+      let demoShip = source.tracking_number ? byTracking.get(source.tracking_number) : null
+      if (!demoShip) {
+        // Fallback: pick any demo shipment whose carrier matches
+        for (const s of byTracking.values()) {
+          if (s.carrier === source.carrier) { demoShip = s; break }
+        }
+      }
+      if (!demoShip) continue
+
+      toInsert.push({
+        shipment_id: demoShip.shipment_id,
+        tracking_number: source.tracking_number,
+        carrier: source.carrier,
+        client_id: demoClientId,
+        checked_at: new Date().toISOString(),
+        first_checked_at: source.first_checked_at || new Date().toISOString(),
         last_recheck_at: new Date().toISOString(),
-        days_in_transit: (d.days_in_transit || 0) + 1,
-      }).eq('id', d.id)
-      result.updated++
+        eligible_after: source.eligible_after,
+        is_international: source.is_international,
+        claim_eligibility_status: status,
+        watch_reason: source.watch_reason,
+        ai_status_badge: source.ai_status_badge,
+        ai_risk_level: source.ai_risk_level,
+        ai_reshipment_urgency: source.ai_reshipment_urgency,
+        ai_customer_anxiety: source.ai_customer_anxiety,
+        ai_predicted_outcome: source.ai_predicted_outcome,
+        ai_assessment: source.ai_assessment,
+        days_in_transit: source.days_in_transit,
+        stuck_duration_days: source.stuck_duration_days,
+        stuck_at_facility: source.stuck_at_facility,
+        last_scan_date: source.last_scan_date,
+        last_scan_description: source.last_scan_description,
+        last_scan_location: source.last_scan_location,
+        substatus_category: source.substatus_category,
+      })
     }
+  }
+
+  if (toInsert.length > 0) {
+    const { error } = await supabase.from('lost_in_transit_checks').insert(toInsert)
+    if (!error) result.added = toInsert.length
+    else console.warn('[diq-mirror]', error.message)
   }
   return result
 }
