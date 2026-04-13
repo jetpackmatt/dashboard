@@ -1,20 +1,6 @@
 import type { NextConfig } from 'next'
-import path from 'path'
 
 const nextConfig: NextConfig = {
-  // Force single react instance across bundled app code and externally-loaded
-  // @react-pdf/* packages (fixes React #31 / "older version of React" in PDF gen).
-  webpack: (config) => {
-    config.resolve = config.resolve || {}
-    config.resolve.alias = {
-      ...(config.resolve.alias || {}),
-      react: path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-      'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
-      'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
-    }
-    return config
-  },
   // Disable StrictMode in dev — it double-fires every useEffect, doubling all API fetches
   // on a single-threaded dev server. This only affects dev; production is unaffected.
   reactStrictMode: false,
