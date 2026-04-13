@@ -358,9 +358,9 @@ const InvoicePDF: React.FC<InvoicePDFProps> = ({
         {/* Due Amount Headline - amount bold, date lighter */}
         <View style={styles.dueHeadlineContainer}>
           <Text style={styles.dueHeadlineAmount}>
-            {formatCurrency(data.summary.totalAmount, currency).replace(' ', '')}
+            {formatCurrency(data.summary.totalAmount, currency).replace(' ', '')}{' '}
           </Text>
-          <Text style={styles.dueHeadlineText}> due {dueDate}</Text>
+          <Text style={styles.dueHeadlineText}>due {dueDate}</Text>
         </View>
 
         {/* Service Line Items Table */}
