@@ -469,6 +469,7 @@ export async function GET(
         shipment_id,
         tracking_id,
         carrier,
+        client_id,
         event_logs,
         event_labeled,
         event_delivered,
@@ -525,6 +526,91 @@ export async function GET(
 
       // Add deduped events to timeline
       timeline.push(...latestByTitle.values())
+    }
+
+    // Demo branch: skip TrackingMore entirely. Read checkpoints by tracking_number
+    // (demo's shipment_id won't match real checkpoint keys, but tracking_number will).
+    // If no real checkpoints exist, synthesize a plausible timeline so the drawer
+    // never shows "No tracking events available".
+    const { data: clientRow } = await supabase.from('clients').select('is_demo').eq('id', shipment.client_id).single()
+    if (clientRow?.is_demo) {
+      const { data: sharedCps } = await supabase
+        .from('tracking_checkpoints')
+        .select('*')
+        .eq('tracking_number', trackingNumber)
+        .order('checkpoint_date', { ascending: false })
+        .limit(50)
+
+      let events: TimelineEvent[] = [...timeline]
+      let latestCp = sharedCps && sharedCps[0]
+      let currentStatus = shipment.status || 'In Transit'
+
+      if (sharedCps && sharedCps.length > 0) {
+        for (const cp of sharedCps) {
+          events.push({
+            timestamp: cp.checkpoint_date,
+            title: cp.display_title || cp.raw_description || 'Tracking update',
+            description: cp.raw_description || '',
+            location: cp.raw_location || null,
+            source: 'carrier',
+            type: cp.normalized_type === 'DELIVERED' ? 'delivery'
+                : cp.normalized_type === 'OFD' ? 'delivery'
+                : cp.normalized_type === 'EXCEPTION' ? 'exception'
+                : 'transit',
+            status: cp.raw_status,
+            normalizedType: cp.normalized_type,
+            sentiment: cp.sentiment,
+          })
+        }
+      } else {
+        // Synthesize a plausible carrier timeline based on event_labeled age.
+        const labeledAt = shipment.event_labeled ? new Date(shipment.event_labeled) : new Date(Date.now() - 10 * 86400_000)
+        const synthetic = synthesizeDemoCheckpoints(labeledAt, shipment.carrier || 'UPS', shipment.destination_country)
+        for (const s of synthetic) events.push(s)
+        latestCp = {
+          checkpoint_date: synthetic[0].timestamp,
+          raw_description: synthetic[0].description,
+          display_title: synthetic[0].title,
+          raw_location: synthetic[0].location,
+          normalized_type: synthetic[0].normalizedType,
+          sentiment: synthetic[0].sentiment,
+          raw_status: synthetic[0].status,
+        }
+      }
+
+      // Sort timeline newest-first
+      events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+      const lastScan = latestCp ? {
+        date: latestCp.checkpoint_date,
+        description: latestCp.raw_description,
+        displayTitle: latestCp.display_title || latestCp.raw_description,
+        location: latestCp.raw_location || null,
+        daysSince: Math.floor((Date.now() - new Date(latestCp.checkpoint_date).getTime()) / 86400_000),
+        normalizedType: latestCp.normalized_type,
+        sentiment: latestCp.sentiment,
+      } : {
+        date: null, description: null, displayTitle: null, location: null,
+        daysSince: null, normalizedType: null, sentiment: null,
+      }
+
+      return NextResponse.json({
+        trackingNumber,
+        carrier: shipment.carrier || 'Unknown',
+        carrierDisplayName: shipment.carrier || 'Unknown',
+        currentStatus,
+        claimStatus: null,
+        estimatedDelivery: null,
+        timeline: events,
+        lastCarrierScan: lastScan,
+        shipmentInfo: {
+          shipmentId: shipment.shipment_id,
+          shipDate: shipment.event_labeled,
+          firstScanDate: events.filter(e => e.source === 'carrier').slice(-1)[0]?.timestamp || null,
+          origin: shipment.origin_country,
+          destination: shipment.destination_country,
+        },
+      })
     }
 
     // 2. Fetch carrier tracking - prefer stored normalized checkpoints, fallback to TrackingMore
@@ -722,4 +808,89 @@ export async function GET(
       { status: 500 }
     )
   }
+}
+
+// ========== Demo-only synthesized carrier timeline ==========
+// Fallback when a demo shipment's tracking_number has no real checkpoints in
+// tracking_checkpoints. Produces 4-7 plausible events spanning from the
+// shipment's label date up to "a few days ago" (stale, matching the at_risk /
+// eligible state).
+function synthesizeDemoCheckpoints(
+  labeledAt: Date,
+  carrier: string,
+  destinationCountry: string | null
+): TimelineEvent[] {
+  const isIntl = destinationCountry === 'CA'
+  const now = Date.now()
+  const labeledMs = labeledAt.getTime()
+  const daysIn = Math.floor((now - labeledMs) / 86400_000)
+  const lastScanDaysAgo = Math.max(3, Math.min(daysIn - 2, 12))
+  const lastScanMs = now - lastScanDaysAgo * 86400_000
+
+  const HUBS_US = ['Louisville KY', 'Memphis TN', 'Atlanta GA', 'Chicago IL', 'Indianapolis IN', 'Dallas TX', 'Ontario CA']
+  const HUBS_CA = ['Mississauga ON', 'Vancouver BC', 'Montreal QC', 'Calgary AB']
+  const pickHub = () => {
+    const pool = isIntl ? HUBS_CA.concat(HUBS_US.slice(0, 2)) : HUBS_US
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
+
+  const events: TimelineEvent[] = []
+  // Event 1 (oldest): label created
+  events.push({
+    timestamp: new Date(labeledMs).toISOString(),
+    title: 'Shipping label created',
+    description: 'Electronic shipping information received',
+    location: null,
+    source: 'carrier',
+    type: 'info',
+    status: 'InfoReceived',
+    normalizedType: 'LABEL',
+    sentiment: 'neutral',
+  })
+  // Event 2: picked up by carrier (within 1-2 days)
+  const pickupMs = labeledMs + (0.5 + Math.random()) * 86400_000
+  if (pickupMs < now) {
+    events.push({
+      timestamp: new Date(pickupMs).toISOString(),
+      title: 'Picked up by carrier',
+      description: `Package picked up by ${carrier}`,
+      location: pickHub(),
+      source: 'carrier',
+      type: 'transit',
+      status: 'InTransit',
+      normalizedType: 'PICKUP',
+      sentiment: 'positive',
+    })
+  }
+  // Events 3-5: hub scans
+  const hubCount = Math.max(1, Math.floor((lastScanDaysAgo * 0.5)))
+  for (let i = 0; i < Math.min(hubCount, 4); i++) {
+    const ts = pickupMs + (i + 1) * 86400_000 * (0.8 + Math.random() * 0.4)
+    if (ts > lastScanMs) break
+    events.push({
+      timestamp: new Date(ts).toISOString(),
+      title: i === 0 ? 'Arrived at origin facility' : 'Departed facility',
+      description: i === 0 ? `Arrived at ${carrier} facility` : 'In transit to next facility',
+      location: pickHub(),
+      source: 'carrier',
+      type: 'transit',
+      status: 'InTransit',
+      normalizedType: 'HUB',
+      sentiment: 'neutral',
+    })
+  }
+  // Last event (the "stale" one matching watch_reason)
+  events.push({
+    timestamp: new Date(lastScanMs).toISOString(),
+    title: 'In transit',
+    description: 'Package in transit to destination',
+    location: pickHub(),
+    source: 'carrier',
+    type: 'transit',
+    status: 'InTransit',
+    normalizedType: 'HUB',
+    sentiment: lastScanDaysAgo > 7 ? 'concerning' : 'neutral',
+  })
+  // Return newest-first
+  return events.reverse()
 }
