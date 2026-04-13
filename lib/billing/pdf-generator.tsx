@@ -347,13 +347,11 @@ const InvoicePDF: React.FC<InvoicePDFProps> = ({
           <View style={styles.addressBlock}>
             <Text style={styles.addressLabel}>Bill To:</Text>
             <Text style={styles.addressLine}>{data.client.company_name}</Text>
-            {clientAddress ? (
-              <>
-                <Text style={styles.addressLine}>{clientAddress.street}</Text>
-                <Text style={styles.addressLine}>{clientAddress.city}, {clientAddress.region}</Text>
-                <Text style={styles.addressLine}>{clientAddress.postalCode}, {clientAddress.country}</Text>
-              </>
-            ) : null}
+            {clientAddress && [
+              <Text key="street" style={styles.addressLine}>{clientAddress.street}</Text>,
+              <Text key="city" style={styles.addressLine}>{clientAddress.city}, {clientAddress.region}</Text>,
+              <Text key="postal" style={styles.addressLine}>{clientAddress.postalCode}, {clientAddress.country}</Text>,
+            ]}
           </View>
         </View>
 
