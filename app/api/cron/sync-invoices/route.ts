@@ -823,17 +823,22 @@ export async function GET(request: Request) {
     console.log(`  Invoice IDs: ${shipbobInvoiceIds.join(', ')}`)
     console.log(`  Types: ${[...new Set(unprocessedInvoices.map((i: { invoice_type: string }) => i.invoice_type))].join(', ')}`)
 
-    // Step 4.5: Backfill missing timeline data before preflight
-    // Catches shipments where initial sync ran before ShipBob recorded the Labeled event.
-    // Run with larger batch size (200) to clear backlog before preflight checks.
+    // Step 4.5: Backfill missing timeline data before preflight.
+    // Loop until backlog is cleared OR we hit a safety cap, so a 500+ backlog
+    // doesn't get partially-cleared in one pass and leave preflight with errors.
     console.log('[InvoiceSync] Step 4.5: Backfilling missing timeline data...')
     try {
-      const timelineResult = await syncBillingAwareTimelines(200)
-      if (timelineResult.updated > 0 || timelineResult.errors.length > 0) {
-        console.log(`[InvoiceSync] Timeline backfill: ${timelineResult.updated} updated, ${timelineResult.skipped} skipped, ${timelineResult.errors.length} errors`)
-      } else {
-        console.log('[InvoiceSync] Timeline backfill: no missing timelines found')
+      let totalUpdated = 0
+      const MAX_PASSES = 10
+      const PASS_SIZE = 200
+      for (let pass = 0; pass < MAX_PASSES; pass++) {
+        const timelineResult = await syncBillingAwareTimelines(PASS_SIZE)
+        totalUpdated += timelineResult.updated
+        console.log(`[InvoiceSync] Timeline backfill pass ${pass + 1}: +${timelineResult.updated} (skipped=${timelineResult.skipped}, errors=${timelineResult.errors.length})`)
+        // Stop when nothing new was found (backlog cleared)
+        if (timelineResult.totalShipments < PASS_SIZE) break
       }
+      console.log(`[InvoiceSync] Timeline backfill complete: ${totalUpdated} total updated across ${Math.min(MAX_PASSES, Math.ceil(totalUpdated / PASS_SIZE) || 1)} passes`)
     } catch (err) {
       console.error('[InvoiceSync] Timeline backfill failed (non-fatal):', err)
     }

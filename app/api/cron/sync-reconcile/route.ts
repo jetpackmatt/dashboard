@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
     // STEP 5: Catch billable shipments missing timeline data (event_labeled)
     // These are shipments that "aged out" of the 14-day timeline sync window but need timeline data for invoicing
     console.log('[Cron Reconcile] Step 5: Syncing billing-aware timelines...')
-    const billingTimelineResult = await syncBillingAwareTimelines(50)
+    const billingTimelineResult = await syncBillingAwareTimelines(200)
     if (billingTimelineResult.updated > 0) {
       console.log(`[Cron Reconcile] Billing timelines: ${billingTimelineResult.updated} updated`)
     }

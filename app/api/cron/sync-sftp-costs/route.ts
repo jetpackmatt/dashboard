@@ -100,13 +100,15 @@ export async function GET(request: Request) {
       }
     }
 
-    // Step 2b: Backfill pass — retry SFTP matching for previous 3 days
-    // Catches transactions that arrived in DB after the original SFTP cron ran
+    // Step 2b: Backfill pass — retry SFTP matching for previous 8 days
+    // Catches transactions that arrived in DB after the original SFTP cron ran.
+    // Window must cover the full Mon-Sun invoicing week so preflight on Monday
+    // morning never sees missing base_cost on shipments from earlier in the week.
     // IMPORTANT: Runs even if primary SFTP fetch failed
-    console.log('Starting SFTP backfill for previous 3 days...')
+    console.log('Starting SFTP backfill for previous 8 days...')
     const backfillResults: Array<{ date: string; missing: number; updated: number; notFound: number }> = []
 
-    for (let daysAgo = 1; daysAgo <= 3; daysAgo++) {
+    for (let daysAgo = 1; daysAgo <= 8; daysAgo++) {
       const backfillFileDate = new Date(today)
       backfillFileDate.setDate(backfillFileDate.getDate() - daysAgo)
       const backfillChargeDate = yesterday(backfillFileDate)

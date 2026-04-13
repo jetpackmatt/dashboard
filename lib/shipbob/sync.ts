@@ -2847,18 +2847,19 @@ export async function syncBillingAwareTimelines(
   }
 
   try {
-    // Find shipments missing event_labeled that have been synced at least once (event_created exists)
-    // These are shipments where the initial sync ran before ShipBob recorded the Labeled event.
-    // The tiered timeline cron (syncAllUndeliveredTimelines) requires event_labeled IS NOT NULL,
-    // so these shipments are permanently invisible to it — this function is the safety net.
+    // Find billable shipments missing timeline data (event_labeled OR event_created).
+    // The previous version required event_created IS NOT NULL, so shipments missing
+    // BOTH stamps were silently skipped — they're the worst kind because they break
+    // invoicing entirely. We now target either-missing.
+    // Also fixed: order by created_at (the actual column), not "created_date" (typo
+    // that silently produced random ordering).
     const { data: missingTimelines, error: queryError } = await supabase
       .from('shipments')
       .select('id, shipment_id, client_id, status')
-      .is('event_labeled', null)
+      .or('event_labeled.is.null,event_created.is.null')
       .is('deleted_at', null)
-      .not('event_created', 'is', null)
       .not('status', 'in', '("Cancelled","Processing","None","Pending")')
-      .order('created_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(batchSize)
 
     if (queryError) {
