@@ -183,7 +183,7 @@ export async function calculatePreviewMarkups(
     // markup applied by the demo backfill / refresh-demo cron and should
     // never be touched by the production preview-markup pipeline.
     const { excludeDemoClients } = await import('@/lib/demo/exclusion')
-    query = await excludeDemoClients(supabase, query)
+    await excludeDemoClients(supabase, query)
 
     const { data: transactions, error: fetchError } = await query
 
@@ -599,7 +599,7 @@ export async function calculateCreditPreviewMarkups(
       .is('markup_is_preview', null)
       .order('charge_date', { ascending: false })
       .limit(options.limit || 500)
-    creditQuery = await excludeDemoClients(supabase, creditQuery)
+    await excludeDemoClients(supabase, creditQuery)
     const { data: credits, error: fetchError } = await creditQuery
 
     if (fetchError) {

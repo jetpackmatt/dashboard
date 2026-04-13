@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
       if (searchOrFilter) { q1 = q1.or(searchOrFilter); q2 = q2.or(searchOrFilter) }
 
       // Exclude demo client credits
-      ;[q1, q2] = await Promise.all([
+      await Promise.all([
         excludeDemoClients(supabase, q1),
         excludeDemoClients(supabase, q2),
       ])
@@ -184,7 +184,7 @@ export async function GET(request: NextRequest) {
       if (searchOrFilter) q3 = q3.or(searchOrFilter)
 
       // Exclude demo client transactions from all branches (q2/q3 are credits which can have a client_id)
-      ;[q2, q3] = await Promise.all([
+      await Promise.all([
         excludeDemoClients(supabase, q2),
         excludeDemoClients(supabase, q3),
       ])

@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
       .eq('status', 'Under Review')
       .lte('created_at', fiveMinutesAgo.toISOString())
 
-    claimsQuery = await excludeDemoClients(supabase, claimsQuery)
+    await excludeDemoClients(supabase, claimsQuery)
 
     const { data: claimsToAdvance, error: fetchError } = await claimsQuery
 

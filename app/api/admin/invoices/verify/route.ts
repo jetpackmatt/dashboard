@@ -365,7 +365,7 @@ export async function GET(request: NextRequest) {
     } else {
       query = query.eq('status', 'draft')
     }
-    query = await excludeDemoClients(adminClient, query)
+    await excludeDemoClients(adminClient, query)
 
     const { data: invoices, error } = await query
 

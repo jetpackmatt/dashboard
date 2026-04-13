@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       .order('event_labeled', { ascending: true })
       .limit(500)
 
-    candidatesQuery = await excludeDemoClients(supabase, candidatesQuery)
+    await excludeDemoClients(supabase, candidatesQuery)
 
     const { data: candidates, error: candidatesError } = await candidatesQuery
 

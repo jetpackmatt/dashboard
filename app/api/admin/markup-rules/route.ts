@@ -23,7 +23,7 @@ export async function GET() {
       .order('client_id', { ascending: true, nullsFirst: true })
       .order('priority', { ascending: false })
       .order('name', { ascending: true })
-    rulesQuery = await excludeDemoClients(adminClient, rulesQuery)
+    await excludeDemoClients(adminClient, rulesQuery)
     const { data: rules, error } = await rulesQuery
 
     if (error) {

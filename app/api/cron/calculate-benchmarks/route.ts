@@ -163,7 +163,7 @@ async function computeCarrierBenchmarks(
       query = query.gt('id', lastId)
     }
 
-    query = await excludeDemoClients(supabase, query)
+    await excludeDemoClients(supabase, query)
 
     const { data, error } = await query
     if (error || !data || data.length === 0) break
@@ -244,7 +244,7 @@ async function computeInternationalBenchmarks(
       query = query.gt('id', lastId)
     }
 
-    query = await excludeDemoClients(supabase, query)
+    await excludeDemoClients(supabase, query)
 
     const { data, error } = await query
     if (error || !data || data.length === 0) break

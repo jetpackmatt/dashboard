@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
     if (clientId && clientId !== 'all') {
       query = query.eq('client_id', clientId)
     } else {
-      query = await excludeDemoClients(supabase, query, 'client_id')
+      await excludeDemoClients(supabase, query, 'client_id')
     }
 
     // Apply filter

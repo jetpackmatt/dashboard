@@ -32,7 +32,7 @@ export async function GET() {
       .order('invoice_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(100)
-    q = await excludeDemoClients(adminClient, q)
+    await excludeDemoClients(adminClient, q)
     const { data: invoices, error } = await q
 
     if (error) {

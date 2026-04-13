@@ -122,7 +122,7 @@ export async function getAtRiskCandidates(
     )
     .order('event_labeled', { ascending: true })
     .limit(limit)
-  query = await excludeDemoClients(supabase, query)
+  await excludeDemoClients(supabase, query)
   const { data: shipments, error } = await query
 
   if (error) {

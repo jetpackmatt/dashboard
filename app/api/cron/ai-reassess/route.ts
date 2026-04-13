@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       .not('claim_eligibility_status', 'in', '("approved","denied")') // Don't reassess resolved claims
       .order('ai_next_check_at', { ascending: true })
       .limit(100) // Process in batches
-    dueQuery = await excludeDemoClients(supabase, dueQuery)
+    await excludeDemoClients(supabase, dueQuery)
     const { data: dueShipments, error: fetchError } = await dueQuery
 
     if (fetchError) {

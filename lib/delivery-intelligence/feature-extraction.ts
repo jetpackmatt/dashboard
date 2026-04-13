@@ -550,7 +550,7 @@ export async function syncNewDeliveryOutcomes(): Promise<{ added: number; errors
       .not('event_intransit', 'is', null)
       .order('shipment_id', { ascending: true })
       .limit(batchSize)
-    query = await excludeDemoClients(supabase, query)
+    await excludeDemoClients(supabase, query)
 
     if (lastShipmentId) {
       query = query.gt('shipment_id', lastShipmentId)

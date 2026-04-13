@@ -144,7 +144,7 @@ export async function GET(request: NextRequest) {
       .in('claim_eligibility_status', ['at_risk', 'eligible'])
       .order('last_recheck_at', { ascending: true, nullsFirst: true })
       .limit(300)
-    atRiskQuery = await excludeDemoClients(supabase, atRiskQuery)
+    await excludeDemoClients(supabase, atRiskQuery)
     const { data: atRiskShipments, error: fetchError } = await atRiskQuery
 
     if (fetchError) {

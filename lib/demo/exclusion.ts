@@ -39,19 +39,27 @@ export async function getDemoClientIds(supabase: AnySupabase): Promise<string[]>
  * Apply `NOT IN (demo_ids)` to a Supabase query on `client_id`.
  * No-op if there are no demo clients.
  *
- * Usage:
+ * IMPORTANT: This function mutates the query in-place (Supabase filter methods return
+ * `this`). Do NOT reassign the result — just await the call:
  *   let q = supabase.from('shipments').select('*').gte('event_delivered', someDate)
- *   q = await excludeDemoClients(supabase, q)
+ *   await excludeDemoClients(supabase, q)
+ *   // q already has the filter applied
+ *
+ * Returning a Supabase query builder from an async function would cause the async
+ * runtime to execute the query (builders are thenable), which is why this returns void.
  */
-export async function excludeDemoClients<Q extends { not: (...args: any[]) => any }>(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function excludeDemoClients(
   supabase: AnySupabase,
-  query: Q,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  query: { not: (...args: any[]) => any },
   column: string = 'client_id'
-): Promise<Q> {
+): Promise<void> {
   const demoIds = await getDemoClientIds(supabase)
-  if (demoIds.length === 0) return query
+  if (demoIds.length === 0) return
   // PostgREST syntax: .not(col, 'in', '(id1,id2)')
-  return query.not(column, 'in', `(${demoIds.join(',')})`)
+  // Mutates the query builder in-place — do not return it from this async function.
+  query.not(column, 'in', `(${demoIds.join(',')})`)
 }
 
 /** Clear the cache — useful in tests or after creating a new demo client. */

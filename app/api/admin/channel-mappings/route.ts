@@ -36,7 +36,7 @@ export async function GET() {
       .select('client_id, channel_name, order_type')
       .not('channel_name', 'is', null)
       .limit(1000)
-    rawQ = await excludeDemoClients(admin, rawQ)
+    await excludeDemoClients(admin, rawQ)
     const { data: rawChannels, error: rawError } = await rawQ
 
     if (rawError) {

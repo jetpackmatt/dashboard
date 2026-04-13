@@ -262,7 +262,7 @@ export async function GET(request: NextRequest) {
     if (clientId) {
       query = query.eq('client_id', clientId)
     } else {
-      query = await excludeDemoClients(supabase, query, 'client_id')
+      await excludeDemoClients(supabase, query, 'client_id')
     }
 
     // Only show shipments that have actually shipped (have event_labeled or event_intransit)
