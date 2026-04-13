@@ -543,6 +543,20 @@ async function advanceDeliveryIQ(
     const { error } = await supabase.from('lost_in_transit_checks').insert(toInsert)
     if (!error) result.added = toInsert.length
     else console.warn('[diq-mirror]', error.message)
+
+    // Populate reshipment_id on ~50% of at_risk + eligible demo shipments
+    // so the reshipment column in the DIQ table shows a realistic mix.
+    const reshipTargets = toInsert
+      .filter(r => r.claim_eligibility_status === 'at_risk' || r.claim_eligibility_status === 'eligible')
+      .filter(() => Math.random() < 0.5)
+    for (const r of reshipTargets) {
+      const reshipId = String(700000000 + Math.floor(Math.random() * 100_000))
+      const reshipDate = new Date(Date.now() - randInt(1, 5) * 86400_000).toISOString()
+      await supabase.from('shipments')
+        .update({ reshipment_id: reshipId, reshipment_date: reshipDate })
+        .eq('client_id', demoClientId)
+        .eq('shipment_id', r.shipment_id)
+    }
   }
   return result
 }

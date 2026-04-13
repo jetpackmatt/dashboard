@@ -445,9 +445,12 @@ export async function GET(
 
   // Verify user access
   const searchParams = request.nextUrl.searchParams
+  const requestedClientId = searchParams.get('clientId')
+  let scopedClientId: string | null = null
   try {
-    await verifyClientAccess(searchParams.get('clientId'))
-    console.log('[Tracking Timeline] Auth passed')
+    const access = await verifyClientAccess(requestedClientId)
+    scopedClientId = access.requestedClientId === 'all' ? null : access.requestedClientId
+    console.log('[Tracking Timeline] Auth passed, scope:', scopedClientId)
   } catch (error) {
     console.error('[Tracking Timeline] Auth failed:', error)
     return handleAccessError(error)
@@ -456,9 +459,11 @@ export async function GET(
   const supabase = createAdminClient()
 
   try {
-    // Find the shipment by tracking number
+    // Find the shipment by tracking number. NOTE: tracking_id is NOT unique —
+    // demo and source shipments can share the same tracking_id. Filter by
+    // client_id when possible to pick the correct shipment.
     console.log('[Tracking Timeline] Looking up shipment by tracking_id:', trackingNumber)
-    const { data: shipment, error: shipmentError } = await supabase
+    let shipmentQuery = supabase
       .from('shipments')
       .select(`
         shipment_id,
@@ -472,7 +477,10 @@ export async function GET(
         status
       `)
       .eq('tracking_id', trackingNumber)
-      .single()
+      .limit(1)
+    if (scopedClientId) shipmentQuery = shipmentQuery.eq('client_id', scopedClientId)
+    const { data: shipments, error: shipmentError } = await shipmentQuery
+    const shipment = shipments && shipments[0]
 
     if (shipmentError || !shipment) {
       console.error('[Tracking Timeline] Shipment lookup failed:', { trackingNumber, error: shipmentError })
