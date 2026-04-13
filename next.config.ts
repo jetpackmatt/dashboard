@@ -19,6 +19,12 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     'ssh2',
     'ssh2-sftp-client',
+    // Force single React instance shared between bundled app code and externally-loaded
+    // @react-pdf/* packages. Without this, pdf-generator.tsx's JSX runs through the bundled
+    // React while the reconciler loads its own React from node_modules — the element
+    // Symbol.for('react.element') ends up mismatched and reconciler throws #31.
+    'react',
+    'react-dom',
     '@react-pdf/renderer',
     '@react-pdf/reconciler',
     '@react-pdf/primitives',
