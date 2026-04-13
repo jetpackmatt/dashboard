@@ -352,7 +352,9 @@ export async function POST(request: NextRequest) {
           await storeInvoiceFiles(invoice.id, client.id, invoiceNumber, xlsBuffer, pdfBuffer)
         } catch (fileError) {
           // File generation failed - clean up the invoice record to prevent orphans
+          const stackInfo = fileError instanceof Error ? fileError.stack : 'no stack'
           console.error(`File generation failed for ${invoiceNumber}, cleaning up invoice record:`, fileError)
+          console.error(`[FileError stack] ${stackInfo}`)
           await adminClient
             .from('invoices_jetpack')
             .delete()
