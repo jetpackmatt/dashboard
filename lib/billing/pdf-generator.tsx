@@ -492,15 +492,18 @@ export async function generatePDFInvoice(
   // Default to USD if no currency specified
   const currency = options?.currency || 'USD'
 
-  const pdfBuffer = await renderToBuffer(
-    <InvoicePDF
-      data={data}
-      billingPeriodLabel={billingPeriodLabel}
-      storagePeriodLabel={storagePeriodLabel}
-      clientAddress={options?.clientAddress}
-      currency={currency}
-    />
-  )
+  // Call as a function (not <InvoicePDF/>) so renderToBuffer receives the
+  // <Document> element directly. Wrapping in a custom component caused react-pdf's
+  // reconciler to throw #31 in production builds (suspected dual-React / element
+  // symbol mismatch with Vercel's bundled output).
+  const documentElement = InvoicePDF({
+    data,
+    billingPeriodLabel,
+    storagePeriodLabel,
+    clientAddress: options?.clientAddress,
+    currency,
+  })
+  const pdfBuffer = await renderToBuffer(documentElement as any)
 
   return Buffer.from(pdfBuffer)
 }
