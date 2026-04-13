@@ -537,8 +537,27 @@ For testing in development (Stripe test mode):
 | `lib/billing/markup-engine.ts` | Rule matching and calculation |
 | `lib/billing/invoice-generator.ts` | Invoice data collection |
 | `lib/billing/preflight-validation.ts` | Pre-generation checks |
-| `lib/billing/pdf-subprocess.ts` | PDF generation |
+| `lib/billing/pdf-subprocess.ts` | PDF generation (always via subprocess) |
+| `lib/billing/pdf-generator.tsx` | React-PDF invoice layout |
+| `scripts/generate-pdf-worker.ts` | Worker entry point (stdin→stdout) |
+| `scripts/build-pdf-worker.mjs` | esbuild bundler for the worker |
+| `pdf-worker.cjs` | Pre-built standalone bundle (gitignored, built on deploy) |
 | `app/api/admin/invoices/*` | Invoice API routes |
+
+### PDF Generation Architecture
+
+`@react-pdf/renderer` cannot run inside Next.js's server bundle — it causes React error #31 ("Minified React error #31" / "older version of React") because Next bundles its own React instance while @react-pdf loads another.
+
+**Solution:** `pdf-subprocess.ts` always spawns `node pdf-worker.cjs` as a child process (in both dev and prod). The worker runs in a fresh Node process with its own React, fully isolated from the bundler.
+
+**Build step:** `prebuild` npm script runs `scripts/build-pdf-worker.mjs` (esbuild) to produce `pdf-worker.cjs` before `next build`. Vercel runs `prebuild` automatically.
+
+**Deployment:** `outputFileTracingIncludes` in `next.config.ts` ensures `pdf-worker.cjs`, fonts, and the logo are included in the serverless function bundles for invoice-generating routes.
+
+**Do NOT:**
+- Move PDF generation back in-process (it will break on Vercel)
+- Remove `@react-pdf/*` from `serverExternalPackages` (needed for the worker's own imports)
+- Externalize `react`/`react-dom` globally (breaks Next.js SSR/prerender)
 
 ---
 

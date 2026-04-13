@@ -155,10 +155,6 @@ async function main() {
   }
   console.log(`Selected ${candidates.length} shipments for care tickets\n`)
 
-  // Get next ticket number
-  const { data: maxRow } = await supabase.from('care_tickets').select('ticket_number').order('ticket_number', { ascending: false }).limit(1).single()
-  let nextTicketNum = (maxRow?.ticket_number || 100000) + 1
-
   // Valid issue_types (DB constraint): Loss, Damage, Pick Error, Short Ship,
   // Other, Incorrect Items, Incorrect Quantity, Incorrect Delivery, Claim
   const ticketTypes = [
@@ -182,7 +178,7 @@ async function main() {
 
     ticketRows.push({
       client_id: DEMO_CLIENT_ID,
-      ticket_number: nextTicketNum++,
+      // ticket_number intentionally omitted — let the DB sequence assign it
       ticket_type: type,
       issue_type: issue,
       status: stage,

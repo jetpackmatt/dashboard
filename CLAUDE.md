@@ -603,8 +603,10 @@ A demo brand ("Paul's Boutique", guitar accessories) lives in the production DB 
 - Cross-client crons filter demo: `calculate-benchmarks`, `monitoring-entry`, `calculate-client-sizes`, `auto-file-claims`
 - Commissions (`lib/commissions/calculator.ts`) skip demo in all-clients mode
 - `get_monitoring_stats` RPC patched with `NOT is_demo_client(client_id)`
-
-**Known follow-up:** `get_analytics_from_summaries` RPC (~300 lines with ~15 WHERE clauses) is NOT yet patched. Mitigation: admin selector hides demo, so an admin cannot switch to demo or reach "All Brands including demo" via normal UI. A future migration should add `AND NOT is_demo_client(client_id)` to each all-brands branch for defense-in-depth.
+- `get_dashboard_kpi_totals` RPC patched with `AND (p_client_id IS NOT NULL OR NOT public.is_demo_client(client_id))`
+- `get_otd_percentiles` (both overloads) patched with `AND (p_client_id IS NOT NULL OR NOT public.is_demo_client(s.client_id))`
+- `get_analytics_from_summaries` RPC patched — all ~12 WHERE clauses across `analytics_daily_summaries`, `analytics_city_summaries`, `analytics_billing_summaries` have `AND (NOT v_all_clients OR NOT public.is_demo_client(client_id))`
+- Data routes patched: `care-tickets`, `shipments`, `monitoring/shipments`, `misfits` all call `excludeDemoClients()` in their all-brands branches
 
 **Scripts:**
 - `scripts/seed-demo.js` — create demo client + 20 guitar SKUs + demo user

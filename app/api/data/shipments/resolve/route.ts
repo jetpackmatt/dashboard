@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
       .from('shipments')
       .select('shipment_id, shipbob_order_id, client_id, tracking_id, carrier, ship_option_name')
       .eq('shipbob_order_id', input)
-      .order('created_date', { ascending: false })
+      .order('event_labeled', { ascending: false })
     if (clientId) orderQuery = orderQuery.eq('client_id', clientId)
 
     const { data: byOrder } = await orderQuery.limit(1)
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
         .from('shipments')
         .select('shipment_id, shipbob_order_id, client_id, tracking_id, carrier, ship_option_name')
         .eq('shipbob_order_id', sbOrderId)
-        .order('created_date', { ascending: false })
+        .order('event_labeled', { ascending: false })
       if (clientId) shipQuery = shipQuery.eq('client_id', clientId)
 
       const { data: shipment } = await shipQuery.limit(1)
