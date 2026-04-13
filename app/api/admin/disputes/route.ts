@@ -165,7 +165,8 @@ export async function GET(request: NextRequest) {
         })
       }
 
-      // Standard search mode
+      // Standard search mode (exclude demo transactions)
+      const { excludeDemoClients: excludeDemoSearch } = await import('@/lib/demo/exclusion')
       let searchQuery = adminClient
         .from('transactions')
         .select(`
@@ -184,6 +185,7 @@ export async function GET(request: NextRequest) {
         `)
         .is('dispute_status', null) // Only undisputed transactions
         .order('charge_date', { ascending: false })
+      searchQuery = await excludeDemoSearch(adminClient, searchQuery)
 
       if (feeType) {
         searchQuery = searchQuery.ilike('fee_type', `%${feeType}%`)

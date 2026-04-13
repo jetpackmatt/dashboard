@@ -14,14 +14,17 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Fetch rules using admin client
+    // Fetch rules using admin client. Exclude demo client's markup rule.
     const adminClient = createAdminClient()
-    const { data: rules, error } = await adminClient
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+    let rulesQuery = adminClient
       .from('markup_rules')
       .select('*')
       .order('client_id', { ascending: true, nullsFirst: true })
       .order('priority', { ascending: false })
       .order('name', { ascending: true })
+    rulesQuery = await excludeDemoClients(adminClient, rulesQuery)
+    const { data: rules, error } = await rulesQuery
 
     if (error) {
       console.error('Error fetching markup rules:', error)
@@ -75,6 +78,14 @@ export async function POST(request: NextRequest) {
 
     // Create rule
     const adminClient = createAdminClient()
+
+    // CRITICAL: refuse to create markup rules for demo clients.
+    if (client_id) {
+      const { data: target } = await adminClient.from('clients').select('is_demo').eq('id', client_id).maybeSingle()
+      if (target?.is_demo) {
+        return NextResponse.json({ error: 'Cannot create markup rules for demo clients' }, { status: 403 })
+      }
+    }
     const { data: rule, error } = await adminClient
       .from('markup_rules')
       .insert({

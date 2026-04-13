@@ -24,6 +24,12 @@ export async function GET() {
 
     const adminClient = createAdminClient()
 
+    // Demo exclusion: build the NOT IN filter clause once.
+    const { getDemoClientIds } = await import('@/lib/demo/exclusion')
+    const demoIds = await getDemoClientIds(adminClient)
+    const notDemo = <Q extends { not: (...a: any[]) => any }>(q: Q): Q =>
+      demoIds.length === 0 ? q : q.not('client_id', 'in', `(${demoIds.join(',')})`)
+
     // Run all queries in parallel
     const [
       transactionsWithTracking,
@@ -37,73 +43,73 @@ export async function GET() {
       recentSyncStats,
     ] = await Promise.all([
       // 1. Transactions with tracking_id (for shipment type)
-      adminClient
+      notDemo(adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .eq('reference_type', 'Shipment')
-        .not('tracking_id', 'is', null),
+        .not('tracking_id', 'is', null)),
 
       // 2. Total shipment transactions
-      adminClient
+      notDemo(adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .eq('reference_type', 'Shipment'),
+        .eq('reference_type', 'Shipment')),
 
       // 3. Completed shipments with any timeline data (event_created populated)
-      adminClient
+      notDemo(adminClient
         .from('shipments')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'Completed')
         .not('event_created', 'is', null)
-        .is('deleted_at', null),
+        .is('deleted_at', null)),
 
       // 4. Total completed shipments
-      adminClient
+      notDemo(adminClient
         .from('shipments')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'Completed')
-        .is('deleted_at', null),
+        .is('deleted_at', null)),
 
-      // 5. Unattributed transactions (no client_id) - ALL transactions must be attributed for invoicing
+      // 5. Unattributed transactions (no client_id) - demo always has client_id, so naturally excluded
       adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .is('client_id', null),
 
       // 6. Shipping transactions with base_cost (SFTP data - only applies to fee_type='Shipping')
-      adminClient
+      notDemo(adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .eq('reference_type', 'Shipment')
         .eq('fee_type', 'Shipping')
-        .not('base_cost', 'is', null),
+        .not('base_cost', 'is', null)),
 
       // 7. Total shipping transactions for base_cost percentage (fee_type='Shipping' only)
-      adminClient
+      notDemo(adminClient
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .eq('reference_type', 'Shipment')
-        .eq('fee_type', 'Shipping'),
+        .eq('fee_type', 'Shipping')),
 
       // 8. Total transactions (for attribution percentage)
-      adminClient
+      notDemo(adminClient
         .from('transactions')
-        .select('*', { count: 'exact', head: true }),
+        .select('*', { count: 'exact', head: true })),
 
       // 9. Recent sync stats (orders/shipments created in last 24h)
       Promise.all([
-        adminClient
+        notDemo(adminClient
           .from('orders')
           .select('*', { count: 'exact', head: true })
-          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-        adminClient
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())),
+        notDemo(adminClient
           .from('shipments')
           .select('*', { count: 'exact', head: true })
-          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-        adminClient
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())),
+        notDemo(adminClient
           .from('transactions')
           .select('*', { count: 'exact', head: true })
-          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())),
       ]),
     ])
 

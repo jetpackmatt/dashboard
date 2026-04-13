@@ -30,11 +30,14 @@ export async function GET() {
 
   if (channelsError) {
     // Fallback: query directly if RPC doesn't exist yet
-    const { data: rawChannels, error: rawError } = await admin
+    const { excludeDemoClients } = await import('@/lib/demo/exclusion')
+    let rawQ = admin
       .from('orders')
       .select('client_id, channel_name, order_type')
       .not('channel_name', 'is', null)
       .limit(1000)
+    rawQ = await excludeDemoClients(admin, rawQ)
+    const { data: rawChannels, error: rawError } = await rawQ
 
     if (rawError) {
       return NextResponse.json({ error: rawError.message }, { status: 500 })

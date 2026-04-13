@@ -34,12 +34,20 @@ export async function POST(
     // Get the invoice
     const { data: invoice, error: fetchError } = await adminClient
       .from('invoices_jetpack')
-      .select('id, invoice_number, status, paid_status, client_id')
+      .select('id, invoice_number, status, paid_status, client_id, client:clients(is_demo)')
       .eq('id', invoiceId)
       .single()
 
     if (fetchError || !invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse demo invoice
+    if ((invoice.client as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Demo invoices cannot be revised — sales-demo brand' },
+        { status: 403 }
+      )
     }
 
     if (invoice.status !== 'approved' && invoice.status !== 'sent') {

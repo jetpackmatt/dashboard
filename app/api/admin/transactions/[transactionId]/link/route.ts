@@ -30,6 +30,32 @@ export async function POST(
 
     const adminClient = createAdminClient()
 
+    // CRITICAL: refuse if either source transaction OR target client is demo.
+    const { data: srcTx } = await adminClient
+      .from('transactions')
+      .select('client_id, clients(is_demo)')
+      .eq('transaction_id', transactionId)
+      .maybeSingle()
+    if ((srcTx?.clients as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Cannot link a demo transaction — sales-demo brand' },
+        { status: 403 }
+      )
+    }
+    if (clientId !== '__jetpack_parent__') {
+      const { data: targetClient } = await adminClient
+        .from('clients')
+        .select('is_demo')
+        .eq('id', clientId)
+        .maybeSingle()
+      if (targetClient?.is_demo) {
+        return NextResponse.json(
+          { error: 'Cannot link a transaction to a demo client' },
+          { status: 403 }
+        )
+      }
+    }
+
     let targetClientId: string
     let targetMerchantId: number | null = null
 

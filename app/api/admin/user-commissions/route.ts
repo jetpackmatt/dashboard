@@ -121,9 +121,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create user commission' }, { status: 500 })
     }
 
-    // Add client assignments (skip when include_all_clients is true)
+    // Add client assignments (skip when include_all_clients is true).
+    // Filter out any demo clients — they must never be tied to commission calculations.
     if (!body.include_all_clients && body.client_ids && body.client_ids.length > 0) {
-      const clientInserts = body.client_ids.map(clientId => ({
+      const { data: demoClientRows } = await adminClient.from('clients').select('id').eq('is_demo', true)
+      const demoSet = new Set((demoClientRows || []).map((c: any) => c.id))
+      const safeClientIds = body.client_ids.filter((id: string) => !demoSet.has(id))
+      const clientInserts = safeClientIds.map(clientId => ({
         user_commission_id: userCommission.id,
         client_id: clientId,
       }))
@@ -216,9 +220,12 @@ export async function PATCH(request: NextRequest) {
         .delete()
         .eq('user_commission_id', body.id)
 
-      // Insert new assignments
+      // Insert new assignments — filter out demo clients first
       if (body.client_ids.length > 0) {
-        const clientInserts = body.client_ids.map((clientId: string) => ({
+        const { data: demoRows } = await adminClient.from('clients').select('id').eq('is_demo', true)
+        const demoSet = new Set((demoRows || []).map((c: any) => c.id))
+        const safeIds = body.client_ids.filter((id: string) => !demoSet.has(id))
+        const clientInserts = safeIds.map((clientId: string) => ({
           user_commission_id: body.id,
           client_id: clientId,
         }))

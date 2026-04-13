@@ -45,11 +45,12 @@ export async function GET() {
       .limit(1)
       .single()
 
-    // Get all clients that have eshipper_id
+    // Get all clients that have eshipper_id (exclude demo clients)
     const { data: clients } = await adminClient
       .from('clients')
       .select('id, company_name')
       .not('eshipper_id', 'is', null)
+      .eq('is_demo', false)
 
     // Get counts per client
     const byClient: Array<{ client_name: string; shipments: number }> = []

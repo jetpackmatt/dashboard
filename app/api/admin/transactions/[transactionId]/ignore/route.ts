@@ -24,6 +24,19 @@ export async function POST(
 
     const adminClient = createAdminClient()
 
+    // CRITICAL: refuse if the target transaction belongs to a demo client.
+    const { data: tx } = await adminClient
+      .from('transactions')
+      .select('client_id, clients(is_demo)')
+      .eq('transaction_id', transactionId)
+      .maybeSingle()
+    if ((tx?.clients as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Cannot ignore a demo transaction — sales-demo brand' },
+        { status: 403 }
+      )
+    }
+
     // Update the transaction to mark as ignored
     // Using dispute_status = 'ignored' to exclude from preflight
     const { error: updateError } = await adminClient

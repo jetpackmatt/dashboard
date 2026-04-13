@@ -49,13 +49,22 @@ export async function POST(
       .from('invoices_jetpack')
       .select(`
         *,
-        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id, billing_address, payment_method)
+        client:clients(id, company_name, short_code, billing_email, billing_terms, merchant_id, billing_address, payment_method, is_demo)
       `)
       .eq('id', invoiceId)
       .single()
 
     if (invoiceError || !invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+    }
+
+    // CRITICAL: refuse demo invoice. Regenerate creates a new draft + files
+    // that the admin would then approve, triggering real emails / charges.
+    if ((invoice.client as any)?.is_demo) {
+      return NextResponse.json(
+        { error: 'Demo invoices cannot be regenerated — sales-demo brand' },
+        { status: 403 }
+      )
     }
 
     // Only allow regeneration of draft invoices
