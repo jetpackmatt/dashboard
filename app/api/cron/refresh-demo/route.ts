@@ -369,19 +369,25 @@ async function progressShipmentEvents(
     const outForDeliveryAfterD = isIntl ? (4 + Math.random() * 3) : (2 + Math.random() * 2)  // 2-4d US, 4-7d CA
     const deliveredAfterD = isIntl ? (5 + Math.random() * 3) : (3 + Math.random() * 2)       // 3-5d US, 5-8d CA
 
+    // Never emit future timestamps — cap at now.
+    const nowMs = Date.now()
     const patch: any = {}
     if (!s.event_intransit && hoursSinceLabeled >= intransitAfterH) {
-      patch.event_intransit = new Date(labeledAt + intransitAfterH * 3600_000).toISOString()
+      patch.event_intransit = new Date(Math.min(labeledAt + intransitAfterH * 3600_000, nowMs)).toISOString()
       result.inTransit++
     }
     if (!s.event_outfordelivery && daysSinceLabeled >= outForDeliveryAfterD) {
-      patch.event_outfordelivery = new Date(labeledAt + outForDeliveryAfterD * 86400_000).toISOString()
+      patch.event_outfordelivery = new Date(Math.min(labeledAt + outForDeliveryAfterD * 86400_000, nowMs)).toISOString()
       result.outForDelivery++
     }
     if (!s.event_delivered && daysSinceLabeled >= deliveredAfterD) {
-      const deliveredAt = new Date(labeledAt + deliveredAfterD * 86400_000)
+      // Leave a small slice (~2%) of shipments persistently undelivered (lost / stuck)
+      // so Delivery IQ has a steady pipeline of at_risk candidates.
+      if (Math.random() < 0.02) continue
+      const deliveredAtMs = Math.min(labeledAt + deliveredAfterD * 86400_000, nowMs)
+      const deliveredAt = new Date(deliveredAtMs)
       patch.event_delivered = deliveredAt.toISOString()
-      patch.transit_time_days = +(deliveredAfterD).toFixed(1)
+      patch.transit_time_days = +((deliveredAtMs - labeledAt) / 86400_000).toFixed(1)
       patch.last_update_at = deliveredAt.toISOString()
       result.delivered++
     }

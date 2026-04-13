@@ -582,15 +582,24 @@ async function main() {
   console.log(`  TOTAL:    ${totalUs.toLocaleString()} US + ${totalCa.toLocaleString()} CA = ${(totalUs+totalCa).toLocaleString()} shipments\n`)
 
   const summary = { orders: 0, shipments: 0, items: 0, tx: 0 }
+  const absoluteNow = new Date()
   for (const m of monthLabels) {
     const monthStartDate = new Date(); monthStartDate.setMonth(monthStartDate.getMonth() + m); monthStartDate.setDate(1); monthStartDate.setHours(0,0,0,0)
     const monthEndDate = new Date(monthStartDate); monthEndDate.setMonth(monthEndDate.getMonth() + 1)
+    // Cap the current month's window at "now" so we don't generate future-dated
+    // shipments. Previously we were generating all 30 days of April even though
+    // today is only April 12.
+    const effectiveEnd = m === 0 && monthEndDate > absoluteNow ? absoluteNow : monthEndDate
     const monthStart = monthStartDate.toISOString()
-    const monthEnd = monthEndDate.toISOString()
+    const monthEnd = effectiveEnd.toISOString()
     const label = monthStartDate.toISOString().slice(0, 7)
 
     for (const country of ['US', 'CA']) {
-      const need = targets[m][country.toLowerCase()]
+      // For the current (partial) month, prorate the target to only the days elapsed.
+      const monthlyTarget = targets[m][country.toLowerCase()]
+      const fullMonthDays = new Date(monthStartDate.getFullYear(), monthStartDate.getMonth() + 1, 0).getDate()
+      const effectiveDays = Math.max(1, Math.ceil((effectiveEnd - monthStartDate) / 86400_000))
+      const need = m === 0 ? Math.round(monthlyTarget * (effectiveDays / fullMonthDays)) : monthlyTarget
       let pool = await fetchSourceShipments(monthStart, monthEnd, country, need)
       let dateShifted = false
       if (pool.length < need / 2) {
