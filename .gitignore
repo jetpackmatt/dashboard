@@ -55,3 +55,4 @@ CLAUDE.local.md
 
 # claude memory
 /.claude/
+pdf-worker.cjs

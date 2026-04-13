@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/build-pdf-worker.mjs",
     "build": "next build",
+    "build:pdf-worker": "node scripts/build-pdf-worker.mjs",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit"
@@ -83,6 +85,7 @@
     "all-the-cities": "^3.1.0",
     "autoprefixer": "^10.4.16",
     "dotenv": "^17.2.3",
+    "esbuild": "^0.28.0",
     "eslint": "^8.56.0",
     "eslint-config-next": "15.5.9",
     "pg": "^8.16.3",

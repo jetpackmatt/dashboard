@@ -1,12 +1,14 @@
 /**
- * PDF Generation
+ * PDF Generation via isolated subprocess.
  *
- * Production: Calls generatePDFInvoice directly. @react-pdf/* is configured as
- * serverExternalPackages in next.config.ts so webpack loads it from node_modules
- * at runtime without bundling conflicts.
+ * `@react-pdf/renderer` + Next.js bundler don't agree on a single React instance,
+ * which causes "Minified React error #31" / "older version of React" in production.
+ * We sidestep this by spawning a pre-bundled standalone CJS worker (pdf-worker.cjs)
+ * via `node` in a fresh process — it loads its own @react-pdf + React from node_modules
+ * and never touches Next's bundled React.
  *
- * Development: Uses a subprocess (npx tsx) because Turbopack's module handling
- * causes @react-pdf/renderer's renderToBuffer to hang in-process.
+ * The worker is built by `scripts/build-pdf-worker.mjs` (runs in `prebuild`) and
+ * emitted at the repo root so `process.cwd()` on Vercel resolves it correctly.
  */
 import { spawn } from 'child_process'
 import path from 'path'
@@ -27,17 +29,10 @@ export async function generatePDFViaSubprocess(
     currency?: string
   }
 ): Promise<Buffer> {
-  // Production: direct call works correctly with serverExternalPackages + webpack
-  if (process.env.NODE_ENV !== 'development') {
-    const { generatePDFInvoice } = await import('./pdf-generator')
-    return generatePDFInvoice(data, options)
-  }
-
-  // Development: subprocess isolates @react-pdf from Turbopack's module system
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(process.cwd(), 'scripts', 'generate-pdf-worker.ts')
+    const workerPath = path.join(process.cwd(), 'pdf-worker.cjs')
 
-    const child = spawn('npx', ['tsx', scriptPath], {
+    const child = spawn(process.execPath, [workerPath], {
       cwd: process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
     })

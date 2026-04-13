@@ -16,6 +16,31 @@ const nextConfig: NextConfig = {
   // Mark packages as external to prevent webpack from bundling them
   // - ssh2/ssh2-sftp-client: Use optional native crypto bindings that break webpack
   // - @react-pdf/*: Uses custom React reconciler that conflicts with Next.js bundling
+  // Include the prebuilt PDF worker and its runtime assets in the serverless
+  // function bundles for any route that generates invoice PDFs.
+  outputFileTracingIncludes: {
+    '/api/admin/invoices/generate': [
+      './pdf-worker.cjs',
+      './public/fonts/outfit/**',
+      './public/images/jetpack-logo.png',
+    ],
+    '/api/admin/invoices/[invoiceId]/regenerate': [
+      './pdf-worker.cjs',
+      './public/fonts/outfit/**',
+      './public/images/jetpack-logo.png',
+    ],
+    '/api/cron/generate-invoices': [
+      './pdf-worker.cjs',
+      './public/fonts/outfit/**',
+      './public/images/jetpack-logo.png',
+    ],
+    '/api/cron/refresh-demo': [
+      './pdf-worker.cjs',
+      './public/fonts/outfit/**',
+      './public/images/jetpack-logo.png',
+    ],
+  },
+
   serverExternalPackages: [
     'ssh2',
     'ssh2-sftp-client',
