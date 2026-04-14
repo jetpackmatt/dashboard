@@ -243,14 +243,6 @@ export async function POST(request: NextRequest) {
     const isCareAdmin = isCareAdminRole(userRole)
     const isCareTeam = userRole === 'care_team'
 
-    // Care Team users cannot create tickets
-    if (isCareTeam) {
-      return NextResponse.json(
-        { error: 'Care Team users have read-only access' },
-        { status: 403 }
-      )
-    }
-
     const body = await request.json()
 
     // Validate required fields
@@ -262,7 +254,8 @@ export async function POST(request: NextRequest) {
     }
 
     // For regular users, verify they have access to the client
-    if (!isAdmin && !isCareAdmin) {
+    // Internal staff (admin, care_admin, care_team) can create tickets for any client
+    if (!isAdmin && !isCareAdmin && !isCareTeam) {
       const supabase = createAdminClient()
       const { data: userClients } = await supabase
         .from('user_clients')
