@@ -64,7 +64,6 @@ export function CreateTicketDialog({
   onCreated,
   selectedClientId,
   clients,
-  isAdmin,
   isBrandUser = false,
   initialShipmentId,
 }: CreateTicketDialogProps) {
@@ -107,6 +106,9 @@ export function CreateTicketDialog({
     } | null
   } | null>(null)
 
+  // Initial brand = mirror the top brand selector; blank when "All Brands" or none
+  const mirroredClientId = selectedClientId && selectedClientId !== 'all' ? selectedClientId : ''
+
   // Reset form when dialog closes, pre-fill initialShipmentId when it opens
   React.useEffect(() => {
     if (!open) {
@@ -132,9 +134,16 @@ export function CreateTicketDialog({
       setShipmentLookupError(null)
       setShipmentVerified(false)
       setVerifiedShipmentData(null)
-    } else if (initialShipmentId) {
-      setCreateForm(prev => ({ ...prev, shipmentId: initialShipmentId }))
-      lookupShipment(initialShipmentId)
+    } else {
+      // Mirror the top brand selector when opening
+      setCreateForm(prev => ({
+        ...prev,
+        clientId: mirroredClientId,
+        ...(initialShipmentId ? { shipmentId: initialShipmentId } : {}),
+      }))
+      if (initialShipmentId) {
+        lookupShipment(initialShipmentId)
+      }
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -177,6 +186,8 @@ export function CreateTicketDialog({
             ...prev,
             carrier,
             trackingNumber: trackingId,
+            // Shipment's own client_id always wins — overrides mirrored/manual selection
+            // so the ticket gets attributed to the correct brand.
             clientId: data.clientId || prev.clientId,
           }))
         }
@@ -193,9 +204,11 @@ export function CreateTicketDialog({
   }, 500)
 
   const handleCreate = async () => {
-    // Determine the effective client ID
-    const effectiveClientId = (selectedClientId && selectedClientId !== 'all')
-      ? selectedClientId
+    // For internal users (admin/care_admin/care_team) the dropdown is always shown
+    // and is the source of truth. For brand users there's no dropdown — use the top
+    // selector.
+    const effectiveClientId = isBrandUser
+      ? (selectedClientId && selectedClientId !== 'all' ? selectedClientId : '')
       : createForm.clientId
 
     if (!effectiveClientId) {
@@ -322,10 +335,9 @@ export function CreateTicketDialog({
         )}
 
         <div className="space-y-5">
-          {/* Row 1: Type + Shipment ID (or just Shipment ID full-width for brand users) */}
+          {/* Row 1: Type + Brand (always for internal users). Row 2: Shipment ID if applicable. */}
           {(() => {
             const isShipmentType = createForm.ticketType === 'Shipment Inquiry' || createForm.ticketType === 'Address Change'
-            const showBrand = isAdmin && (!selectedClientId || selectedClientId === 'all')
             const shipmentIdField = (
               <div className="space-y-1.5">
                 <Label htmlFor="shipmentId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
@@ -363,54 +375,59 @@ export function CreateTicketDialog({
               return shipmentIdField
             }
 
+            const brandField = (
+              <div className="space-y-1.5">
+                <Label htmlFor="clientId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Brand <span className="text-red-500">*</span>
+                </Label>
+                <Select
+                  value={createForm.clientId}
+                  onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                >
+                  <SelectTrigger id="clientId" className={cn("h-9", createForm.clientId ? "text-foreground" : "text-muted-foreground/40")}>
+                    <SelectValue placeholder="Select brand..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.filter(client => client.merchant_id).map((client) => (
+                      <SelectItem key={client.id} value={client.id}>
+                        {client.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )
+
             return (
-              <div className={cn("grid gap-4", isShipmentType || showBrand ? "grid-cols-2" : "grid-cols-1")}>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ticketType" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                    Type <span className="text-red-500">*</span>
-                  </Label>
-                  <Select
-                    value={createForm.ticketType}
-                    onValueChange={(value) => {
-                      setCreateForm({ ...createForm, ticketType: value })
-                      setCreateDialogError(null)
-                    }}
-                  >
-                    <SelectTrigger id="ticketType" className={cn("h-9", createForm.ticketType ? "text-foreground" : "text-muted-foreground/40")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Shipment Inquiry">Shipment Inquiry</SelectItem>
-                      <SelectItem value="Address Change">Address Change</SelectItem>
-                      <SelectItem value="Request">Request</SelectItem>
-                      <SelectItem value="Technical">Technical</SelectItem>
-                      <SelectItem value="Inquiry">Inquiry</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {isShipmentType ? shipmentIdField : showBrand ? (
+              <>
+                <div className="grid gap-4 grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="clientId" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                      Brand <span className="text-red-500">*</span>
+                    <Label htmlFor="ticketType" className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                      Type <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      value={createForm.clientId}
-                      onValueChange={(value) => setCreateForm({ ...createForm, clientId: value })}
+                      value={createForm.ticketType}
+                      onValueChange={(value) => {
+                        setCreateForm({ ...createForm, ticketType: value })
+                        setCreateDialogError(null)
+                      }}
                     >
-                      <SelectTrigger id="clientId" className={cn("h-9", createForm.clientId ? "text-foreground" : "text-muted-foreground/40")}>
-                        <SelectValue placeholder="Select brand..." />
+                      <SelectTrigger id="ticketType" className={cn("h-9", createForm.ticketType ? "text-foreground" : "text-muted-foreground/40")}>
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {clients.filter(client => client.merchant_id).map((client) => (
-                          <SelectItem key={client.id} value={client.id}>
-                            {client.company_name}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="Shipment Inquiry">Shipment Inquiry</SelectItem>
+                        <SelectItem value="Address Change">Address Change</SelectItem>
+                        <SelectItem value="Request">Request</SelectItem>
+                        <SelectItem value="Technical">Technical</SelectItem>
+                        <SelectItem value="Inquiry">Inquiry</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                ) : null}
-              </div>
+                  {brandField}
+                </div>
+                {isShipmentType && shipmentIdField}
+              </>
             )
           })()}
 
