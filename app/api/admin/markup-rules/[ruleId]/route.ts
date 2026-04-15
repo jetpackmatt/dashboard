@@ -86,25 +86,84 @@ export async function PATCH(
       return NextResponse.json({ error: 'Cannot modify demo client markup rule' }, { status: 403 })
     }
 
-    // Update rule
-    const updateData: Record<string, unknown> = {}
+    // Build the set of changed fields from the body
     const allowedFields = [
       'name', 'client_id', 'billing_category', 'fee_type', 'order_category',
       'ship_option_id', 'origin_country', 'markup_type', 'markup_value', 'priority', 'is_additive',
       'effective_from', 'effective_to', 'description', 'conditions', 'is_active'
     ]
-
+    const changedFields: Record<string, unknown> = {}
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
-        updateData[field] = body[field]
+        changedFields[field] = body[field]
       }
     }
 
-    updateData.updated_at = new Date().toISOString()
+    // Pricing-relevant changes get versioned (close old rule, insert new one) so
+    // historical transactions always have a live rule for their charge_date.
+    // Cosmetic changes (name, description) and window closures (effective_to,
+    // is_active=false) update in place.
+    const pricingFields = [
+      'markup_type', 'markup_value', 'conditions', 'fee_type', 'billing_category',
+      'order_category', 'ship_option_id', 'origin_country', 'is_additive', 'priority',
+      'client_id',
+    ]
+    const currentRuleClean = (() => {
+      const { clients: _c, ...rest } = currentRule as Record<string, unknown>
+      return rest
+    })()
+    const isPricingChange = pricingFields.some(
+      f => changedFields[f] !== undefined && JSON.stringify(changedFields[f]) !== JSON.stringify(currentRuleClean[f])
+    )
+
+    if (isPricingChange) {
+      // Version: close the existing rule and insert a new one with the updated values.
+      const newEffectiveFrom = (changedFields.effective_from as string) || new Date().toISOString().split('T')[0]
+      // Close the old rule the day before the new one takes effect.
+      const closeDate = new Date(newEffectiveFrom)
+      closeDate.setUTCDate(closeDate.getUTCDate() - 1)
+      const closeDateStr = closeDate.toISOString().split('T')[0]
+
+      const { error: closeError } = await adminClient
+        .from('markup_rules')
+        .update({ effective_to: closeDateStr, updated_at: new Date().toISOString() })
+        .eq('id', ruleId)
+      if (closeError) {
+        console.error('Error closing old rule:', closeError)
+        return NextResponse.json({ error: 'Failed to close old rule' }, { status: 500 })
+      }
+
+      // Build the new row from the merged state.
+      const newRow: Record<string, unknown> = { ...currentRuleClean, ...changedFields }
+      delete newRow.id
+      delete newRow.created_at
+      delete newRow.updated_at
+      newRow.effective_from = newEffectiveFrom
+      newRow.effective_to = (changedFields.effective_to as string | null | undefined) ?? null
+      newRow.is_active = changedFields.is_active !== undefined ? changedFields.is_active : true
+
+      const { data: newRule, error: insertError } = await adminClient
+        .from('markup_rules')
+        .insert(newRow)
+        .select()
+        .single()
+      if (insertError) {
+        console.error('Error inserting new versioned rule:', insertError)
+        return NextResponse.json({ error: 'Failed to create new rule version' }, { status: 500 })
+      }
+
+      await recordRuleChange(ruleId, 'updated', currentRuleClean, { ...currentRuleClean, effective_to: closeDateStr }, user.id, body.change_reason || 'Superseded by new version')
+      await recordRuleChange(newRule.id, 'created', null, newRule, user.id, body.change_reason || `Supersedes rule ${ruleId}`)
+
+      return NextResponse.json({ rule: newRule, versioned: true, supersededRuleId: ruleId })
+    }
+
+    // Non-pricing change: update in place.
+    changedFields.updated_at = new Date().toISOString()
 
     const { data: updatedRule, error } = await adminClient
       .from('markup_rules')
-      .update(updateData)
+      .update(changedFields)
       .eq('id', ruleId)
       .select()
       .single()
@@ -114,17 +173,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Failed to update rule' }, { status: 500 })
     }
 
-    // Record history. Strip the joined `clients` blob from previous_values —
-    // it's not a real column and produces a phantom diff in the history UI.
-    const { clients: _clientsJoin, ...currentRuleForHistory } = currentRule as Record<string, unknown>
-    await recordRuleChange(
-      ruleId,
-      'updated',
-      currentRuleForHistory,
-      updatedRule,
-      user.id,
-      body.change_reason || null
-    )
+    await recordRuleChange(ruleId, 'updated', currentRuleClean, updatedRule, user.id, body.change_reason || null)
 
     return NextResponse.json({ rule: updatedRule })
   } catch (error) {
