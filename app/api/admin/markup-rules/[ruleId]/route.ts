@@ -114,11 +114,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'Failed to update rule' }, { status: 500 })
     }
 
-    // Record history
+    // Record history. Strip the joined `clients` blob from previous_values —
+    // it's not a real column and produces a phantom diff in the history UI.
+    const { clients: _clientsJoin, ...currentRuleForHistory } = currentRule as Record<string, unknown>
     await recordRuleChange(
       ruleId,
       'updated',
-      currentRule,
+      currentRuleForHistory,
       updatedRule,
       user.id,
       body.change_reason || null

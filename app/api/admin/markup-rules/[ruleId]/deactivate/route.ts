@@ -57,11 +57,12 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to deactivate rule' }, { status: 500 })
     }
 
-    // Record history with reason
+    // Record history with reason. Strip the joined `clients` blob — not a real column.
+    const { clients: _clientsJoin, ...currentRuleForHistory } = currentRule as Record<string, unknown>
     await recordRuleChange(
       ruleId,
       'deactivated',
-      currentRule,
+      currentRuleForHistory,
       updatedRule,
       user.id,
       reason || 'No reason provided'
