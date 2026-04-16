@@ -536,13 +536,9 @@ export async function GET(request: NextRequest) {
     // ── Date-based trends (from by_date — already grouped per day) ────────
     const byDate = s.by_date as any[]
 
-    // Rolling average window size based on date range preset
-    const halfWindow = (datePreset === '14d' || datePreset === 'mtd') ? 0
-      : datePreset === '30d' ? 1
-      : datePreset === '60d' ? 2
-      : 3 // 90d, 6mo, 1yr, ytd, all, custom
-
-    // Cost trend with rolling average
+    // Cost trend: raw per-day averages. The chart renders a separate
+    // client-side moving-average line on top, so no server-side windowing
+    // (which was causing Apr 15 to show different numbers across presets).
     const rawCost = byDate
       .filter((r: any) => !(r.shipment_count > 0 && r.total_charge === 0 && r.total_base_charge === 0))
       .map((r: any) => ({
@@ -552,22 +548,13 @@ export async function GET(request: NextRequest) {
         shipmentCount: r.shipment_count,
       }))
 
-    const costTrendAll = rawCost.map((d, i) => {
-      let sumBase = 0, sumTotal = 0, sumShipments = 0
-      for (let j = Math.max(0, i - halfWindow); j <= Math.min(rawCost.length - 1, i + halfWindow); j++) {
-        sumBase += rawCost[j].baseCharge
-        sumTotal += rawCost[j].totalCharge
-        sumShipments += rawCost[j].shipmentCount
-      }
-      return {
-        month: d.date,
-        avgCostBase: sumShipments > 0 ? (sumBase / 100) / sumShipments : 0,
-        avgCostWithSurcharge: sumShipments > 0 ? (sumTotal / 100) / sumShipments : 0,
-        surchargeOnly: sumShipments > 0 ? ((sumTotal - sumBase) / 100) / sumShipments : 0,
-        orderCount: d.shipmentCount,
-      }
-    })
-    // Trim buffer days — only show dates within the user's requested range
+    const costTrendAll = rawCost.map((d) => ({
+      month: d.date,
+      avgCostBase: d.shipmentCount > 0 ? (d.baseCharge / 100) / d.shipmentCount : 0,
+      avgCostWithSurcharge: d.shipmentCount > 0 ? (d.totalCharge / 100) / d.shipmentCount : 0,
+      surchargeOnly: d.shipmentCount > 0 ? ((d.totalCharge - d.baseCharge) / 100) / d.shipmentCount : 0,
+      orderCount: d.shipmentCount,
+    }))
     const costTrend = costTrendAll.filter(d => d.month >= startDate!)
 
     // Build raw daily sums for 7-day rolling average calculation
@@ -602,6 +589,13 @@ export async function GET(request: NextRequest) {
       lastReliableIdx--
     }
     const trimmed = rawDays.slice(0, lastReliableIdx + 1)
+
+    // Rolling window for delivery-speed smoothing (kept here; only the cost
+    // trend was changed to raw daily values).
+    const halfWindow = (datePreset === '14d' || datePreset === 'mtd') ? 0
+      : datePreset === '30d' ? 1
+      : datePreset === '60d' ? 2
+      : 3
 
     const deliverySpeedTrendAll = trimmed.map((d, i) => {
       let wFulfillHrs = 0, wFulfillCnt = 0
