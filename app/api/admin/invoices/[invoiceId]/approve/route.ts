@@ -131,24 +131,32 @@ export async function POST(
       // Get the transaction IDs (billingRecordId) from credit line items
       const creditTransactionIds = creditLineItems.map(item => item.billingRecordId)
 
-      // Query transactions to get their reference_ids (which are shipment_ids for credits)
-      const { data: creditTransactions } = await adminClient
+      // Credits are already linked to tickets via transactions.care_ticket_id
+      // (set at ticket-creation auto-link, sync-matching, or admin Misfit-connect).
+      // Read that link directly — don't try to re-derive the match via
+      // reference_id/shipment_id, which fails when the credit is on a reshipment
+      // shipment that differs from the ticket's original shipment_id.
+      const { data: linkedCreditTxs } = await adminClient
         .from('transactions')
-        .select('id, reference_id')
+        .select('id, care_ticket_id')
         .in('id', creditTransactionIds)
+        .not('care_ticket_id', 'is', null)
 
-      const creditShipmentIds = (creditTransactions || [])
-        .map((tx: { id: string; reference_id: string | null }) => tx.reference_id)
-        .filter((id: string | null): id is string => !!id)
+      const careTicketIds = [...new Set(
+        (linkedCreditTxs || [])
+          .map((tx: { care_ticket_id: string | null }) => tx.care_ticket_id)
+          .filter((id: string | null): id is string => !!id)
+      )]
 
-      if (creditShipmentIds.length > 0) {
-        // Find care_tickets that are "Credit Approved" and match these shipment IDs
+      if (careTicketIds.length > 0) {
+        // Find care_tickets that are "Credit Approved" (regardless of ticket_type,
+        // since the credit is directly linked — type-filtering is only needed for
+        // the older shipment_id-based lookup that's no longer used).
         const { data: ticketsToUpdate } = await adminClient
           .from('care_tickets')
           .select('id, ticket_number, shipment_id, events, credit_amount')
           .eq('status', 'Credit Approved')
-          .in('ticket_type', ['Claim', 'Shipment Inquiry'])
-          .in('shipment_id', creditShipmentIds)
+          .in('id', careTicketIds)
 
         if (ticketsToUpdate && ticketsToUpdate.length > 0) {
           console.log(`  Updating ${ticketsToUpdate.length} care_tickets to Resolved...`)

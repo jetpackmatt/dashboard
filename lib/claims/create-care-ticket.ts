@@ -203,7 +203,7 @@ export async function createCareTicket(
       .eq('client_id', ticket.client_id)
       .eq('reference_id', ticket.shipment_id)
       .eq('is_voided', false)
-      .select('transaction_id')
+      .select('transaction_id, billed_amount, invoice_id_jp')
 
     if (linkErr) {
       console.error('Auto-link credit transactions error:', linkErr)
@@ -211,6 +211,75 @@ export async function createCareTicket(
       autoLinkedCount = linkedTxs?.length || 0
       if (autoLinkedCount > 0) {
         console.log(`Auto-linked ${autoLinkedCount} credit transaction(s) to ticket #${ticket.ticket_number}`)
+
+        // Credit already exists → advance status past Under Review.
+        // If the credit's invoice is already approved → Resolved.
+        // Otherwise → Credit Approved.
+        const totalBilled = linkedTxs.reduce(
+          (sum: number, tx: { billed_amount: number | string | null }) => sum + Math.abs(parseFloat(String(tx.billed_amount ?? 0)) || 0),
+          0
+        )
+        const invoiceIds = [...new Set(
+          linkedTxs.map((tx: { invoice_id_jp: string | null }) => tx.invoice_id_jp).filter((v: string | null): v is string => !!v)
+        )]
+        let invoiceApproved = false
+        let approvedInvoiceNumber: string | null = null
+        if (invoiceIds.length > 0) {
+          const { data: invoices } = await supabase
+            .from('invoices_jetpack')
+            .select('invoice_number, status')
+            .in('invoice_number', invoiceIds)
+          if (invoices && invoices.length > 0 && invoices.every((i: { status: string }) => i.status === 'approved')) {
+            invoiceApproved = true
+            approvedInvoiceNumber = invoices[0].invoice_number as string
+          }
+        }
+
+        const nowIso = new Date().toISOString()
+        const currentEvents = (ticket.events as Array<Record<string, unknown>>) || []
+        const newEvents: Array<Record<string, unknown>> = []
+
+        if (invoiceApproved && approvedInvoiceNumber) {
+          newEvents.push({
+            status: 'Resolved',
+            note: totalBilled > 0
+              ? `Your credit of $${totalBilled.toFixed(2)} has been applied to invoice ${approvedInvoiceNumber}.`
+              : `Credit has been applied to invoice ${approvedInvoiceNumber}.`,
+            createdAt: nowIso,
+            createdBy: 'System',
+            jetpackInvoiceNumber: approvedInvoiceNumber,
+          })
+        } else {
+          newEvents.push({
+            status: 'Credit Approved',
+            note: totalBilled > 0
+              ? `A credit of $${totalBilled.toFixed(2)} has been approved and will appear on your next invoice.`
+              : 'A credit has been approved and will appear on your next invoice.',
+            createdAt: nowIso,
+            createdBy: 'System',
+          })
+        }
+
+        const finalStatus = invoiceApproved ? 'Resolved' : 'Credit Approved'
+        const updatePayload: Record<string, unknown> = {
+          status: finalStatus,
+          events: [...newEvents, ...currentEvents],
+          updated_at: nowIso,
+        }
+        if (totalBilled > 0 && (!ticket.credit_amount || Number(ticket.credit_amount) === 0)) {
+          updatePayload.credit_amount = totalBilled
+        }
+        if (invoiceApproved) updatePayload.resolved_at = nowIso
+
+        const { error: statusUpdateErr } = await supabase
+          .from('care_tickets')
+          .update(updatePayload)
+          .eq('id', ticket.id)
+        if (statusUpdateErr) {
+          console.error('Error advancing ticket status after auto-link:', statusUpdateErr)
+        } else {
+          ticket.status = finalStatus
+        }
       }
     }
   }
