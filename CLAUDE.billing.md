@@ -87,6 +87,20 @@ Rules are **standalone** (no stacking). If multiple rules match, the most specif
 | `effective_from` | DATE | When rule becomes active |
 | `effective_to` | DATE | NULL = currently active |
 
+### Rule Versioning (PATCH behavior)
+
+Editing a rule via `PATCH /api/admin/markup-rules/[ruleId]` splits into two paths:
+
+**Pricing-relevant fields** (`markup_type`, `markup_value`, `conditions`, `fee_type`, `billing_category`, `order_category`, `ship_option_id`, `origin_country`, `is_additive`, `priority`, `client_id`) — automatically versioned:
+1. Old row's `effective_to` is set to `new_effective_from - 1 day`
+2. A new row is inserted with the updated values and `is_active=true`
+3. Two history events recorded (close on old ID, create on new ID)
+4. Response returns `{ rule, versioned: true, supersededRuleId }`
+
+**Cosmetic fields** (`name`, `description`) and window closures (`effective_to`, `is_active=false`) — update in place.
+
+**Why versioning matters:** Transactions store `markup_percentage`, `markup_applied`, and `markup_rule_id` on the row, so already-billed amounts are frozen. But any recalc, preview, or backfill against a historical `charge_date` queries `markup_rules` with `effective_from <= charge_date AND (effective_to IS NULL OR effective_to >= charge_date)` — if the live rule's `effective_from` moved forward, the historical window has no matching rule and produces $0 markup silently. Versioning guarantees every past charge_date has a live rule.
+
 ### Weight Brackets
 
 | Label | Range |
