@@ -2613,7 +2613,7 @@ export default function AnalyticsContent() {
                       <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-2">
                         <div>
                           <div className="text-sm font-semibold">Order-to-Delivery Breakdown</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">Stacked components of total delivery time</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">Stacked components of total delivery time · 7-day centered average</div>
                         </div>
                         <ChartSelectors chart={deliverySpeedChart} availableCountries={analyticsData?.availableCountries || []} dateRangeDisplayLabel={dateRangeDisplayLabel} />
                       </div>

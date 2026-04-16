@@ -590,12 +590,11 @@ export async function GET(request: NextRequest) {
     }
     const trimmed = rawDays.slice(0, lastReliableIdx + 1)
 
-    // Rolling window for delivery-speed smoothing (kept here; only the cost
-    // trend was changed to raw daily values).
-    const halfWindow = (datePreset === '14d' || datePreset === 'mtd') ? 0
-      : datePreset === '30d' ? 1
-      : datePreset === '60d' ? 2
-      : 3
+    // Rolling window for delivery-speed smoothing. Fixed at 7-day centered
+    // avg regardless of preset so the same date shows the same value across
+    // all presets — delivery metrics are too noisy day-to-day to render raw.
+    // The chart's subheader labels this as "7-day centered average".
+    const halfWindow = 3
 
     const deliverySpeedTrendAll = trimmed.map((d, i) => {
       let wFulfillHrs = 0, wFulfillCnt = 0
