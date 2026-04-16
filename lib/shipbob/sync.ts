@@ -2390,7 +2390,7 @@ export async function syncAllTransactions(
           .from('care_tickets')
           .select('id, ticket_number, shipment_id, events, credit_amount')
           .eq('status', 'Credit Requested')
-          .in('ticket_type', ['Claim', 'Shipping Inquiry'])
+          .in('ticket_type', ['Claim', 'Shipment Inquiry'])
           .in('shipment_id', creditShipmentIds)
 
         if (ticketFetchError) {
