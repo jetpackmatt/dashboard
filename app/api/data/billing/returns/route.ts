@@ -75,6 +75,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // When searching, pre-resolve matching return IDs from the returns table
+    // so we can filter server-side before pagination.
+    let searchReturnIds: string[] | null = null
+    if (search) {
+      let returnsSearchQuery = supabase
+        .from('returns')
+        .select('shipbob_return_id')
+        .or(`shipbob_return_id.ilike.%${search}%,original_shipment_id.ilike.%${search}%,tracking_number.ilike.%${search}%`)
+      if (clientId) returnsSearchQuery = returnsSearchQuery.eq('client_id', clientId)
+
+      const { data: matchingReturns } = await returnsSearchQuery
+
+      searchReturnIds = (matchingReturns || []).map((r: Record<string, unknown>) => String(r.shipbob_return_id))
+    }
+
     let query = supabase
       .from('transactions')
       .select('*', { count: 'exact' })
@@ -95,6 +110,16 @@ export async function GET(request: NextRequest) {
     // If we have filtered return IDs, apply that filter
     if (filteredReturnIds) {
       query = query.in('reference_id', filteredReturnIds)
+    }
+
+    // Server-side search: match reference_id directly OR any return IDs resolved
+    // from the returns table (original_shipment_id, tracking_number matches)
+    if (search && searchReturnIds) {
+      if (searchReturnIds.length > 0) {
+        query = query.or(`reference_id.ilike.%${search}%,reference_id.in.(${searchReturnIds.join(',')})`)
+      } else {
+        query = query.ilike('reference_id', `%${search}%`)
+      }
     }
 
     const { data: transactions, error, count } = await query
@@ -177,20 +202,8 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Apply search filter post-mapping (to search across multiple fields)
-    if (search) {
-      mapped = mapped.filter((item: { returnId: string; originalShipmentId: string; trackingNumber: string; invoiceNumber: string; charge: number | null }) =>
-        item.returnId.toLowerCase().includes(search) ||
-        item.originalShipmentId.toLowerCase().includes(search) ||
-        item.trackingNumber.toLowerCase().includes(search) ||
-        item.invoiceNumber.toLowerCase().includes(search) ||
-        (item.charge !== null && item.charge.toString().includes(search))
-      )
-    }
-
-    // Apply pagination after search filter
-    const totalCount = search ? mapped.length : (count || 0)
-    const paginatedData = search ? mapped.slice(offset, offset + limit) : mapped
+    const totalCount = count || 0
+    const paginatedData = mapped
 
     return NextResponse.json({
       data: paginatedData,

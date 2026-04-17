@@ -61,6 +61,13 @@ export async function GET(request: NextRequest) {
       query = query.contains('additional_details', { CreditReason: creditReason })
     }
 
+    // Server-side search on reference_id + additional_details fields
+    if (search) {
+      query = query.or(
+        `reference_id.ilike.%${search}%,additional_details->>TicketReference.ilike.%${search}%,additional_details->>Comment.ilike.%${search}%,additional_details->>CreditReason.ilike.%${search}%`
+      )
+    }
+
     const { data, error, count } = await query
       .order(sortField, { ascending: sortAscending })
       .range(offset, offset + limit - 1)
@@ -129,20 +136,8 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // Apply search filter post-mapping
-    if (search) {
-      mapped = mapped.filter((item: { referenceId: string; sbTicketReference: string; careTicketNumber: number | null; creditInvoiceNumber: string; creditAmount: number | null }) =>
-        item.referenceId.toLowerCase().includes(search) ||
-        item.sbTicketReference.toLowerCase().includes(search) ||
-        (item.careTicketNumber !== null && item.careTicketNumber.toString().includes(search)) ||
-        item.creditInvoiceNumber.toLowerCase().includes(search) ||
-        (item.creditAmount !== null && item.creditAmount.toString().includes(search))
-      )
-    }
-
-    // Apply pagination after search filter
-    const totalCount = search ? mapped.length : (count || 0)
-    const paginatedData = search ? mapped.slice(offset, offset + limit) : mapped
+    const totalCount = count || 0
+    const paginatedData = mapped
 
     return NextResponse.json({
       data: paginatedData,
