@@ -77,12 +77,23 @@ export async function GET(request: NextRequest) {
 
     // When searching, pre-resolve matching return IDs from the returns table
     // so we can filter server-side before pagination.
+    // shipbob_return_id and original_shipment_id are INTEGER columns, so use
+    // ::text cast via tracking_number ilike + separate numeric eq checks.
     let searchReturnIds: string[] | null = null
     if (search) {
+      const isNumeric = /^\d+$/.test(search)
       let returnsSearchQuery = supabase
         .from('returns')
         .select('shipbob_return_id')
-        .or(`shipbob_return_id.ilike.%${search}%,original_shipment_id.ilike.%${search}%,tracking_number.ilike.%${search}%`)
+
+      if (isNumeric) {
+        returnsSearchQuery = returnsSearchQuery.or(
+          `shipbob_return_id.eq.${search},original_shipment_id.eq.${search},tracking_number.ilike.%${search}%`
+        )
+      } else {
+        returnsSearchQuery = returnsSearchQuery.ilike('tracking_number', `%${search}%`)
+      }
+
       if (clientId) returnsSearchQuery = returnsSearchQuery.eq('client_id', clientId)
 
       const { data: matchingReturns } = await returnsSearchQuery
