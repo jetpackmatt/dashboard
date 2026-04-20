@@ -29,6 +29,7 @@ const ADDITIONAL_SERVICE_FEES = [
   'Insurance',
   'Signature Required',
   'Fuel Surcharge',
+  'Outsourced Fuel Surcharge',
   'Residential Surcharge',
   'Delivery Area Surcharge',
   'Saturday Delivery',

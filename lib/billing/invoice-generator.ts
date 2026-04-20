@@ -202,6 +202,10 @@ export const ADDITIONAL_SERVICE_FEES = [
   'Insurance',
   'Signature Required',
   'Fuel Surcharge',
+  // New ShipBob fee type as of 2026-04-15 — billed as a separate transaction on the
+  // Shipping invoice (not inline in SFTP surcharge column). reference_type='Shipment'
+  // with reference_id matching the shipment the surcharge applies to.
+  'Outsourced Fuel Surcharge',
   'Residential Surcharge',
   'Delivery Area Surcharge',
   'Saturday Delivery',
