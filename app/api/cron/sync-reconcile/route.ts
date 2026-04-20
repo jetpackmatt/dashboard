@@ -62,11 +62,14 @@ export async function GET(request: NextRequest) {
       console.log(`[Cron Reconcile] Tracking IDs: ${trackingResult.updated} updated`)
     }
 
-    // STEP 3: Sync orders/shipments (45-day lookback to catch cancelled/deleted)
-    // Note: daysBack triggers reconciliation, minutesBack skips it
-    // Uses StartDate filter to fetch orders created in the last 45 days
-    console.log('[Cron Reconcile] Step 3: Syncing orders/shipments...')
-    const results = await syncAll({ daysBack: 45 })
+    // STEP 3: Sync orders/shipments (14-day lookback)
+    // Reduced from 45d → 14d because high-volume clients (Henson: ~11K shipments/45d)
+    // couldn't complete the full sweep within maxDuration=300s, leaving 76% of
+    // their 45-day window stale for 7+ days. 14d overlaps perfectly with
+    // sync-older-nightly (which handles 14-180d), closing the coverage gap for
+    // the "ShipBob lazily populates measurements/zone after creation" case.
+    console.log('[Cron Reconcile] Step 3: Syncing orders/shipments (14-day lookback)...')
+    const results = await syncAll({ daysBack: 14 })
 
     const ordersDuration = Date.now() - startTime
     console.log(`[Cron Reconcile] Orders/shipments completed in ${ordersDuration}ms`)

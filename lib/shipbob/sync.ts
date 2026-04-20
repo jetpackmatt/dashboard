@@ -4284,10 +4284,10 @@ export interface VoidedReconcileResult {
 }
 
 export async function reconcileVoidedShippingTransactions(): Promise<VoidedReconcileResult> {
-  // Use paginated direct query approach (45-day window).
+  // Use paginated direct query approach (90-day window).
   // The old RPC (find_duplicate_shipping_transactions) scanned ALL 115K+ transactions
   // without a date filter, causing Supabase statement timeouts. The Direct approach
-  // uses cursor-based pagination and a 45-day window for reliable execution.
+  // uses cursor-based pagination for reliable execution.
   return await reconcileVoidedShippingTransactionsDirect()
 }
 
@@ -4305,11 +4305,11 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
   }
 
   try {
-    // Step 1: Paginated fetch of recent Shipping transactions (last 45 days)
+    // Step 1: Paginated fetch of recent Shipping transactions (last 90 days)
     // CRITICAL: Supabase returns MAX 1000 rows per query. Without pagination,
     // 114K+ transactions were silently truncated, missing most voided labels.
     const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - 45)
+    cutoffDate.setDate(cutoffDate.getDate() - 90)
     const cutoffStr = cutoffDate.toISOString().split('T')[0]
 
     const PAGE_SIZE = 1000
@@ -4354,7 +4354,7 @@ async function reconcileVoidedShippingTransactionsDirect(): Promise<VoidedReconc
       if (data.length < PAGE_SIZE) break
     }
 
-    console.log(`[VoidedReconcile] Fetched ${allTransactions.length} active shipping transactions (last 45 days)`)
+    console.log(`[VoidedReconcile] Fetched ${allTransactions.length} active shipping transactions (last 90 days)`)
 
     if (allTransactions.length === 0) {
       return result

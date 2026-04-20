@@ -10,7 +10,7 @@ import {
   formatValidationResult,
   type ValidationResult,
 } from '@/lib/billing/preflight-validation'
-import { syncBillingAwareTimelines } from '@/lib/shipbob/sync'
+import { syncBillingAwareTimelines, reconcileVoidedShippingTransactions } from '@/lib/shipbob/sync'
 
 /**
  * GET /api/cron/sync-invoices
@@ -841,6 +841,16 @@ export async function GET(request: Request) {
       console.log(`[InvoiceSync] Timeline backfill complete: ${totalUpdated} total updated across ${Math.min(MAX_PASSES, Math.ceil(totalUpdated / PASS_SIZE) || 1)} passes`)
     } catch (err) {
       console.error('[InvoiceSync] Timeline backfill failed (non-fatal):', err)
+    }
+
+    // Step 4.6: Reconcile voided/duplicate shipping transactions before preflight
+    // so the "tracking IDs don't match" warnings reflect only genuine edge cases.
+    console.log('[InvoiceSync] Step 4.6: Reconciling voided shipping transactions...')
+    try {
+      const voidedResult = await reconcileVoidedShippingTransactions()
+      console.log(`[InvoiceSync] Voided reconcile: ${voidedResult.voided} voided across ${voidedResult.duplicateGroups} duplicate groups${voidedResult.errors.length ? `, ${voidedResult.errors.length} errors` : ''}`)
+    } catch (err) {
+      console.error('[InvoiceSync] Voided reconcile failed (non-fatal):', err)
     }
 
     // Step 5: Run preflight validation for each client
