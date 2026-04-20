@@ -72,7 +72,7 @@ export async function GET(request: Request) {
         .in('client_id', demoClientIds)
         .not('invoice_id_sb', 'is', null)
       if (polluted && polluted.length > 0) {
-        const total = polluted.reduce((s, r: { cost: number | string }) => s + Number(r.cost || 0), 0)
+        const total = polluted.reduce((s: number, r: { cost: number | string }) => s + Number(r.cost || 0), 0)
         const invoicesAffected = new Set(polluted.map((r: { invoice_id_sb: number }) => r.invoice_id_sb))
         console.error(`[InvoiceSync] 🚨 DEMO POLLUTION DETECTED: ${polluted.length} demo txs tagged to ${invoicesAffected.size} real SB invoice(s), total $${total.toFixed(2)}. Auto-untagging. Investigate the code path that re-introduced this leak.`)
         await adminClient
