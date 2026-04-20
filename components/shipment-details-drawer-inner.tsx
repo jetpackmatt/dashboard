@@ -186,6 +186,7 @@ interface ShipmentDetails {
     surcharges: number | null
     totalFulfillmentCost: number | null
     pickFees: number | null
+    fuelSurcharge: number | null
     insurance: number | null
     subtotal: number | null
     taxes: number | null
@@ -198,6 +199,7 @@ interface ShipmentDetails {
       fulfillmentMarkupPct: number | null
       pickFeeCost: number | null
       pickFeeMarkupPct: number | null
+      fuelSurchargeCost?: number | null
     }
   }
   returns: Array<{
@@ -1822,7 +1824,7 @@ export default function ShipmentDetailsDrawerInner({
                         )}
 
                         {/* SECTION: Additional Fees */}
-                        {(data.chargesBreakdown.pickFees !== null || (data.chargesBreakdown.insurance !== null && data.chargesBreakdown.insurance > 0)) && (
+                        {(data.chargesBreakdown.pickFees !== null || data.chargesBreakdown.fuelSurcharge !== null || (data.chargesBreakdown.insurance !== null && data.chargesBreakdown.insurance > 0)) && (
                           <div className="bg-gradient-to-r from-violet-50/50 to-transparent dark:from-violet-950/20 dark:to-transparent">
                             <div className="px-4 py-2 border-b border-border/20">
                               <span className="text-xs font-semibold uppercase tracking-wider text-violet-600 dark:text-violet-400">Additional Fees</span>
@@ -1851,6 +1853,29 @@ export default function ShipmentDetailsDrawerInner({
                                     <span className="text-sm text-muted-foreground">Pick Fees</span>
                                     <span className="text-sm tabular-nums text-foreground text-right w-14">
                                       ${data.chargesBreakdown.pickFees.toFixed(2)}
+                                    </span>
+                                  </div>
+                                )
+                              )}
+                              {data.chargesBreakdown.fuelSurcharge !== null && (
+                                effectiveIsAdmin && data.chargesBreakdown.adminCosts ? (
+                                  <div className="grid grid-cols-12 gap-1 py-1.5 pr-[11px]">
+                                    <span className="col-span-6 text-sm text-muted-foreground">Fuel Surcharge</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">
+                                      {data.chargesBreakdown.adminCosts.fuelSurchargeCost != null
+                                        ? `$${data.chargesBreakdown.adminCosts.fuelSurchargeCost.toFixed(2)}`
+                                        : '-'}
+                                    </span>
+                                    <span className="col-span-2 text-sm tabular-nums text-muted-foreground/70 text-right">-</span>
+                                    <span className="col-span-2 text-sm tabular-nums text-foreground text-right">
+                                      ${data.chargesBreakdown.fuelSurcharge.toFixed(2)}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between py-1.5 pr-[11px]">
+                                    <span className="text-sm text-muted-foreground">Fuel Surcharge</span>
+                                    <span className="text-sm tabular-nums text-foreground text-right w-14">
+                                      ${data.chargesBreakdown.fuelSurcharge.toFixed(2)}
                                     </span>
                                   </div>
                                 )

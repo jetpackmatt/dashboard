@@ -586,6 +586,14 @@ export async function GET(
           .filter((tx: any) => tx.fee_type === 'Per Pick Fee' && tx.transaction_type !== 'Refund')
           .reduce((sum: number, tx: any) => sum + (parseFloat(tx.billed_amount) || 0), 0)
 
+        // Sum Outsourced Fuel Surcharge (per-shipment surcharge billed separately since 2026-04-15)
+        const fuelSurchargeTotal = transactions
+          .filter((tx: any) => tx.fee_type === 'Outsourced Fuel Surcharge' && tx.transaction_type !== 'Refund')
+          .reduce((sum: number, tx: any) => sum + (parseFloat(tx.billed_amount) || parseFloat(tx.cost) || 0), 0)
+        const rawFuelSurchargeCost = transactions
+          .filter((tx: any) => tx.fee_type === 'Outsourced Fuel Surcharge' && tx.transaction_type !== 'Refund')
+          .reduce((sum: number, tx: any) => sum + (parseFloat(tx.cost) || 0), 0)
+
         // Raw costs (admin-only — base_cost is from SFTP, the actual carrier cost before markup)
         const rawShippingCost = shippingTx?.base_cost != null ? parseFloat(shippingTx.base_cost) : null
         const rawPickFeeCost = transactions
@@ -606,7 +614,12 @@ export async function GET(
 
         // Calculate subtotal (sum of all non-null values)
         let subtotal: number | null = null
-        const components = [totalCharge, pickFeeTotal > 0 ? pickFeeTotal : null, insuranceCharge]
+        const components = [
+          totalCharge,
+          pickFeeTotal > 0 ? pickFeeTotal : null,
+          fuelSurchargeTotal > 0 ? fuelSurchargeTotal : null,
+          insuranceCharge,
+        ]
         const validComponents = components.filter((v): v is number => v !== null && v !== undefined)
         if (validComponents.length > 0) {
           subtotal = validComponents.reduce((sum, v) => sum + v, 0)
@@ -643,6 +656,7 @@ export async function GET(
           surcharges: surcharge,
           totalFulfillmentCost: totalCharge,
           pickFees: pickFeeTotal > 0 ? pickFeeTotal : null,
+          fuelSurcharge: fuelSurchargeTotal > 0 ? fuelSurchargeTotal : null,
           insurance: insuranceCharge,
           subtotal,
           taxes,
@@ -656,6 +670,7 @@ export async function GET(
               fulfillmentMarkupPct: shippingMarkupPct,
               pickFeeCost: rawPickFeeCost > 0 ? rawPickFeeCost : null,
               pickFeeMarkupPct: pickFeeMarkupPctDb,
+              fuelSurchargeCost: rawFuelSurchargeCost > 0 ? rawFuelSurchargeCost : null,
             }
           } : {}),
         }

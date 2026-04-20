@@ -2368,6 +2368,17 @@ function mapFeeTypeToCategory(feeType: string): string {
       return 'VAS/Kitting'
     case 'Address Correction':
       return 'Address Correction'
+    // Surcharges — per-shipment carrier adjustments that ShipBob bills as their own
+    // line items. Bundled together so clients see one "Surcharges" category rather
+    // than a proliferating list of surcharge variants.
+    case 'Outsourced Fuel Surcharge':
+    case 'Fuel Surcharge':
+    case 'Residential Surcharge':
+    case 'Delivery Area Surcharge':
+    case 'Saturday Delivery':
+    case 'Oversized Package':
+    case 'Dimensional Weight':
+      return 'Surcharges'
     default:
       // Return original if no mapping found
       return feeType
