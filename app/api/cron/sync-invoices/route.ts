@@ -11,6 +11,7 @@ import {
   type ValidationResult,
 } from '@/lib/billing/preflight-validation'
 import { syncBillingAwareTimelines, reconcileVoidedShippingTransactions } from '@/lib/shipbob/sync'
+import { getDemoClientIds } from '@/lib/demo/exclusion'
 
 /**
  * GET /api/cron/sync-invoices
@@ -53,6 +54,34 @@ export async function GET(request: Request) {
     console.log('Starting invoice sync (preflight only)...')
 
     const adminClient = createAdminClient()
+
+    // CRITICAL: Load demo client IDs up front. ALL invoice_id_sb writes below must
+    // exclude these clients. Demo txs MUST NEVER be tagged to a real ShipBob invoice —
+    // doing so pollutes preflight totals and risks billing demo charges to real clients.
+    const demoClientIds = await getDemoClientIds(adminClient)
+    const demoFilter = demoClientIds.length > 0 ? `(${demoClientIds.join(',')})` : null
+    console.log(`[InvoiceSync] Demo client exclusion active for ${demoClientIds.length} demo client(s)`)
+
+    // TRIPWIRE: detect and auto-heal any demo txs already tagged to real SB invoices.
+    // If this ever logs a non-zero count, a new code path has introduced a demo leak
+    // and the invariant "demo.invoice_id_sb IS NULL" has been violated. Untag and alert.
+    if (demoClientIds.length > 0) {
+      const { data: polluted } = await adminClient
+        .from('transactions')
+        .select('transaction_id, invoice_id_sb, client_id, cost')
+        .in('client_id', demoClientIds)
+        .not('invoice_id_sb', 'is', null)
+      if (polluted && polluted.length > 0) {
+        const total = polluted.reduce((s, r: { cost: number | string }) => s + Number(r.cost || 0), 0)
+        const invoicesAffected = new Set(polluted.map((r: { invoice_id_sb: number }) => r.invoice_id_sb))
+        console.error(`[InvoiceSync] 🚨 DEMO POLLUTION DETECTED: ${polluted.length} demo txs tagged to ${invoicesAffected.size} real SB invoice(s), total $${total.toFixed(2)}. Auto-untagging. Investigate the code path that re-introduced this leak.`)
+        await adminClient
+          .from('transactions')
+          .update({ invoice_id_sb: null, invoice_date_sb: null, invoiced_status_sb: false })
+          .in('client_id', demoClientIds)
+          .not('invoice_id_sb', 'is', null)
+      }
+    }
 
     // Calculate invoice date (this Monday)
     const today = new Date()
@@ -366,14 +395,17 @@ export async function GET(request: Request) {
               // Reference type mapping: WarehouseStorage → FC, WarehouseInboundFee → WRO
               const refType = invoice.invoice_type === 'WarehouseStorage' ? 'FC' : 'WRO'
 
-              // Find transactions in our DB that match this period and type
-              const { data: matchingTx } = await adminClient
+              // Find transactions in our DB that match this period and type.
+              // CRITICAL: exclude demo clients so we never tag demo txs to real SB invoices.
+              let matchingTxQ = adminClient
                 .from('transactions')
                 .select('transaction_id')
                 .eq('reference_type', refType)
                 .is('invoice_id_sb', null)
                 .gte('charge_date', periodStart)
                 .lte('charge_date', periodEnd)
+              if (demoFilter) matchingTxQ = matchingTxQ.not('client_id', 'in', demoFilter)
+              const { data: matchingTx } = await matchingTxQ
 
               if (matchingTx && matchingTx.length > 0) {
                 // Update these transactions with the invoice_id_sb
@@ -564,6 +596,11 @@ export async function GET(request: Request) {
               .is('dispute_status', null)
               .gte('charge_date', periodStart)
               .lte('charge_date', periodEnd + 'T23:59:59Z')
+
+            // CRITICAL: exclude demo clients so demo txs never get tagged to real SB invoices.
+            // This is the DB fallback that previously polluted 11 real invoices with 2,124
+            // demo txs totaling $11,320 (discovered 2026-04-20). Must exclude here.
+            if (demoFilter) query = query.not('client_id', 'in', demoFilter)
 
             // Apply invoice-type-specific filters
             switch (invoice.invoice_type) {
@@ -773,12 +810,13 @@ export async function GET(request: Request) {
       console.log('No breakdown data in SFTP file')
     }
 
-    // Step 3: Get all active clients with billing info (exclude internal/system entries)
+    // Step 3: Get all active clients with billing info (exclude internal AND demo)
     const { data: clients, error: clientsError } = await adminClient
       .from('clients')
       .select('id, company_name, short_code, merchant_id')
       .eq('is_active', true)
       .or('is_internal.is.null,is_internal.eq.false')
+      .or('is_demo.is.null,is_demo.eq.false')
 
     if (clientsError || !clients) {
       console.error('Error fetching clients:', clientsError)
