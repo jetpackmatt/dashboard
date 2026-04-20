@@ -158,6 +158,29 @@ export async function fetchMarkupRules(
 }
 
 /**
+ * Fetch ALL active markup rules for a client (and globals), ignoring effective
+ * dates. Use this when calculating markup for a set of transactions that span
+ * multiple dates — callers must then pass each tx's own charge date to
+ * findMatchingRule() so the right versioned rule applies per-tx.
+ */
+export async function fetchMarkupRulesAll(clientId: string): Promise<MarkupRule[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('markup_rules')
+    .select('*')
+    .eq('is_active', true)
+    .or(`client_id.is.null,client_id.eq.${clientId}`)
+    .order('priority', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching markup rules (all):', error)
+    return []
+  }
+
+  return data || []
+}
+
+/**
  * Check if a rule matches the transaction context
  */
 export function ruleMatchesContext(
@@ -289,9 +312,22 @@ export function countRuleConditions(rule: MarkupRule): number {
  */
 export function findMatchingRule(
   rules: MarkupRule[],
-  context: TransactionContext
+  context: TransactionContext,
+  asOfDate?: Date
 ): MarkupRule | null {
-  const matching = rules.filter(rule => ruleMatchesContext(rule, context))
+  // When asOfDate is provided, also filter by the rule's effective window.
+  // This is required when caller has pre-fetched rules across a multi-day span
+  // (see fetchMarkupRulesAll) — each tx should only match the rule version that
+  // was live on its own charge_date.
+  const asOfStr = asOfDate ? asOfDate.toISOString().split('T')[0] : null
+  const matching = rules.filter(rule => {
+    if (!ruleMatchesContext(rule, context)) return false
+    if (asOfStr) {
+      if (rule.effective_from && asOfStr < rule.effective_from) return false
+      if (rule.effective_to && asOfStr > rule.effective_to) return false
+    }
+    return true
+  })
 
   if (matching.length === 0) {
     return null
@@ -399,16 +435,17 @@ export async function calculateBatchMarkups(
 
   // Process each client's transactions
   for (const [clientId, clientTxs] of byClient) {
-    // Get the date range for this client's transactions
-    const dates = clientTxs.map(tx => tx.context.transactionDate)
-    const minDate = new Date(Math.min(...dates.map(d => d.getTime())))
+    // Fetch ALL active rules for this client across the full span of tx dates.
+    // Previously used only minDate, which silently dropped any rule that became
+    // effective LATER than the earliest tx in the batch — causing a multi-day
+    // invoice spanning a rule change to apply the wrong markup to the later days
+    // (or, in the Arterra case where historical rule data was corrupted, zero markup).
+    // We now filter per-tx by date inside findMatchingRule using asOfDate.
+    const rules = await fetchMarkupRulesAll(clientId)
 
-    // Fetch rules once for this client
-    const rules = await fetchMarkupRules(clientId, minDate)
-
-    // Calculate markup for each transaction
+    // Calculate markup for each transaction using its own charge date
     for (const tx of clientTxs) {
-      const matchingRule = findMatchingRule(rules, tx.context)
+      const matchingRule = findMatchingRule(rules, tx.context, tx.context.transactionDate)
       const result = calculateMarkup(tx.baseAmount, matchingRule)
       results.set(tx.id, result)
     }
