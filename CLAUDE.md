@@ -586,6 +586,7 @@ npm run dev
 | `TRACKINGMORE_WEBHOOK_SECRET` | HMAC-SHA256 for webhook verification | Yes |
 | `GOOGLE_AI_API_KEY` | Gemini API key (checkpoint normalization, AI reassess) | Yes |
 | `SLACK_WEBHOOK_URL` | Slack alerts (care tickets, address changes) | Optional |
+| `SLACK_WEBHOOK_SUPPORT_ALERTS` | Slack webhook for #support-alerts (permanent claim email send failures) | Optional |
 | `RESEND_API_KEY` | Resend email service | Yes |
 | `SITE_PASSWORD` | Pre-launch site password gate | Optional |
 | `CRON_SECRET` | Auth for cron endpoints | Production |

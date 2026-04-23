@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendClaimEmail, fetchAttachmentBuffers } from '@/lib/email/client'
 import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/templates'
 import { excludeDemoClients } from '@/lib/demo/exclusion'
+import { sendSlackAlert } from '@/lib/slack'
 
 // Resend paid tier: 5 emails/sec. We throttle to ~3/sec (300ms between sends)
 // to stay comfortably under the limit even if multiple crons overlap or if
@@ -196,7 +197,7 @@ export async function GET(request: NextRequest) {
     let errors = 0
     let emailsSent = 0
     let emailErrors = 0
-    let emailPermanentFailures = 0
+    const permanentFailures: Array<{ ticketNumber: number; brand: string; error: string; attempts: number }> = []
 
     if (claimsToAdvance && claimsToAdvance.length > 0) {
       console.log(`[Cron AdvanceClaims] Found ${claimsToAdvance.length} claims to advance`)
@@ -268,13 +269,38 @@ export async function GET(request: NextRequest) {
         } else {
           emailErrors++
           if (outcome.permanent) {
-            emailPermanentFailures++
             console.error(`[Cron AdvanceClaims] PERMANENT email failure for ticket #${claim.ticket_number}: ${outcome.error}`)
+            permanentFailures.push({
+              ticketNumber: claim.ticket_number,
+              brand: claim.client?.company_name || 'Unknown',
+              error: outcome.error || 'unknown',
+              attempts: (claim.claim_email_attempts || 0) + 1,
+            })
           }
         }
         // Throttle between sends to stay under Resend's rate limit
         if (i < unsentClaims.length - 1) await sleep(THROTTLE_MS)
       }
+    }
+
+    // Alert #support-alerts if any claim hit permanent email failure this run.
+    // These won't self-heal — they've either exhausted retries or hit a
+    // non-retryable error (bad merchant_id, malformed email, etc.) and need a
+    // human to investigate and manually re-send via the audit script.
+    if (permanentFailures.length > 0) {
+      const lines = permanentFailures.map(
+        (f) => `• #${f.ticketNumber} (${f.brand}) — ${f.attempts} attempts — ${f.error}`,
+      )
+      const body = [
+        `:rotating_light: *${permanentFailures.length} claim email(s) permanently failed to send to ShipBob*`,
+        '',
+        ...lines,
+        '',
+        'These tickets advanced status but no email reached support@shipbob.com and retries are exhausted. ' +
+          'Investigate via the Supabase dashboard (care_tickets.claim_email_last_error) and re-send manually via ' +
+          '`scripts/audit-claim-emails.ts --resend` once the root cause is resolved.',
+      ].join('\n')
+      sendSlackAlert(body, 'support-alerts')
     }
 
     // ========================================
@@ -399,7 +425,7 @@ export async function GET(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime
-    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${emailErrors} email failures (${emailPermanentFailures} permanent), ${synced} synced, ${created} created, ${errors + syncErrors + createErrors} non-email errors`)
+    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${emailErrors} email failures (${permanentFailures.length} permanent), ${synced} synced, ${created} created, ${errors + syncErrors + createErrors} non-email errors`)
 
     return NextResponse.json({
       success: errors === 0 && syncErrors === 0 && createErrors === 0,
@@ -407,7 +433,7 @@ export async function GET(request: NextRequest) {
       claimsAdvanced: advanced,
       emailsSent,
       emailErrors,
-      emailPermanentFailures,
+      emailPermanentFailures: permanentFailures.length,
       claimsSynced: synced,
       deliveryIqEntriesCreated: created,
       errors: errors + syncErrors + createErrors,
