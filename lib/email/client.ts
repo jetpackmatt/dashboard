@@ -16,47 +16,95 @@ export interface SendClaimEmailOptions {
   }>
 }
 
-/**
- * Send a claim notification email via Resend
- *
- * In test mode (EMAIL_TEST_MODE=true, the default), emails are only sent to matt@shipwithjetpack.com
- * In production mode (EMAIL_TEST_MODE=false), emails go to the specified recipients
- */
-export async function sendClaimEmail(options: SendClaimEmailOptions) {
-  // In test mode, override recipients to only send to Matt
-  const recipients = IS_TEST_MODE
-    ? ['matt@shipwithjetpack.com']
-    : options.to
+export type SendClaimEmailResult =
+  | { success: true; id: string }
+  | { success: false; error: string; retryable: boolean }
 
-  const ccRecipients = IS_TEST_MODE
-    ? undefined
-    : options.cc
+/**
+ * True if the error should be retried. 429 (rate limit) and 5xx (server errors,
+ * timeouts) are safe to retry. 4xx other than 429 (bad email, auth, etc.) is a
+ * permanent failure — retrying won't help.
+ */
+function isRetryableError(err: unknown): boolean {
+  if (!err) return false
+  const e = err as { statusCode?: number; status?: number; name?: string; message?: string }
+  const code = e.statusCode ?? e.status ?? 0
+  if (code === 429) return true
+  if (code >= 500 && code < 600) return true
+  // Network errors surface as fetch failures without a status
+  const msg = (e.message || '').toLowerCase()
+  if (msg.includes('fetch failed') || msg.includes('timeout') || msg.includes('econnreset') || msg.includes('etimedout')) return true
+  return false
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Send a claim notification email via Resend, with automatic retry on 429 /
+ * transient errors. Returns a structured result — never throws — so callers
+ * can persist send state even when the send fails.
+ *
+ * Retry schedule: 1s, 2s, 4s (3 retries total, max ~7s added latency).
+ * For deeper failures (rate-limit burst across multiple tickets in one cron
+ * run), the advance-claims cron picks up stragglers on the next 5-min run.
+ *
+ * In test mode (EMAIL_TEST_MODE=true, default), emails are only sent to
+ * matt@shipwithjetpack.com. In production (EMAIL_TEST_MODE=false), emails go
+ * to the specified recipients.
+ */
+export async function sendClaimEmail(options: SendClaimEmailOptions): Promise<SendClaimEmailResult> {
+  const recipients = IS_TEST_MODE ? ['matt@shipwithjetpack.com'] : options.to
+  const ccRecipients = IS_TEST_MODE ? undefined : options.cc
 
   console.log(`[Email] Sending claim email to ${recipients.join(', ')}${ccRecipients ? ` (CC: ${ccRecipients.join(', ')})` : ''} - Test mode: ${IS_TEST_MODE}`)
 
-  try {
-    const result = await resend.emails.send({
-      from: 'Jetpack Care <support@shipwithjetpack.com>',
-      to: recipients,
-      cc: ccRecipients,
-      replyTo: 'support@shipwithjetpack.com',
-      subject: options.subject,
-      html: options.html,
-      text: options.text,
-      attachments: options.attachments,
-    })
+  const MAX_RETRIES = 3
+  const BACKOFF_MS = [1000, 2000, 4000]
 
-    if (result.error) {
-      console.error('[Email] Resend error:', result.error)
-      throw new Error(result.error.message)
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await resend.emails.send({
+        from: 'Jetpack Care <support@shipwithjetpack.com>',
+        to: recipients,
+        cc: ccRecipients,
+        replyTo: 'support@shipwithjetpack.com',
+        subject: options.subject,
+        html: options.html,
+        text: options.text,
+        attachments: options.attachments,
+      })
+
+      if (result.error) {
+        const err = result.error as { statusCode?: number; message: string; name?: string }
+        const retryable = isRetryableError(err)
+        console.error(`[Email] Resend error (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`, err)
+        if (retryable && attempt < MAX_RETRIES) {
+          await sleep(BACKOFF_MS[attempt])
+          continue
+        }
+        return { success: false, error: err.message || String(err), retryable }
+      }
+
+      if (!result.data?.id) {
+        return { success: false, error: 'Resend returned no id', retryable: true }
+      }
+      console.log(`[Email] Email sent successfully. ID: ${result.data.id}${attempt > 0 ? ` (after ${attempt} retries)` : ''}`)
+      return { success: true, id: result.data.id }
+    } catch (error) {
+      const retryable = isRetryableError(error)
+      console.error(`[Email] Send threw (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`, error)
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep(BACKOFF_MS[attempt])
+        continue
+      }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        retryable,
+      }
     }
-
-    console.log(`[Email] Email sent successfully. ID: ${result.data?.id}`)
-    return result.data
-  } catch (error) {
-    console.error('[Email] Failed to send email:', error)
-    throw error
   }
+  return { success: false, error: 'retries exhausted', retryable: true }
 }
 
 /**

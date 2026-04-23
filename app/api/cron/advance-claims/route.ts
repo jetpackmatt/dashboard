@@ -4,6 +4,125 @@ import { sendClaimEmail, fetchAttachmentBuffers } from '@/lib/email/client'
 import { generateClaimEmail, IssueType, ReshipmentStatus } from '@/lib/email/templates'
 import { excludeDemoClients } from '@/lib/demo/exclusion'
 
+// Resend paid tier: 5 emails/sec. We throttle to ~3/sec (300ms between sends)
+// to stay comfortably under the limit even if multiple crons overlap or if
+// Resend's rate-limit clock isn't perfectly aligned with ours.
+const THROTTLE_MS = 300
+// Max number of times we'll retry an unsent email before giving up and logging
+// a permanent failure. At 5-min cron cadence this is ~1.7 hours of retries.
+const MAX_EMAIL_ATTEMPTS = 20
+// Upper bound on emails processed in a single cron run, to keep total runtime
+// bounded even if a brand dumps hundreds of claims at once. Stragglers get
+// picked up by the next run.
+const MAX_EMAILS_PER_RUN = 100
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+interface ClaimWithClient {
+  id: string
+  ticket_number: number
+  events: unknown
+  shipment_id: string | null
+  issue_type: string
+  description: string | null
+  compensation_request: string | null
+  reshipment_status: string | null
+  reshipment_id: string | null
+  attachments: unknown
+  carrier_confirmed_loss: boolean
+  client: { company_name: string; merchant_id: string } | null
+  claim_email_attempts: number
+}
+
+/**
+ * Send a claim email and persist the outcome on the ticket. Always writes
+ * claim_email_attempts + claim_email_last_attempt_at so we know when we last
+ * tried. On success, also sets claim_email_sent_at (permanent) + clears
+ * claim_email_last_error. On failure, sets claim_email_last_error and leaves
+ * claim_email_sent_at NULL so the next cron run will pick it back up.
+ */
+async function sendAndRecord(
+  supabase: ReturnType<typeof createAdminClient>,
+  claim: ClaimWithClient,
+): Promise<{ sent: boolean; error?: string; permanent?: boolean }> {
+  const attemptNumber = (claim.claim_email_attempts || 0) + 1
+  const now = new Date().toISOString()
+
+  if (!claim.client?.merchant_id) {
+    // Permanent failure — no merchant ID means we can't compose the email.
+    // Record the attempt so we don't loop on it forever.
+    await supabase
+      .from('care_tickets')
+      .update({
+        claim_email_attempts: attemptNumber,
+        claim_email_last_attempt_at: now,
+        claim_email_last_error: 'Missing merchant_id on client',
+      })
+      .eq('id', claim.id)
+    return { sent: false, error: 'Missing merchant_id', permanent: true }
+  }
+
+  // Fetch attachments fresh each attempt (signed URLs expire)
+  const attachmentsData = claim.attachments as Array<{ name: string; url: string; path?: string }> | null
+  let attachmentBuffers: Array<{ filename: string; content: Buffer }> = []
+  if (attachmentsData && attachmentsData.length > 0) {
+    try {
+      attachmentBuffers = await fetchAttachmentBuffers(attachmentsData)
+    } catch (attachmentError) {
+      console.warn(`[Cron AdvanceClaims] Failed to fetch attachments for ticket #${claim.ticket_number}:`, attachmentError)
+      // Continue without attachments — the email is still better than nothing
+    }
+  }
+
+  const emailData = generateClaimEmail({
+    merchantName: claim.client.company_name,
+    merchantId: claim.client.merchant_id,
+    shipmentId: claim.shipment_id || '',
+    issueType: claim.issue_type as IssueType,
+    description: claim.description,
+    compensationRequest: claim.compensation_request,
+    reshipmentStatus: claim.reshipment_status as ReshipmentStatus | null,
+    reshipmentId: claim.reshipment_id,
+    carrierConfirmedLoss: claim.carrier_confirmed_loss,
+  })
+
+  const result = await sendClaimEmail({
+    to: ['support@shipbob.com'],
+    cc: ['support@shipwithjetpack.com'],
+    subject: emailData.subject,
+    html: emailData.html,
+    text: emailData.text,
+    attachments: attachmentBuffers.length > 0 ? attachmentBuffers : undefined,
+  })
+
+  if (result.success) {
+    await supabase
+      .from('care_tickets')
+      .update({
+        claim_email_sent_at: now,
+        claim_email_attempts: attemptNumber,
+        claim_email_last_attempt_at: now,
+        claim_email_last_error: null,
+      })
+      .eq('id', claim.id)
+    return { sent: true }
+  }
+
+  // Failed send — record for next run to retry
+  const permanent = !result.retryable || attemptNumber >= MAX_EMAIL_ATTEMPTS
+  await supabase
+    .from('care_tickets')
+    .update({
+      claim_email_attempts: attemptNumber,
+      claim_email_last_attempt_at: now,
+      claim_email_last_error: permanent
+        ? `PERMANENT after ${attemptNumber} attempts: ${result.error}`
+        : result.error,
+    })
+    .eq('id', claim.id)
+  return { sent: false, error: result.error, permanent }
+}
+
 /**
  * Cron endpoint to advance claims and sync claim statuses
  *
@@ -42,26 +161,24 @@ export async function GET(request: NextRequest) {
 
     // CRITICAL: exclude demo clients. This cron sends live emails to ShipBob
     // support — demo tickets would trigger hundreds of real emails.
+    const CLAIM_SELECT = `
+      id, ticket_number, events, created_at, shipment_id, issue_type,
+      description, compensation_request, reshipment_status, reshipment_id,
+      attachments, carrier_confirmed_loss, claim_email_attempts,
+      client:clients!care_tickets_client_id_fkey(company_name, merchant_id)
+    `
+
+    // ----------------------------------------------------------------
+    // Part 1a: Advance Under Review → Credit Requested (status flip)
+    // We advance the status FIRST (without sending the email), then the
+    // email send happens in Part 1b below. This separation means status
+    // advancement can't be blocked by email issues, AND email sends
+    // always go through the same self-healing path whether they're
+    // first attempts or retries.
+    // ----------------------------------------------------------------
     let claimsQuery = supabase
       .from('care_tickets')
-      .select(`
-        id,
-        ticket_number,
-        events,
-        created_at,
-        shipment_id,
-        issue_type,
-        description,
-        compensation_request,
-        reshipment_status,
-        reshipment_id,
-        attachments,
-        carrier_confirmed_loss,
-        client:clients!care_tickets_client_id_fkey (
-          company_name,
-          merchant_id
-        )
-      `)
+      .select(CLAIM_SELECT)
       .eq('ticket_type', 'Claim')
       .eq('status', 'Under Review')
       .lte('created_at', fiveMinutesAgo.toISOString())
@@ -79,24 +196,19 @@ export async function GET(request: NextRequest) {
     let errors = 0
     let emailsSent = 0
     let emailErrors = 0
+    let emailPermanentFailures = 0
 
-    if (!claimsToAdvance || claimsToAdvance.length === 0) {
-      console.log('[Cron AdvanceClaims] No claims to advance')
-    } else {
+    if (claimsToAdvance && claimsToAdvance.length > 0) {
       console.log(`[Cron AdvanceClaims] Found ${claimsToAdvance.length} claims to advance`)
 
       for (const claim of claimsToAdvance) {
         const events = (claim.events as Array<{ status: string; note: string; createdAt: string; createdBy: string }>) || []
-
-        // Add Credit Requested event
         const creditRequestedEvent = {
           status: 'Credit Requested',
           note: 'Credit request has been sent to the warehouse team for review.',
           createdAt: new Date().toISOString(),
           createdBy: 'System',
         }
-
-        // Prepend to events array (newest first)
         const updatedEvents = [creditRequestedEvent, ...events]
 
         const { error: updateError } = await supabase
@@ -114,57 +226,54 @@ export async function GET(request: NextRequest) {
         } else {
           console.log(`[Cron AdvanceClaims] Advanced ticket #${claim.ticket_number} to Credit Requested`)
           advanced++
+        }
+      }
+    }
 
-          // Send email notification to ShipBob
-          try {
-            const clientData = claim.client as { company_name: string; merchant_id: string } | null
-            if (!clientData?.merchant_id) {
-              console.warn(`[Cron AdvanceClaims] Skipping email for ticket #${claim.ticket_number} - no merchant ID`)
-            } else {
-              // Generate email content using template
-              const emailData = generateClaimEmail({
-                merchantName: clientData.company_name,
-                merchantId: clientData.merchant_id,
-                shipmentId: claim.shipment_id || '',
-                issueType: claim.issue_type as IssueType,
-                description: claim.description as string | null,
-                compensationRequest: claim.compensation_request as string | null,
-                reshipmentStatus: claim.reshipment_status as ReshipmentStatus | null,
-                reshipmentId: claim.reshipment_id as string | null,
-                carrierConfirmedLoss: claim.carrier_confirmed_loss as boolean,
-              })
+    // ----------------------------------------------------------------
+    // Part 1b: Send emails for any claim that needs one (self-healing)
+    //
+    // This covers BOTH the just-advanced tickets from Part 1a AND any
+    // ticket from prior runs whose email failed (rate-limit, network,
+    // Resend outage, etc.). Query criterion: status is in the "claim
+    // lifecycle" AND claim_email_sent_at IS NULL AND we haven't exhausted
+    // retries. Throttled to ~3 emails/sec to stay under Resend's 5/sec.
+    // ----------------------------------------------------------------
+    let unsentQuery = supabase
+      .from('care_tickets')
+      .select(CLAIM_SELECT)
+      .eq('ticket_type', 'Claim')
+      // Only email tickets currently in the active claim lifecycle. Not
+      // Under Review (too early) and not Resolved/Closed/Credit Not Approved
+      // (too late — ShipBob has already resolved one way or another).
+      .in('status', ['Credit Requested', 'Credit Approved'])
+      .is('claim_email_sent_at', null)
+      .lt('claim_email_attempts', MAX_EMAIL_ATTEMPTS)
+      .order('claim_email_last_attempt_at', { ascending: true, nullsFirst: true })
+      .limit(MAX_EMAILS_PER_RUN)
 
-              // Fetch attachments if any (path is used to generate fresh signed URLs)
-              const attachmentsData = claim.attachments as Array<{ name: string; url: string; path?: string }> | null
-              let attachmentBuffers: Array<{ filename: string; content: Buffer }> = []
-              if (attachmentsData && attachmentsData.length > 0) {
-                try {
-                  attachmentBuffers = await fetchAttachmentBuffers(attachmentsData)
-                } catch (attachmentError) {
-                  console.warn(`[Cron AdvanceClaims] Failed to fetch attachments for ticket #${claim.ticket_number}:`, attachmentError)
-                  // Continue without attachments
-                }
-              }
+    await excludeDemoClients(supabase, unsentQuery)
 
-              // Send the email
-              await sendClaimEmail({
-                to: ['support@shipbob.com'],
-                cc: ['support@shipwithjetpack.com'],
-                subject: emailData.subject,
-                html: emailData.html,
-                text: emailData.text,
-                attachments: attachmentBuffers.length > 0 ? attachmentBuffers : undefined,
-              })
+    const { data: unsentClaims, error: unsentError } = await unsentQuery
+    if (unsentError) {
+      console.error('[Cron AdvanceClaims] Error fetching unsent claims:', unsentError.message)
+    } else if (unsentClaims && unsentClaims.length > 0) {
+      console.log(`[Cron AdvanceClaims] ${unsentClaims.length} claim(s) need email send/retry`)
 
-              console.log(`[Cron AdvanceClaims] Sent email for ticket #${claim.ticket_number}`)
-              emailsSent++
-            }
-          } catch (emailError) {
-            console.error(`[Cron AdvanceClaims] Email failed for ticket #${claim.ticket_number}:`, emailError)
-            emailErrors++
-            // Don't block advancement - log and continue
+      for (let i = 0; i < unsentClaims.length; i++) {
+        const claim = unsentClaims[i] as unknown as ClaimWithClient
+        const outcome = await sendAndRecord(supabase, claim)
+        if (outcome.sent) {
+          emailsSent++
+        } else {
+          emailErrors++
+          if (outcome.permanent) {
+            emailPermanentFailures++
+            console.error(`[Cron AdvanceClaims] PERMANENT email failure for ticket #${claim.ticket_number}: ${outcome.error}`)
           }
         }
+        // Throttle between sends to stay under Resend's rate limit
+        if (i < unsentClaims.length - 1) await sleep(THROTTLE_MS)
       }
     }
 
@@ -290,7 +399,7 @@ export async function GET(request: NextRequest) {
     }
 
     const duration = Date.now() - startTime
-    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${synced} synced, ${created} created, ${errors + syncErrors + createErrors + emailErrors} errors`)
+    console.log(`[Cron AdvanceClaims] Completed in ${duration}ms: ${advanced} advanced, ${emailsSent} emails sent, ${emailErrors} email failures (${emailPermanentFailures} permanent), ${synced} synced, ${created} created, ${errors + syncErrors + createErrors} non-email errors`)
 
     return NextResponse.json({
       success: errors === 0 && syncErrors === 0 && createErrors === 0,
@@ -298,6 +407,7 @@ export async function GET(request: NextRequest) {
       claimsAdvanced: advanced,
       emailsSent,
       emailErrors,
+      emailPermanentFailures,
       claimsSynced: synced,
       deliveryIqEntriesCreated: created,
       errors: errors + syncErrors + createErrors,
