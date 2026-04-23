@@ -300,7 +300,7 @@ export async function GET(request: NextRequest) {
           'Investigate via the Supabase dashboard (care_tickets.claim_email_last_error) and re-send manually via ' +
           '`scripts/audit-claim-emails.ts --resend` once the root cause is resolved.',
       ].join('\n')
-      sendSlackAlert(body, 'support-alerts')
+      sendSlackAlert(body, { channel: '#support-alerts' })
     }
 
     // ========================================
