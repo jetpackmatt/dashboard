@@ -26,7 +26,6 @@ import {
   TransactionContext,
   BillingCategory,
 } from './markup-engine'
-import { safeShipmentBaseCost } from './invoice-generator'
 
 // Fee type to billing category mapping
 const FEE_TYPE_TO_CATEGORY: Record<string, BillingCategory> = {
@@ -385,17 +384,10 @@ export async function calculatePreviewMarkups(
       let billedAmount: number
 
       if (isShipment) {
-        // For shipments: calculate breakdown fields matching invoice-generator logic.
-        // safeShipmentBaseCost clamps SFTP's base_cost to never exceed cost-surcharge
-        // (see comment on safeShipmentBaseCost for the 2026-04-20 doubled-SFTP incident).
+        // For shipments: calculate breakdown fields matching invoice-generator logic
+        const baseCost = Number(tx.base_cost) || 0
         const surcharge = Number(tx.surcharge) || 0
         const insuranceCost = Number(tx.insurance_cost) || 0
-        const baseCost = safeShipmentBaseCost(
-          Number(tx.cost) || 0,
-          Number(tx.base_cost) || 0,
-          surcharge,
-          insuranceCost,
-        )
 
         // Match Excel/invoice formula exactly
         const baseChargeRaw = baseCost * (1 + markupDecimal)

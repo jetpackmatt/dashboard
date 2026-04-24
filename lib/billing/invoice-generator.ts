@@ -184,31 +184,6 @@ export interface InvoiceData {
   }
 }
 
-/**
- * Derive the true markup base for a shipping transaction, defending against
- * SFTP inconsistencies where base_cost is inflated by duplicated Base Rate rows
- * (observed 2026-04-20 — ~945 shipments had base_cost doubled).
- *
- * cost (ShipBob billing API) is authoritative. base_cost (from SFTP) is a
- * decomposition used to markup only the base rate, not surcharges. If SFTP's
- * base_cost + surcharge + insurance exceeds cost by more than rounding
- * tolerance, trust cost and derive base = cost - surcharge - insurance to avoid
- * inflating what we charge the client. Preserves sign so refunds work.
- */
-export function safeShipmentBaseCost(
-  cost: number,
-  rawBaseCost: number,
-  surcharge: number,
-  insuranceCost: number,
-): number {
-  const derived = cost - surcharge - insuranceCost
-  if (Math.abs(rawBaseCost) > Math.abs(derived) + 0.05) {
-    return derived
-  }
-  // Fall back to cost when base_cost is missing/zero and cost is available
-  return rawBaseCost || derived
-}
-
 // Additional service fee types (non-shipping fees on shipments)
 export const ADDITIONAL_SERVICE_FEES = [
   'Per Pick Fee',
@@ -780,14 +755,9 @@ export async function collectBillingTransactionsByInvoiceIds(
         const feeType = getShipmentFeeType(orderCategory || null)
         const isRefund = txTransactionType === 'Refund'
         // For shipments: use base_cost (marked up) + surcharge (pass-through) + insurance
+        const shipBaseAmount = Number(tx.base_cost) || Number(tx.cost) || 0
         const shipSurcharge = Number(tx.surcharge) || 0
         const shipInsuranceCost = Number(tx.insurance_cost) || 0
-        const shipBaseAmount = safeShipmentBaseCost(
-          Number(tx.cost) || 0,
-          Number(tx.base_cost) || 0,
-          shipSurcharge,
-          shipInsuranceCost,
-        )
 
         items.push({
           id: txId,
@@ -1087,14 +1057,9 @@ export async function collectUnprocessedBillingTransactions(
         const feeType = getShipmentFeeType(orderCategory || null)
         const isRefund = txTransactionType === 'Refund'
         // For shipments: use base_cost (marked up) + surcharge (pass-through) + insurance
+        const shipBaseAmount = Number(tx.base_cost) || Number(tx.cost) || 0
         const shipSurcharge = Number(tx.surcharge) || 0
         const shipInsuranceCost = Number(tx.insurance_cost) || 0
-        const shipBaseAmount = safeShipmentBaseCost(
-          Number(tx.cost) || 0,
-          Number(tx.base_cost) || 0,
-          shipSurcharge,
-          shipInsuranceCost,
-        )
 
         items.push({
           id: txId,

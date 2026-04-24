@@ -494,12 +494,45 @@ export async function fetchDailyShippingBreakdown(date: Date): Promise<DailyFetc
       fee_amount: parseCurrency(row['Fee Amount'] || row['Fee_Amount'] || '0')
     }))
 
-    // Aggregate by shipment_id
-    const byShipment = new Map<string, DailyShipmentCost>()
-
+    // Dedup exact-duplicate rows within this file.
+    //
+    // Observed 2026-04-21: ShipBob's daily file had every row duplicated for 946
+    // shipments (charge $7.50 appeared as two identical rows "Base Rate $7.50").
+    // Blindly summing doubled base_cost values, which inflated 945 preview
+    // billed_amounts in JPP. We never detected this because 8 clean days of files
+    // (before and after) had ZERO duplicate row-keys.
+    //
+    // Safe dedup key: (shipment_id | fee_type | fee_amount-as-number). Crucially,
+    // the SIGN is part of the number — a refund row ($-7.50) and a charge row
+    // ($7.50) have different keys and are NEVER deduped. Only exact repeats of
+    // the same signed amount get collapsed. Different fee_types (e.g.,
+    // "Base Rate $7.50" vs "Residential $7.50") keep both.
+    const seen = new Set<string>()
+    const dedupedRows: DailyFeeRow[] = []
+    const droppedRows: DailyFeeRow[] = []
     for (const row of rawRows) {
       if (!row.shipment_id) continue
+      // Normalize amount to fixed-precision string so "7.5" and "7.50" collide but
+      // "7.50" and "-7.50" don't. parseCurrency already returned a number.
+      const key = `${row.shipment_id}|${row.fee_type}|${row.fee_amount.toFixed(4)}`
+      if (seen.has(key)) {
+        droppedRows.push(row)
+        continue
+      }
+      seen.add(key)
+      dedupedRows.push(row)
+    }
+    if (droppedRows.length > 0) {
+      console.warn(`[SFTP] ${droppedRows.length} exact-duplicate row(s) dropped from ${filename}. Sample:`)
+      for (const r of droppedRows.slice(0, 5)) {
+        console.warn(`  shipment=${r.shipment_id} fee_type=${r.fee_type} amount=${r.fee_amount}`)
+      }
+    }
 
+    // Aggregate by shipment_id (now on the deduped list)
+    const byShipment = new Map<string, DailyShipmentCost>()
+
+    for (const row of dedupedRows) {
       if (!byShipment.has(row.shipment_id)) {
         byShipment.set(row.shipment_id, {
           shipment_id: row.shipment_id,
