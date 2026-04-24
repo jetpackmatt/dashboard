@@ -1661,7 +1661,14 @@ export function DataTable({
                       onSelectionChange={setShipmentsTypeFilter}
                       placeholder="Type"
                     />
-                    {/* Channel filter hidden — rarely used, takes up space */}
+                    {shipmentsChannels.length > 0 && (
+                      <MultiSelectFilter
+                        options={shipmentsChannels.map(c => ({ value: c, label: c }))}
+                        selected={shipmentsChannelFilter}
+                        onSelectionChange={setShipmentsChannelFilter}
+                        placeholder="Store"
+                      />
+                    )}
                     <MultiSelectFilter
                       options={consolidatedCarrierOptions.map(c => ({ value: c, label: c }))}
                       selected={shipmentsCarrierFilter}
