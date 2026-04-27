@@ -91,6 +91,10 @@
     {
       "path": "/api/cron/normalize-checkpoints",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/billing-threshold-alerts",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

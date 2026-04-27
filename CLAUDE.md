@@ -127,6 +127,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 | Path | Schedule | Purpose |
 |------|----------|---------|
 | `/api/cron/refresh-analytics` | Every 5 min | Refresh pre-aggregated analytics summary tables |
+| `/api/cron/billing-threshold-alerts` | Every 15 min | Slack alert to #mgmt each time the week's cumulative ShipBob cost crosses a $1K threshold (resets every Monday America/Toronto) |
 | `/api/cron/refresh-carrier-views` | Daily 5:30 AM UTC | Refresh carrier filter materialized views |
 | `/api/cron/calculate-client-sizes` | 1st of month, 6 AM UTC | Client size labels (whale/shark/dolphin/bass/goldfish) |
 | `/api/cron/lock-commissions` | 1st of month, 11 AM UTC | Lock previous month's commissions into snapshots |
