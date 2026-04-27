@@ -49,6 +49,54 @@ interface SBShipment {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 
+// Mirrors TIMELINE_EVENT_MAP in lib/shipbob/sync.ts. When updating either, update both.
+const TIMELINE_EVENT_MAP: Record<number, string> = {
+  118: 'event_pickinprogress',
+  601: 'event_created',
+  602: 'event_picked',
+  603: 'event_packed',
+  604: 'event_labeled',
+  605: 'event_labelvalidated',
+  607: 'event_intransit',
+  608: 'event_outfordelivery',
+  609: 'event_delivered',
+  611: 'event_deliveryattemptfailed',
+}
+
+async function fetchTimeline(token: string, shipmentId: string): Promise<{ eventCols: Record<string, string>; logs: unknown[] } | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const [tlRes, logRes] = await Promise.all([
+        fetch(`${SB_BASE}/1.0/shipment/${shipmentId}/timeline`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${SB_BASE}/1.0/shipment/${shipmentId}/logs`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
+      if (tlRes.status === 429 || logRes.status === 429) {
+        await sleep(5000 + attempt * 5000)
+        continue
+      }
+      const events: Array<{ log_type_id?: number; timestamp?: string }> = []
+      if (tlRes.ok) {
+        const t = await tlRes.json()
+        if (Array.isArray(t)) events.push(...t)
+      }
+      if (logRes.ok) {
+        const l = await logRes.json()
+        if (Array.isArray(l)) events.push(...l)
+      }
+      events.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+      const eventCols: Record<string, string> = {}
+      for (const e of events) {
+        const col = e.log_type_id != null ? TIMELINE_EVENT_MAP[e.log_type_id] : undefined
+        if (col && e.timestamp) eventCols[col] = e.timestamp
+      }
+      return { eventCols, logs: events }
+    } catch {
+      await sleep(2000 + attempt * 2000)
+    }
+  }
+  return null
+}
+
 async function fetchOrder(token: string, orderId: string): Promise<{ shipments?: SBShipment[] } | null> {
   // Retry 429 (rate limit) and transient errors with backoff. ShipBob's child-token
   // rate limits are bursty — a single brand-wide refresh sometimes hits them.
@@ -161,12 +209,17 @@ export async function GET(request: Request) {
     if (c.api_token) tokenByClient.set(c.client_id, c.api_token)
   }
 
-  // 5) For each stale shipment, fetch /order/{id} via its brand's child token, update DB
+  // 5) For each stale shipment, fetch /order/{id} via its brand's child token, update DB.
+  //    Also fetch /shipment/{id}/timeline + /logs and populate event_* columns when status
+  //    flips out of Processing/Pending/None — otherwise we'd leave shipments shipped on
+  //    ShipBob's side but with no event_labeled/event_created in our DB, which breaks
+  //    preflight (it requires at least one of those for invoicing).
   let refreshed = 0
   let unchanged = 0
   let missingToken = 0
   let apiFailed = 0
   let notFoundOnSB = 0
+  let timelineFetched = 0
 
   for (const row of stale) {
     if (Date.now() - startedAt > 270_000) {
@@ -207,6 +260,25 @@ export async function GET(request: Request) {
       updates.actual_weight_oz = sbShip.measurements.total_weight_oz
     }
 
+    // If the shipment now has a real status (no longer Processing/Pending/None),
+    // fetch its timeline so event_labeled/event_created get populated. Without this,
+    // sync-invoices' preflight would still flag the shipment as missing events.
+    const flippedToShipped =
+      sbShip.status &&
+      !['Processing', 'Pending', 'None'].includes(sbShip.status) &&
+      ['Processing', 'Pending', 'None'].includes(row.status || '')
+
+    if (flippedToShipped) {
+      const tl = await fetchTimeline(token, row.shipment_id)
+      await sleep(200)
+      if (tl) {
+        Object.assign(updates, tl.eventCols)
+        if (tl.logs.length > 0) updates.event_logs = tl.logs
+        updates.timeline_checked_at = new Date().toISOString()
+        timelineFetched++
+      }
+    }
+
     if (Object.keys(updates).length === 0) { unchanged++; continue }
 
     updates.updated_at = new Date().toISOString()
@@ -229,6 +301,7 @@ export async function GET(request: Request) {
     candidates: refSet.size,
     stale: stale.length,
     refreshed,
+    timelineFetched,
     unchanged,
     missingToken,
     apiFailed,
