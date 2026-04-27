@@ -25,6 +25,10 @@
       "schedule": "30 * * * *"
     },
     {
+      "path": "/api/cron/preflight-refresh",
+      "schedule": "0 9 * * 1"
+    },
+    {
       "path": "/api/cron/sync-invoices",
       "schedule": "0 10 * * 1"
     },

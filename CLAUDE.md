@@ -103,6 +103,7 @@ Infrastructure partner is ShipBob (warehouses, systems) - we white-label their p
 
 | Path | Schedule | Purpose |
 |------|----------|---------|
+| `/api/cron/preflight-refresh` | Mondays 9 AM UTC | Targeted /order/{id} refresh on stale shipments referenced by unprocessed SB invoices (runs 1h before sync-invoices) |
 | `/api/cron/sync-invoices` | Mondays 10 AM UTC | ShipBob invoice sync + SFTP breakdown + preflight |
 | `/api/cron/sync-older-nightly` | Daily 3 AM UTC | Full refresh for shipments 14-180 days old |
 | `/api/cron/sync-products` | Daily 4 AM UTC | Products with variants (inventory_id → client mapping) |
