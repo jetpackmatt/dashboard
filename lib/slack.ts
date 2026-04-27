@@ -14,12 +14,20 @@
 interface SlackOptions {
   /** Channel override, e.g. '#support-alerts'. Honored by classic webhooks. */
   channel?: string
+  /**
+   * Webhook URL override. Use this for channels the default webhook's bot
+   * can't reach (e.g. private channels). Modern workspace webhooks silently
+   * ignore the channel override and post to their configured default, so
+   * private/restricted channels need their own dedicated webhook URL stored
+   * in a separate env var.
+   */
+  webhookUrl?: string
 }
 
 export function sendSlackAlert(text: string, opts: SlackOptions = {}): void {
-  const webhookUrl = process.env.SLACK_WEBHOOK_URL
+  const webhookUrl = opts.webhookUrl || process.env.SLACK_WEBHOOK_URL
   if (!webhookUrl) {
-    console.warn(`[Slack] SLACK_WEBHOOK_URL not set — skipping alert: ${text.slice(0, 120)}`)
+    console.warn(`[Slack] No webhook URL — skipping alert: ${text.slice(0, 120)}`)
     return
   }
 

@@ -93,10 +93,22 @@ export async function GET(request: Request) {
       if (thresholds.length >= MAX_ALERTS_PER_RUN) break
     }
 
-    for (const t of thresholds) {
-      const formatted = t.toLocaleString('en-US')
-      sendSlackAlert(`ShipBob billings just crossed $${formatted}`, { channel: '#mgmt' })
-      alertsSent.push(t)
+    // #mgmt is private — the default SLACK_WEBHOOK_URL's bot can't reach it.
+    // Requires a dedicated webhook stored in SLACK_WEBHOOK_URL_MGMT. If not
+    // set we no-op (logged) rather than leak the alert to whatever channel
+    // the default webhook is bound to.
+    const mgmtWebhookUrl = process.env.SLACK_WEBHOOK_URL_MGMT
+    if (!mgmtWebhookUrl) {
+      console.warn('[BillingThresholdAlerts] SLACK_WEBHOOK_URL_MGMT not set — would have alerted at:', thresholds)
+    } else {
+      for (const t of thresholds) {
+        const formatted = t.toLocaleString('en-US')
+        sendSlackAlert(`ShipBob billings just crossed $${formatted}`, {
+          channel: '#mgmt',
+          webhookUrl: mgmtWebhookUrl,
+        })
+        alertsSent.push(t)
+      }
     }
   }
 
