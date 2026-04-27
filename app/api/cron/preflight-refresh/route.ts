@@ -86,7 +86,7 @@ export async function GET(request: Request) {
 
   const sbInvoiceIds = unprocessed
     .map((r: { shipbob_invoice_id: string }) => parseInt(r.shipbob_invoice_id, 10))
-    .filter((n) => !isNaN(n))
+    .filter((n: number) => !isNaN(n))
 
   // 2) Get distinct shipment reference_ids from transactions on those invoices
   const refSet = new Set<string>()
