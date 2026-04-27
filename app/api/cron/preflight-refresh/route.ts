@@ -47,19 +47,28 @@ interface SBShipment {
   last_update_at?: string
 }
 
-async function fetchOrder(token: string, orderId: string): Promise<{ shipments?: SBShipment[] } | null> {
-  try {
-    const r = await fetch(`${SB_BASE}/1.0/order/${orderId}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    })
-    if (!r.ok) return null
-    return await r.json()
-  } catch {
-    return null
-  }
-}
-
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+
+async function fetchOrder(token: string, orderId: string): Promise<{ shipments?: SBShipment[] } | null> {
+  // Retry 429 (rate limit) and transient errors with backoff. ShipBob's child-token
+  // rate limits are bursty — a single brand-wide refresh sometimes hits them.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch(`${SB_BASE}/1.0/order/${orderId}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      })
+      if (r.ok) return await r.json()
+      if (r.status === 429 || r.status >= 500) {
+        await sleep(5000 + attempt * 5000)
+        continue
+      }
+      return null
+    } catch {
+      await sleep(2000 + attempt * 2000)
+    }
+  }
+  return null
+}
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
@@ -88,18 +97,29 @@ export async function GET(request: Request) {
     .map((r: { shipbob_invoice_id: string }) => parseInt(r.shipbob_invoice_id, 10))
     .filter((n: number) => !isNaN(n))
 
-  // 2) Get distinct shipment reference_ids from transactions on those invoices
+  // 2) Get distinct shipment reference_ids from transactions on those invoices.
+  // Cursor pagination: Supabase caps responses at 1000 rows regardless of .limit().
   const refSet = new Set<string>()
-  for (let i = 0; i < sbInvoiceIds.length; i += 100) {
-    const batch = sbInvoiceIds.slice(i, i + 100)
-    const { data: txs } = await supabase
+  let lastTxId: string | null = null
+  while (true) {
+    let q = supabase
       .from('transactions')
-      .select('reference_id')
+      .select('id, reference_id')
       .eq('reference_type', 'Shipment')
-      .in('invoice_id_sb', batch)
-    for (const t of txs || []) {
+      .in('invoice_id_sb', sbInvoiceIds)
+      .order('id', { ascending: true })
+      .limit(1000)
+    if (lastTxId) q = q.gt('id', lastTxId)
+    const { data: txs, error } = await q
+    if (error) {
+      return NextResponse.json({ error: 'Failed to load transactions', details: error.message }, { status: 500 })
+    }
+    if (!txs || txs.length === 0) break
+    for (const t of txs as Array<{ id: string; reference_id: string | null }>) {
       if (t.reference_id) refSet.add(String(t.reference_id))
     }
+    lastTxId = (txs[txs.length - 1] as { id: string }).id
+    if (txs.length < 1000) break
   }
 
   if (refSet.size === 0) {
