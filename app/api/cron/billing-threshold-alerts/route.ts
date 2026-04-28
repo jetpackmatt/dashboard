@@ -25,6 +25,49 @@ export const maxDuration = 60
 const TZ = 'America/Toronto'
 const MAX_ALERTS_PER_RUN = 10
 
+// Excitement scales with $. Tier picked by threshold; pick within tier is random.
+// Tiers cap at $30K and saturate above.
+const EXCLAMATION_TIERS: string[][] = [
+  // Tier 1: $1K-$5K (mild)
+  ['Nice.', 'Cool beans.', 'Tidy.', 'Cha-ching.', 'Ka-ching.', 'Sweet.', 'Lovely.', 'Not bad.', 'Look at us go.', 'Off to the races.'],
+  // Tier 2: $5K-$10K (building)
+  ['Woohoo!', 'Yeehaw!', 'Heck yes!', 'Hot dog!', 'Right on!', 'Boom.', 'Yes please!', 'Kapow!', 'Shazam!', 'Bingo!'],
+  // Tier 3: $10K-$15K (excited)
+  ['Hokie Dinah!', 'Holy moly!', 'Hot diggity!', 'Hubba hubba!', 'Mama mia!', 'Whoa Nelly!', 'Yowza!', 'Holy smokes!', 'Sweet mercy!', 'Cowabunga!'],
+  // Tier 4: $15K-$22K (hyped)
+  ['Hoochie Mama!', 'Holy cannoli!', 'Great Scott!', "Sufferin' succotash!", "Jumpin' Jehoshaphat!", 'By Jove!', 'Stop the presses!', 'Ring the bell!', 'Champagne on ice!', "Pinch me, I'm dreaming!"],
+  // Tier 5: $22K+ (bonkers)
+  ['HOLY GUACAMOLE!', 'SWEET MOTHER OF PEARL!', 'ABSOLUTE UNIT!', 'WE ARE SO BACK!', 'THE LADS HAVE DONE IT!', 'CALL YOUR MOTHER!', 'WAKE THE NEIGHBORS!', 'STOP THE WORLD!', 'ABSOLUTE PANDEMONIUM!', 'SOMEONE GET MARC ON THE PHONE!'],
+]
+
+// Spicy variants reserved for tier 4+ and rolled at increasing probability with
+// dollar amount. Targets ~5% overall fire rate when alerts are spread across tiers.
+const SPICY_TIERS: string[][] = [
+  // Spicy tier 4 (~$15K-$22K): rolled 10% of the time at this tier
+  ['Holy shit!', 'Fuck yeah!', 'What the fuck.', 'Holy fuckballs!', 'No fucking way.'],
+  // Spicy tier 5 ($22K+): rolled 20% of the time at this tier
+  ['ABSO-FUCKING-LUTELY!', 'HOLY FUCKING SHIT!', 'FUCK ME RUNNING!', 'JESUS TAP-DANCING CHRIST!', 'HOLY MOTHERFUCKING SHITBALLS!', 'WHAT THE ACTUAL FUCK!'],
+]
+
+function pickExclamation(thresholdDollars: number): string {
+  let tierIdx: number
+  if (thresholdDollars < 5000) tierIdx = 0
+  else if (thresholdDollars < 10000) tierIdx = 1
+  else if (thresholdDollars < 15000) tierIdx = 2
+  else if (thresholdDollars < 22000) tierIdx = 3
+  else tierIdx = 4
+
+  // Roll spicy at higher tiers only
+  const spicyChance = tierIdx === 3 ? 0.10 : tierIdx === 4 ? 0.20 : 0
+  if (spicyChance > 0 && Math.random() < spicyChance) {
+    const pool = SPICY_TIERS[tierIdx - 3]
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
+
+  const pool = EXCLAMATION_TIERS[tierIdx]
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
 /** Get the Monday-of-current-week date string (YYYY-MM-DD) in America/Toronto. */
 function getWeekStartLocal(): string {
   const now = new Date()
@@ -103,7 +146,8 @@ export async function GET(request: Request) {
     } else {
       for (const t of thresholds) {
         const formatted = t.toLocaleString('en-US')
-        sendSlackAlert(`ShipBob billings just crossed $${formatted}`, {
+        const exclamation = pickExclamation(t)
+        sendSlackAlert(`ShipBob billings just crossed $${formatted}. ${exclamation}`, {
           channel: '#mgmt',
           webhookUrl: mgmtWebhookUrl,
         })
