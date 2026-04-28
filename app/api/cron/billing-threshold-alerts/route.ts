@@ -49,6 +49,40 @@ const SPICY_TIERS: string[][] = [
   ['ABSO-FUCKING-LUTELY!', 'HOLY FUCKING SHIT!', 'FUCK ME RUNNING!', 'JESUS TAP-DANCING CHRIST!', 'HOLY MOTHERFUCKING SHITBALLS!', 'WHAT THE ACTUAL FUCK!'],
 ]
 
+// Day-of-week bonus commentary, appended when the threshold beats expectations
+// for that day. Mondays are usually slow, so $6K is impressive. Tuesday should
+// hit $10K. Thresholds are weekly cumulative cost, not daily.
+const DAY_BONUS: Record<string, { minDollars: number; phrases: string[] }> = {
+  Mon: {
+    minDollars: 6000,
+    phrases: [
+      'Not bad for a fucking Monday.',
+      'On a goddamn Monday, no less.',
+      'Hell of a way to start the week.',
+      "Monday isn't usually this generous.",
+      'Take that, Monday.',
+      'Monday came out swinging.',
+    ],
+  },
+  Tue: {
+    minDollars: 10000,
+    phrases: [
+      "And it's only Tuesday.",
+      'Tuesday is showing up.',
+      'Hell of a Tuesday.',
+      'Five figures on a Tuesday — sheesh.',
+      'Tuesday flexing, apparently.',
+    ],
+  },
+}
+
+function pickDayBonus(thresholdDollars: number): string | null {
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short' }).format(new Date())
+  const bonus = DAY_BONUS[weekday]
+  if (!bonus || thresholdDollars < bonus.minDollars) return null
+  return bonus.phrases[Math.floor(Math.random() * bonus.phrases.length)]
+}
+
 function pickExclamation(thresholdDollars: number): string {
   let tierIdx: number
   if (thresholdDollars < 5000) tierIdx = 0
@@ -147,7 +181,11 @@ export async function GET(request: Request) {
       for (const t of thresholds) {
         const formatted = t.toLocaleString('en-US')
         const exclamation = pickExclamation(t)
-        sendSlackAlert(`ShipBob billings just crossed $${formatted}. ${exclamation}`, {
+        const dayBonus = pickDayBonus(t)
+        const message = dayBonus
+          ? `ShipBob billings just crossed $${formatted}. ${exclamation} ${dayBonus}`
+          : `ShipBob billings just crossed $${formatted}. ${exclamation}`
+        sendSlackAlert(message, {
           channel: '#mgmt',
           webhookUrl: mgmtWebhookUrl,
         })
