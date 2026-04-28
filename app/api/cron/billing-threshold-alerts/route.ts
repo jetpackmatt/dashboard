@@ -49,9 +49,10 @@ const SPICY_TIERS: string[][] = [
   ['ABSO-FUCKING-LUTELY!', 'HOLY FUCKING SHIT!', 'FUCK ME RUNNING!', 'JESUS TAP-DANCING CHRIST!', 'HOLY MOTHERFUCKING SHITBALLS!', 'WHAT THE ACTUAL FUCK!'],
 ]
 
-// Day-of-week bonus commentary, appended when the threshold beats expectations
-// for that day. Mondays are usually slow, so $6K is impressive. Tuesday should
-// hit $10K. Thresholds are weekly cumulative cost, not daily.
+// Day-of-week bonus commentary, fires at $6K-and-above on Mondays and
+// $10K-and-above on Tuesdays. Mondays don't usually hit $6K so it's
+// noteworthy; same for $10K Tuesdays. Higher thresholds on the same day
+// keep getting the bonus too.
 const DAY_BONUS: Record<string, { minDollars: number; phrases: string[] }> = {
   Mon: {
     minDollars: 6000,
