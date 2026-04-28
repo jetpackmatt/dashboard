@@ -49,10 +49,10 @@ const SPICY_TIERS: string[][] = [
   ['ABSO-FUCKING-LUTELY!', 'HOLY FUCKING SHIT!', 'FUCK ME RUNNING!', 'JESUS TAP-DANCING CHRIST!', 'HOLY MOTHERFUCKING SHITBALLS!', 'WHAT THE ACTUAL FUCK!'],
 ]
 
-// Day-of-week bonus commentary, fires at $6K-and-above on Mondays and
-// $10K-and-above on Tuesdays. Mondays don't usually hit $6K so it's
-// noteworthy; same for $10K Tuesdays. Higher thresholds on the same day
-// keep getting the bonus too.
+// Day-of-week bonus commentary, fires when the running cumulative crosses
+// the day's notable mark. Higher thresholds on the same day keep getting
+// the bonus too. Daily marks: Mon $6K, Tue $10K, Wed $13K, Thu $17K,
+// Fri $20K, Sat $24K.
 const DAY_BONUS: Record<string, { minDollars: number; phrases: string[] }> = {
   Mon: {
     minDollars: 6000,
@@ -73,6 +73,49 @@ const DAY_BONUS: Record<string, { minDollars: number; phrases: string[] }> = {
       'Hell of a Tuesday.',
       'Five figures on a Tuesday — sheesh.',
       'Tuesday flexing, apparently.',
+      'Tuesday turned up.',
+    ],
+  },
+  Wed: {
+    minDollars: 13000,
+    phrases: [
+      'Hump day humping hard.',
+      'Wednesday with the goods.',
+      "We're past the hump and pulling.",
+      'Wednesday is cooking.',
+      'Mid-week mayhem.',
+      'Wednesday keeps showing up.',
+    ],
+  },
+  Thu: {
+    minDollars: 17000,
+    phrases: [
+      'Thursday earning its keep.',
+      'Thirsty Thursday is paying for itself.',
+      'Thursday delivering the goods.',
+      'Thursday flexing.',
+      'Thursday is locked in.',
+    ],
+  },
+  Fri: {
+    minDollars: 20000,
+    phrases: [
+      "Friday vibes — let's fucking go.",
+      'TGIF, indeed.',
+      'Friday cashed in.',
+      'Friday is paying for the weekend.',
+      "Friday earned everyone's drinks.",
+      'Big-time Friday.',
+    ],
+  },
+  Sat: {
+    minDollars: 24000,
+    phrases: [
+      'Saturday somehow keeps cooking.',
+      'On a Saturday?? Wild.',
+      "Even Saturday's putting in work.",
+      'Saturday refused to take the day off.',
+      'Saturday going hard.',
     ],
   },
 }
