@@ -118,6 +118,17 @@ const DAY_BONUS: Record<string, { minDollars: number; phrases: string[] }> = {
       'Saturday going hard.',
     ],
   },
+  Sun: {
+    minDollars: 27000,
+    phrases: [
+      'Wow! What a fucking week, guys!',
+      'Hell of a week, team. Hell of a week.',
+      'That was a goddamn week.',
+      'Lock it in — week complete.',
+      "Closing the week out in style. Let's fucking go.",
+      'Cap that off. Massive week.',
+    ],
+  },
 }
 
 function pickDayBonus(thresholdDollars: number): string | null {
